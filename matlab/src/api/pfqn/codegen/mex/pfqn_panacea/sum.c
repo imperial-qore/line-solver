@@ -90,14 +90,14 @@ static emlrtRSInfo nb_emlrtRSI = {
     "blockedSummation.m" /* pathName */
 };
 
-static emlrtRTEInfo kb_emlrtRTEI = {
+static emlrtRTEInfo gb_emlrtRTEI = {
     20,                                                             /* lineNo */
     1,                                                              /* colNo */
     "sum",                                                          /* fName */
     "/usr/local/MATLAB/R2025a/toolbox/eml/lib/matlab/datafun/sum.m" /* pName */
 };
 
-static emlrtRTEInfo lb_emlrtRTEI = {
+static emlrtRTEInfo hb_emlrtRTEI = {
     35,                    /* lineNo */
     20,                    /* colNo */
     "sumMatrixIncludeNaN", /* fName */
@@ -222,7 +222,7 @@ void c_sum(const emlrtStack *sp, const emxArray_real_T *x, emxArray_real_T *y)
     y->size[0] = 1;
     i = x->size[1];
     y->size[1] = x->size[1];
-    emxEnsureCapacity_real_T(&e_st, y, ncols, &lb_emlrtRTEI);
+    emxEnsureCapacity_real_T(&e_st, y, ncols, &hb_emlrtRTEI);
     y_data = y->data;
     ncols = x->size[1];
     f_st.site = &s_emlrtRSI;
@@ -285,7 +285,7 @@ void sum(const emlrtStack *sp, const emxArray_real_T *x, emxArray_real_T *y)
     nfb = y->size[0] * y->size[1];
     y->size[0] = 1;
     y->size[1] = x->size[1];
-    emxEnsureCapacity_real_T(&c_st, y, nfb, &kb_emlrtRTEI);
+    emxEnsureCapacity_real_T(&c_st, y, nfb, &gb_emlrtRTEI);
     y_data = y->data;
     nfb = x->size[1];
     for (col = 0; col < nfb; col++) {
@@ -300,7 +300,7 @@ void sum(const emlrtStack *sp, const emxArray_real_T *x, emxArray_real_T *y)
     y->size[0] = 1;
     i = x->size[1];
     y->size[1] = x->size[1];
-    emxEnsureCapacity_real_T(&e_st, y, nfb, &lb_emlrtRTEI);
+    emxEnsureCapacity_real_T(&e_st, y, nfb, &hb_emlrtRTEI);
     y_data = y->data;
     if (x->size[0] < 4096) {
       f_st.site = &s_emlrtRSI;

@@ -52,7 +52,7 @@ public class Solver_qns {
 
         String tempDirPath;
         try {
-            tempDirPath = SysUtils.lineTempName("qns");
+            tempDirPath = SysUtils.lineTempName("qns", false);
         } catch (java.io.IOException ex) {
             throw new RuntimeException("QNS: Cannot allocate temp directory", ex);
         }
@@ -60,6 +60,7 @@ public class Solver_qns {
 
         try {
             File modelFile = new File(tempDir, "model.jmva");
+            jline.io.LineConsole.step("writing the JMVA model file");
             writeJMVAFile(modelFile);
             File resultFile = new File(tempDir, "result.jmva");
             File logFile = new File(tempDir, "console.out");
@@ -67,6 +68,7 @@ public class Solver_qns {
             if (GlobalConstants.Verbose == VerboseLevel.DEBUG) {
                 System.out.println("SolverQNS command: " + cmd);
             }
+            jline.io.LineConsole.step("running the qnsolver binary as a subprocess");
             File devNull = new File(isWindows() ? "NUL" : "/dev/null");
             int exitCode;
             if (isWindows()) {
@@ -88,8 +90,9 @@ public class Solver_qns {
                 String logContent = logFile.exists() ? readFile(logFile) : "No log file";
                 throw new RuntimeException("QNS solver failed with exit code: " + exitCode + "\nLog: " + logContent);
             }
+            jline.io.LineConsole.step("parsing the qnsolver output");
 
-            ParsedResults parsed = parseResults(resultFile, sn.nchains);
+            ParsedResults parsed = parseResults(resultFile, sn.nchains, logFile);
             Ret.snGetDemands demandResults = SnGetDemandsChain.snGetDemandsChain(sn);
             Matrix Lchain = demandResults.Dchain;
             Matrix STchain = demandResults.STchain;
@@ -97,7 +100,11 @@ public class Solver_qns {
             Matrix alpha = demandResults.alpha;
             Matrix Xchain = Matrix.zeros(1, sn.nchains);
             for (int c = 0; c < sn.nchains; c++) {
-                int refstat = (int) sn.refstat.get(c);
+                // sn.refstat is indexed by CLASS, so the chain's reference station is read
+                // through the chain's first class, as writeJMVA and snGetDemandsChain both do.
+                // Indexing it with the chain number lands on an unrelated class's reference
+                // station once class switching makes the two index spaces differ.
+                int refstat = (int) sn.refstat.get((int) sn.inchain.get(c).get(0));
                 double tChainRefstat = parsed.Tchain.get(refstat, c);
                 if (tChainRefstat > 0) Xchain.set(0, c, tChainRefstat);
                 else {
@@ -174,6 +181,7 @@ public class Solver_qns {
         return cmd.toString();
     }
 
+
     private boolean hasMultiServer() {
         for (int i = 0; i < sn.nstations; i++) {
             int servers = (int) sn.nservers.get(i);
@@ -186,7 +194,7 @@ public class Solver_qns {
         return System.getProperty("os.name").toLowerCase().contains("win");
     }
 
-    private ParsedResults parseResults(File resultFile, int nchains) {
+    private ParsedResults parseResults(File resultFile, int nchains, File logFile) {
         Matrix Uchain = new Matrix(sn.nstations, nchains);
         Matrix Qchain = new Matrix(sn.nstations, nchains);
         Matrix Wchain = new Matrix(sn.nstations, nchains);
@@ -194,13 +202,23 @@ public class Solver_qns {
         Uchain.fill(0.0); Qchain.fill(0.0); Wchain.fill(0.0); Tchain.fill(0.0);
 
         if (!resultFile.exists()) {
-            throw new RuntimeException("QNS result file not found: " + resultFile.getAbsolutePath());
+            // qnsolver exits 0 on a parse error, so the exit-code branch never fires and its
+            // own message is the only evidence of what it rejected. Carry it here or a build
+            // that cannot read an <ldstation> reads as an unexplained missing file.
+            String logContent = (logFile != null && logFile.exists()) ? readFile(logFile).trim() : "";
+            throw new RuntimeException("QNS result file not found: " + resultFile.getAbsolutePath()
+                    + (logContent.isEmpty() ? "" : "\nqnsolver said: " + logContent));
         }
         try (java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.FileReader(resultFile))) {
             String line;
             while ((line = reader.readLine()) != null) {
                 if (line.contains(",") && !line.contains("$")) {
-                    ParsedLine parsed = (sn.nclasses == 1)
+                    // The stride is set by the CHAIN count: qnsolver writes a per-chain column
+                    // plus an aggregate one for each of Q, R, U and X, and drops the aggregate
+                    // entirely at one chain. Switching on nclasses agrees only while classes and
+                    // chains are in bijection; with class switching folding two classes into one
+                    // chain the length guard below rejects every row and the table comes back zero.
+                    ParsedLine parsed = (nchains == 1)
                             ? parseDollarOutputSingleClass(line, nchains)
                             : parseDollarOutput(line, nchains);
                     if (parsed != null) {

@@ -17,6 +17,14 @@ if nargin >= 2 && ~isempty(dockerMountable) && dockerMountable
     end
 end
 
+% LINE_WORKSPACE_ROOT relocates every staged model. run-tests.sh sets it when
+% wrapping a solver in a container, so the staging dir is one the container can
+% bind-mount; nothing in the solvers needs to know a container is involved.
+envRoot = getenv('LINE_WORKSPACE_ROOT');
+if ~isempty(envRoot)
+    baseroot = strtrim(envRoot);
+end
+
 if nargin >= 1 && ~isempty(solvername)
     basedir = fullfile(baseroot, 'line_workspace', solvername);
 else

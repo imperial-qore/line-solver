@@ -1,0 +1,50 @@
+{
+  "class": {
+    "CTMC": "deterministic"
+  },
+  "example": "cqn_bcmp_theorem",
+  "solvers": {
+    "CTMC": [
+      {
+        "ArvR": 0.46291,
+        "JobClass": "Class1",
+        "QLen": 0.30861,
+        "ResidT": 0.66667,
+        "RespT": 0.66667,
+        "Station": "Delay",
+        "Tput": 0.46291,
+        "Util": 0.30861
+      },
+      {
+        "ArvR": 0.53653,
+        "JobClass": "Class2",
+        "QLen": 0.11625,
+        "ResidT": 0.21667,
+        "RespT": 0.21667,
+        "Station": "Delay",
+        "Tput": 0.53653,
+        "Util": 0.11625
+      },
+      {
+        "ArvR": 0.46291,
+        "JobClass": "Class1",
+        "QLen": 1.6914,
+        "ResidT": 3.6538,
+        "RespT": 3.6538,
+        "Station": "Queue1",
+        "Tput": 0.46291,
+        "Util": 0.46291
+      },
+      {
+        "ArvR": 0.53653,
+        "JobClass": "Class2",
+        "QLen": 1.8838,
+        "ResidT": 3.511,
+        "RespT": 3.511,
+        "Station": "Queue1",
+        "Tput": 0.53653,
+        "Util": 0.53653
+      }
+    ]
+  }
+}

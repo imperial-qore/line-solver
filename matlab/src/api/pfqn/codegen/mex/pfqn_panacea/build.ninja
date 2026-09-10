@@ -47,8 +47,6 @@ build $builddir/sum.o : cc $root/sum.c
 build $builddir/sumMatrixIncludeNaN.o : cc $root/sumMatrixIncludeNaN.c
 build $builddir/repmat.o : cc $root/repmat.c
 build $builddir/assertCompatibleDims.o : cc $root/assertCompatibleDims.c
-build $builddir/indexShapeCheck.o : cc $root/indexShapeCheck.c
-build $builddir/mtimes.o : cc $root/mtimes.c
 build $builddir/pfqn_ca.o : cc $root/pfqn_ca.c
 build $builddir/prod.o : cc $root/prod.c
 build $builddir/_coder_pfqn_panacea_api.o : cc $root/interface/_coder_pfqn_panacea_api.c
@@ -62,4 +60,4 @@ build $builddir/_coder_pfqn_panacea_info.o : cc $root/interface/_coder_pfqn_pana
 build $builddir/c_mexapi_version.o : cc $matlabdir/extern/version/c_mexapi_version.c
 
 # Link
-build $root/pfqn_panacea_mex.mexa64 : link $builddir/pfqn_panacea_data.o $builddir/rt_nonfinite.o $builddir/pfqn_panacea_initialize.o $builddir/pfqn_panacea_terminate.o $builddir/pfqn_panacea.o $builddir/sum.o $builddir/sumMatrixIncludeNaN.o $builddir/repmat.o $builddir/assertCompatibleDims.o $builddir/indexShapeCheck.o $builddir/mtimes.o $builddir/pfqn_ca.o $builddir/prod.o $builddir/_coder_pfqn_panacea_api.o $builddir/_coder_pfqn_panacea_mex.o $builddir/eml_int_forloop_overflow_check.o $builddir/applyScalarFunctionInPlace.o $builddir/log.o $builddir/div.o $builddir/pfqn_panacea_emxutil.o $builddir/_coder_pfqn_panacea_info.o $builddir/c_mexapi_version.o 
+build $root/pfqn_panacea_mex.mexa64 : link $builddir/pfqn_panacea_data.o $builddir/rt_nonfinite.o $builddir/pfqn_panacea_initialize.o $builddir/pfqn_panacea_terminate.o $builddir/pfqn_panacea.o $builddir/sum.o $builddir/sumMatrixIncludeNaN.o $builddir/repmat.o $builddir/assertCompatibleDims.o $builddir/pfqn_ca.o $builddir/prod.o $builddir/_coder_pfqn_panacea_api.o $builddir/_coder_pfqn_panacea_mex.o $builddir/eml_int_forloop_overflow_check.o $builddir/applyScalarFunctionInPlace.o $builddir/log.o $builddir/div.o $builddir/pfqn_panacea_emxutil.o $builddir/_coder_pfqn_panacea_info.o $builddir/c_mexapi_version.o 

@@ -62,7 +62,12 @@ public final class abatewhitt {
                 lambda = Apfloat.ONE;
                 bound_r = bound;
                 if ((bound_r.subtract(bound_l)).compareTo(new Apfloat(0.0001, (long) precision)) < 0) {
-                    System.out.println(lambdavals);
+                    // LATENT DEFECT, left as-is deliberately: the sibling branch above
+                    // breaks on the same convergence test, so a right-bound convergence
+                    // never terminates this loop. Behaviour is unchanged pending a real
+                    // caller -- optimise_lambda is reached only through getResult, whose
+                    // sole reference is the commented-out euler.java:52. See
+                    // git show 449847e7b:_kb/log.md.
                 }
             } else {
                 lambda = lambda.add(new Apfloat(0.01, (long) precision));

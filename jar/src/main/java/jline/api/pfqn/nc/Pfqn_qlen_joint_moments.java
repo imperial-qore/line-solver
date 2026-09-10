@@ -605,7 +605,7 @@ public final class Pfqn_qlen_joint_moments {
                 for (int r = 0; r < R; r++) {
                     n.set(0, r, pops[p][r]);
                 }
-                lg[p] = Pfqn_nc.pfqn_nc(lambda, Lsub, n, Z, options).lG;
+                lg[p] = Pfqn_nc.pfqn_nc(lambda, Lsub, n, Z, options, false).lG;
                 counters[2]++;
             }
             index.put(key(pops[p]), lg[p]);

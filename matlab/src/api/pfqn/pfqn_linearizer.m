@@ -13,8 +13,9 @@
  % @param N Population vector.
  % @param Z Think time vector.
  % @param type Scheduling strategy type per station.
- % @param tol Convergence tolerance.
+ % @param tol Convergence tolerance; 'cn' or NaN selects the Chandy-Neuse (1982) population-scaled termination test, see pfqn_cntol.
  % @param maxiter Maximum number of iterations.
+ % @param QN0 (M x R) queue lengths that warm-start the Bard-Schweitzer initialization; empty for the default cold start.
  % @return Q Mean queue lengths.
  % @return U Utilization.
  % @return W Waiting times.

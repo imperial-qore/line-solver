@@ -80,7 +80,7 @@ def after_fj_event(sn, fjentry, glspace, is_simulation=False):
         newpartprob = []
         for pp in range(len(partials)):
             curgl = partials[pp]
-            arvspace, _, arvprob = after_event(
+            arvspace, _, arvprob, _, _ = after_event(
                 sn, bh, np.atleast_2d(curgl[isf_b]), EventType.ARV, a, is_simulation)
             arvspace = np.atleast_2d(arvspace)
             if arvspace.size == 0:

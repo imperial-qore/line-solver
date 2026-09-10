@@ -40,7 +40,13 @@ public class CTMCResult extends SolverResult {
         this.infGenWork = null;
         this.nodeSpace = null;
         this.eventFilt = null;
+        this.startFilt = null;
+        this.preemptFilt = null;
+        this.startRate = null;
+        this.preemptRate = null;
         this.solverSpecific = null;
+        this.cftpSamples = null;
+        this.cftpHorizon = null;
     }
     public Matrix space;
     public Matrix infGen;
@@ -60,8 +66,29 @@ public class CTMCResult extends SolverResult {
     public Matrix infGenWork;
     public Map<StatefulNode, Matrix> nodeSpace;
     public MatrixCell eventFilt;
+    /**
+     * Derived START/PREEMPT filtrations, indexed [station][class]. Kept apart
+     * from eventFilt, which pairs one-to-one with sn.sync and is summed as D1:
+     * a START rides on an arc eventFilt already carries.
+     */
+    public Matrix[][] startFilt;
+    public Matrix[][] preemptFilt;
+    /** (stations x classes) rates the two filtrations above reduce to. */
+    public Matrix startRate;
+    public Matrix preemptRate;
     public TRAN Tran;
     public Matrix solverSpecific;
+    /**
+     * Perfect-sampling output of the {@code cftp} method: the drawn states, one
+     * per row (samples x stations), and the per-sample coalescence horizon
+     * ({@code cftp}) or number of mixing steps ({@code cftp.approx}). Null under
+     * every enumerating method. Mirrors MATLAB {@code result.cftp.samples} /
+     * {@code result.cftp.horizon} and Python {@code _CFTPResult.cftpSamples} /
+     * {@code cftpHorizon}; the empirical probabilities of the distinct states
+     * are in {@code pi}, indexed by {@code spaceAggr}.
+     */
+    public Matrix cftpSamples;
+    public Matrix cftpHorizon;
     
     // Transient probability results
     public TranProbResult tranProb;

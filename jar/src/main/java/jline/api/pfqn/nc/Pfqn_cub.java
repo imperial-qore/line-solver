@@ -11,12 +11,40 @@ package jline.api.pfqn.nc;
 
 import org.apache.commons.math3.util.FastMath;
 
+import jline.GlobalConstants;
 import jline.io.Ret;
 import jline.util.Maths;
 import jline.util.matrix.Matrix;
 
 public final class Pfqn_cub {
     private Pfqn_cub() {}
+
+    /** quadrature points of v in the think-time branch; pfqn_nc prices CUB against it */
+    public static final int CUB_THINK_STEPS = 10000;
+
+    /** integrand-evaluation budget above which pfqn_nc prefers le over cub */
+    public static final double CUB_MAX_EVALS = 1e7;
+
+    /**
+     * Number of integrand evaluations pfqn_cub performs at this order. The
+     * Grundmann-Moeller rule of degree order on the (M-1)-simplex evaluates
+     * sum_{d=0..order} binom(M-1+2d, M-1) points, and a non-zero think time
+     * repeats the whole rule at every v-quadrature step.
+     *
+     * @param M     - number of queueing stations
+     * @param order - cubature order
+     * @param Z     - think time per class, summed over delay stations
+     * @return the integrand-evaluation count
+     */
+    public static double pfqn_cub_evals(int M, int order, Matrix Z) {
+        int n = M - 1;
+        double nodes = 0.0;
+        for (int d = 0; d <= order; d++) {
+            nodes += Maths.binomialCoeff(n + 2 * d, n);
+        }
+        boolean hasThink = Z != null && Z.elementSum() >= GlobalConstants.FineTol;
+        return hasThink ? nodes * CUB_THINK_STEPS : nodes;
+    }
 
     /**
      * Cubature method to compute the normalizing constant of a load-independent closed queueing network model
@@ -61,7 +89,7 @@ public final class Pfqn_cub {
             double Gn = Q[Q.length - 1] * FastMath.exp(Maths.factln(N.elementSum() + M - 1) - N.factln().elementSum());
             return new Ret.pfqnNc(Gn, FastMath.log(Gn));
         } else {
-            int steps = 10000;
+            int steps = CUB_THINK_STEPS;
             double Nt = N.elementSum();
             Matrix beta = N.scale(1 / Nt);
             double Gn = 0.0;

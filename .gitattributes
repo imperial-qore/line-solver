@@ -1,15 +1,24 @@
 # Source files
 # ============
 *.m             text diff=matlab
-*.mat           binary
 *.ipynb         filter=nbstripout diff=ipynb
-*.jar           binary
-*.zip           binary
-*.pdf           binary
 * text=auto
 * text eol=lf
 
 # Binary files (must come after text rules)
+# MEX artifacts are ELF/PE objects: without these the `* text eol=lf` rule above
+# rewrites every CRLF byte pair inside them and commits a truncated, unloadable
+# binary (it had already silently damaged three cache_*_mex.mexa64 blobs).
+# The same applies to .mat/.jar/.zip/.pdf: declaring them binary ABOVE the
+# catch-all left eol=lf winning by last-match, damaging gausslegendre-data.mat.
+*.mat           binary
+*.jar           binary
+*.zip           binary
+*.pdf           binary
+*.mexa64        binary
+*.mexw64        binary
+*.mexmaci64     binary
+*.mexmaca64     binary
 *.png           binary
 *.jpg           binary
 *.jpeg          binary

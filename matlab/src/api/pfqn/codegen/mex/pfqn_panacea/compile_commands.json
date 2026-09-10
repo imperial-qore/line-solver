@@ -55,18 +55,6 @@
   },
   {
     "directory": "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/codegen/mex/pfqn_panacea",
-    "command": "/usr/bin/gcc -fexceptions -fPIC -fno-omit-frame-pointer -pthread -fwrapv -D_GNU_SOURCE -DMATLAB_MEX_FILE  -O2 -DNDEBUG -fno-predictive-commoning -std=c99 -I \".\" -I \"/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn\" -I \"./interface\" -I \"/usr/local/MATLAB/R2025a/extern/include\" -I \".\" -DMODEL=pfqn_panacea_mex -msse2 -fno-predictive-commoning -Wno-stringop-overflow -Wno-maybe-uninitialized -c -fopenmp -DOMPLIBNAME=\"/usr/local/MATLAB/R2025a/sys/os/glnxa64/libiomp5.so\"  indexShapeCheck.c -o build/glnxa64/indexShapeCheck.o",
-    "file": "indexShapeCheck.c",
-    "output": "build/glnxa64/indexShapeCheck.o"
-  },
-  {
-    "directory": "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/codegen/mex/pfqn_panacea",
-    "command": "/usr/bin/gcc -fexceptions -fPIC -fno-omit-frame-pointer -pthread -fwrapv -D_GNU_SOURCE -DMATLAB_MEX_FILE  -O2 -DNDEBUG -fno-predictive-commoning -std=c99 -I \".\" -I \"/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn\" -I \"./interface\" -I \"/usr/local/MATLAB/R2025a/extern/include\" -I \".\" -DMODEL=pfqn_panacea_mex -msse2 -fno-predictive-commoning -Wno-stringop-overflow -Wno-maybe-uninitialized -c -fopenmp -DOMPLIBNAME=\"/usr/local/MATLAB/R2025a/sys/os/glnxa64/libiomp5.so\"  mtimes.c -o build/glnxa64/mtimes.o",
-    "file": "mtimes.c",
-    "output": "build/glnxa64/mtimes.o"
-  },
-  {
-    "directory": "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/codegen/mex/pfqn_panacea",
     "command": "/usr/bin/gcc -fexceptions -fPIC -fno-omit-frame-pointer -pthread -fwrapv -D_GNU_SOURCE -DMATLAB_MEX_FILE  -O2 -DNDEBUG -fno-predictive-commoning -std=c99 -I \".\" -I \"/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn\" -I \"./interface\" -I \"/usr/local/MATLAB/R2025a/extern/include\" -I \".\" -DMODEL=pfqn_panacea_mex -msse2 -fno-predictive-commoning -Wno-stringop-overflow -Wno-maybe-uninitialized -c -fopenmp -DOMPLIBNAME=\"/usr/local/MATLAB/R2025a/sys/os/glnxa64/libiomp5.so\"  pfqn_ca.c -o build/glnxa64/pfqn_ca.o",
     "file": "pfqn_ca.c",
     "output": "build/glnxa64/pfqn_ca.o"

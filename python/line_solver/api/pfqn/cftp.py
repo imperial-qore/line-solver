@@ -26,7 +26,9 @@ def pfqn_cftp(L: np.ndarray, N: int, S: np.ndarray = None,
 
     Returns:
         Q: Empirical mean queue length per station (1 x stations)
+
         X: Sampled states, one per row (nsamples x stations), each row sums to N
+
         T: Per-sample coalescence horizon ('cftp') or mixing steps used
            ('approx'), as (nsamples,)
 

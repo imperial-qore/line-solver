@@ -344,7 +344,7 @@ def map_compute_R(C: ArrayLike, D: ArrayLike, mu: float) -> np.ndarray:
         M x M rate matrix (minimal nonnegative solution)
 
     References:
-        Original MATLAB: matlab/src/api/map/map_compute_R.m
+        Original MATLAB: matlab/src/api/mam/map_compute_R.m
         Masuyama, H., & Takine, T. (2003). Sojourn time distribution in a
         MAP/M/1 processor-sharing queue.
     """
@@ -358,7 +358,8 @@ def map_m1ps_h_recursive(C: ArrayLike, D: ArrayLike, mu: float,
     """
     Recursive computation of h_{n,k} coefficients for MAP/M/1-PS.
 
-    The h_{n,k} vectors satisfy the recursion (Theorem 1 in paper):
+    The h_{n,k} vectors satisfy the recursion (Theorem 1 in paper)::
+
         h_{n,0} = e (vector of ones), for n = 0, 1, ...
         h_{n,k+1} = 1/(theta+mu) * [n*mu/(n+1) * h_{n-1,k} + (theta*I + C) * h_{n,k}
                                      + D * h_{n+1,k}]
@@ -375,7 +376,7 @@ def map_m1ps_h_recursive(C: ArrayLike, D: ArrayLike, mu: float,
         2D list h[n][k] of (M,1) arrays containing h_{n,k}
 
     References:
-        Original MATLAB: matlab/src/api/map/map_m1ps_h_recursive.m
+        Original MATLAB: matlab/src/api/mam/map_m1ps_h_recursive.m
         Masuyama, H., & Takine, T. (2003).
     """
     C = np.asarray(C, dtype=np.float64)
@@ -404,7 +405,7 @@ def map_m1ps_sojourn(C: ArrayLike, D: ArrayLike, mu: float,
         Complementary CDF values W_bar(x) = Pr[W > x]
 
     References:
-        Original MATLAB: matlab/src/api/map/map_m1ps_sojourn.m
+        Original MATLAB: matlab/src/api/mam/map_m1ps_sojourn.m
     """
     return map_m1ps_cdf_respt(C, D, mu, x, epsilon, epsilon_prime)
 

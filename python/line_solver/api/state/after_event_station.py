@@ -9,7 +9,11 @@ Port from JAR AfterEventStation.java.
 
 import numpy as np
 from ...constants import EventType, GlobalConstants, ProcessType
-from ...lang.base import SchedStrategy, NodeType
+from ...lang.base import (SchedStrategy, NodeType,
+                          SCHED_PREEMPT as _SCHED_PREEMPT,
+                          SCHED_PREEMPT_LCFS as _SCHED_PREEMPT_LCFS,
+                          SCHED_PREEMPT_PRIO as _SCHED_PREEMPT_PRIO,
+                          SCHED_PREEMPT_RESUME as _SCHED_PREEMPT_RESUME)
 from .reply_block import (reply_width as _reply_width, reply_blocked as _reply_blocked,
                           reply_block_info as _reply_block_info, is_reply_class as _is_reply_class)
 
@@ -61,7 +65,7 @@ def after_event_station(sn, ind, inspace, event, job_class,
     K = np.atleast_1d(K).astype(int)
     Ks = np.atleast_1d(Ks).astype(int)
 
-    # server breakdown status is the trailing local-var column (0=down,1=up), exclusive with the BAS marker/polling controller; a down server suppresses DEP/PHASE unless a degraded rate is configured.
+    # breakdown status = trailing local-var col (0=down,1=up), exclusive with BAS marker/polling controller; down: no DEP/PHASE unless degraded rate set.
     is_breakdown_station = False
     if getattr(sn, 'hasbreakdown', None) is not None:
         from .ctmc_ssg import _is_breakdown_station
@@ -78,7 +82,7 @@ def after_event_station(sn, ind, inspace, event, job_class,
                 if ist < dsr.shape[0] and job_class < dsr.shape[1]:
                     down_rate = float(dsr[ist, job_class])
             if down_rate <= 0:
-                return np.zeros((0, 0)), np.zeros((0, 0)), np.zeros((0, 0))
+                return _empty_result(sn)
             up_rate = float(np.atleast_2d(sn.rates)[ist, job_class])
             if not np.isfinite(up_rate) or up_rate <= 0:
                 raise ValueError(
@@ -88,34 +92,40 @@ def after_event_station(sn, ind, inspace, event, job_class,
             down_rate_scale = down_rate / up_rate
 
     if event == EventType.FAILURE:
-        # an up server fails at rate breakdownMu regardless of serving state; only the status column changes (memoryless service resumes on repair, no job moves).
+        # up server fails at rate breakdownMu regardless of serving state; only status column changes (memoryless service resumes on repair, no job moves).
         if is_breakdown_station and _in.size > 0 and _in[0, -1] == 1:
             outspace = _in.astype(float).copy()
             outspace[:, -1] = 0
+            # only the server status changes: no job moves, so no tag
             return (outspace,
                     np.full((outspace.shape[0], 1), float(sn.breakdownMu[ist])),
-                    np.ones((outspace.shape[0], 1)))
-        return np.zeros((0, 0)), np.zeros((0, 0)), np.zeros((0, 0))
+                    np.ones((outspace.shape[0], 1)),
+                    np.zeros((outspace.shape[0], R)), np.zeros((outspace.shape[0], R)))
+        return _empty_result(sn)
     elif event == EventType.REPAIR:
         # A down server is restored at the memoryless rate repairMu.
         if is_breakdown_station and _in.size > 0 and _in[0, -1] == 0:
             outspace = _in.astype(float).copy()
             outspace[:, -1] = 1
+            # REPAIR emits no START: the supported breakdown model RESUMES the
+            # job the server was holding rather than restarting it
             return (outspace,
                     np.full((outspace.shape[0], 1), float(sn.repairMu[ist])),
-                    np.ones((outspace.shape[0], 1)))
-        return np.zeros((0, 0)), np.zeros((0, 0)), np.zeros((0, 0))
+                    np.ones((outspace.shape[0], 1)),
+                    np.zeros((outspace.shape[0], R)), np.zeros((outspace.shape[0], R)))
+        return _empty_result(sn)
 
-    outspace, outrate, outprob = _dispatch_station_event(
+    outspace, outrate, outprob, outstart, outpreempt = _dispatch_station_event(
         sn, ind, inspace, event, job_class, M, R, ist, S, K, Ks, hasOnlyExp,
         mu, phi, pie, proc, ismkvmodclass, lldscaling, lldlimit, cdscaling,
         capacity, classcap, V, sched, space_buf, space_srv, space_var,
         is_simulation, no_promote)
 
-    # degraded down-server rate rescales the up-server-computed completion rate; down_rate_scale=1 (no-op) whenever the server is up or no degraded rate was configured.
+    # degraded down-server rate rescales the up-server-computed completion rate; down_rate_scale=1 (no-op) when server up or no degraded rate configured.
     if down_rate_scale != 1.0 and np.asarray(outrate).size > 0:
         outrate = np.asarray(outrate, dtype=float) * down_rate_scale
-    return outspace, outrate, outprob
+    # the tags travel with the successors: only the rate is rescaled
+    return outspace, outrate, outprob, outstart, outpreempt
 
 
 def _dispatch_station_event(sn, ind, inspace, event, job_class, M, R, ist, S,
@@ -133,19 +143,19 @@ def _dispatch_station_event(sn, ind, inspace, event, job_class, M, R, ist, S,
                            lldscaling, lldlimit, cdscaling, capacity, classcap,
                            V, sched, space_buf, space_srv, space_var, is_simulation)
     elif event == EventType.DEP:
-        outspace, outrate, outprob = _handle_dep(
+        outspace, outrate, outprob, outstart, outpreempt = _handle_dep(
             sn, ind, inspace, job_class, M, R, ist, S, K, Ks,
             hasOnlyExp, mu, phi, pie, proc, ismkvmodclass,
             lldscaling, lldlimit, cdscaling, capacity, classcap,
             V, sched, space_buf, space_srv, space_var, no_promote)
-        # true-BAS instant transfer of an already-blocked job fires at rate 1e7 and clears the successor's blocked marker; the complementary become-blocked edge is added by the CTMC/SSA generator.
+        # true-BAS transfer of already-blocked job at rate 1e7 clears successor's blocked marker; complementary become-blocked edge from CTMC/SSA generator.
         _in = np.atleast_2d(inspace)
         if (_is_bas_station_marker(sn, ist) and _in.size > 0 and _in.shape[1] > 0
                 and _in[0, -1] == 1 and np.asarray(outspace).size > 0):
             outspace = np.atleast_2d(outspace).astype(float).copy()
             outspace[:, -1] = 0
             outrate = np.full((outspace.shape[0], 1), 1.0e7)
-        return outspace, outrate, outprob
+        return outspace, outrate, outprob, outstart, outpreempt
     elif event == EventType.PHASE:
         return _handle_phase(sn, ind, inspace, job_class, M, R, ist, S, K, Ks,
                              hasOnlyExp, mu, phi, pie, proc, ismkvmodclass,
@@ -161,7 +171,7 @@ def _dispatch_station_event(sn, ind, inspace, event, job_class, M, R, ist, S,
         return _handle_switch(sn, ind, inspace, job_class, ist, R, K, Ks, pie,
                               space_buf, space_srv, space_var)
 
-    return np.zeros((0, 0)), np.zeros((0, 0)), np.zeros((0, 0))
+    return _empty_result(sn)
 
 
 def _has_blocking_droprule(sn, ist, job_class):
@@ -274,15 +284,18 @@ def _handle_arv(sn, ind, inspace, job_class, M, R, ist, S, K, Ks,
                 V, sched, space_buf, space_srv, space_var, is_simulation=False):
     """Handle arrival events."""
     from .marginal import toMarginalAggr
-    # a Place has no servers/phases; an arriving token only increments the class marking, or the scheduling branches would widen the row past the marking state space and silently drop the arrival. See _kb/11-conventions-and-gotchas.md SPN sections.
+    # Place: no servers/phases; token only increments class marking, else row exceeds marking state space, drop it. _kb/11-conventions-and-gotchas.md SPN.
     if sn.nodetype[ind] == NodeType.PLACE:
         out = np.atleast_2d(np.array(inspace, dtype=float).copy())
         out[:, job_class] += 1
         n_out = out.shape[0]
-        # passive action: the rate is set by the active node
+        # passive action: the rate is set by the active node. FIVE values, as
+        # every other branch returns since the start/preempt tags were added:
+        # a Place holds no server, so nothing starts or is preempted there.
         return (out,
                 -1.0 * np.ones(n_out).reshape(-1, 1),
-                np.ones(n_out).reshape(-1, 1))
+                np.ones(n_out).reshape(-1, 1),
+                np.zeros((n_out, R)), np.zeros((n_out, R)))
     # signal/catastrophe arrival removes job(s) already present and is annihilated itself; mirrors MATLAB State.afterEventStationSignal.
     if getattr(sn, 'issignal', None) is not None and bool(sn.issignal[job_class]):
         # A REPLY signal is not a negative customer: it completes a synchronous
@@ -326,7 +339,7 @@ def _handle_arv(sn, ind, inspace, job_class, M, R, ist, S, K, Ks,
                     out_states.append(rows[i].copy())
                     out_rates.append(-1.0)
                     out_probs.append(0.0)
-            return _finalize(out_states, out_rates, out_probs, inspace)
+            return _finalize(out_states, out_rates, out_probs, inspace, None, None, R)
     ni, nir = toMarginalAggr(sn, ind, inspace, K, Ks, space_buf, space_srv, space_var)
 
     # Get phase entry probabilities
@@ -335,6 +348,11 @@ def _handle_arv(sn, ind, inspace, job_class, M, R, ist, S, K, Ks,
     out_states = []
     out_rates = []
     out_probs = []
+    # START/PREEMPT tags of the arrival arcs, keyed by the index of the
+    # successor they annotate: only the arcs that take or free a server say
+    # anything, every other successor is a zero row. See _finalize.
+    start_tags = {}
+    preempt_tags = {}
 
     for kentry in range(int(K[job_class])):
         space_buf_k = space_buf.copy()
@@ -342,6 +360,9 @@ def _handle_arv(sn, ind, inspace, job_class, M, R, ist, S, K, Ks,
         space_var_k = space_var.copy() if space_var.size > 0 else space_var
 
         n_rows = space_srv_k.shape[0]
+        # per-row class that takes a server in this row (0 = none); read at the
+        # common composition loop below, where the successors are appended
+        start_row = np.zeros(n_rows, dtype=int)
         outprob_k = np.full(n_rows, pentry[kentry])
         valid = np.ones(n_rows, dtype=bool)
 
@@ -369,7 +390,7 @@ def _handle_arv(sn, ind, inspace, job_class, M, R, ist, S, K, Ks,
                     out_states.append(state_row)
                     out_rates.append(-1.0)
                     out_probs.append(1.0)
-            return _finalize(out_states, out_rates, out_probs, inspace)
+            return _finalize(out_states, out_rates, out_probs, inspace, None, None, R)
 
         elif sched in (SchedStrategy.INF, SchedStrategy.PS, SchedStrategy.DPS,
                         SchedStrategy.GPS, SchedStrategy.PSPRIO, SchedStrategy.DPSPRIO,
@@ -377,14 +398,15 @@ def _handle_arv(sn, ind, inspace, job_class, M, R, ist, S, K, Ks,
             # Jobs enter service immediately
             for i in range(n_rows):
                 if classcap is not None and nir[i, job_class] >= classcap[ist, job_class]:
-                    # no room: DROP leaves the state unchanged (job destroyed, upstream departure stays enabled); BAS/BBS/RSRD remove the row so the upstream departure is held back.
+                    # no room: DROP leaves state unchanged (job destroyed, upstream departure stays on); BAS/BBS/RSRD remove the row, holding back upstream departure.
                     if _has_blocking_droprule(sn, ist, job_class):
                         valid[i] = False
                     continue
                 space_srv_k[i, int(Ks[job_class]) + kentry] += 1
+                start_row[i] = job_class + 1  # the job enters service at once
 
         elif sched == SchedStrategy.POLLING:
-            # the polling controller (not the arrival) decides who is served; only a parked server (empty station, immediate switchovers) starts a visit on the arriving job at once.
+            # polling controller (not the arrival) picks who is served; only a parked server (empty station, immediate switchovers) visits the arrival at once.
             from .polling import polling_info, polling_get, polling_set, polling_next
             pinfo_a = polling_info(sn, ind)
             for i in range(n_rows):
@@ -401,16 +423,18 @@ def _handle_arv(sn, ind, inspace, job_class, M, R, ist, S, K, Ks,
                     nbuf_a[job_class] += 1
                     q_a, _, budget_a = polling_next(pinfo_a, job_class, nbuf_a, R, arrived=True)
                     space_srv_k[i, int(Ks[job_class]) + kentry] += 1
+                    start_row[i] = job_class + 1  # a parked server takes it at once
                     space_var_k[i] = polling_set(pinfo_a, var_row, q_a, 0, budget_a)
                 else:
                     space_buf_k[i, job_class] += 1
 
         elif sched in (SchedStrategy.SIRO, SchedStrategy.SEPT, SchedStrategy.LEPT):
-            # SIRO/size-based SEPT/LEPT share an unordered per-class-count buffer; idle-server test uses server occupancy (not total count) so an immediate-feedback self-loop re-enters the vacated server.
+            # SIRO/SEPT/LEPT share unordered per-class-count buffer; idle test on server occupancy (not total count), so a self-loop re-enters the vacated server.
             for i in range(n_rows):
                 srv_count = float(np.sum(space_srv_k[i])) if space_srv_k.ndim >= 2 else float(np.sum(space_srv_k))
                 if srv_count < S:
                     space_srv_k[i, int(Ks[job_class]) + kentry] += 1
+                    start_row[i] = job_class + 1
                 else:
                     if space_buf_k.ndim >= 2 and job_class < space_buf_k.shape[1]:
                         space_buf_k[i, job_class] += 1
@@ -425,12 +449,13 @@ def _handle_arv(sn, ind, inspace, job_class, M, R, ist, S, K, Ks,
             Seff_rows = S - _reply_held_rows(sn, ind, space_var_k)
             for i in range(n_rows):
                 ni_val = ni[i]
-                # idle-server test on server occupancy, not total count, so an immediate-feedback self-loop (idle server + nonempty buffer) re-enters the vacated server; mirrors MATLAB afterEventStation.m.
+                # idle: server occupancy not total count; immediate-feedback self-loop (idle server, nonempty buffer) re-enters vacated server; afterEventStation.m.
                 srv_count = float(np.sum(space_srv_k[i])) if space_srv_k.ndim >= 2 else float(np.sum(space_srv_k))
                 Seff = Seff_rows if np.isscalar(Seff_rows) else Seff_rows[min(i, len(Seff_rows) - 1)]
                 if srv_count < Seff:
                     # Idle server available: enter service directly
                     space_srv_k[i, int(Ks[job_class]) + kentry] += 1
+                    start_row[i] = job_class + 1
                 else:
                     # All servers busy: add to buffer
                     cap_ok = True
@@ -439,7 +464,7 @@ def _handle_arv(sn, ind, inspace, job_class, M, R, ist, S, K, Ks,
                     if classcap is not None and nir[i, job_class] >= classcap[ist, job_class]:
                         cap_ok = False
                     if not cap_ok:
-                        # refusal is LOST (self-loop) for an open class or BLOCKED (invalidated row) for a closed/BAS class, decided by class type not drop rule; see _kb/11-conventions-and-gotchas.md Modeling traps (BUG-81/BUG-84).
+                        # refusal LOST (self-loop, open), BLOCKED (invalid row, closed/BAS), by class type not drop rule; _kb/11-conventions-and-gotchas.md (BUG-81/BUG-84).
                         if not _arrival_is_lost(sn, ist, job_class):
                             valid[i] = False
                         continue
@@ -464,7 +489,7 @@ def _handle_arv(sn, ind, inspace, job_class, M, R, ist, S, K, Ks,
                             else:
                                 space_buf_k = np.concatenate([[job_class + 1], space_buf_k])
                         else:
-                            # CTMC buffer width-full (state-space cutoff, not physical capacity) always BLOCKS, even for an open class, or the reported rate would be offered rather than carried; see _kb/11-conventions-and-gotchas.md Modeling traps.
+                            # CTMC width-full (state-space cutoff, not physical capacity) always BLOCKS even open, else offered not carried. _kb/11-conventions-and-gotchas.md
                             valid[i] = False
                             continue
                     elif len(buf_row) > 0:
@@ -482,9 +507,8 @@ def _handle_arv(sn, ind, inspace, job_class, M, R, ist, S, K, Ks,
                             valid[i] = False
                             continue
 
-        elif sched in (SchedStrategy.LCFSPR, SchedStrategy.LCFSPRPRIO,
-                        SchedStrategy.FCFSPRPRIO, SchedStrategy.FCFSPR):
-            # preemptive strategies: idle server enters directly; all-busy preempts one in-service job into the buffer as a (class,phase) pair; multiple output states are composed inline.
+        elif sched in _SCHED_PREEMPT:
+            # preemptive: idle server enters directly; all-busy preempts one in-service job into buffer as a (class,phase) pair; output states composed inline.
             for i in range(n_rows):
                 ni_val = ni[i]
                 if ni_val < S:
@@ -497,6 +521,7 @@ def _handle_arv(sn, ind, inspace, job_class, M, R, ist, S, K, Ks,
                     out_states.append(state_row)
                     out_rates.append(-1.0)
                     out_probs.append(pentry[kentry])
+                    start_tags[len(out_states) - 1] = job_class + 1
                 else:
                     # All servers busy: generate states for each possible preemption
                     srv_total = np.sum(space_srv_k[i])
@@ -504,12 +529,21 @@ def _handle_arv(sn, ind, inspace, job_class, M, R, ist, S, K, Ks,
                     classprio_arr = sn.classprio if hasattr(sn, 'classprio') and sn.classprio is not None else np.zeros(R)
 
                     for classpreempt in range(R):
-                        is_prio_sched = sched in (SchedStrategy.LCFSPRPRIO, SchedStrategy.LCFSPIPRIO, SchedStrategy.FCFSPRPRIO, SchedStrategy.FCFSPIPRIO)
+                        is_prio_sched = sched in _SCHED_PREEMPT_PRIO
                         # priority-awareness is a property of the declared policy, never inferred from the data; see _kb/11-conventions-and-gotchas.md Modeling traps.
                         is_prio_aware = is_prio_sched
                         if is_prio_aware:
-                            if classprio_arr[job_class] >= classprio_arr[classpreempt]:
-                                continue  # arriving job has same or lower priority
+                            # Across priority groups a strictly higher-priority arrival
+                            # preempts. WITHIN a group the base discipline decides: LCFS-PR
+                            # keeps the NEWEST job in service, so an equal-priority arrival
+                            # preempts, whereas FCFS-PR never lets an arrival preempt
+                            # (MATLAB afterEventStation.m:377-392).
+                            if sched in (SchedStrategy.LCFSPRPRIO, SchedStrategy.LCFSPIPRIO):
+                                cannot_preempt = classprio_arr[job_class] > classprio_arr[classpreempt]
+                            else:
+                                cannot_preempt = classprio_arr[job_class] >= classprio_arr[classpreempt]
+                            if cannot_preempt:
+                                continue
                         for phasepreempt in range(int(K[classpreempt])):
                             col_preempt = int(Ks[classpreempt]) + phasepreempt
                             count_preempt = space_srv_k[i, col_preempt]
@@ -521,24 +555,32 @@ def _handle_arv(sn, ind, inspace, job_class, M, R, ist, S, K, Ks,
                                 srv_k[col_preempt] -= 1
                                 # Add arriving job to service
                                 srv_k[int(Ks[job_class]) + kentry] += 1
-                                # preempted (class,phase) pair fills the rightmost empty slot, keeping the produced state reachable in the right-aligned enumerated space; mirrors MATLAB afterEventStation.m.
+                                # preempted (class,phase) pair fills rightmost empty slot, keeping it reachable in right-aligned enumerated space; mirrors MATLAB afterEventStation.m.
+                                # PI discards the phase on resume, so it stores 1 rather than the
+                                # phase reached; storing the real phase would split each state into
+                                # K lumpable copies (MATLAB afterEventStation.m:433-437).
+                                stored_phase = phasepreempt + 1 if sched in _SCHED_PREEMPT_RESUME else 1
                                 for b in range(len(buf_k) - 2, -1, -2):
                                     if buf_k[b] == 0:
                                         buf_k[b] = classpreempt + 1      # 1-based class
-                                        buf_k[b + 1] = phasepreempt + 1  # 1-based phase
+                                        buf_k[b + 1] = stored_phase
                                         break
                                 else:
-                                    # no empty pair slot: simulation grows the buffer on demand (prepend); CTMC pre-sizes to capacity so this only fires on the dynamically-growing SSA path.
+                                    # no empty pair slot: simulation grows buffer on demand (prepend); CTMC pre-sizes to capacity so this only fires on the dynamically-growing SSA path.
                                     if is_simulation:
                                         buf_k = np.concatenate(
-                                            ([classpreempt + 1, phasepreempt + 1], buf_k))
+                                            ([classpreempt + 1, stored_phase], buf_k))
                                 state_row = _compose_state(buf_k, srv_k, var_k)
                                 out_states.append(state_row)
                                 out_rates.append(-1.0)
                                 out_probs.append(pentry[kentry] * count_preempt / srv_total)
+                                # the displaced job leaves the server and the
+                                # arriving one takes it, on the same arc
+                                start_tags[len(out_states) - 1] = job_class + 1
+                                preempt_tags[len(out_states) - 1] = classpreempt + 1
                                 any_preempt = True
                     if not any_preempt:
-                        # no lower-priority job to preempt: the arrival WAITS in the buffer rather than being dropped (previously invalidated the row, BUG-70, starving the highest-priority class's queue).
+                        # no lower-priority job to preempt: arrival WAITS in buffer, not dropped (previously invalidated row, BUG-70, starving highest-priority class queue).
                         buf_k = space_buf_k[i].copy() if space_buf_k.ndim >= 2 else space_buf_k.copy()
                         srv_k = space_srv_k[i].copy()
                         var_k = (space_var_k[i].copy() if space_var_k.ndim >= 2 and space_var_k.size > 0
@@ -590,6 +632,8 @@ def _handle_arv(sn, ind, inspace, job_class, M, R, ist, S, K, Ks,
                 out_states.append(state_row)
                 out_rates.append(-1.0)  # Passive action
                 out_probs.append(outprob_k[i])
+                if start_row[i] > 0:
+                    start_tags[len(out_states) - 1] = int(start_row[i])
 
     # balking (QUEUE_LENGTH strategy) decided on pre-arrival population; admitted branches scaled by (1-balk_prob); mirrors MATLAB.
     if (getattr(sn, 'balkingStrategy', None) is not None and len(out_states) > 0
@@ -614,8 +658,10 @@ def _handle_arv(sn, ind, inspace, job_class, M, R, ist, S, K, Ks,
             out_states.append(inrow)
             out_rates.append(-1.0)
             out_probs.append(balk_prob)
+            # a balked job never joins: the arc carries no tag
 
-    return _finalize(out_states, out_rates, out_probs, inspace)
+    return _finalize(out_states, out_rates, out_probs, inspace,
+                     start_tags, preempt_tags, R)
 
 
 # ---------------------------------------------------------------------------
@@ -666,6 +712,7 @@ def _handle_arv_reply(sn, ind, ist, job_class, K, Ks, S, pie,
     var_rows = np.atleast_2d(space_var)
 
     out_states, out_rates, out_probs = [], [], []
+    start_tags = {}
     pentry = _get_pie(pie, ist, job_class, K)
     for i in range(srv_rows.shape[0]):
         buf = (buf_rows[i].copy() if buf_rows is not None and buf_rows.shape[0] > i
@@ -691,6 +738,8 @@ def _handle_arv_reply(sn, ind, ist, job_class, K, Ks, S, pie,
                 out_states.append(_compose_state(buf, srv_k, var))
                 out_rates.append(-1.0)
                 out_probs.append(pentry[kentry])
+                # the reply took the server it just released: a service start
+                _tag_start(start_tags, out_states, job_class)
             continue
 
         buf_new = buf.copy()
@@ -705,7 +754,9 @@ def _handle_arv_reply(sn, ind, ist, job_class, K, Ks, S, pie,
         out_rates.append(-1.0)
         out_probs.append(1.0)
 
-    outspace, outrate, outprob = _finalize(out_states, out_rates, out_probs, inspace)
+    R = int(getattr(sn, 'nclasses', 0) or 0)
+    outspace, outrate, outprob, outstart, outpreempt = _finalize(
+        out_states, out_rates, out_probs, inspace, start_tags, None, R)
     if is_simulation and outprob.shape[0] > 1:
         cum = np.cumsum(outprob.ravel()) / float(np.sum(outprob))
         idx = int(np.searchsorted(cum, np.random.rand()))
@@ -713,7 +764,9 @@ def _handle_arv_reply(sn, ind, ist, job_class, K, Ks, S, pie,
         outspace = outspace[idx:idx + 1]
         outrate = outrate[idx:idx + 1]
         outprob = np.ones((1, 1))
-    return outspace, outrate, outprob
+        outstart = outstart[idx:idx + 1]
+        outpreempt = outpreempt[idx:idx + 1]
+    return outspace, outrate, outprob, outstart, outpreempt
 
 
 def _handle_renege(sn, ind, inspace, job_class, ist, R, K, Ks,
@@ -734,8 +787,10 @@ def _handle_renege(sn, ind, inspace, job_class, ist, R, K, Ks,
             var = np.ravel(space_var).astype(float) if space_var.size > 0 else np.array([])
             out = np.concatenate([buf_k, srv, var])
             rate = waiting * float(sn.impatienceMu[ist, job_class])
-            return out.reshape(1, -1), np.array([[rate]]), np.array([[1.0]])
-    return np.zeros((0, 0)), np.zeros((0, 0)), np.zeros((0, 0))
+            # a WAITING job abandons: no server is freed and none is taken
+            return (out.reshape(1, -1), np.array([[rate]]), np.array([[1.0]]),
+                    np.zeros((1, R)), np.zeros((1, R)))
+    return _empty_result(sn)
 
 
 def _handle_switch(sn, ind, inspace, job_class, ist, R, K, Ks, pie,
@@ -752,7 +807,7 @@ def _handle_switch(sn, ind, inspace, job_class, ist, R, K, Ks, pie,
 
     pinfo = polling_info(sn, ind)
     if pinfo is None or not bool(pinfo['has_sw'][job_class]):
-        return np.zeros((0, 0)), np.zeros((0, 0)), np.zeros((0, 0))
+        return _empty_result(sn)
 
     inspace = np.atleast_2d(inspace)
     space_buf = np.atleast_2d(space_buf)
@@ -760,6 +815,7 @@ def _handle_switch(sn, ind, inspace, job_class, ist, R, K, Ks, pie,
     space_var = np.atleast_2d(space_var)
 
     out_states, out_rates, out_probs = [], [], []
+    start_tags = {}
     D0 = pinfo['sw_d0'][job_class]
     D1 = pinfo['sw_d1'][job_class]
 
@@ -787,18 +843,28 @@ def _handle_switch(sn, ind, inspace, job_class, ist, R, K, Ks, pie,
         rows, probs = polling_land(pinfo, q, mode, budget, space_buf[row],
                                    space_srv[row], space_var[row], K, Ks, pie, ist, R)
         for j in range(len(rows)):
-            # a switchover completing over an empty buffer that re-enters the same phase of the same switchover lands exactly on the departure state; such a self-loop is suppressed so it does not inflate the exit rate.
+            # switchover over empty buffer re-entering same phase of same switchover lands on departure state; self-loop suppressed, not inflating exit rate.
             if np.array_equal(rows[j], np.ravel(inspace[row])):
                 continue
             out_states.append(rows[j])
             out_rates.append(rate * probs[j])
             out_probs.append(1.0)
+            # A completed switchover that opens a visit pulls a waiting class-q
+            # job into the server, so it starts service just as an ARV or a DEP
+            # promotion does. This is the one service start a polling station
+            # reaches through neither, and leaving it untagged would break
+            # startRate == TN + preemptRate there for no reason other than the
+            # name of the carrier event.
+            if mode == 1:
+                _tag_start(start_tags, out_states, q)
 
     if not out_states:
-        return np.zeros((0, 0)), np.zeros((0, 0)), np.zeros((0, 0))
+        return _empty_result(sn)
     return (np.array(out_states, dtype=float),
             np.array(out_rates, dtype=float).reshape(-1, 1),
-            np.array(out_probs, dtype=float).reshape(-1, 1))
+            np.array(out_probs, dtype=float).reshape(-1, 1),
+            _tag_matrix(start_tags, len(out_states), R),
+            np.zeros((len(out_states), R)))
 
 
 def _is_retrial_station(sn, ist):
@@ -821,6 +887,7 @@ def _handle_retry(sn, ind, inspace, job_class, ist, R, S, K, Ks, pie,
     in_srv = float(np.sum(space_srv))
     Sist = int(np.ravel(S)[ist]) if np.ndim(S) else int(S)
     out_states, out_rates, out_probs = [], [], []
+    start_tags = {}
     buf = np.ravel(space_buf).astype(float)
     if orbit > 0 and in_srv < Sist and buf.size > 0:
         slot = -1
@@ -853,17 +920,25 @@ def _handle_retry(sn, ind, inspace, job_class, ist, R, S, K, Ks, pie,
                 out_states.append(np.concatenate([buf_k, srv_k, var]))
                 out_rates.append(retrial_rate * pe)
                 out_probs.append(1.0)
+                # A successful retry is the only way into the server at a
+                # retrial station (its departures never promote from the orbit),
+                # so it carries the START the invariant needs.
+                _tag_start(start_tags, out_states, job_class)
             if is_simulation and len(out_states) > 1:
                 rates = np.array(out_rates)
                 tot = rates.sum()
                 cr = np.cumsum(rates) / tot
                 rnd = np.random.rand()
                 fc = 1 + max([-1] + [i for i in range(len(cr)) if rnd > cr[i]])
+                sampled = _tag_matrix({0: start_tags.get(fc)}, 1, R) if fc in start_tags else np.zeros((1, R))
                 return (np.array(out_states[fc]).reshape(1, -1),
-                        np.array([[tot]]), np.array([[1.0]]))
+                        np.array([[tot]]), np.array([[1.0]]),
+                        sampled, np.zeros((1, R)))
     if len(out_states) == 0:
-        return np.zeros((0, 0)), np.zeros((0, 0)), np.zeros((0, 0))
-    return np.array(out_states), np.array(out_rates).reshape(-1, 1), np.array(out_probs).reshape(-1, 1)
+        return _empty_result(sn)
+    return (np.array(out_states), np.array(out_rates).reshape(-1, 1),
+            np.array(out_probs).reshape(-1, 1),
+            _tag_matrix(start_tags, len(out_states), R), np.zeros((len(out_states), R)))
 
 
 # ---------------------------------------------------------------------------
@@ -904,7 +979,7 @@ def _handle_dep(sn, ind, inspace, job_class, M, R, ist, S, K, Ks,
         if has_jobs:
             break
     if not has_jobs:
-        return np.zeros((0, 0)), np.zeros((0, 0)), np.zeros((0, 0))
+        return _empty_result(sn)
 
     # Update round-robin pointer
     space_var = space_var.copy()
@@ -917,6 +992,10 @@ def _handle_dep(sn, ind, inspace, job_class, M, R, ist, S, K, Ks,
     out_states = []
     out_rates = []
     out_probs = []
+    # START tags of the departure arcs: a completion hands the freed server to a
+    # waiting job, and that promotion is the service start. A departure preempts
+    # nobody, so there is no PREEMPT counterpart here. Keyed by successor index.
+    start_tags = {}
 
     for k_phase in range(int(K[phclass])):
         col = int(Ks[phclass]) + k_phase
@@ -974,7 +1053,7 @@ def _handle_dep(sn, ind, inspace, job_class, M, R, ist, S, K, Ks,
                 continue
 
             if sched == SchedStrategy.EXT:
-                # Source DEP enters phase kentry with probability D1[k_phase,kentry]/rowsum (preserves MAP/MMPP2 autocorrelation, falls back to pie); entry weight folds into the rate (out_prob=1) since the CTMC sync builder does not multiply the active side by out_prob.
+                # Source DEP->kentry, prob D1[k_phase,kentry]/rowsum (MAP/MMPP2 autocorr, else pie); weight->rate (out_prob=1); CTMC sync skips active-side out_prob.
                 pentry = None
                 p_src = _get_proc(proc, ist, job_class)
                 if markofclass > 0 and p_src is not None and len(p_src) > 1 + markofclass:
@@ -1013,33 +1092,35 @@ def _handle_dep(sn, ind, inspace, job_class, M, R, ist, S, K, Ks,
                                   ismkvmodclass, space_buf_k, space_srv_k, space_var_k,
                                   kir_val, ni_val, nir_row, lldscaling, lldlimit,
                                   cdscaling, pie, out_states, out_rates, out_probs,
-                                  no_promote=no_promote_k)
+                                  no_promote=no_promote_k, start_tags=start_tags)
                 else:
                     # Buffer promotion: move head-of-line job to service
                     _dep_with_buffer_promotion(sched, sn, space_buf_k, space_srv_k, space_var_k,
                                                 K, Ks, pie, ist, S, ni_val, sir[row_idx],
                                                 out_states, out_rates, out_probs, rate, R,
-                                                ismkvmodclass=ismkvmodclass, no_promote=no_promote_k)
-            elif sched in (SchedStrategy.LCFSPR, SchedStrategy.LCFSPRPRIO,
-                            SchedStrategy.FCFSPRPRIO, SchedStrategy.FCFSPR):
-                # Preemptive resume: promote buffered job back to service with saved phase
-                _dep_preemptive_resume(sched, sn, space_buf_k, space_srv_k, space_var_k,
-                                        K, Ks, pie, ist, S, ni_val,
-                                        out_states, out_rates, out_probs, rate, R)
+                                                ismkvmodclass=ismkvmodclass, no_promote=no_promote_k,
+                                                start_tags=start_tags)
+            elif sched in _SCHED_PREEMPT:
+                # Promote a buffered job back to service, at its saved phase (PR) or from pie (PI)
+                _dep_preemptive(sched, sn, space_buf_k, space_srv_k, space_var_k,
+                                K, Ks, pie, ist, S, ni_val,
+                                out_states, out_rates, out_probs, rate, R,
+                                start_tags=start_tags)
             elif sched == SchedStrategy.POLLING:
                 _dep_polling(sn, ind, space_buf_k, space_srv_k, space_var_k,
                               K, Ks, pie, ist, job_class,
-                              out_states, out_rates, out_probs, rate, R)
+                              out_states, out_rates, out_probs, rate, R,
+                              start_tags=start_tags)
             elif sched == SchedStrategy.SIRO:
                 _dep_siro_promotion(space_buf_k, space_srv_k, space_var_k,
                                      K, Ks, pie, ist, ni_val, nir_row, sir[row_idx],
                                      out_states, out_rates, out_probs, rate, R,
-                                     no_promote=no_promote)
+                                     no_promote=no_promote, start_tags=start_tags)
             elif sched in (SchedStrategy.SEPT, SchedStrategy.LEPT):
                 _dep_sept_lept_promotion(sched, sn, space_buf_k, space_srv_k, space_var_k,
                                           K, Ks, pie, ist, ni_val,
                                           out_states, out_rates, out_probs, rate, R,
-                                          no_promote=no_promote)
+                                          no_promote=no_promote, start_tags=start_tags)
             else:
                 # No buffer promotion (PS, INF, DPS, GPS, etc.)
                 state_row = _compose_state(space_buf_k, space_srv_k, space_var_k)
@@ -1047,7 +1128,8 @@ def _handle_dep(sn, ind, inspace, job_class, M, R, ist, S, K, Ks,
                 out_rates.append(rate)
                 out_probs.append(1.0)
 
-    return _finalize(out_states, out_rates, out_probs, inspace)
+    return _finalize(out_states, out_rates, out_probs, inspace,
+                     start_tags, None, R)
 
 
 def _compute_dep_rate(sched, ist, S, job_class, k_phase, K, Ks,
@@ -1134,10 +1216,8 @@ def _compute_dep_rate(sched, ist, S, job_class, k_phase, K, Ks,
         # rate is that of the one job in service.
         return mu_val * phi_val * kir_val * lld * cd
 
-    elif sched in (SchedStrategy.FCFS, SchedStrategy.HOL, SchedStrategy.LCFS,
-                    SchedStrategy.SIRO, SchedStrategy.LCFSPR,
-                    SchedStrategy.LCFSPRPRIO, SchedStrategy.FCFSPRPRIO,
-                    SchedStrategy.FCFSPR):
+    elif sched in ((SchedStrategy.FCFS, SchedStrategy.HOL, SchedStrategy.LCFS,
+                    SchedStrategy.SIRO) + _SCHED_PREEMPT):
         # For FCFS with MAP processes, use D1 matrix
         if proc is not None:
             p = _get_proc(proc, ist, job_class)
@@ -1173,7 +1253,7 @@ def _compute_dep_rate(sched, ist, S, job_class, k_phase, K, Ks,
 def _dep_with_buffer_promotion(sched, sn, space_buf_k, space_srv_k, space_var_k,
                                 K, Ks, pie, ist, S, ni_val, sir_row,
                                 out_states, out_rates, out_probs, rate, R,
-                                ismkvmodclass=None, no_promote=False):
+                                ismkvmodclass=None, no_promote=False, start_tags=None):
     """Handle departure with buffer promotion for FCFS/HOL/LCFS.
 
     When no_promote is True (immediate-feedback self-loop), the vacated server
@@ -1204,7 +1284,7 @@ def _dep_with_buffer_promotion(sched, sn, space_buf_k, space_srv_k, space_var_k,
                 promote_idx = b
                 break
     elif sched == SchedStrategy.LCFS:
-        # plain LCFS always promotes the most recent arrival regardless of priority; LCFSPRIO is the dedicated priority-aware branch. See _kb/11-conventions-and-gotchas.md Modeling traps.
+        # plain LCFS promotes newest arrival ignoring priority; LCFSPRIO is the priority-aware branch. See _kb/11-conventions-and-gotchas.md Modeling traps.
         promote_idx = -1
         for b in range(len(buf)):
             if buf[b] > 0:
@@ -1265,6 +1345,7 @@ def _dep_with_buffer_promotion(sched, sn, space_buf_k, space_srv_k, space_var_k,
         out_states.append(_compose_state(buf_new, srv_new, space_var_k))
         out_rates.append(rate)
         out_probs.append(1.0)
+        _tag_start(start_tags, out_states, start_svc_class)
     else:
         pentry = _get_pie(pie, ist, start_svc_class, K)
         for kentry in range(int(K[start_svc_class])):
@@ -1274,12 +1355,13 @@ def _dep_with_buffer_promotion(sched, sn, space_buf_k, space_srv_k, space_var_k,
             out_states.append(state_row)
             out_rates.append(rate * pentry[kentry])
             out_probs.append(1.0)
+            _tag_start(start_tags, out_states, start_svc_class)
 
 
 def _dep_map_fcfs(sn, ind, ist, job_class, k_phase, K, Ks, S, proc, ismkvmodclass,
                   space_buf_k, space_srv_k, space_var_k, kir_val, ni_val, nir_row,
                   lldscaling, lldlimit, cdscaling, pie, out_states, out_rates, out_probs,
-                  no_promote=False):
+                  no_promote=False, start_tags=None):
     """MAP service completion at an FCFS station.
 
     Port of MATLAB State.afterEventStation case DEP / SchedStrategy.FCFS
@@ -1353,12 +1435,13 @@ def _dep_map_fcfs(sn, ind, ist, job_class, k_phase, K, Ks, S, proc, ismkvmodclas
             out_states.append(_compose_state(buf_new, srv_new, var_kd))
             out_rates.append(rate_kd * pr)
             out_probs.append(1.0)
+            _tag_start(start_tags, out_states, scls)
 
 
 def _dep_sept_lept_promotion(sched, sn, space_buf_k, space_srv_k, space_var_k,
                               K, Ks, pie, ist, ni_val,
                               out_states, out_rates, out_probs, rate, R,
-                              no_promote=False):
+                              no_promote=False, start_tags=None):
     """SEPT/LEPT departure promotion (non-preemptive, size-based).
 
     The next job to enter service is the buffered class with the SHORTEST (SEPT)
@@ -1403,11 +1486,12 @@ def _dep_sept_lept_promotion(sched, sn, space_buf_k, space_srv_k, space_var_k,
         out_states.append(_compose_state(buf_new, srv_new, space_var_k))
         out_rates.append(rate * pentry[kentry])
         out_probs.append(1.0)
+        _tag_start(start_tags, out_states, pick)
 
 
 def _dep_polling(sn, ind, space_buf_k, space_srv_k, space_var_k,
                   K, Ks, pie, ist, job_class,
-                  out_states, out_rates, out_probs, rate, R):
+                  out_states, out_rates, out_probs, rate, R, start_tags=None):
     """Handle a departure at a polling station.
 
     A completion ends the visit unless the discipline still allows another job of
@@ -1453,11 +1537,16 @@ def _dep_polling(sn, ind, space_buf_k, space_srv_k, space_var_k,
         out_states.append(rows[j])
         out_rates.append(rate * probs[j])
         out_probs.append(1.0)
+        # mode 1 pulls a waiting class-q job into the server; a switchover or a
+        # park starts nobody
+        if mode == 1:
+            _tag_start(start_tags, out_states, q)
 
 
 def _dep_siro_promotion(space_buf_k, space_srv_k, space_var_k,
                           K, Ks, pie, ist, ni_val, nir_row, sir_row,
-                          out_states, out_rates, out_probs, rate, R, no_promote=False):
+                          out_states, out_rates, out_probs, rate, R, no_promote=False,
+                          start_tags=None):
     """Handle departure with SIRO buffer promotion.
 
     When no_promote is True (immediate-feedback self-loop) the vacated server is
@@ -1491,16 +1580,21 @@ def _dep_siro_promotion(space_buf_k, space_srv_k, space_var_k,
             out_states.append(state_row)
             out_rates.append(rate * pick_prob * pentry[kentry])
             out_probs.append(1.0)
+            _tag_start(start_tags, out_states, r)
 
 
-def _dep_preemptive_resume(sched, sn, space_buf_k, space_srv_k, space_var_k,
-                            K, Ks, pie, ist, S, ni_val,
-                            out_states, out_rates, out_probs, rate, R):
-    """Handle departure with preempt-resume buffer promotion for LCFSPR/LCFSPRPRIO/FCFSPRPRIO.
+def _dep_preemptive(sched, sn, space_buf_k, space_srv_k, space_var_k,
+                    K, Ks, pie, ist, S, ni_val,
+                    out_states, out_rates, out_probs, rate, R, start_tags=None):
+    """Handle departure with buffer promotion for the eight preempt disciplines.
 
     Buffer stores [class, phase, class, phase, ...] pairs (1-based values).
-    On departure, the highest-priority buffered job is promoted back to service
-    resuming at its saved phase (preempt-resume semantics).
+    On departure a buffered job is promoted back to service. The eight
+    disciplines factor as {FCFS,LCFS} x {PR,PI} x {plain,PRIO}, so three flags
+    cover what MATLAB afterEventStation.m writes as eight separate cases
+    (:1043-1400): LCFS scans the buffer newest-first, PRIO restricts the scan to
+    the highest-priority class, and PR resumes at the saved phase whereas PI
+    discards it and restarts from the entry distribution pie.
     """
     buf = space_buf_k
     # Check if any job in buffer (class values at even indices)
@@ -1522,65 +1616,31 @@ def _dep_preemptive_resume(sched, sn, space_buf_k, space_srv_k, space_var_k,
     # Find job to promote from buffer based on scheduling strategy
     classprio = sn.classprio if hasattr(sn, 'classprio') and sn.classprio is not None else np.zeros(R)
 
-    if sched == SchedStrategy.LCFSPR:
-        # plain LCFSPR resumes the most recently preempted job regardless of priority; LCFSPRPRIO is the dedicated priority-aware variant. See _kb/11-conventions-and-gotchas.md Modeling traps.
-        has_diff_prio_lcfspr = False
+    if sched not in _SCHED_PREEMPT:
         target_col = -1
-        if has_diff_prio_lcfspr:
-            # Find leftmost pair among highest-priority class
-            best_prio = float('inf')
-            for b in range(0, len(buf), 2):
-                if buf[b] > 0:
-                    cls = int(buf[b]) - 1  # 0-based class
-                    prio = classprio[cls] if cls < len(classprio) else float('inf')
-                    if prio < best_prio:
-                        best_prio = prio
-                        target_col = b
-        else:
-            for b in range(0, len(buf), 2):
-                if buf[b] > 0:
-                    target_col = b
-                    break
-    elif sched == SchedStrategy.LCFSPRPRIO:
-        # LCFSPRPRIO: among highest-priority jobs, pick leftmost (LCFS: most recent)
-        best_prio = float('inf')
-        target_col = -1
-        for b in range(0, len(buf), 2):
-            if buf[b] > 0:
-                cls = int(buf[b]) - 1  # 0-based class
-                prio = classprio[cls] if cls < len(classprio) else float('inf')
-                if prio < best_prio:
-                    best_prio = prio
-                    target_col = b  # leftmost wins for LCFS (use < not <=)
-    elif sched == SchedStrategy.FCFSPRPRIO:
-        # FCFSPRPRIO: among highest-priority jobs, pick rightmost (FCFS: oldest)
-        best_prio = float('inf')
-        target_col = -1
-        for b in range(len(buf) - 2, -1, -2):
-            if b >= 0 and buf[b] > 0:
-                cls = int(buf[b]) - 1  # 0-based class
-                prio = classprio[cls] if cls < len(classprio) else float('inf')
-                if prio < best_prio:
-                    best_prio = prio
-                    target_col = b
-    elif sched == SchedStrategy.FCFSPR:
-        # plain FCFSPR is not priority-aware (resumes oldest); FCFSPRPRIO is the priority-aware variant. See _kb/11-conventions-and-gotchas.md Modeling traps.
-        has_diff_prio_fcfspr = False
-        best_prio = float('inf')
-        target_col = -1
-        for b in range(len(buf) - 2, -1, -2):
-            if b >= 0 and buf[b] > 0:
-                if has_diff_prio_fcfspr:
-                    cls = int(buf[b]) - 1  # 0-based class
-                    prio = classprio[cls] if cls < len(classprio) else float('inf')
-                    if prio < best_prio:
-                        best_prio = prio
-                        target_col = b
-                else:
-                    target_col = b
-                    break
     else:
+        lcfs = sched in _SCHED_PREEMPT_LCFS
+        prio_aware = sched in _SCHED_PREEMPT_PRIO
+        # LCFS scans newest-first (leftmost), FCFS oldest-first (rightmost).
+        cols = range(0, len(buf), 2) if lcfs else range(len(buf) - 2, -1, -2)
+        best_prio = float('inf')
         target_col = -1
+        for b in cols:
+            if buf[b] <= 0:
+                continue
+            if not prio_aware:
+                # priority-awareness is a property of the declared policy, never
+                # inferred from the data: the plain variants promote by arrival
+                # order alone, the PRIO variants are the priority-aware ones.
+                # See _kb/11-conventions-and-gotchas.md Modeling traps.
+                target_col = b
+                break
+            cls = int(buf[b]) - 1  # 0-based class
+            prio = classprio[cls] if cls < len(classprio) else float('inf')
+            if prio < best_prio:
+                # strict <, so the first column reached in scan order wins ties
+                best_prio = prio
+                target_col = b
 
     if target_col < 0:
         state_row = _compose_state(space_buf_k, space_srv_k, space_var_k)
@@ -1590,23 +1650,38 @@ def _dep_preemptive_resume(sched, sn, space_buf_k, space_srv_k, space_var_k,
         return
 
     start_svc_class = int(buf[target_col]) - 1       # 0-based class
-    kentry_phase = int(buf[target_col + 1]) - 1       # 0-based phase
 
-    # Remove [class, phase] pair from buffer and shift remaining left
+    # Remove [class, phase] pair from buffer, keeping it right-aligned
     buf_new = np.concatenate([
         np.array([0.0, 0.0]),
         buf[:target_col],
         buf[target_col + 2:]
     ])
 
-    # Put promoted job into service resuming at its saved phase
-    srv_new = space_srv_k.copy()
-    srv_new[int(Ks[start_svc_class]) + kentry_phase] += 1
+    if sched in _SCHED_PREEMPT_RESUME:
+        # PR: the promoted job resumes in the phase it was preempted at
+        kentry_phase = int(buf[target_col + 1]) - 1   # 0-based phase
+        srv_new = space_srv_k.copy()
+        srv_new[int(Ks[start_svc_class]) + kentry_phase] += 1
+        state_row = _compose_state(buf_new, srv_new, space_var_k)
+        out_states.append(state_row)
+        out_rates.append(rate)
+        out_probs.append(1.0)
+        _tag_start(start_tags, out_states, start_svc_class)
+        return
 
-    state_row = _compose_state(buf_new, srv_new, space_var_k)
-    out_states.append(state_row)
-    out_rates.append(rate)
-    out_probs.append(1.0)
+    # PI: the saved phase is discarded and the job restarts from pie, so the
+    # departure branches into one successor per entry phase, the rate split by
+    # the entry probability (MATLAB afterEventStation.m:1100-1114).
+    pentry = _get_pie(pie, ist, start_svc_class, K)
+    for kentry in range(int(K[start_svc_class])):
+        srv_new = space_srv_k.copy()
+        srv_new[int(Ks[start_svc_class]) + kentry] += 1
+        state_row = _compose_state(buf_new, srv_new, space_var_k)
+        out_states.append(state_row)
+        out_rates.append(rate * pentry[kentry])
+        out_probs.append(1.0)
+        _tag_start(start_tags, out_states, start_svc_class)
 
 
 # ---------------------------------------------------------------------------
@@ -1626,7 +1701,7 @@ def _handle_phase(sn, ind, inspace, job_class, M, R, ist, S, K, Ks,
     nir = np.atleast_2d(nir)
 
     if nir[0, job_class] <= 0:
-        return np.zeros((0, 0)), np.zeros((0, 0)), np.zeros((0, 0))
+        return _empty_result(sn)
 
     # Get D0 matrix for phase transitions
     d0 = None
@@ -1696,7 +1771,7 @@ def _handle_phase(sn, ind, inspace, job_class, M, R, ist, S, K, Ks,
                 out_rates.append(rate)
                 out_probs.append(1.0)
 
-    return _finalize(out_states, out_rates, out_probs, inspace)
+    return _finalize(out_states, out_rates, out_probs, inspace, None, None, R)
 
 
 def _compute_phase_rate(sched, d0_rate, kir_val, ni_val, nir_row, S,
@@ -1815,14 +1890,58 @@ def _compose_state(buf, srv, var):
     return np.concatenate(parts) if parts else np.array([])
 
 
-def _finalize(out_states, out_rates, out_probs, inspace):
-    """Finalize output arrays."""
+def _finalize(out_states, out_rates, out_probs, inspace,
+              start_tags=None, preempt_tags=None, R=None):
+    """Finalize output arrays.
+
+    START_TAGS and PREEMPT_TAGS map the INDEX of a successor in OUT_STATES to
+    the 1-based class it tags, so only the arcs that actually start or preempt
+    a job have to say anything; every other successor is a zero row. The two
+    tag matrices come back with one row per successor and one column per class,
+    so a caller can index them exactly like OUTSPACE.
+    """
+    ncls = int(R) if R is not None else 0
     if len(out_states) == 0:
-        return np.zeros((0, 0)), np.zeros((0, 0)), np.zeros((0, 0))
+        return (np.zeros((0, 0)), np.zeros((0, 0)), np.zeros((0, 0)),
+                np.zeros((0, ncls)), np.zeros((0, ncls)))
     outspace = np.array(out_states)
     outrate = np.array(out_rates).reshape(-1, 1)
     outprob = np.array(out_probs).reshape(-1, 1)
-    return outspace, outrate, outprob
+    outstart = _tag_matrix(start_tags, outspace.shape[0], ncls)
+    outpreempt = _tag_matrix(preempt_tags, outspace.shape[0], ncls)
+    return outspace, outrate, outprob, outstart, outpreempt
+
+
+def _tag_start(start_tags, out_states, cls0):
+    """Tag the successor just appended to OUT_STATES as starting a class-CLS0
+    (0-based) service. A no-op when the caller did not ask for tags."""
+    if start_tags is None or cls0 is None or cls0 < 0:
+        return
+    start_tags[len(out_states) - 1] = int(cls0) + 1
+
+
+def _empty_result(sn):
+    """The no-successor result, with tag matrices of the right width so that a
+    caller can concatenate or index them without special-casing emptiness."""
+    ncls = int(getattr(sn, 'nclasses', 0) or 0)
+    return (np.zeros((0, 0)), np.zeros((0, 0)), np.zeros((0, 0)),
+            np.zeros((0, ncls)), np.zeros((0, ncls)))
+
+
+def _tag_matrix(tags, nrows, ncls):
+    """Materialize an index -> 1-based-class tag map as an (nrows x ncls) count
+    matrix. An absent index is an untagged arc, i.e. a zero row."""
+    out = np.zeros((nrows, ncls))
+    if not tags or ncls == 0:
+        return out
+    for idx, cls in tags.items():
+        if idx is None or cls is None:
+            continue
+        i = int(idx)
+        c = int(cls)
+        if 0 <= i < nrows and 1 <= c <= ncls:
+            out[i, c - 1] += 1
+    return out
 
 
 def _get_pie(pie, ist, job_class, K):
@@ -2005,7 +2124,7 @@ def _maybe_update_rrobin(sn, ind, job_class, R, space_var):
         v = int(rt.value) if hasattr(rt, 'value') else (int(rt) if rt is not None else -1)
         return v in (rr_val, wrr_val)
 
-    # RR pointers sit after the MAP phase vars in the local-var block; writing at the head corrupts a service phase and freezes the pointer, silently degrading round-robin to static routing probabilities.
+    # RR pointers after MAP phase vars in local-var block; a head write corrupts a service phase, freezes the pointer, degrading RR to static routing.
     from .ctmc_ssg import _map_phases_at
     _n_map = sum(1 for _r in range(R) if _map_phases_at(sn, ind, _r) > 1)
 

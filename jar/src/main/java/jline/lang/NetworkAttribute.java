@@ -12,7 +12,7 @@ import java.util.Map;
 /**
  * Class for auxiliary information stored in Network objects
  */
-public class NetworkAttribute implements Serializable {
+public class NetworkAttribute extends ModelAttribute implements Serializable {
     private final Map<Integer, Integer[]> hosts;
     private final Map<Integer, Integer[]> tasks;
     private final Map<Integer, Integer[]> entries;
@@ -21,6 +21,12 @@ public class NetworkAttribute implements Serializable {
     private int clientIdx;
     private int serverIdx;
     private int sourceIdx;
+    // LQN server element -> its station index in this layer, and the station
+    // indices of the layer's host and task servers. Under 'srvn' layering there
+    // is exactly one server, under 'flat' layering there is one per element.
+    private final Map<Integer, Integer> serverIdxOf;
+    private final java.util.List<Integer> hostStations;
+    private final java.util.List<Integer> taskStations;
 
     public NetworkAttribute() {
         this.hosts = new HashMap<>();
@@ -28,6 +34,25 @@ public class NetworkAttribute implements Serializable {
         this.entries = new HashMap<>();
         this.calls = new HashMap<>();
         this.activities = new HashMap<>();
+        this.serverIdxOf = new HashMap<>();
+        this.hostStations = new java.util.ArrayList<>();
+        this.taskStations = new java.util.ArrayList<>();
+    }
+
+    public Map<Integer, Integer> getServerIdxOf() {
+        return serverIdxOf;
+    }
+
+    public void putServerIdxOf(int elemIdx, int stationIdx) {
+        this.serverIdxOf.put(elemIdx, stationIdx);
+    }
+
+    public java.util.List<Integer> getHostStations() {
+        return hostStations;
+    }
+
+    public java.util.List<Integer> getTaskStations() {
+        return taskStations;
     }
 
     public void addActivities(Integer[] newActivities) {

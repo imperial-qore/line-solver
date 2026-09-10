@@ -15,15 +15,18 @@ public final class Qsys_gig1_approx_kimura {
      *
      * @param lambda arrival rate
      * @param mu service rate
-     * @param ca squared coefficient of variation of inter-arrival time
-     * @param cs squared coefficient of variation of service time
+     * @param ca coefficient of variation of the inter-arrival time
+     * @param cs coefficient of variation of the service time
      * @return HashMap containing W (mean response time) and rhohat
      */
     public static HashMap<String, Object> qsys_gig1_approx_kimura(double lambda, double mu, double ca, double cs) {
         HashMap<String, Object> result = new HashMap<String, Object>();
 
         double rho = lambda / mu;
-        double Wq = rho * (ca + cs) / mu / (1.0 - rho) / (1.0 + ca);
+        // ca and cs are COEFFICIENTS of variation, as everywhere else in this
+        // package (see Qsys_gig1_approx_heyman); the formula squares them.
+        double ca2 = ca * ca;
+        double Wq = rho * (ca2 + cs * cs) / mu / (1.0 - rho) / (1.0 + ca2);
         double W = Wq + 1.0 / mu;
         double rhohat = W * lambda / (1.0 + W * lambda);
 

@@ -134,9 +134,9 @@ public class FCRegionModel {
         // Add FCR with dropping
         model.addRegion(Arrays.asList(queue1, queue2));
         Region fcr = model.getRegions().get(0);
-        fcr.setGlobalMaxJobs(8);
-        fcr.setClassMaxJobs(class1, 5);
-        fcr.setClassMaxJobs(class2, 4);
+        fcr.setGlobalMaxJobs(4);
+        fcr.setClassMaxJobs(class1, 3);
+        fcr.setClassMaxJobs(class2, 2);
         fcr.setDropRule(class1, true);  // true = drop
         fcr.setDropRule(class2, true);
 
@@ -203,7 +203,7 @@ public class FCRegionModel {
     }
 
     /**
-     * M/M/1/K with FCR dropping (K=2).
+     * M/M/1/K with FCR dropping (K=3).
      * <p>
      * This model demonstrates that FCR with dropping around a single
      * queue behaves like an M/M/1/K queue where K is the FCR capacity.
@@ -227,17 +227,17 @@ public class FCRegionModel {
         P.set(jobclass, jobclass, queue, sink, 1.0);
         model.link(P);
 
-        // Add FCR with dropping (K=2)
+        // Add FCR with dropping (K=3)
         model.addRegion(Arrays.asList(queue));
         Region fcr = model.getRegions().get(0);
-        fcr.setGlobalMaxJobs(2);
+        fcr.setGlobalMaxJobs(3);
         fcr.setDropRule(jobclass, true);  // true = drop
 
         return model;
     }
 
     /**
-     * M/M/1/K using queue capacity (K=2, for comparison).
+     * M/M/1/K using queue capacity (K=3, for comparison).
      *
      * @return standard M/M/1/K model
      */
@@ -247,7 +247,7 @@ public class FCRegionModel {
         Source source = new Source(model, "Source");
         Queue queue = new Queue(model, "Queue", SchedStrategy.FCFS);
         queue.setNumberOfServers(1);
-        queue.setCapacity(2);  // K=2
+        queue.setCapacity(3);  // K=3
         Sink sink = new Sink(model, "Sink");
 
         OpenClass jobclass = new OpenClass(model, "Class1", 0);
@@ -307,15 +307,16 @@ public class FCRegionModel {
         model.addRegion(Arrays.asList(queue1, queue2));
         Region fcr = model.getRegions().get(0);
 
-        // Global constraint: max 6 jobs total in the region
-        fcr.setGlobalMaxJobs(6);
+        // Global constraint: max 2 jobs total in the region
+        fcr.setGlobalMaxJobs(2);
 
-        // Per-class constraints: high priority gets more space
-        fcr.setClassMaxJobs(highPriority, 4);  // max 4 high priority jobs
-        fcr.setClassMaxJobs(lowPriority, 3);   // max 3 low priority jobs
+        // Per-class constraints: the per-class limits must sum to at least the
+        // global one for the region to behave consistently.
+        fcr.setClassMaxJobs(highPriority, 2);  // max 2 high priority jobs
+        fcr.setClassMaxJobs(lowPriority, 2);   // max 2 low priority jobs
 
-        // Drop rules: high priority jobs wait, low priority jobs are dropped
-        fcr.setDropRule(highPriority, false);  // block (wait)
+        // Drop rules: all classes take the same rule, which LINE requires.
+        fcr.setDropRule(highPriority, true);   // drop
         fcr.setDropRule(lowPriority, true);    // drop
 
         return model;

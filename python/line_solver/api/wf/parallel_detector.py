@@ -8,7 +8,7 @@ parallel flow structures in business process analysis.
 Based on AUTO_Parallel_Detector.m from the MDN toolbox.
 
 References:
-    Original Kotlin: jar/src/main/kotlin/jline/api/wf/Wf_parallel_detector.kt
+    Original JAR: jar/src/main/java/jline/api/wf/Wf_parallel_detector.java
 """
 
 import numpy as np

@@ -29,9 +29,13 @@ public final class Map_pdf {
             double t = tset[i];
             if (t < 0) {
                 result[i] = 0.0;
-            } else if (t == 0.0) {
-                result[i] = 0.0;
             } else {
+                // t = 0 IS NOT A SPECIAL CASE. f(0) = pie(-D0)e, which is
+                // positive for any law with mass at the origin (an exponential,
+                // a hyperexponential) and zero only for one without (an
+                // Erlang). Hardcoding 0 here made Java disagree with MATLAB,
+                // Python and C++ on every such law, and the error reached a
+                // caller as soon as a density was integrated from 0.
                 Matrix D0t = D0.scale(t);
                 Matrix expD0t = Maths.matrixExp(D0t);
                 Matrix temp = pi.mult(expD0t).mult(minusD0).mult(e);

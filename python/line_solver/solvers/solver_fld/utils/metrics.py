@@ -8,6 +8,63 @@ and handler results.
 import numpy as np
 from typing import Dict, Tuple, Optional
 from ....api.sn import NetworkStruct
+from ....constants import GlobalConstants
+
+
+def fluid_visited_pairs(sn, M: int, K: int) -> np.ndarray:
+    """
+    Mark the (station, class) pairs the model actually routes a job into.
+
+    Returns an (M x K) boolean read off the per-chain visit ratios ``sn.visits``.
+
+    A fluid result cannot decide that question from the SIZE of QN or TN. Both
+    carry a decaying remnant of the initial state, spread over pairs the class
+    never reaches, and the remnant is whatever the integrator left behind when
+    it stopped: measured at QN = 1.3e-12 and TN = 1.3e-13 on picard05 for
+    test_CQN_Cox_CS_7, i.e. ABOVE GlobalConstants.Zero, so a threshold on them
+    divides one remnant by the other and reports the station's own service time,
+    10.0000086, as a response time. The visit ratios come from the routing solve
+    instead, where an unrouted pair is zero to the last bits (2.7e-17 there).
+
+    ``sn.visits`` is indexed by STATEFUL node, hence the stationToStateful
+    lookup; see _kb/04-networkstruct.md. A struct carrying no visit information
+    decides nothing and every pair is reported visited. Mirrors
+    fluid_visited_pairs.m.
+    """
+    visited = np.zeros((M, K), dtype=bool)
+    visits = getattr(sn, 'visits', None)
+    chains = []
+    if visits is not None:
+        chains = list(visits.values()) if hasattr(visits, 'values') else list(visits)
+    station_to_stateful = getattr(sn, 'stationToStateful', None)
+    if station_to_stateful is None or len(station_to_stateful) == 0:
+        station_to_stateful = np.arange(M)
+    else:
+        station_to_stateful = np.asarray(station_to_stateful).flatten()
+    have = False
+    max_cols = 0
+    for Vc in chains:
+        if Vc is None:
+            continue
+        Vc = np.asarray(Vc)
+        if Vc.size == 0 or Vc.ndim != 2:
+            continue
+        have = True
+        max_cols = max(max_cols, Vc.shape[1])
+        for i in range(M):
+            isf = int(station_to_stateful[i]) if i < len(station_to_stateful) else i
+            if isf < 0 or isf >= Vc.shape[0]:
+                visited[i, :] = True
+                continue
+            kk = min(K, Vc.shape[1])
+            visited[i, :kk] |= np.abs(Vc[isf, :kk]) > GlobalConstants.Zero
+    if not have:
+        visited[:] = True
+    elif max_cols < K:
+        # A class NO visit matrix reaches is not evidence of a non-visit, only of
+        # a struct whose visits were refreshed against fewer classes.
+        visited[:, max_cols:] = True
+    return visited
 
 
 def extract_metrics_from_handler_result(handler_result, sn: NetworkStruct) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:

@@ -14,10 +14,10 @@ import jline.util.matrix.Matrix;
 /**
  * Solve reducible CTMCs via direct block decomposition on the generator matrix.
  *
- * Algorithm (based on SMART's computeInfinityDistribution):
+ * Algorithm:
  *   1. Decompose states into transient and recurrent classes via SCC detection
- *   2. For transient states: solve n * Q_tt = -p0_t for expected sojourn
- *   3. Compute hitting probabilities: h = n * Q_ta + p0_r
+ *   2. For transient states: solve sojourn * Q_tt = -p0_t for expected sojourn
+ *   3. Compute hitting probabilities: hit = sojourn * Q_ta + p0_r
  *   4. For each recurrent class: solve pi_c * Q_cc = 0, scale by hitting prob
  */
 public final class Ctmc_solve_reducible_blkdecomp {
@@ -33,11 +33,11 @@ public final class Ctmc_solve_reducible_blkdecomp {
         return ctmc_solve_reducible_blkdecomp(Q, null, defaultOptions());
     }
 
-    public static Pair<Matrix, List<List<Integer>>> ctmc_solve_reducible_blkdecomp(Matrix Q, Matrix pi0) {
-        return ctmc_solve_reducible_blkdecomp(Q, pi0, defaultOptions());
+    public static Pair<Matrix, List<List<Integer>>> ctmc_solve_reducible_blkdecomp(Matrix Q, Matrix pin) {
+        return ctmc_solve_reducible_blkdecomp(Q, pin, defaultOptions());
     }
 
-    public static Pair<Matrix, List<List<Integer>>> ctmc_solve_reducible_blkdecomp(Matrix Q, Matrix pi0,
+    public static Pair<Matrix, List<List<Integer>>> ctmc_solve_reducible_blkdecomp(Matrix Q, Matrix pin,
                                                                                    Map<String, Object> options) {
         Matrix Qmat = Ctmc_makeinfgen.ctmc_makeinfgen(Q.copy());
         int N = Qmat.getNumRows();
@@ -46,7 +46,8 @@ public final class Ctmc_solve_reducible_blkdecomp {
         Matrix Adj = new Matrix(N, N);
         for (int i = 0; i < N; i++) {
             for (int j = 0; j < N; j++) {
-                if (i != j && Qmat.get(i, j) > 0) Adj.set(i, j, 1.0);
+                // arc by MAGNITUDE, never by sign: an ME generator embeds genuinely negative off-diagonals -- see _kb/11-conventions-and-gotchas.md
+                if (i != j && Math.abs(Qmat.get(i, j)) > jline.GlobalConstants.ArcTol) Adj.set(i, j, 1.0);
             }
         }
 
@@ -111,92 +112,25 @@ public final class Ctmc_solve_reducible_blkdecomp {
             Q_ta = Qmat.getSubMatrix(transIdx, recIdx);
         }
 
-        // Compute per-SCC limiting distributions
+        // Compute per-SCC limiting distributions, each from a uniform start in its SCC
         Matrix[] pis = new Matrix[numSCC];
-        for (int i = 0; i < numSCC; i++) pis[i] = Matrix.zeros(1, N);
-
         for (int s = 0; s < numSCC; s++) {
+            double[] p0 = new double[N];
             List<Integer> classStates = sccIdx[s];
-            int classSize = classStates.size();
-
-            double[] hit = new double[nr];
-
-            if (nt > 0 && Q_tt != null && Q_ta != null) {
-                double[] p0_t = new double[nt];
-                for (int idx = 0; idx < transStates.size(); idx++) {
-                    int state = transStates.get(idx);
-                    if (classStates.contains(state)) {
-                        p0_t[idx] = 1.0 / classSize;
-                    }
-                }
-
-                boolean anyPositive = false;
-                for (double v : p0_t) {
-                    if (v > 0.0) { anyPositive = true; break; }
-                }
-
-                if (anyPositive) {
-                    Matrix negP0Col = new Matrix(nt, 1);
-                    for (int i = 0; i < nt; i++) negP0Col.set(i, 0, -p0_t[i]);
-
-                    Matrix sojournCol = new Matrix(nt, 1);
-                    // Above the dispatch threshold the transient block is what the direct
-                    // factorization cannot hold; the direct solve stays the fallback.
-                    boolean solved = false;
-                    if (nt > Ctmc_solve.GMRES_MIN_STATES) {
-                        Ctmc_gmres.GmresResult g =
-                                Ctmc_gmres.ctmc_gmres(Q_tt.transpose(), negP0Col, 0.0, 0, 0, null);
-                        if (g.flag == 0) {
-                            sojournCol = g.x;
-                            solved = true;
-                        }
-                    }
-                    if (!solved) {
-                        Matrix.solveDirect(Q_tt.transpose(), negP0Col, sojournCol);
-                    }
-
-                    Matrix sojournRow = sojournCol.transpose();
-                    Matrix hitMatrix = sojournRow.mult(Q_ta);
-                    for (int i = 0; i < nr; i++) hit[i] = hitMatrix.get(0, i);
-                }
+            for (int k = 0; k < classStates.size(); k++) {
+                p0[classStates.get(k)] = 1.0 / classStates.size();
             }
-
-            for (int idx = 0; idx < recStates.size(); idx++) {
-                int state = recStates.get(idx);
-                if (classStates.contains(state)) {
-                    hit[idx] += 1.0 / classSize;
-                }
-            }
-
-            for (int c : recSccIds) {
-                List<Integer> idxC = sccIdx[c];
-
-                double reachprob = 0.0;
-                for (int state : idxC) {
-                    int loc = recStates.indexOf(state);
-                    if (loc >= 0) reachprob += hit[loc];
-                }
-
-                if (reachprob < 1e-15) continue;
-
-                if (idxC.size() == 1) {
-                    pis[s].set(0, idxC.get(0), reachprob);
-                } else {
-                    Matrix indices = new Matrix(idxC.size(), 1);
-                    for (int i = 0; i < idxC.size(); i++) indices.set(i, 0, (double) idxC.get(i));
-                    Matrix Qcc = Qmat.getSubMatrix(indices, indices);
-                    Matrix piC = Ctmc_solve.ctmc_solve(Qcc);
-                    for (int k = 0; k < idxC.size(); k++) {
-                        int stateIdx = idxC.get(k);
-                        pis[s].set(0, stateIdx, piC.get(0, k) * reachprob);
-                    }
-                }
-            }
+            pis[s] = absorbLimiting(p0, Qmat, N, nt, nr, transStates, recStates, sccIdx, recSccIds, Q_tt, Q_ta);
         }
 
-        // Compute initial SCC probabilities for weighted average
-        double[] pinl = new double[numSCC];
-        if (pi0 == null) {
+        Matrix pi;
+        if (pin == null) {
+            // No initial vector: mix the uniform-start rows, weighting the SCCs equally.
+            // An SCC holding a state whose column of Q is entirely zero is EXCLUDED: such a
+            // state has no transition in and none out, so it is isolated and carries no
+            // dynamics to start from. (Not the same as absorbing, which has incoming
+            // transitions and a zero off-diagonal ROW.)
+            double[] pinl = new double[numSCC];
             for (int i = 0; i < numSCC; i++) pinl[i] = 1.0;
             for (int j = 0; j < N; j++) {
                 double colSum = 0.0;
@@ -204,35 +138,43 @@ public final class Ctmc_solve_reducible_blkdecomp {
                 if (colSum < 1e-12) pinl[scc[j]] = 0.0;
             }
             double totalPinl = 0.0;
-            for (double v : pinl) totalPinl += v;
+            for (int i = 0; i < numSCC; i++) totalPinl += pinl[i];
             if (totalPinl > 0) {
                 for (int i = 0; i < numSCC; i++) pinl[i] /= totalPinl;
             } else {
                 for (int i = 0; i < numSCC; i++) pinl[i] = 1.0 / numSCC;
             }
-        } else {
-            for (int i = 0; i < numSCC; i++) {
-                double sum = 0.0;
-                for (int idx : sccIdx[i]) sum += pi0.get(0, idx);
-                pinl[i] = sum;
-            }
-        }
 
-        // Weighted average over starting SCCs
-        Matrix pi = Matrix.zeros(1, N);
-        for (int i = 0; i < numSCC; i++) {
-            if (pinl[i] > 0) {
-                for (int k = 0; k < N; k++) {
-                    pi.set(0, k, pi.get(0, k) + pis[i].get(0, k) * pinl[i]);
+            pi = Matrix.zeros(1, N);
+            for (int i = 0; i < numSCC; i++) {
+                if (pinl[i] > 0) {
+                    for (int k = 0; k < N; k++) {
+                        pi.set(0, k, pi.get(0, k) + pis[i].get(0, k) * pinl[i]);
+                    }
                 }
             }
-        }
 
-        // Special case: single transient SCC without explicit initial distribution
-        if (transSccIds.size() == 1 && pi0 == null) {
-            for (int k = 0; k < N; k++) {
-                pi.set(0, k, pis[transSccIds.get(0)].get(0, k));
+            // Special case: single transient SCC without explicit initial distribution
+            if (transSccIds.size() == 1) {
+                pi = pis[transSccIds.get(0)].copy();
             }
+        } else {
+            // An initial vector is available, so the exact absorption probabilities can be
+            // computed from it directly. Lumping pin onto its SCCs and mixing the pis rows
+            // would instead assume a uniform start within each SCC, which differs from the
+            // truth whenever pin puts mass on a transient SCC holding more than one state
+            // (states of the same transient SCC reach the recurrent classes with different
+            // probabilities).
+            double[] p0 = new double[N];
+            double total0 = 0.0;
+            for (int k = 0; k < N; k++) {
+                p0[k] = pin.get(0, k);
+                total0 += p0[k];
+            }
+            if (total0 > 0) {
+                for (int k = 0; k < N; k++) p0[k] /= total0;
+            }
+            pi = absorbLimiting(p0, Qmat, N, nt, nr, transStates, recStates, sccIdx, recSccIds, Q_tt, Q_ta);
         }
 
         // Normalize
@@ -249,15 +191,100 @@ public final class Ctmc_solve_reducible_blkdecomp {
         return new Pair<Matrix, List<List<Integer>>>(pi, sccLists);
     }
 
+
+    /**
+     * Limiting distribution reached from the initial vector p0: the mass absorbed in each
+     * recurrent class (BSCC) redistributed over that class according to its own stationary
+     * vector. Transient states receive zero.
+     */
+    private static Matrix absorbLimiting(double[] p0, Matrix Qmat, int N, int nt, int nr,
+                                         List<Integer> transStates, List<Integer> recStates,
+                                         List<Integer>[] sccIdx, List<Integer> recSccIds,
+                                         Matrix Q_tt, Matrix Q_ta) {
+        Matrix piv = Matrix.zeros(1, N);
+
+        // Absorption probabilities into the recurrent states
+        double[] hit = new double[nr];
+        if (nt > 0 && Q_tt != null && Q_ta != null) {
+            double[] p0_t = new double[nt];
+            boolean anyPositive = false;
+            for (int idx = 0; idx < nt; idx++) {
+                p0_t[idx] = p0[transStates.get(idx)];
+                if (p0_t[idx] > 0.0) anyPositive = true;
+            }
+            if (anyPositive) {
+                // Solve sojourn * Q_tt = -p0_t for expected sojourn in transient states.
+                // Q_tt is non-singular (Hurwitz) for transient states.
+                Matrix negP0Col = new Matrix(nt, 1);
+                for (int i = 0; i < nt; i++) negP0Col.set(i, 0, -p0_t[i]);
+                Matrix sojourn = new Matrix(nt, 1);
+                // above the dispatch threshold the transient block is what the direct factorization cannot hold; the direct solve stays the fallback
+                boolean solved = false;
+                if (nt > Ctmc_solve.GMRES_MIN_STATES) {
+                    Ctmc_gmres.GmresResult g =
+                            Ctmc_gmres.ctmc_gmres(Q_tt.transpose(), negP0Col, 0.0, 0, 0, null);
+                    if (g.flag == 0) {
+                        sojourn = g.x;
+                        solved = true;
+                    } else {
+                        // Short-recurrence retry before the cubic factorization, as in Ctmc_solve.
+                        Ctmc_bicgstab.BicgstabResult bs =
+                                Ctmc_bicgstab.ctmc_bicgstab(Q_tt.transpose(), negP0Col, 0.0, 0, null);
+                        if (bs.flag == 0) {
+                            sojourn = bs.x;
+                            solved = true;
+                        }
+                    }
+                }
+                if (!solved) {
+                    Matrix.solveDirect(Q_tt.transpose(), negP0Col, sojourn);
+                }
+                Matrix hitMatrix = sojourn.transpose().mult(Q_ta);
+                for (int i = 0; i < nr; i++) hit[i] = hitMatrix.get(0, i);
+            }
+        }
+
+        // Add initial mass already in recurrent states
+        for (int idx = 0; idx < nr; idx++) {
+            hit[idx] += p0[recStates.get(idx)];
+        }
+
+        // Solve steady state per recurrent class, scaled by hitting probability
+        for (int ci = 0; ci < recSccIds.size(); ci++) {
+            List<Integer> idx_c = sccIdx[recSccIds.get(ci)];
+            double reachprob = 0.0;
+            for (int k = 0; k < idx_c.size(); k++) {
+                int loc = recStates.indexOf(idx_c.get(k));
+                if (loc >= 0) reachprob += hit[loc];
+            }
+            if (reachprob < 1e-15) continue;
+
+            if (idx_c.size() == 1) {
+                // Absorbing state: hitting probability IS the final probability
+                piv.set(0, idx_c.get(0), reachprob);
+            } else {
+                Matrix indices = new Matrix(idx_c.size(), 1);
+                for (int i = 0; i < idx_c.size(); i++) indices.set(i, 0, (double) idx_c.get(i));
+                Matrix Q_cc = Qmat.getSubMatrix(indices, indices);
+                Matrix pi_c = Ctmc_solve.ctmc_solve(Q_cc);
+                for (int k = 0; k < idx_c.size(); k++) {
+                    piv.set(0, idx_c.get(k), pi_c.get(0, k) * reachprob);
+                }
+            }
+        }
+
+        return piv;
+    }
+
     public static Ctmc_solve_reducible_blkdecompResult ctmc_solve_reducible_blkdecomp_full(Matrix Q) {
         return ctmc_solve_reducible_blkdecomp_full(Q, null, defaultOptions());
     }
 
-    public static Ctmc_solve_reducible_blkdecompResult ctmc_solve_reducible_blkdecomp_full(Matrix Q, Matrix pi0) {
-        return ctmc_solve_reducible_blkdecomp_full(Q, pi0, defaultOptions());
+    public static Ctmc_solve_reducible_blkdecompResult ctmc_solve_reducible_blkdecomp_full(Matrix Q, Matrix pin) {
+        return ctmc_solve_reducible_blkdecomp_full(Q, pin, defaultOptions());
     }
 
-    public static Ctmc_solve_reducible_blkdecompResult ctmc_solve_reducible_blkdecomp_full(Matrix Q, Matrix pi0,
+    public static Ctmc_solve_reducible_blkdecompResult ctmc_solve_reducible_blkdecomp_full(Matrix Q, Matrix pin,
                                                                                           Map<String, Object> options) {
         Matrix Qmat = Ctmc_makeinfgen.ctmc_makeinfgen(Q.copy());
         int N = Qmat.getNumRows();
@@ -265,7 +292,8 @@ public final class Ctmc_solve_reducible_blkdecomp {
         Matrix Adj = new Matrix(N, N);
         for (int i = 0; i < N; i++) {
             for (int j = 0; j < N; j++) {
-                if (i != j && Qmat.get(i, j) > 0) Adj.set(i, j, 1.0);
+                // arc by MAGNITUDE, never by sign: an ME generator embeds genuinely negative off-diagonals -- see _kb/11-conventions-and-gotchas.md
+                if (i != j && Math.abs(Qmat.get(i, j)) > jline.GlobalConstants.ArcTol) Adj.set(i, j, 1.0);
             }
         }
 
@@ -276,7 +304,7 @@ public final class Ctmc_solve_reducible_blkdecomp {
         boolean[] isrec = sccResult.recurrent;
         int numSCC = isrec.length;
 
-        Pair<Matrix, List<List<Integer>>> baseResult = ctmc_solve_reducible_blkdecomp(Q, pi0, options);
+        Pair<Matrix, List<List<Integer>>> baseResult = ctmc_solve_reducible_blkdecomp(Q, pin, options);
         Matrix pi = baseResult.getLeft();
         List<List<Integer>> sccLists = baseResult.getRight();
 
@@ -307,7 +335,7 @@ public final class Ctmc_solve_reducible_blkdecomp {
         return new Ctmc_solve_reducible_blkdecompResult(
                 pi,
                 pisList,
-                pi0 != null ? pi0 : Matrix.zeros(1, N),
+                pin != null ? pin : Matrix.zeros(1, N),
                 sccLists,
                 isrecList
         );

@@ -15,7 +15,7 @@ The fit factorizes into two independent inverse problems:
    matrix that depends only on (h1, h2, r1, r2) and is the SAME for every
    class, so the inverse is one pre-computed 3x3 block applied per class and
    costs nothing as K grows. The block was derived in SageMath, see
-   sage/proofs/mmap2k_marking_inverse.py; the offset of the affine map is zero,
+   io/sage/proofs/mmap2k_marking_inverse.py; the offset of the affine map is zero,
    so the formulas below are purely linear in (1, F_c, B_c) scaled by p_c.
 
 Degrees of freedom: the canonical form has 4 + 3(K-1) parameters and realizes

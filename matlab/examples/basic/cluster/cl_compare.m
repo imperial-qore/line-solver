@@ -14,8 +14,8 @@ solverFcn = @(m) SSA(m, 'seed', 23000, 'samples', 2000).getAvgTable();
 policies = [RoutingStrategy.RAND, RoutingStrategy.RROBIN];
 results = cluster.compareDispatching(solverFcn, policies);
 
-keys_ = results.keys;
+keys_ = keys(results);
 for k = 1:numel(keys_)
-    fprintf('\n=== Dispatching: %s ===\n', keys_{k});
-    disp(results(keys_{k}));
+    fprintf('\n=== Dispatching: %s ===\n', keys_(k));
+    disp(results{keys_(k)});
 end

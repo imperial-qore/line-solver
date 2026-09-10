@@ -25,22 +25,27 @@ classdef DiscreteSampler < DiscreteDistribution
         
         function ex = getMean(self)
             % EX = GETMEAN()
-            
-            % Get distribution mean
+
+            % Get distribution mean.
+            % Weighted by the SUPPORT x, not by the rank 1:n. The two agree on
+            % the default support x=1:n, which is why the rank form went
+            % unnoticed; on any other support it returned the mean of a
+            % distribution the caller never asked for.
             p = self.getParam(1).paramValue;
-            n = length(p);
-            ex = sum(p*(1:n)');
+            x = self.getParam(2).paramValue;
+            ex = sum(p(:)'.*x(:)') / sum(p);
         end
-        
+
         function SCV = getSCV(self)
             % SCV = GETSCV()
-            
+
             % Get distribution squared coefficient of variation (SCV = variance / mean^2)
-            
-            
+
             p = self.getParam(1).paramValue;
-            n = length(p);
-            e2 = sum(p*(1:n).^2');
+            x = self.getParam(2).paramValue;
+            % `ex` was never assigned here, so every call errored out.
+            ex = getMean(self);
+            e2 = sum(p(:)'.*(x(:)'.^2)) / sum(p);
             var = e2 - ex^2;
             SCV = var / ex^2;
         end

@@ -1,6 +1,9 @@
 package jline.solvers.fluid;
 
 import odesolver.LSODA;
+
+import static jline.io.InputOutput.line_warning;
+import static jline.io.InputOutput.mfilename;
 import org.apache.commons.math3.ode.FirstOrderDifferentialEquations;
 
 /**
@@ -13,10 +16,54 @@ import org.apache.commons.math3.ode.FirstOrderDifferentialEquations;
  */
 public class LSODAExt extends LSODA {
 
+    /**
+     * Measurement scaffold for the currently-invisible failure class: an lsoda()
+     * call that sets a negative istate and returns NORMALLY, rather than throwing.
+     * Such a call has its (un-integrated) state copied out as if it had converged.
+     * <p>
+     * This counts and reports rather than throwing, ON PURPOSE. It is not yet
+     * established that this failure mode is reachable at all: the failures we can
+     * see today arrive as RuntimeExceptions and are handled by the retry in
+     * {@link jline.solvers.fluid.analyzers.ClosingAndStateDepMethodsAnalyzer}.
+     * If the count is zero, every reachable failure goes through the exception
+     * path and a throw here is free. If it is not zero, some body of currently
+     * "passing" results is quietly wrong, and WHICH models those are is a larger
+     * question than the missing check -- so that must be measured and reported
+     * before a throw converts them into failures.
+     */
+    private static final java.util.concurrent.atomic.AtomicLong INTEGRATE_CALLS =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicLong NEGATIVE_ISTATE_CALLS =
+            new java.util.concurrent.atomic.AtomicLong();
+    /** First-seen istate code, so the report names a code without flooding stdout. */
+    private static final java.util.concurrent.atomic.AtomicLong FIRST_NEGATIVE_ISTATE =
+            new java.util.concurrent.atomic.AtomicLong(0);
+
+    /** Total integrate() calls since the last reset. */
+    public static long getIntegrateCallCount() {
+        return INTEGRATE_CALLS.get();
+    }
+
+    /** Calls that returned normally with a negative istate, i.e. silent failures. */
+    public static long getNegativeIstateCount() {
+        return NEGATIVE_ISTATE_CALLS.get();
+    }
+
+    /** The first negative istate code observed, or 0 if none. */
+    public static long getFirstNegativeIstate() {
+        return FIRST_NEGATIVE_ISTATE.get();
+    }
+
+    public static void resetIstateCounters() {
+        INTEGRATE_CALLS.set(0);
+        NEGATIVE_ISTATE_CALLS.set(0);
+        FIRST_NEGATIVE_ISTATE.set(0);
+    }
+
     private final int maxSteps;
     private final double relativeTol;
     private final double absoluteTol;
-    private final double hmaxInv;
+    private final double hmaxVal;
     private final double hminVal;
 
     /**
@@ -36,8 +83,8 @@ public class LSODAExt extends LSODA {
         this.maxSteps = maxSteps;
         this.relativeTol = rtol;
         this.absoluteTol = atol;
-        // hmaxInv = 1/maxStep (inverse of max step size), hmin = minStep
-        this.hmaxInv = (maxStep > 0) ? 1.0 / maxStep : 0.0;
+        // lsoda() takes the max STEP and inverts it itself; 0 means unbounded
+        this.hmaxVal = (maxStep > 0 && !Double.isInfinite(maxStep)) ? maxStep : 0.0;
         this.hminVal = minStep;
     }
 
@@ -53,7 +100,28 @@ public class LSODAExt extends LSODA {
         // see _kb/06-solver-catalog.md (JAR-only implementation notes: LSODAExt mxstep reflection hack)
         this.lsoda(neq, y0, t0, t, 1, rtolArr, atolArr, 1, 1, 1,
                 0, this.maxSteps, 0, 0, 0,
-                0.0, 0.0, this.hmaxInv, this.hminVal);
+                0.0, 0.0, this.hmaxVal, this.hminVal);
+
+        // lsoda() is VOID: it publishes its status on the inherited public field
+        // istate, not as a return value. This read is the whole point of the
+        // measurement -- a negative istate returned NORMALLY (rather than thrown)
+        // means the state copied out below never integrated, and no caller can
+        // currently tell that from a converged solve.
+        INTEGRATE_CALLS.incrementAndGet();
+        if (this.istate < 0) {
+            long seen = NEGATIVE_ISTATE_CALLS.incrementAndGet();
+            FIRST_NEGATIVE_ISTATE.compareAndSet(0, this.istate);
+            if (seen == 1) {
+                // Reported once only: this sits inside the layer ODE loop and a
+                // per-call message would bury the run. The counters carry the rest.
+                line_warning(mfilename(new Object(){}),
+                        "lsoda returned NORMALLY with istate=" + this.istate
+                        + " over t in [" + t0 + ", " + t + "], neq=" + neq
+                        + ": the state copied out did not integrate. Further"
+                        + " occurrences are counted, not printed"
+                        + " (LSODAExt.getNegativeIstateCount()).");
+            }
+        }
 
         // Copy result to output array
         System.arraycopy(this.y, 1, yOut, 0, neq);

@@ -1,17 +1,26 @@
 """
 Hierarchical and multiserver/load-dependent bound methods for closed
 product-form queueing networks. Native-Python ports (no JVM) of the MATLAB
-pfqn_{pbh,cbh,pbk,bjbk,mcub,ssd,sib,ldbcmp} bound functions used by SolverBA.
+pfqn_{pbh,cbh,pbk,bjbk,mcub,ssd,sib,ldbcmp,scb} bound functions used by
+SolverBA, plus the class-aggregation error and class-count bounds
+pfqn_{scbgap,usumbound,minclasses}.
 
 References:
 - Eager-Sevcik 1983 (PBH), Dowdy et al. 1984 (CBH), Casale-Muntz-Serazzi 2008
   (iterative PB(k)/BJB(k)), Kerola 1986 (multiclass composite upper bound),
   Suri-Dallery 1986 (multiserver disaggregation), Srinivasan 1985 (SIB),
-  Anselmi-Cremonesi 2008 (LD-BCMP closed-open equivalence).
+  Anselmi-Cremonesi 2008 (LD-BCMP closed-open equivalence),
+  Dowdy-Carlson-Krantz-Tripathi 1992 (single-class bounds of multiclass
+  networks, and the class-count bound of their Section 4.7).
 """
 
+from typing import Tuple
+
 import numpy as np
+from scipy.special import gammaln
 from math import factorial
+
+from .utils import _amva_prep
 
 
 # ----------------------------- PBH (Eager-Sevcik) --------------------------
@@ -23,11 +32,20 @@ def _pbh_residence(L, N, Z, level, side):
     b = int(np.argmax(L))
     level = min(level, N)
     n0 = N - level
-    if side == 'opt':
-        Rk = np.ones(K) * max(n0 * L[b] - Z, np.sum(L)) / K
-    else:  # 'pess'
-        Rk = np.zeros(K)
-        Rk[b] = n0
+    if side != 'opt':
+        # Pessimistic start, carried in QUEUE LENGTHS: all n0 customers at the
+        # bottleneck (eq 13). Seeding a residence instead makes the assumed
+        # population n0*Rb/(Z+Rtot) < n0 once Z > 0, so the pessimism is
+        # diluted and the resulting Xlo stops being a bound (violated exact on
+        # 14% of random delay models, worst 43%).
+        Q = np.zeros(K)
+        Q[b] = n0
+        Rk = L * (1.0 + Q)
+        for n in range(n0 + 1, N + 1):
+            Rk = L * (1.0 + Q)
+            Q = (n / (Z + np.sum(Rk))) * Rk
+        return Rk
+    Rk = np.ones(K) * max(n0 * L[b] - Z, np.sum(L)) / K
     if n0 == 0:
         Rk = np.zeros(K)
     for n in range(n0 + 1, N + 1):
@@ -107,7 +125,10 @@ def _cbh_hier(L, N, Z, c, side):
         for n in range(1, N + 1):
             g[n] = g[n] + L[m] * g[n - 1]
     if Z > 0:
-        gd = np.array([Z ** j / factorial(j) for j in range(N + 1)])
+        # Poisson weight Z^j/j! through logs: the naive ratio overflows for
+        # j >~ 171 in double, and j runs to the POPULATION here.
+        _j = np.arange(N + 1, dtype=float)
+        gd = np.exp(_j * np.log(Z) - gammaln(_j + 1.0))
         gfull = np.zeros(N + 1)
         for n in range(N + 1):
             gfull[n] = sum(g[j] * gd[n - j] for j in range(n + 1))
@@ -172,7 +193,11 @@ def pfqn_mcub(L, N, Z=None):
 
 def pfqn_ssd(L, N, Z=0.0, nservers=None):
     """Server-Station Disaggregation bounds (Suri-Dallery 1986, Thm 5),
-    single-class multiserver. Returns (Xlo, Xhi)."""
+    single-class multiserver. Returns (Xlo, Xhi).
+
+    With Z>0 the queueing terms carry the terminal-workload correction of
+    Lazowska et al. 1984, Table 5.2; adding Z without it is not a bound.
+    """
     L = np.asarray(L, dtype=float).ravel()
     K = L.size
     if Z is None:
@@ -188,8 +213,8 @@ def pfqn_ssd(L, N, Z=0.0, nservers=None):
     Ru = np.sum(L / C)
     Yu = Ru / K
     b = int(np.argmax(L / C))
-    Xlo = N / (Rl + Z + (N - 1) * Yl)
-    Xhi = min(N / (Ru + Z + (N - 1) * Yu), C[b] / L[b], N / (Rl + Z))
+    Xlo = N / (Rl + Z + (N - 1) * Yl / (1 + Z / (N * Rl)))
+    Xhi = min(N / (Ru + Z + (N - 1) * Yu / (1 + Z / Ru)), C[b] / L[b], N / (Rl + Z))
     return Xlo, Xhi
 
 
@@ -279,7 +304,9 @@ def pfqn_sib(L, N, Z=0.0, level=3):
         phi_hi = min(phi_hi, phi_u_n)
         T1l = (N - 2) * S2 - 1
         bl = betaL(NN, level - 1)
-        phi_l_n = (T1l + np.sqrt(max(0.0, T1l ** 2 + 4 * (N - 2) * (S2 + (N - 2) * bl)))) / (2 * level)
+        # eq (3.23) divides by 2*eta, the SAME constant eq (3.22) applies as
+        # 0.5/eta above; the Greek eta on the scan was read as the level index n
+        phi_l_n = (T1l + np.sqrt(max(0.0, T1l ** 2 + 4 * (N - 2) * (S2 + (N - 2) * bl)))) / (2 * eta)
         phi_lo = max(phi_lo, phi_l_n)
 
     phi_lo = max(0.0, phi_lo)
@@ -339,7 +366,252 @@ def pfqn_ldbcmp(L, N, Z=0.0, c=None, tol=1e-10):
     return Xlo, Rhi, Qhat
 
 
+# ------------------- SCB (Dowdy-Carlson-Krantz-Tripathi) -------------------
+
+def pfqn_scb(L, N):
+    """Single-class bounds of multiclass networks (Dowdy et al. 1992, JACM 39(1)).
+
+    Returns (Xlo, Xhi, Ulo, Uhi), a bracket on the total throughput and on the
+    per-device utilizations of the UNKNOWN multiclass system whose single-class
+    counterpart has demand vector L at population N.
+
+    SEMANTICS DIFFER FROM EVERY OTHER pfqn_* BOUND. aba/bjb/gb/... bracket the
+    exact solution OF THE GIVEN MODEL; this brackets the multiclass system that
+    the given single-class model aggregates. The lower side is therefore the
+    EXACT single-class solution, not an approximation of it.
+
+    Theorem 2 / Corollary 2: aggregating an R-class model into its single-class
+    counterpart can only understate performance, U_k,1 <= U_k,R and X_1 <= X_R,
+    and Corollary 1 makes the utilization ratio uniform, U_k,R/U_k,1 = X_R/X_1
+    for every k. Theorem 3 (their Expression 3) caps the relative throughput
+    error at (m-1)/(N+m-1), m = min(N,K), independently of the demands. The
+    single-server capacity U_k,R <= 1 caps the same ratio at 1/(X_1*max(L)),
+    tight on the paper's own worst case, so both are applied. L holds queueing
+    stations only: Theorem 3 rests on the delay-free balanced-network
+    throughput, so a delay station is not admitted.
+    """
+    L = np.asarray(L, dtype=float).ravel()
+    K = L.size
+    if K == 0:
+        raise ValueError("pfqn_scb requires at least one queueing station.")
+    N = int(round(N))
+    if N < 1:
+        raise ValueError("pfqn_scb requires N >= 1.")
+    # Exact single-class MVA at Z=0. This IS the lower bound (Theorem 2), so it
+    # is computed exactly rather than bounded: a bounded X1 would not bracket X_R.
+    Q = np.zeros(K)
+    X1 = 0.0
+    for n in range(1, N + 1):
+        Rk = L * (1.0 + Q)
+        X1 = n / np.sum(Rk)
+        Q = X1 * Rk
+    U1 = X1 * L
+    m = min(N, K)
+    ratio = (N + m - 1) / float(N)          # Theorem 3, Expression (3)
+    Dmax = float(np.max(L))
+    if X1 * Dmax > 0:
+        # U_k,R <= 1 with the uniform ratio of Corollary 1. Tight at the worst case.
+        ratio = min(ratio, 1.0 / (X1 * Dmax))
+    return float(X1), float(X1 * ratio), U1, U1 * ratio
+
+
+def pfqn_scbgap(N, K, r=None, undominated=False):
+    """Maximum relative throughput error of merging r of N classes (Dowdy 1992).
+
+    Demand-free bound on the relative throughput error incurred when r of the N
+    single-customer classes of a closed product-form network are merged into
+    one class. With r = N (the default) this is the full single-class
+    aggregation error of their Theorem 3, at most 50%; with r < N it is the
+    partial-aggregation error of their Theorem 4. The bound never reads the
+    demands, so it can be attached as a certified error bar to any result
+    computed on merged chains.
+
+    General case, dominating classes allowed (Expression 4, and with r = N
+    Expression 3): e = (min(r,K)-1)/(r+min(r,K)-1). Undominated case, every
+    customer placing the same total demand (Theorem 5 and its comment (3),
+    which lifts the N = R restriction): e = r(r-1)/(min(N,K)(2r-1)), valid for
+    r <= K only, smaller than the general case by the factor r/min(N,K) and
+    equal to it at r = K. THE DOMAIN IS NOT COSMETIC: Theorem 5 gives each of
+    its R classes a dedicated device, so r never exceeds K there, and comment
+    (3) states the generalization for r < K. Evaluated at r > K the expression
+    climbs past the general bound and past the 50% cap of Theorem 3, i.e. it
+    stops being a bound, so r > K is refused rather than returned.
+    """
+    N = int(round(N)); K = int(round(K))
+    if r is None:
+        r = N
+    r = int(round(r))
+    if N < 1 or K < 1:
+        raise ValueError("pfqn_scbgap requires N >= 1 and K >= 1.")
+    if r < 1 or r > N:
+        raise ValueError("pfqn_scbgap requires 1 <= r <= N (r=%d, N=%d)." % (r, N))
+    if r == 1:
+        return 0.0                          # merging one class changes nothing
+    if undominated:
+        if r > K:
+            raise ValueError(
+                "The undominated (Theorem 5) form is defined for r <= K only "
+                "(r=%d, K=%d); beyond it the expression exceeds the general "
+                "bound and the 50%% cap." % (r, K))
+        return r * (r - 1) / float(min(N, K) * (2 * r - 1))   # Thm 5, comment (3)
+    m = min(r, K)
+    return (m - 1) / float(r + m - 1)       # Expression (4); r=N gives (3)
+
+
+def pfqn_usumbound(R, K, N):
+    """Upper bound on sum_k U_k in a closed R-class network (Dowdy 1992, Thm 6).
+
+    sum_k U_k,R <= (H-1) + (K-H+1)(N-H+1)/(K+N-2H+1), H = min(R,K). Demand-free
+    and nondecreasing in R, which is what makes it invertible into a lower
+    bound on the number of necessary classes; see pfqn_minclasses. At
+    R >= min(N,K) it reaches min(N,K), the trivial one-busy-server-per-device
+    cap. The paper's worked case is K = 2, N = 3, R = 1, giving 2N/(N+1) = 1.5.
+    """
+    R = int(round(R)); K = int(round(K)); N = int(round(N))
+    if N < 1 or K < 1:
+        raise ValueError("pfqn_usumbound requires N >= 1 and K >= 1.")
+    if R < 1 or R > N:
+        raise ValueError("pfqn_usumbound requires 1 <= R <= N (R=%d, N=%d)." % (R, N))
+    H = min(R, K)
+    return (H - 1) + (K - H + 1) * (N - H + 1) / float(K + N - 2 * H + 1)
+
+
+def pfqn_minclasses(Usum, K, N):
+    """Lower bound on the class count from a measured utilization sum (Dowdy 1992).
+
+    Smallest number of customer classes R consistent with an observed sum of
+    device utilizations, obtained by inverting the demand-free Expression (6)
+    bound of pfqn_usumbound, which is nondecreasing in R. Only measured
+    quantities are needed -- the utilizations, the device count and the
+    population -- so the answer is available BEFORE any class-specific demand
+    has been characterized. An upper bound on R is meaningless (extra classes
+    can always be introduced by splitting) and none is returned.
+
+    Returns NaN when Usum exceeds min(N,K) and so is unattainable by ANY class
+    structure, which signals a measurement error rather than a workload needing
+    more classes. The paper's example: K = 2, N = 3, Usum = 1.6 -> 2, since a
+    single class admits at most 2N/(N+1) = 1.5.
+    """
+    K = int(round(K)); N = int(round(N))
+    if N < 1 or K < 1:
+        raise ValueError("pfqn_minclasses requires N >= 1 and K >= 1.")
+    if Usum < 0:
+        raise ValueError("pfqn_minclasses requires a nonnegative utilization sum.")
+    tol = 1e-12 * max(1.0, abs(Usum))
+    for R in range(1, N + 1):
+        if pfqn_usumbound(R, K, N) >= Usum - tol:
+            return float(R)
+    return float('nan')
+
+
+def pfqn_looping(L, N, Z=None, tol: float = 1e-6, maxiter: int = 1000
+                 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
+    """Eager Looping approximate MVA bounds.
+
+    D. L. Eager, "Bounding Algorithms for Queueing Network Models of Computer
+    Systems", Ph.D. thesis, Tech. Rept. CSRG-156, University of Toronto, 1984.
+    Looping supplies the initial pessimistic and optimistic estimates that the
+    multiple-class performance bound hierarchy starts from, so it carries a
+    pair of bounds rather than a single fixed point. It is built on the
+    convolution identity of Zahorjan (1980)
+
+        Q_jk(N - 1_c) = [X_j^{+k}(N - 1_c) / X_j(N)] Q_jk(N),
+
+    with X_j^{+k}(N - 1_c) estimated from the level-0 multiple-class PBH upper
+    bound B_j and X_j(N) from the optimistic response time R_j^(opt). A HEAP
+    H_j is the class-j congestion the current queue-length lower bounds have
+    not accounted for; it is charged back at the pessimistic inflation factor
+    V_c = max_k D_ck or the optimistic one L_c = min_k D_ck. The level-0
+    multiple-class PBH bounds on the mean response time are
+
+        J_j(n) = sum_k D_jk,  B_j(n) = sum_k D_jk + (sum(n) - 1) max_k D_jk,
+
+    i.e. an arriving customer queues behind nobody, respectively behind every
+    other customer in the network at its own worst centre.
+
+    Returns (Xlo, Xup, QN, RN, it) with Xlo the pessimistic and Xup the
+    optimistic throughput bound.
+    """
+    L, N, Z, M, R = _amva_prep(L, N, Z)
+
+    Dtot = L.sum(axis=0)
+    Vpess = L.max(axis=0) if M > 0 else np.zeros(R)
+    Lopt = L.min(axis=0) if M > 0 else np.zeros(R)
+    Ntot = float(N.sum())
+    Jbnd = Dtot
+    Bm = Dtot + max(Ntot - 2, 0) * Vpess
+    beta = np.eye(R)
+
+    Qm = np.zeros((M, R, R))            # Qm[k, j, c] = Q_jk(N - 1_c)
+    for c in range(R):
+        for j in range(R):
+            Qm[:, j, c] = max(N[j] - beta[c, j], 0) / M if M > 0 else 0.0
+    Hopt = np.zeros((R, R))
+    Hpess = np.zeros((R, R))
+
+    QN = np.zeros((M, R))
+    RN = np.zeros((M, R))
+    XN = np.zeros(R)
+    Rc = np.zeros(R)
+    Rpess = np.zeros(R)
+    Ropt = np.zeros(R)
+    it = 1
+    for it in range(1, maxiter + 1):
+        QN_old = QN.copy()
+        for c in range(R):
+            if N[c] == 0:
+                RN[:, c] = 0.0
+                XN[c] = 0.0
+                Rc[c] = 0.0
+                Rpess[c] = 0.0
+                continue
+            Qk = Qm[:, :, c].sum(axis=1)
+            RN[:, c] = L[:, c] * (1 + Qk)
+            Rc[c] = RN[:, c].sum()
+            Rpess[c] = Rc[c] + Vpess[c] * Hpess[:, c].sum()
+            XN[c] = N[c] / (Z[c] + Rpess[c])
+        for c in range(R):
+            if N[c] == 0:
+                Ropt[c] = 0.0
+                continue
+            sat = -np.inf
+            for ist in range(M):
+                den = 1 - (float(np.sum(XN * L[ist, :])) - XN[c] * L[ist, c])
+                if den > 0:
+                    sat = max(sat, L[ist, c] * N[c] / den - Z[c])
+            heaped = Rc[c] + Lopt[c] * Hopt[:, c].sum()
+            # an optimistic bound can never exceed the pessimistic one
+            Ropt[c] = min(max(sat, heaped, Dtot[c]), Rpess[c])
+        for c in range(R):
+            QN[:, c] = XN[c] * RN[:, c]
+        for c in range(R):
+            for j in range(R):
+                nj = N[j] - beta[c, j]
+                if N[j] <= 0 or nj <= 0:
+                    Qm[:, j, c] = 0.0
+                else:
+                    Qm[:, j, c] = (nj / N[j]) * ((Z[j] + Ropt[j]) / (Z[j] + Bm[j])) * QN[:, j]
+                qsum = float(Qm[:, j, c].sum())
+                if nj > 0:
+                    Hopt[j, c] = max(0.0, Jbnd[j] / (Z[j] + Jbnd[j]) * nj - qsum)
+                    Hpess[j, c] = max(0.0, Bm[j] / (Z[j] + Bm[j]) * nj - qsum)
+                else:
+                    Hopt[j, c] = 0.0
+                    Hpess[j, c] = 0.0
+        nz = N > 0
+        if not np.any(nz) or (it > 1 and np.max(np.abs(QN[:, nz] - QN_old[:, nz])) < tol):
+            break
+
+    Xup = np.zeros(R)
+    for c in range(R):
+        if N[c] > 0:
+            Xup[c] = N[c] / (Z[c] + Ropt[c])
+    return XN.reshape(1, -1), Xup.reshape(1, -1), QN, RN, it
+
+
 __all__ = [
+    'pfqn_looping',
     'pfqn_pbh', 'pfqn_pbk', 'pfqn_bjbk', 'pfqn_cbh',
     'pfqn_mcub', 'pfqn_ssd', 'pfqn_sib', 'pfqn_ldbcmp',
+    'pfqn_scb', 'pfqn_scbgap', 'pfqn_usumbound', 'pfqn_minclasses',
 ]

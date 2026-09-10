@@ -32,7 +32,7 @@ model.link(P);
 %%
 % This part illustrates the execution of different solvers
 solver = {};
-solver{end+1} = CTMC(model);
+solver{end+1} = CTMC(model,'exact');
 solver{end+1} = JMT(model,'seed',23000,'samples',1e4,'keep',true);
 %solver{end+1} = SSA(model,'seed',23000,'samples',1e4);
 % solver{end+1} = FLD(model);

@@ -321,21 +321,25 @@ def _ekf_data(cpu_util, r_avg_times, avg_arvr, num_servers, iter_max,
 
 
 def _get_solver_analyzer(solver, model, sn, st_idx):
-    """Return a callable that takes sn and returns (Q, U, R, T)."""
+    """Return a callable that takes sn and returns (Q, U, R, T).
+
+    The analyzer is asked for METHOD 'default', not the 'exact' that
+    `SolverMVAOptions()` defaults to, because the likelihood is evaluated on
+    whatever model the user brought: exact MVA refuses a network without a
+    product form ("Unsupported exact MVA analysis"), which is most open models
+    the estimators are pointed at. MATLAB's `estimator_mle` passes
+    `SolverMVA.defaultOptions` for the same reason, and 'default' picks exact
+    where exact applies and an AMVA where it does not.
+    """
     from line_solver.api.solvers.mva.analyzers import solver_mva_analyzer
+    from line_solver.api.solvers.mva.handler import SolverMVAOptions
+
+    options = SolverMVAOptions()
+    options.method = 'default'
 
     def analyzer(sn_arg):
-        try:
-            result = solver_mva_analyzer(sn_arg)
-            return result.QN, result.UN, result.RN, result.TN
-        except Exception:
-            solver_obj = SolverMVA(model)
-            solver_obj.runAnalyzer()
-            Q = solver_obj.result.QN
-            U = solver_obj.result.UN
-            R = solver_obj.result.RN
-            T = solver_obj.result.TN
-            return Q, U, R, T
+        result = solver_mva_analyzer(sn_arg, options)
+        return result.QN, result.UN, result.RN, result.TN
 
     return analyzer
 
@@ -398,18 +402,24 @@ def estimator_mcmc(se, nodes):
                     lambda_r = 1.0 / nd.getService(classes[r]).getMean()
                     Z[r] = P_pop[r] / lambda_r
 
-    # Collect aggregate queue-length data
+    # Collect aggregate queue-length data, one column per (node, class) pair.
+    # The datum is the AGGREGATE queue length, so the same series fills every
+    # class column of a node; MATLAB's estimator_mcmc builds the identical
+    # avgAQLen{n,r} cell that way. Stacking one column per NODE instead, as this
+    # did, collapses the class axis and leaves the sampler estimating a single
+    # demand for a multiclass station.
     avg_ql_list = []
     for n_idx in range(len(nodes)):
         node = nodes[n_idx]
         aqlen = se.get_aggr_qlen(node)
         if aqlen is None:
             raise ValueError(f'Transient queue-length data for node {n_idx + 1} missing.')
-        avg_ql_list.append(aqlen.data)
+        for _r in range(sn.nclasses):
+            avg_ql_list.append(np.asarray(aqlen.data, dtype=float).ravel())
 
     avg_ql = np.column_stack(avg_ql_list)
     experiments = avg_ql.shape[0]
-    avg_ql_mean = np.mean(avg_ql, axis=0).reshape(len(nodes), -1)
+    avg_ql_mean = np.mean(avg_ql, axis=0).reshape(len(nodes), int(sn.nclasses))
 
     return _mcmc_data(avg_ql_mean, sn.visits, experiments, se.options['iter_max'], P_pop, Z)
 
@@ -556,98 +566,6 @@ def _mle_data(cpu_util, r_avg_times, avg_arvr, num_servers, iter_max,
     result = minimize(objfun, x0, method='L-BFGS-B', bounds=bounds,
                       options={'maxiter': iter_max})
     return result.x
-
-
-def estimator_rnn(se, nodes):
-    """Explainable RNN estimation."""
-    import torch
-    import torch.nn as nn
-    from line_solver.inference.lang.rnn_layer import QueueNetworkLearningRNNLayer
-
-    sn = se.model.refreshStruct() or se.model.getStruct()
-    all_nodes = se.model.getNodes()
-
-    ql_ts = {}
-    ql_trace = {}
-    num_servers = []
-    min_sample_count = float('inf')
-
-    for n_idx, nd in enumerate(all_nodes):
-        num_servers.append(nd.getNumberOfServers())
-        for r in range(sn.nclasses):
-            jc = se.model.getClasses()[r]
-            samples = se.get_qlen(nd, jc)
-            if samples is None:
-                raise ValueError(f'Queue-length data for node {n_idx + 1} class {r + 1} missing.')
-            if not isinstance(samples, list):
-                samples = [samples]
-            for d, ql_data in enumerate(samples):
-                if d not in ql_ts:
-                    ql_ts[d] = {}
-                    ql_trace[d] = {}
-                ql_ts[d][(n_idx, r)] = ql_data.t
-                ql_trace[d][(n_idx, r)] = ql_data.data
-                if len(ql_data.data) < min_sample_count:
-                    min_sample_count = len(ql_data.data)
-
-    M = len(all_nodes)
-    R = sn.nclasses
-
-    traces_list = []
-    for d in sorted(ql_ts.keys()):
-        trace = np.zeros((int(min_sample_count), M, R + 1))
-        for n_idx in range(M):
-            for r in range(R):
-                data = ql_trace[d][(n_idx, r)][:int(min_sample_count)]
-                ts = ql_ts[d][(n_idx, r)][:int(min_sample_count)]
-                trace[:, n_idx, 0] = ts
-                trace[:, n_idx, r + 1] = data
-        traces_list.append(trace)
-
-    traces = np.stack(traces_list, axis=0)
-
-    return _rnn_data(traces, np.array(num_servers))
-
-
-def _rnn_data(avg_ql, num_servers):
-    import torch
-    import torch.nn as nn
-    from line_solver.inference.lang.rnn_layer import QueueNetworkLearningRNNLayer
-
-    M = avg_ql.shape[2]
-    R = avg_ql.shape[3] - 1
-    S = avg_ql.shape[1]
-    trace_count = avg_ql.shape[0]
-
-    num_epochs = 2
-    num_iters_per_epoch = 50
-
-    layer = QueueNetworkLearningRNNLayer(M, R, num_servers)
-    optimizer = torch.optim.Adam(layer.parameters(), lr=0.1)
-
-    for epoch in range(num_epochs):
-        for i in range(num_iters_per_epoch):
-            layer.reset_state()
-            exp_idx = np.random.randint(trace_count)
-            trace = avg_ql[exp_idx]
-
-            X = torch.tensor(trace, dtype=torch.float32)
-            T = torch.tensor(trace, dtype=torch.float32)
-
-            optimizer.zero_grad()
-            Y = layer(X)
-
-            # Loss: max absolute percentage error
-            pred_err = torch.abs(T[:, :, 1:] - Y[:, :, 1:])
-            N_mean = torch.mean(torch.sum(X[:, :, 1:], dim=1))
-            max_err = torch.max(torch.sum(pred_err, dim=0) / (2.0 * N_mean + 1e-10))
-            loss = 100 * max_err
-
-            loss.backward()
-            optimizer.step()
-
-    mu = torch.abs(layer.mu).detach().numpy()
-    return 1.0 / mu.flatten()
 
 
 def estimator_mlps(se, nodes):
@@ -848,3 +766,194 @@ def estimator_gibbs(se, nodes):
         data[5][r] = tput_data.data
 
     return _infer_gibbs(data, nb_cores, se.options['tol'])
+
+
+def estimator_variational(se, nodes):
+    """Variational inference for Markovian queueing networks.
+
+    Estimates service rates from noisy queue-length readings taken over time,
+    with the method of I. Perez, G. Casale, "Variational Inference for
+    Markovian Queueing Networks", Advances in Applied Probability 53(3), 2021.
+    The network is translated into the transition set eta=(i,j,c) of the paper,
+    with the transition rate lambda_eta = mu_{i,c} p^c_{i,j}; routing
+    probabilities are taken as known and only the station rates of the
+    requested nodes are estimated.
+
+    Options read from ``se.options``: epsilon, prior_shape, iter_max, tol,
+    ngrid, dt, ymax, nsamples, delta, rate_max, tmax, verbose. The posterior of
+    each estimated rate is left in ``se.options['posterior']``.
+    """
+    from line_solver.api.sn.transforms import sn_rt_stations
+    from line_solver.inference.api.infer_variational import (
+        VariationalSpec, VariationalOptions, infer_variational)
+
+    sn = se.model.refreshStruct() or se.model.getStruct()
+    M = int(sn.nstations)
+    R = int(sn.nclasses)
+    csmask = np.asarray(sn.csmask, dtype=bool).reshape(R, R)
+    if np.any(csmask & ~np.eye(R, dtype=bool)):
+        raise ValueError('The variational estimator does not support class switching.')
+
+    rtst = np.asarray(sn_rt_stations(sn)[0] if isinstance(sn_rt_stations(sn), tuple)
+                      else sn_rt_stations(sn), dtype=float)
+    sched = np.zeros(M, dtype=int)
+    source_idx = []
+    # sn.sched may hold the enum member or its raw value, and the value sets
+    # differ across codebases, so compare on the value in both cases
+    def _sv(x):
+        return x.value if hasattr(x, 'value') else int(x)
+    shared = set(_sv(x) for x in (SchedStrategy.PS, SchedStrategy.FCFS, SchedStrategy.DPS,
+                                  SchedStrategy.GPS, SchedStrategy.SIRO, SchedStrategy.LCFS))
+    for i in range(M):
+        s = _sv(sn.sched[i])
+        if s == _sv(SchedStrategy.INF):
+            sched[i] = 0
+        elif s == _sv(SchedStrategy.EXT):
+            sched[i] = 2
+            source_idx.append(i)
+        elif s in shared:
+            sched[i] = 1
+        else:
+            raise ValueError('The variational estimator does not support scheduling %s '
+                             'at station %d.' % (str(s), i + 1))
+
+    # transitions eta = (i,j,c), one per positive routing probability; the
+    # pseudo-closed sink-to-source feedback is not a job transition
+    arcs = []
+    routeprob = []
+    for c in range(R):
+        for i in range(M):
+            for j in range(M):
+                if i == j or j in source_idx:
+                    continue
+                p = rtst[i * R + c, j * R + c]
+                if p <= 0:
+                    continue
+                arcs.append([i + 1, j + 1, c + 1])
+                routeprob.append(p)
+    if not arcs:
+        raise ValueError('The model has no job transitions to infer from.')
+
+    rates = np.asarray(sn.rates, dtype=float).reshape(M, R)
+    nservers = np.asarray(sn.nservers, dtype=float).flatten()
+    nservers[~np.isfinite(nservers)] = 1.0
+
+    # which station-class rates are being estimated
+    estimated = np.zeros((M, R), dtype=int)
+    P = 0
+    node_station = []
+    all_nodes = se.model.getNodes()
+    node_pos = dict((id(nd), k) for k, nd in enumerate(all_nodes))
+    for nd in nodes:
+        if id(nd) not in node_pos:
+            raise ValueError('A node handed to the estimator does not belong to the model.')
+        i = int(sn.nodeToStation[node_pos[id(nd)]])
+        node_station.append(i)
+        if i < 0 or i >= M:
+            raise ValueError('A node handed to the estimator is not a station.')
+        for r in range(R):
+            if rates[i, r] > 0 and np.isfinite(rates[i, r]):
+                P += 1
+                estimated[i, r] = P
+    if P == 0:
+        raise ValueError('No station-class pair with a positive service rate was selected.')
+
+    arcparam = np.zeros(len(arcs), dtype=int)
+    arcrate = np.full(len(arcs), np.nan)
+    for e, arc in enumerate(arcs):
+        i, c = arc[0] - 1, arc[2] - 1
+        if estimated[i, c] > 0:
+            arcparam[e] = estimated[i, c]
+        else:
+            arcrate[e] = rates[i, c]
+            if not (arcrate[e] > 0) or not np.isfinite(arcrate[e]):
+                raise ValueError('Station %d class %d has no usable rate to hold fixed.'
+                                 % (i + 1, c + 1))
+
+    # observations: QLen timeseries, one column per (station, class) pair
+    classes = se.model.getClasses()
+    series = {}
+    times = set()
+    for nd in all_nodes:
+        i = int(sn.nodeToStation[node_pos[id(nd)]])
+        if i < 0 or i >= M:
+            continue
+        for r in range(R):
+            ql = se.get_qlen(nd, classes[r])
+            if ql is None:
+                continue
+            if isinstance(ql, list):
+                if not ql:
+                    continue
+                ql = ql[0]
+            series[(i, r)] = (np.asarray(ql.t, dtype=float).flatten(),
+                              np.asarray(ql.data, dtype=float).flatten())
+            times.update(series[(i, r)][0].tolist())
+    if not series:
+        raise ValueError('The variational estimator needs QLen timeseries data.')
+    obsTimes = np.array(sorted(times), dtype=float)
+    obsData = np.full((obsTimes.size, M * R), np.nan)
+    for (i, r), (tv, dv) in series.items():
+        for k in range(tv.size):
+            pos = np.searchsorted(obsTimes, tv[k])
+            if pos < obsTimes.size and obsTimes[pos] == tv[k]:
+                obsData[pos, r * M + i] = round(float(dv[k]))
+
+    # population per class bounds both the contamination support and the load
+    njobs = np.asarray(sn.njobs, dtype=float).flatten()
+    popr = np.zeros(R)
+    for r in range(R):
+        if np.isfinite(njobs[r]):
+            popr[r] = njobs[r]
+        else:
+            col = obsData[:, r * M:(r + 1) * M]
+            col = col[~np.isnan(col)]
+            popr[r] = max(1.0, 2.0 * (col.max() if col.size else 1.0))
+    obsRange = np.zeros((M, R))
+    capacity = np.full((M, R), np.inf)
+    for r in range(R):
+        obsRange[:, r] = popr[r]
+        if np.isfinite(njobs[r]):
+            capacity[:, r] = popr[r]
+
+    x0 = np.zeros((M, R))
+    refstat = np.asarray(sn.refstat, dtype=int).flatten()
+    for r in range(R):
+        if np.isfinite(njobs[r]) and njobs[r] > 0:
+            ref = int(refstat[r])
+            x0[ref if 0 <= ref < M else 0, r] = njobs[r]
+
+    shape0 = float(se.options.get('prior_shape', 1.0))
+    alpha0 = np.zeros(P)
+    beta0 = np.zeros(P)
+    for i in range(M):
+        for r in range(R):
+            p = estimated[i, r]
+            if p > 0:
+                alpha0[p - 1] = shape0
+                beta0[p - 1] = shape0 / rates[i, r]
+
+    spec = VariationalSpec(arcs=arcs, x0=x0, sched=sched, nservers=nservers,
+                           routeprob=routeprob, arcparam=arcparam, arcrate=arcrate,
+                           alpha0=alpha0, beta0=beta0, obsTimes=obsTimes, obsData=obsData,
+                           obsRange=obsRange, epsilon=float(se.options.get('epsilon', 0.05)),
+                           capacity=capacity)
+    vopt = VariationalOptions()
+    vopt.iter_max = int(se.options.get('iter_max', 20))
+    for name in ('tol', 'ngrid', 'dt', 'ymax', 'nsamples', 'delta', 'rate_max', 'tmax', 'verbose'):
+        if se.options.get(name, None) is not None:
+            setattr(vopt, name, se.options[name])
+
+    out = infer_variational(spec, vopt)
+    se.options['posterior'] = np.column_stack([out.alpha, out.beta])
+    se.options['bound'] = out.bound
+
+    est_val = np.zeros((len(nodes), R))
+    for n_idx, i in enumerate(node_station):
+        for r in range(R):
+            p = estimated[i, r]
+            if p > 0:
+                est_val[n_idx, r] = out.meanServiceTime[p - 1]
+            elif rates[i, r] > 0:
+                est_val[n_idx, r] = 1.0 / rates[i, r]
+    return est_val

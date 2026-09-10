@@ -77,32 +77,54 @@ public class SymEngines {
         }
         if (req.startsWith("http://") || req.startsWith("https://")) {
             SageRestEngine engine = new SageRestEngine(req);
-            return engine.isAvailable() ? engine : null;
+            return engine.isAvailable() && engine.isUsable() ? engine : null;
         }
 
         String env = System.getenv(URL_ENV);
         if (env != null && env.trim().length() > 0) {
             SageRestEngine engine = new SageRestEngine(env.trim());
-            if (engine.isAvailable()) {
+            if (engine.isAvailable() && engine.isUsable()) {
                 return engine;
             }
         }
 
-        if (started != null && started.isAvailable()) {
+        if (started != null && started.isAvailable() && started.isUsable()) {
             return started;
         }
 
         for (int i = 0; i < PROBE_PORTS.length; i++) {
             SageRestEngine engine = new SageRestEngine("http://localhost:" + PROBE_PORTS[i]);
-            if (isSageService(engine)) {
+            if (isSageService(engine) && engine.isUsable()) {
                 return engine;
             }
         }
 
+        // A container this JVM did not start, on the EPHEMERAL port startContainer
+        // gives it. PROBE_PORTS only names the two conventional ones, so a healthy
+        // line-sage-rest published on a free port was invisible and a second
+        // container was started beside it -- and since a JVM that dies without
+        // running its shutdown hook never stops the first, they accumulate: two
+        // were found on picard05 on 2026-09-09, up SEVEN DAYS and still serving.
+        // Asking docker what is already listening reuses it instead. NOT stopped
+        // by stopContainer: startedContainer stays null, because a container this
+        // process did not start is not this process's to remove.
+        SageRestEngine running = runningContainer();
+        if (running != null) {
+            return running;
+        }
+
         // see _kb/03-api-layer.md for rationale (sym/ section)
-        String image = req.length() == 0 || "auto".equalsIgnoreCase(req)
-                || "true".equalsIgnoreCase(req) || "sage".equalsIgnoreCase(req)
-                ? findImage() : req;
+        boolean search = req.length() == 0 || "auto".equalsIgnoreCase(req)
+                || "true".equalsIgnoreCase(req) || "sage".equalsIgnoreCase(req);
+        String image = search ? findImage() : req;
+        // Auto-pull only on an explicit opt-in: the "sage" keyword or a named
+        // image. Bare "auto"/"true"/"" keep the native backend unless the image
+        // is already local, so leaving symbolic on auto never triggers a pull.
+        if (image == null && "sage".equalsIgnoreCase(req)) {
+            image = pullImage(DOCKER_IMAGE);
+        } else if (!search && image != null && !jline.io.DockerImage.hasLocalImage(image)) {
+            image = pullImage(image);
+        }
         if (image == null) {
             return null;
         }
@@ -111,6 +133,50 @@ public class SymEngines {
         } catch (IOException e) {
             return null;
         }
+    }
+
+    /**
+     * A line-sage-rest container already running on this host, or null.
+     *
+     * <p>Reads the published host port out of {@code docker ps} and verifies the
+     * service the same way the port probe does, so a container that is up but
+     * unhealthy (or is some other line-*-rest) is not returned.</p>
+     *
+     * @return a usable engine for an already-running container, or null
+     */
+    private static SageRestEngine runningContainer() {
+        String out = run(15, "docker", "ps", "--filter", "name=line-sage-rest-",
+                "--format", "{{.Ports}}");
+        if (out == null) {
+            return null;
+        }
+        String[] lines = out.split("\n");
+        for (int i = 0; i < lines.length; i++) {
+            // e.g. "8888/tcp, 0.0.0.0:38572->8080/tcp, [::]:38572->8080/tcp"
+            String[] parts = lines[i].split(",");
+            for (int j = 0; j < parts.length; j++) {
+                String part = parts[j].trim();
+                int arrow = part.indexOf("->8080/tcp");
+                if (arrow < 0) {
+                    continue;
+                }
+                int colon = part.lastIndexOf(':', arrow);
+                if (colon < 0) {
+                    continue;
+                }
+                String port = part.substring(colon + 1, arrow).trim();
+                try {
+                    Integer.parseInt(port);
+                } catch (NumberFormatException e) {
+                    continue;
+                }
+                SageRestEngine engine = new SageRestEngine("http://localhost:" + port);
+                if (isSageService(engine) && engine.isUsable()) {
+                    return engine;
+                }
+            }
+        }
+        return null;
     }
 
     /**
@@ -127,6 +193,27 @@ public class SymEngines {
         } catch (IOException e) {
             return false;
         }
+    }
+
+    /**
+     * Pull {@code target} if the Docker storage location has room; return the
+     * tag on success, else null. Storage-guarded via {@link jline.io.DockerImage}
+     * (same guard as the LQNS/QNS/JMT wrappers), so an opt-in symbolic request
+     * never silently fills the Docker disk; on refusal the caller keeps its
+     * native algebra.
+     */
+    private static String pullImage(String target) {
+        if (!jline.io.DockerImage.hasStorageFor(target)) {
+            System.err.println("[LINE] Skipping docker pull of " + target
+                    + ": insufficient free space at the Docker storage location; "
+                    + "keeping the native symbolic backend.");
+            return null;
+        }
+        System.out.println("[LINE] Pulling Docker image " + target + " (this may take a while)...");
+        if (jline.io.DockerImage.pull(target) && jline.io.DockerImage.hasLocalImage(target)) {
+            return target;
+        }
+        return null;
     }
 
     /**
@@ -169,8 +256,16 @@ public class SymEngines {
         long deadline = System.currentTimeMillis() + STARTUP_TIMEOUT_SECONDS * 1000L;
         while (System.currentTimeMillis() < deadline) {
             if (engine.isAvailable()) {
-                started = engine;
-                return engine;
+                if (engine.isUsable()) {
+                    started = engine;
+                    return engine;
+                }
+                // Booted, but its arithmetic dies on this CPU. Keeping it
+                // running would only cost memory, and returning it would hand
+                // the caller a backend that kills every request.
+                stopContainer();
+                throw new IOException("container " + name + " answers but cannot evaluate on "
+                        + "this CPU");
             }
             try {
                 Thread.sleep(500);

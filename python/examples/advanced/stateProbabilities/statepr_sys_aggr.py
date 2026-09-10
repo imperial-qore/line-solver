@@ -95,6 +95,8 @@ print('Computing getProbSysAggr() with multiple solvers:\n')
 solver_ctmc = CTMC(model, options)
 pr_ctmc = solver_ctmc.getProbSysAggr()
 print(f'CTMC: Pr_ctmc = {pr_ctmc}')
+print('Pr_ctmc =')
+print(pr_ctmc)
 
 solver_nc = NC(model, dict(options, method='exact'))
 pr_nc = solver_nc.getProbSysAggr()

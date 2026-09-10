@@ -37,7 +37,7 @@ model.link(P);
 q1.setState([1 2 3 4 5 6]);   % Fig. 6a initial placement (reducible model input)
 
 fprintf('=== CTMC (exact) ===\n');
-Tc = CTMC(model, 'cutoff', 6).getAvgTable;
+Tc = CTMC(model, 'exact', 'cutoff', 6).getAvgTable;
 fprintf('=== SolverNC method=''sampling'' (importance sampling, 5e5 samples) ===\n');
 Tn = NC(model, 'method', 'sampling', 'samples', 5e5, 'seed', 777, 'verbose', false).getAvgTable;
 

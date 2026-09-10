@@ -940,12 +940,40 @@ class HostDemand(DecisionVariable):
 
         The host-layer rows are (Layer=processor, Station=processor,
         JobClass=activity); the sensitivity value is d(metric)/d(service rate).
+        This is the 'srvn.cs' spelling of the key -- see `sensKeys` for the one
+        the caller should read, which also covers 'srvn.ph'.
         """
         from .layered import activity_processor_name
         proc = activity_processor_name(model, self._activity)
         if proc is None:
             return None
         return (proc, self._activity)
+
+    def sensKeys(self, model: 'Network') -> List[tuple]:
+        """Candidate row keys of this variable, most specific first.
+
+        The LN method decides how a host layer names its classes: 'srvn.cs'
+        names them after the ACTIVITY, 'srvn.ph' -- the method the 'srvn'
+        default resolves to on every model that admits it -- collapses each
+        caller into ONE phase-type class named after the TASK. Both spellings
+        are returned so the gradient reads the table the solver actually
+        produced instead of assuming one method.
+
+        The task-level row is coarser: it holds the derivative with respect to
+        the whole caller's composed service rate, so on a task with several
+        activities the same row serves each of them. That is a further bias on
+        top of the within-layer one this table already carries, and 'fd' /
+        'partial_plus_fd' are what correct it.
+        """
+        from .layered import activity_processor_name, activity_task_name
+        proc = activity_processor_name(model, self._activity)
+        if proc is None:
+            return []
+        keys = [(proc, self._activity)]
+        task = activity_task_name(model, self._activity)
+        if task is not None and task != self._activity:
+            keys.append((proc, task))
+        return keys
 
     def sensMetricTargets(self, model: 'Network') -> Dict[str, tuple]:
         """Map each layer-row metric to the EvaluationResult key it approximates.
@@ -978,6 +1006,7 @@ class HostDemand(DecisionVariable):
 
     get_activity = getActivity
     sens_key = sensKey
+    sens_keys = sensKeys
     sens_metric_targets = sensMetricTargets
     rate_jacobian = rateJacobian
     decode_jacobian = decodeJacobian

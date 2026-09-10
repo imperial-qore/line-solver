@@ -15,6 +15,7 @@
  % @par Syntax:
  % @code
  % [gamma, u, n, h] = cache_gamma_lp(lambda, R)
+ % [gamma, u, n, h, parent] = cache_gamma_lp(lambda, R)
  % @endcode
  %
  % @par Parameters:
@@ -31,14 +32,28 @@
  % <tr><td>u<td>Number of users
  % <tr><td>n<td>Number of items
  % <tr><td>h<td>Number of cache levels
+ % <tr><td>parent<td>Parent list of each list, 1 x h, with 0 for the lists rooted in the miss list
  % </table>
 %}
-function [gamma,u,n,h]=cache_gamma_lp(lambda,R)
+function [gamma,u,n,h,parent]=cache_gamma_lp(lambda,R)
 u=size(lambda,1); % number of users
 n=size(lambda,2); % number of items
 h=size(lambda,3)-1; % number of lists
 
 gamma=zeros(n,h);
+parent=zeros(1,h);
+% tree structure read off item 1's routing matrix aggregated over users --
+% the same matrix the gamma loop walks
+Rtot = 0*R{1,1};
+for v=1:u
+    Rtot = Rtot + R{v,1};
+end
+for j=1:h
+    pj = par(Rtot, 1+j);
+    if ~isempty(pj)
+        parent(j) = pj-1; % list indices, 0 = miss list
+    end
+end
 for i = 1:n % for all items
     for j = 1:h % for all levels
         % compute gamma(i,j)

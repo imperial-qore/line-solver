@@ -1,0 +1,133 @@
+{
+  "class": {
+    "JMT": "stochastic",
+    "LDES": "stochastic"
+  },
+  "example": "sdroute_jsq",
+  "solvers": {
+    "JMT": [
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class1",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 2.1424,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 2.1424,
+        "JobClass": "Class1",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Router",
+        "Tput": 2.1424,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.70971,
+        "JobClass": "Class1",
+        "QLen": 1.1546,
+        "ResidT": 0.55909,
+        "RespT": 1.6773,
+        "Station": "Queue1",
+        "Tput": 0.7033,
+        "Util": 0.69904
+      },
+      {
+        "ArvR": 0.70313,
+        "JobClass": "Class1",
+        "QLen": 1.196,
+        "ResidT": 0.5546,
+        "RespT": 1.6638,
+        "Station": "Queue2",
+        "Tput": 0.69734,
+        "Util": 0.70625
+      },
+      {
+        "ArvR": 0.70054,
+        "JobClass": "Class1",
+        "QLen": 1.1402,
+        "ResidT": 0.55804,
+        "RespT": 1.6741,
+        "Station": "Queue3",
+        "Tput": 0.7027,
+        "Util": 0.70621
+      },
+      {
+        "ArvR": 2.1424,
+        "JobClass": "Class1",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Sink",
+        "Tput": 0.0,
+        "Util": 0.0
+      }
+    ],
+    "LDES": [
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class1",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 2.1,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 2.1,
+        "JobClass": "Class1",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Router",
+        "Tput": 2.1,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.7,
+        "JobClass": "Class1",
+        "QLen": 1.2209,
+        "ResidT": 0.57552,
+        "RespT": 1.7266,
+        "Station": "Queue1",
+        "Tput": 0.69886,
+        "Util": 0.70135
+      },
+      {
+        "ArvR": 0.7,
+        "JobClass": "Class1",
+        "QLen": 1.2207,
+        "ResidT": 0.57268,
+        "RespT": 1.7181,
+        "Station": "Queue2",
+        "Tput": 0.70236,
+        "Util": 0.70081
+      },
+      {
+        "ArvR": 0.7,
+        "JobClass": "Class1",
+        "QLen": 1.2189,
+        "ResidT": 0.57391,
+        "RespT": 1.7217,
+        "Station": "Queue3",
+        "Tput": 0.69968,
+        "Util": 0.7017
+      },
+      {
+        "ArvR": 2.1,
+        "JobClass": "Class1",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Sink",
+        "Tput": 0.0,
+        "Util": 0.0
+      }
+    ]
+  }
+}

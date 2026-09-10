@@ -9,7 +9,7 @@ now driven by both MVA and NC through ``_fj_inner_solver``.
 The tests assert (i) that the move left SolverMVA numerically unchanged, (ii)
 that SolverNC now solves fork-join models, and (iii) that the two routes agree.
 
-Python mirror of line-test.git/test_fj_driver_nc.m and
+Python mirror of line-test.git/test/testsFJ/test_fj_driver_nc.m and
 jar/src/test/java/jline/solvers/fj/FJDriverNCTest.java.
 """
 
@@ -179,7 +179,7 @@ def test_ctmc_solves_closed_forkjoin_exactly():
 
 
 def test_nc_closed_forkjoin_is_no_worse_than_mva_against_ctmc():
-    # Mirrors the accuracy check of line-test.git/test_fj_driver_nc.m. Station 4
+    # Mirrors the accuracy check of line-test.git/test/testsFJ/test_fj_driver_nc.m. Station 4
     # is the Join, whose queue length is the synchronisation delay of the
     # transformed formulation and is not comparable with the exact one.
     Qc = np.asarray(SolverCTMC(_closed_fj(3)).getAvgQLen()).ravel()

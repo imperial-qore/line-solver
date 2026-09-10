@@ -144,100 +144,134 @@ public class DirectedGraph {
         return false;
     }
 
+    /**
+     * Strongly connected components, with the bottom ones (BSCCs) flagged.
+     *
+     * <p>{@code I[v]} is the 1-based component index of vertex v, components numbered by
+     * decreasing size (ties broken by discovery order). {@code recurrent[c]} is true when no
+     * edge leaves component c; for the transition graph of a Markov chain those components are
+     * exactly its recurrent classes and the rest are transient.</p>
+     *
+     * <p>Tarjan's algorithm with an explicit depth-first stack. The recursion is unrolled
+     * deliberately: this runs on CTMC/DTMC state spaces whose graphs routinely contain paths
+     * far longer than the JVM stack can carry, and a recursive formulation overflows on them.</p>
+     */
     public SCCResult stronglyconncomp() {
+        int[] v_idx = new int[V];    // discovery index, 0 while unvisited
+        int[] v_low = new int[V];    // lowlink
+        boolean[] v_stk = new boolean[V]; // currently on the Tarjan stack
+        int[] comp = new int[V];     // component index in discovery order
+        Arrays.fill(comp, -1);
         int idx = 0;
-        List<int[]> SCC = new ArrayList<>();
-        List<Integer> stk = new ArrayList<>();
+        int ncomp = 0;
 
-        int[] v_idx = new int[V];
-        int[] v_low = new int[V];
-        boolean[] v_stk = new boolean[V];
+        int[] stk = new int[V];      // Tarjan stack
+        int nstk = 0;
 
-        for (int i = 0; i < V; i++) {
-            if (v_idx[i] == 0) {
-                SCCAuxResult auxResult = stronglyconncomp_aux(i, v_idx, v_low, v_stk, SCC, stk, idx);
-                v_idx = auxResult.v_idx;
-                v_low = auxResult.v_low;
-                v_stk = auxResult.v_stk;
-                SCC = auxResult.SCC;
-                stk = auxResult.stk;
-                idx = auxResult.idx;
+        int[] frameV = new int[V];   // DFS stack: vertex of each open frame
+        int[] frameK = new int[V];   // out-neighbours of that vertex already consumed
+        @SuppressWarnings("unchecked")
+        List<Integer>[] frameN = (List<Integer>[]) new List[V]; // neighbour list, fetched once
+
+        for (int root = 0; root < V; root++) {
+            if (v_idx[root] != 0) {
+                continue;
             }
-        }
 
-        // Sort SCCs by size
-        SCC.sort((a, b) -> Integer.compare(b.length, a.length));
+            idx++;
+            v_idx[root] = idx;
+            v_low[root] = idx;
+            stk[nstk++] = root;
+            v_stk[root] = true;
 
-        int[] I = new int[V];
-        for (int j = 0; j < SCC.size(); j++) {
-            for (int node : SCC.get(j)) {
-                I[node] = j + 1;
-            }
-        }
+            int nf = 1;
+            frameV[0] = root;
+            frameK[0] = 0;
+            frameN[0] = findOutgoing(root);
 
-        boolean[] recurrent = new boolean[SCC.size()];
-        for (int j = 0; j < SCC.size(); j++) {
-            int[] scc = SCC.get(j);
-            boolean is_recurrent = true;
-
-            // Check if any node in the SCC has outgoing edges to nodes outside the SCC
-            for (int node : scc) {
-                List<Integer> out_edges = findOutgoing(node);
-                for (int out_node : out_edges) {
-                    if (!isInArray(out_node, scc)) {
-                        is_recurrent = false;
-                        break;
+            while (nf > 0) {
+                int v = frameV[nf - 1];
+                List<Integer> nbrs = frameN[nf - 1];
+                if (frameK[nf - 1] < nbrs.size()) {
+                    int w = nbrs.get(frameK[nf - 1]);
+                    frameK[nf - 1]++;
+                    if (v_idx[w] == 0) {
+                        idx++;
+                        v_idx[w] = idx;
+                        v_low[w] = idx;
+                        stk[nstk++] = w;
+                        v_stk[w] = true;
+                        frameV[nf] = w;
+                        frameK[nf] = 0;
+                        frameN[nf] = findOutgoing(w);
+                        nf++;
+                    } else if (v_stk[w]) {
+                        v_low[v] = Math.min(v_low[v], v_idx[w]);
+                    }
+                } else {
+                    // v is exhausted: close its component if it is a root, then hand its
+                    // lowlink back to the parent frame
+                    if (v_low[v] == v_idx[v]) {
+                        while (true) {
+                            int w = stk[--nstk];
+                            v_stk[w] = false;
+                            comp[w] = ncomp;
+                            if (w == v) {
+                                break;
+                            }
+                        }
+                        ncomp++;
+                    }
+                    nf--;
+                    if (nf > 0) {
+                        int p = frameV[nf - 1];
+                        v_low[p] = Math.min(v_low[p], v_low[v]);
                     }
                 }
-                if (!is_recurrent) {
+            }
+        }
+
+        // Renumber by decreasing component size; the sort is stable, so components of equal
+        // size keep their discovery order
+        int[] counts = new int[ncomp];
+        for (int v = 0; v < V; v++) {
+            counts[comp[v]]++;
+        }
+        List<Integer> order = new ArrayList<Integer>(ncomp);
+        for (int c = 0; c < ncomp; c++) {
+            order.add(c);
+        }
+        final int[] countsRef = counts;
+        Collections.sort(order, new Comparator<Integer>() {
+            @Override
+            public int compare(Integer a, Integer b) {
+                return Integer.compare(countsRef[b], countsRef[a]);
+            }
+        });
+        int[] relabel = new int[ncomp];
+        for (int rank = 0; rank < ncomp; rank++) {
+            relabel[order.get(rank)] = rank + 1;
+        }
+
+        int[] I = new int[V];
+        for (int v = 0; v < V; v++) {
+            I[v] = relabel[comp[v]];
+        }
+
+        // A component is recurrent iff no edge leaves it
+        boolean[] recurrent = new boolean[ncomp];
+        Arrays.fill(recurrent, true);
+        for (int v = 0; v < V; v++) {
+            List<Integer> out = findOutgoing(v);
+            for (int k = 0; k < out.size(); k++) {
+                if (I[out.get(k)] != I[v]) {
+                    recurrent[I[v] - 1] = false;
                     break;
                 }
             }
-
-            recurrent[j] = is_recurrent;
         }
 
         return new SCCResult(I, recurrent);
-    }
-
-    private SCCAuxResult stronglyconncomp_aux(int i, int[] v_idx, int[] v_low, boolean[] v_stk, List<int[]> SCC, List<Integer> stk, int idx) {
-        idx++;
-        v_idx[i] = idx;
-        v_low[i] = idx;
-        stk.add(0, i);
-        v_stk[i] = true;
-
-        List<Integer> in_edges = findIncoming(i);
-
-        for (int j : in_edges) {
-            if (v_idx[j] == 0) {
-                SCCAuxResult auxResult = stronglyconncomp_aux(j, v_idx, v_low, v_stk, SCC, stk, idx);
-                v_idx = auxResult.v_idx;
-                v_low = auxResult.v_low;
-                v_stk = auxResult.v_stk;
-                SCC = auxResult.SCC;
-                stk = auxResult.stk;
-                idx = auxResult.idx;
-                v_low[i] = Math.min(v_low[i], v_low[j]);
-            } else if (v_stk[j]) {
-                v_low[i] = Math.min(v_low[i], v_idx[j]);
-            }
-        }
-
-        if (v_low[i] == v_idx[i]) {
-            int pos = stk.indexOf(i);
-            int[] scc = new int[pos + 1];
-            for (int k = 0; k <= pos; k++) {
-                scc[k] = stk.get(k);
-            }
-            stk.subList(0, pos + 1).clear();
-            for (int node : scc) {
-                v_stk[node] = false;
-            }
-            SCC.add(scc);
-        }
-
-        return new SCCAuxResult(v_idx, v_low, v_stk, SCC, stk, idx);
     }
 
     // Updated toMatrix method to return the internal adjacency matrix

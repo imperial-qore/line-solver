@@ -59,56 +59,56 @@ emlrtRSInfo gb_emlrtRSI = {
                                                                          */
 };
 
-emlrtRSInfo dc_emlrtRSI = {
+emlrtRSInfo bc_emlrtRSI = {
     73,                      /* lineNo */
     "vectorMinOrMaxInPlace", /* fcnName */
     "/usr/local/MATLAB/R2025a/toolbox/eml/eml/+coder/+internal/"
     "vectorMinOrMaxInPlace.m" /* pathName */
 };
 
-emlrtRSInfo ec_emlrtRSI = {
+emlrtRSInfo cc_emlrtRSI = {
     65,                      /* lineNo */
     "vectorMinOrMaxInPlace", /* fcnName */
     "/usr/local/MATLAB/R2025a/toolbox/eml/eml/+coder/+internal/"
     "vectorMinOrMaxInPlace.m" /* pathName */
 };
 
-emlrtRSInfo fc_emlrtRSI = {
+emlrtRSInfo dc_emlrtRSI = {
     114,         /* lineNo */
     "findFirst", /* fcnName */
     "/usr/local/MATLAB/R2025a/toolbox/eml/eml/+coder/+internal/"
     "vectorMinOrMaxInPlace.m" /* pathName */
 };
 
-emlrtRSInfo gc_emlrtRSI = {
+emlrtRSInfo ec_emlrtRSI = {
     131,                        /* lineNo */
     "minOrMaxRealVectorKernel", /* fcnName */
     "/usr/local/MATLAB/R2025a/toolbox/eml/eml/+coder/+internal/"
     "vectorMinOrMaxInPlace.m" /* pathName */
 };
 
-emlrtRSInfo nc_emlrtRSI = {
+emlrtRSInfo lc_emlrtRSI = {
     15,    /* lineNo */
     "min", /* fcnName */
     "/usr/local/MATLAB/R2025a/toolbox/eml/lib/matlab/datafun/min.m" /* pathName
                                                                      */
 };
 
-emlrtRSInfo oc_emlrtRSI = {
+emlrtRSInfo mc_emlrtRSI = {
     75,         /* lineNo */
     "minOrMax", /* fcnName */
     "/usr/local/MATLAB/R2025a/toolbox/eml/eml/+coder/+internal/minOrMax.m" /* pathName
                                                                             */
 };
 
-emlrtRSInfo pc_emlrtRSI = {
+emlrtRSInfo nc_emlrtRSI = {
     121,       /* lineNo */
     "minimum", /* fcnName */
     "/usr/local/MATLAB/R2025a/toolbox/eml/eml/+coder/+internal/minOrMax.m" /* pathName
                                                                             */
 };
 
-emlrtRSInfo qc_emlrtRSI =
+emlrtRSInfo oc_emlrtRSI =
     {
         273,             /* lineNo */
         "unaryMinOrMax", /* fcnName */
@@ -116,7 +116,7 @@ emlrtRSInfo qc_emlrtRSI =
         "unaryMinOrMax.m" /* pathName */
 };
 
-emlrtRSInfo rc_emlrtRSI =
+emlrtRSInfo pc_emlrtRSI =
     {
         962,                    /* lineNo */
         "minRealVectorOmitNaN", /* fcnName */
@@ -124,20 +124,14 @@ emlrtRSInfo rc_emlrtRSI =
         "unaryMinOrMax.m" /* pathName */
 };
 
-emlrtRSInfo od_emlrtRSI = {
-    71,                                                           /* lineNo */
-    "power",                                                      /* fcnName */
-    "/usr/local/MATLAB/R2025a/toolbox/eml/lib/matlab/ops/power.m" /* pathName */
-};
-
-emlrtRSInfo qd_emlrtRSI = {
+emlrtRSInfo cd_emlrtRSI = {
     149,                     /* lineNo */
     "combineVectorElements", /* fcnName */
     "/usr/local/MATLAB/R2025a/toolbox/eml/lib/matlab/datafun/private/"
     "combineVectorElements.m" /* pathName */
 };
 
-emlrtRSInfo rd_emlrtRSI = {
+emlrtRSInfo dd_emlrtRSI = {
     209,                /* lineNo */
     "colMajorFlatIter", /* fcnName */
     "/usr/local/MATLAB/R2025a/toolbox/eml/lib/matlab/datafun/private/"
@@ -148,7 +142,14 @@ omp_lock_t emlrtLockGlobal;
 
 omp_nest_lock_t pfqn_panacea_nestLockGlobal;
 
-emlrtRTEInfo b_emlrtRTEI =
+emlrtRTEInfo emlrtRTEI = {
+    14,                                                           /* lineNo */
+    9,                                                            /* colNo */
+    "log",                                                        /* fName */
+    "/usr/local/MATLAB/R2025a/toolbox/eml/lib/matlab/elfun/log.m" /* pName */
+};
+
+emlrtRTEInfo d_emlrtRTEI =
     {
         198,             /* lineNo */
         27,              /* colNo */
@@ -157,14 +158,7 @@ emlrtRTEInfo b_emlrtRTEI =
         "unaryMinOrMax.m" /* pName */
 };
 
-emlrtRTEInfo e_emlrtRTEI = {
-    14,                                                           /* lineNo */
-    9,                                                            /* colNo */
-    "log",                                                        /* fName */
-    "/usr/local/MATLAB/R2025a/toolbox/eml/lib/matlab/elfun/log.m" /* pName */
-};
-
-emlrtRTEInfo q_emlrtRTEI = {
+emlrtRTEInfo o_emlrtRTEI = {
     8,                                                             /* lineNo */
     1,                                                             /* colNo */
     "factln",                                                      /* fName */

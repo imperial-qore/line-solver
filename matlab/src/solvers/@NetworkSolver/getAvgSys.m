@@ -28,7 +28,10 @@ for f=find(sn.nodetype == NodeType.Fork)'
             if RN(sn.nodeToStation(joinIdx), r) == 0
                 % Find the parallel paths coming out of the fork
                 %[ri, stat, RN] = ModelAdapter.paths(sn, self.model.getLinkedRoutingMatrix{r,r}, f, joinIdx, r, RN, 0, []);
-                [ri, stat, RN] = ModelAdapter.pathsCS(sn, cell2mat(self.model.getLinkedRoutingMatrix), f, joinIdx, r, RN, 0, []);
+                % pathsCS indexes the class-expanded routing matrix as
+                % (class-1)*orignodes + node, so the node count is an argument
+                % in its own right and cannot be inferred from the matrix
+                [ri, stat, RN] = ModelAdapter.pathsCS(sn, sn.nnodes, cell2mat(self.model.getLinkedRoutingMatrix), f, joinIdx, r, RN, 0, []);
                 lambdai = 1./ri;
                 d0 = 0;
                 parallel_branches = length(ri);

@@ -157,7 +157,25 @@ public class Solver_ctmc {
         // see _kb/06-solver-catalog.md for rationale
         boolean fcrWaitq = sn.nregions > 0;
 
+        // Global (Whittle) dependence: phi(n) reads the FULL population matrix, so
+        // within a state it is a constant that factors out of every rate at that
+        // state; tabulate it once per state. See _kb/11-conventions-and-gotchas.md
+        boolean hasGD = sn.gdscaling != null;
+        Matrix gdFactor = null;
+        if (hasGD) {
+            if (fcrWaitq) {
+                throw new IllegalArgumentException("A global dependence (setGlobalDependence) cannot be combined with finite capacity regions: the region generator builds its own transitions and would ignore the scaling.");
+            }
+            gdFactor = gdFactorTable(sn, stateSpaceAggr, options);
+        }
+
         MatrixCell Dfilt = new MatrixCell();
+        // Derived START/PREEMPT filtrations, one matrix per (station, class).
+        // They live OUTSIDE Dfilt on purpose: a START rides on the same arc as
+        // the ARV or DEP that causes it, so adding it to the event filtration
+        // would double-count D1 wherever the filtration is summed.
+        Matrix[][] DfiltStart = new Matrix[sn.nstations][sn.nclasses];
+        Matrix[][] DfiltPreempt = new Matrix[sn.nstations][sn.nclasses];
         // see _kb/06-solver-catalog.md for rationale
         Matrix basBlockQ = null;
         int local = sn.nnodes + 1;
@@ -174,6 +192,12 @@ public class Solver_ctmc {
         basBlockQ = new Matrix(sizeGen, sizeGen);
         for (int a = 0; a < A; a++) {
             Dfilt.set(a, new Matrix(sizeGen, sizeGen));
+        }
+        for (int i = 0; i < sn.nstations; i++) {
+            for (int r = 0; r < sn.nclasses; r++) {
+                DfiltStart[i][r] = new Matrix(sizeGen, sizeGen);
+                DfiltPreempt[i][r] = new Matrix(sizeGen, sizeGen);
+            }
         }
         for (int a = 0; a < A; a++) {
             MatrixCell stateCell = new MatrixCell();
@@ -202,6 +226,17 @@ public class Solver_ctmc {
 
                 Matrix new_state_a = eventResult.outspace;
                 Matrix rate_a = eventResult.outrate;
+
+                if (hasGD && sn.isstation.get(node_a, 0) == 1.0
+                        && (event_a == EventType.DEP || event_a == EventType.PHASE)) {
+                    // PHASE is scaled too, or phase-type service would advance unscaled
+                    int ist_a = (int) sn.nodeToStation.get(node_a);
+                    double f = gdFactor.get(s, ist_a + class_a * sn.nstations);
+                    rate_a = rate_a.copy();
+                    for (int ridx = 0; ridx < rate_a.length(); ridx++) {
+                        rate_a.set(ridx, rate_a.get(ridx) * f);
+                    }
+                }
 
                 boolean allInvalid = true;
                 for (int checkIdx = 0; checkIdx < new_state_a.length(); checkIdx++) {
@@ -350,6 +385,11 @@ public class Solver_ctmc {
                                             } else {
                                                 Dfilt.get(a).set(s, ns, finalRate);
                                             }
+                                            // Both halves of the synchronization are tagged: a DEP
+                                            // promotes at the sender while the paired ARV starts or
+                                            // preempts at the receiver.
+                                            addAuxFilt(DfiltStart, DfiltPreempt, sn, node_a, s, ns, finalRate, eventResult, ia);
+                                            addAuxFilt(DfiltStart, DfiltPreempt, sn, node_p, s, ns, finalRate, afterEventResult, ip);
                                         }
                                     }
                                 }
@@ -396,6 +436,9 @@ public class Solver_ctmc {
                                         } else {
                                             Dfilt.get(a).set(s, ns, rate_a.get(ia) * prob_sync_p);
                                         }
+                                        // local action: only the active node can tag
+                                        addAuxFilt(DfiltStart, DfiltPreempt, sn, node_a, s, ns,
+                                                rate_a.get(ia) * prob_sync_p, eventResult, ia);
                                     }
                                 }
                             }
@@ -772,88 +815,68 @@ public class Solver_ctmc {
         // This runs before the immediate-state removal below, since the initial state may
         // itself be vanishing and is then absent from the complemented chain.
         // Mirrors MATLAB solver_ctmc.m.
-        if (sn.state != null && !sn.state.isEmpty()) {
-            boolean allStatesSet = true;
-            for (int isf = 0; isf < nstateful; isf++) {
-                Matrix row_isf = sn.state.get(sn.stateful.get(isf));
-                if (row_isf == null || row_isf.isEmpty()) {
-                    allStatesSet = false;
-                    break;
+        int initState = initialStateIndex(sn, nstateful, stateSpace);
+        if (initState >= 0) {
+            int nQ = Q.getNumRows();
+            boolean[] reach = new boolean[nQ];
+            reach[initState] = true;
+            List<Integer> frontier = new ArrayList<Integer>();
+            frontier.add(initState);
+            while (!frontier.isEmpty()) {
+                List<Integer> next = new ArrayList<Integer>();
+                for (int fi = 0; fi < frontier.size(); fi++) {
+                    int s = frontier.get(fi).intValue();
+                    for (int ns = 0; ns < nQ; ns++) {
+                        if (ns == s || reach[ns]) continue;
+                        // any nonzero off-diagonal is an arc: an ME embeds with negative ones
+                        if (Math.abs(Q.get(s, ns)) > jline.GlobalConstants.ArcTol) {
+                            reach[ns] = true;
+                            next.add(ns);
+                        }
+                    }
                 }
+                frontier = next;
             }
-            if (allStatesSet) {
-                // The per-station initial rows carry only as many buffer slots as the
-                // initial population needs, while the enumerated local space is sized for
-                // the full capacity. Left-pad each row to its space width (empty buffer
-                // slots pad the left, so the server-phase and local-variable tail stays
-                // aligned) before matching; without this the lookup fails and the pruning
-                // is silently skipped, leaving any enumerated-but-unreachable state to
-                // break the stationary solve.
-                Matrix initRow = new Matrix(0, 0);
-                for (int isf = 0; isf < nstateful; isf++) {
-                    Matrix row_isf = Matrix.extractRows(sn.state.get(sn.stateful.get(isf)), 0, 1, null);
-                    Matrix space_isf = sn.space.get(sn.stateful.get(isf));
-                    int w_isf = space_isf == null ? row_isf.getNumCols() : space_isf.getNumCols();
-                    if (row_isf.getNumCols() < w_isf) {
-                        Matrix pad = new Matrix(1, w_isf - row_isf.getNumCols());
-                        pad.zero();
-                        row_isf = pad.concatCols(row_isf);
-                    }
-                    initRow = initRow.isEmpty() ? row_isf : initRow.concatCols(row_isf);
+            List<Integer> keep = new ArrayList<Integer>();
+            for (int s = 0; s < nQ; s++) {
+                if (reach[s]) keep.add(s);
+            }
+            if (keep.size() < nQ) {
+                // state indices shift, the vanishing predicate must be re-evaluated
+                immPurged = null;
+                Q = Ctmc_makeinfgen.ctmc_makeinfgen(submatrix(Q, keep, keep));
+                stateSpace = subrows(stateSpace, keep);
+                stateSpaceAggr = subrows(stateSpaceAggr, keep);
+                stateSpaceHashed = subrows(stateSpaceHashed, keep);
+                arvRates = subrates(arvRates, keep, nstateful, nclasses);
+                depRates = subrates(depRates, keep, nstateful, nclasses);
+                for (int a = 0; a < A; a++) {
+                    Dfilt.set(a, submatrix(Dfilt.get(a), keep, keep));
                 }
-                int initState = -1;
-                if (initRow.getNumCols() == stateSpace.getNumCols()) {
-                    initState = Matrix.matchrow(stateSpace, initRow);
-                }
-                if (initState >= 0) {
-                    int nQ = Q.getNumRows();
-                    boolean[] reach = new boolean[nQ];
-                    reach[initState] = true;
-                    List<Integer> frontier = new ArrayList<Integer>();
-                    frontier.add(initState);
-                    while (!frontier.isEmpty()) {
-                        List<Integer> next = new ArrayList<Integer>();
-                        for (int fi = 0; fi < frontier.size(); fi++) {
-                            int s = frontier.get(fi).intValue();
-                            for (int ns = 0; ns < nQ; ns++) {
-                                if (ns == s || reach[ns]) continue;
-                                // any nonzero off-diagonal is an arc: an ME embeds with negative ones
-                                if (Math.abs(Q.get(s, ns)) > 1e-12) {
-                                    reach[ns] = true;
-                                    next.add(ns);
-                                }
-                            }
+                for (int i = 0; i < sn.nstations; i++) {
+                    for (int r = 0; r < sn.nclasses; r++) {
+                        if (DfiltStart[i][r] != null) {
+                            DfiltStart[i][r] = submatrix(DfiltStart[i][r], keep, keep);
                         }
-                        frontier = next;
-                    }
-                    List<Integer> keep = new ArrayList<Integer>();
-                    for (int s = 0; s < nQ; s++) {
-                        if (reach[s]) keep.add(s);
-                    }
-                    if (keep.size() < nQ) {
-                        Q = Ctmc_makeinfgen.ctmc_makeinfgen(submatrix(Q, keep, keep));
-                        stateSpace = subrows(stateSpace, keep);
-                        stateSpaceAggr = subrows(stateSpaceAggr, keep);
-                        stateSpaceHashed = subrows(stateSpaceHashed, keep);
-                        arvRates = subrates(arvRates, keep, nstateful, nclasses);
-                        depRates = subrates(depRates, keep, nstateful, nclasses);
-                        for (int a = 0; a < A; a++) {
-                            Dfilt.set(a, submatrix(Dfilt.get(a), keep, keep));
-                        }
-                        for (int k = 0; k < FJ; k++) {
-                            if (DfiltFjsync[k] != null) {
-                                DfiltFjsync[k] = submatrix(DfiltFjsync[k], keep, keep);
-                            }
-                        }
-                        for (int g = 0; g < G; g++) {
-                            if (DfiltGsyncComp[g] != null) {
-                                DfiltGsyncComp[g] = submatrix(DfiltGsyncComp[g], keep, keep);
-                            }
+                        if (DfiltPreempt[i][r] != null) {
+                            DfiltPreempt[i][r] = submatrix(DfiltPreempt[i][r], keep, keep);
                         }
                     }
                 }
+                for (int k = 0; k < FJ; k++) {
+                    if (DfiltFjsync[k] != null) {
+                        DfiltFjsync[k] = submatrix(DfiltFjsync[k], keep, keep);
+                    }
+                }
+                for (int g = 0; g < G; g++) {
+                    if (DfiltGsyncComp[g] != null) {
+                        DfiltGsyncComp[g] = submatrix(DfiltGsyncComp[g], keep, keep);
+                    }
+                }
+                initState = keep.indexOf(Integer.valueOf(initState));
             }
         }
+        Matrix pi0 = null;
 
         if (options.config.hide_immediate) {
             List<Double> imm_unique = (immPurged != null) ? immPurged
@@ -909,6 +932,38 @@ public class Solver_ctmc {
                 for (int i = 0; i < imm_unique.size(); i++) immSetMap.put(imm_unique.get(i).intValue(), i);
                 Map<Integer, Integer> nonimmSet = new HashMap<Integer, Integer>(nonimm.size() * 2);
                 for (int i = 0; i < nonimm.size(); i++) nonimmSet.put(nonimm.get(i).intValue(), i);
+
+                // Carry the declared initial state through the complementation. A vanishing
+                // initial state is left in zero time, so its seed is the first-entry
+                // distribution (-Q22)^-1 Q21 over the retained states; a retained one just
+                // moves to its new index. See _kb/11-conventions-and-gotchas.md.
+                if (initState >= 0) {
+                    Integer posNonimm = nonimmSet.get(Integer.valueOf(initState));
+                    if (posNonimm != null) {
+                        pi0 = new Matrix(1, nonimm.size());
+                        pi0.set(0, posNonimm.intValue(), 1.0);
+                    } else if (stochcompResult.entry != null) {
+                        // the complement block is ordered by ascending state index, not by
+                        // the order in which the vanishing states were discovered
+                        int nStatesPreComp = imm_unique.size() + nonimm.size();
+                        int posImm = -1;
+                        for (int s = 0, seen = 0; s < nStatesPreComp; s++) {
+                            if (nonimmSet.containsKey(Integer.valueOf(s))) continue;
+                            if (s == initState) { posImm = seen; break; }
+                            seen++;
+                        }
+                        if (posImm >= 0 && posImm < stochcompResult.entry.getNumRows()) {
+                            Matrix entryRow = stochcompResult.entry.getRow(posImm);
+                            double tot = entryRow.elementSum();
+                            if (tot > 0) {
+                                pi0 = new Matrix(1, nonimm.size());
+                                for (int j = 0; j < nonimm.size(); j++) {
+                                    pi0.set(0, j, entryRow.get(0, j) / tot);
+                                }
+                            }
+                        }
+                    }
+                }
 
                 @SuppressWarnings("unchecked")
                 LinearSolverDense<DMatrixRMaj> denseLU =
@@ -1115,6 +1170,18 @@ public class Solver_ctmc {
                     Dfilt.set(a, dfilt_value);
                 }
 
+                // The derived filtrations are complemented exactly like Dfilt: a
+                // service start that lands on a vanishing state would otherwise
+                // be dropped and the START rate would undercount by that path.
+                for (int i = 0; i < sn.nstations; i++) {
+                    for (int r = 0; r < sn.nclasses; r++) {
+                        DfiltStart[i][r] = complementAux(DfiltStart[i][r], nonimmSet, immSetMap,
+                                nImm, nNonimm, Q12, stochcompResult.Q22);
+                        DfiltPreempt[i][r] = complementAux(DfiltPreempt[i][r], nonimmSet, immSetMap,
+                                nImm, nNonimm, Q12, stochcompResult.Q22);
+                    }
+                }
+
                 if (FJ == 0 && nImm == 0) {
                     // (when there are vanishing states the rates were already
                     // recomputed above on the nonimm-restricted index set)
@@ -1137,7 +1204,110 @@ public class Solver_ctmc {
             }
         }
 
-        return new ResultCTMC(Q, stateSpace, stateSpaceAggr, Dfilt, arvRates, depRates, sn);
+        ResultCTMC ctmcResult = new ResultCTMC(Q, stateSpace, stateSpaceAggr, Dfilt, arvRates, depRates, sn);
+        ctmcResult.setPi0(pi0);
+        ctmcResult.setAuxFilt(DfiltStart, DfiltPreempt);
+        return ctmcResult;
+    }
+
+    /**
+     * Stochastic complement of one derived filtration over the non-vanishing
+     * states, mirroring what the loop above does for Dfilt.
+     */
+    private static Matrix complementAux(Matrix F, Map<Integer, Integer> nonimmSet, Map<Integer, Integer> immSetMap,
+                                        int nImm, int nNonimm, Matrix Q12, Matrix Q22) {
+        if (F == null) {
+            return null;
+        }
+        DMatrixSparseCSC sparseF = F.toDMatrixSparseCSC();
+        Matrix restricted = new Matrix(nNonimm, nNonimm);
+        Matrix Q21a = new Matrix(nImm, nNonimm);
+        for (int c = 0; c < sparseF.getNumCols(); c++) {
+            Integer newCol = nonimmSet.get(c);
+            if (newCol == null) continue;
+            int idx0 = sparseF.col_idx[c];
+            int idx1 = sparseF.col_idx[c + 1];
+            for (int idx = idx0; idx < idx1; idx++) {
+                int r = sparseF.nz_rows[idx];
+                Integer newRowN = nonimmSet.get(r);
+                if (newRowN != null) {
+                    restricted.set(newRowN, newCol, sparseF.nz_values[idx]);
+                    continue;
+                }
+                Integer newRowI = immSetMap.get(r);
+                if (newRowI != null) {
+                    Q21a.set(newRowI, newCol, sparseF.nz_values[idx]);
+                }
+            }
+        }
+        if (Q21a.getNumNonZeros() > 0) {
+            Matrix T = new Matrix(nImm, nNonimm);
+            Matrix.solve(Q22.neg(), Q21a, T);
+            Matrix Ta = Q12.mult(T);
+            if (Ta.getNumNonZeros() > 0) {
+                restricted.add(Ta);
+            }
+        }
+        return restricted;
+    }
+
+    /**
+     * Accumulate the START/PREEMPT annotation of one successor row into the
+     * derived filtrations of the station behind NODE. W is the same weight the
+     * caller added to Dfilt, so the filtration integrates rate * count and
+     * pi*F*e is a rate of starts (or of preemptions) per unit time.
+     */
+    private static void addAuxFilt(Matrix[][] startFilt, Matrix[][] preemptFilt, NetworkStruct sn,
+                                   int node, int s, int ns, double w, Ret.EventResult res, int row) {
+        if (w == 0 || res == null || node < 0 || node >= sn.nnodes || sn.isstation.get(node, 0) != 1.0) {
+            return;
+        }
+        int ist = (int) sn.nodeToStation.get(node);
+        for (int r = 0; r < sn.nclasses; r++) {
+            double st = res.startOf(row, r);
+            if (st != 0 && startFilt[ist][r] != null) {
+                startFilt[ist][r].set(s, ns, startFilt[ist][r].get(s, ns) + w * st);
+            }
+            double pr = res.preemptOf(row, r);
+            if (pr != 0 && preemptFilt[ist][r] != null) {
+                preemptFilt[ist][r].set(s, ns, preemptFilt[ist][r].get(s, ns) + w * pr);
+            }
+        }
+    }
+
+    /**
+     * Index of the declared initial state in the given state space, or -1.
+     *
+     * <p>The per-station initial rows carry only as many buffer slots as the initial
+     * population needs, while the enumerated local space is sized for the full capacity.
+     * Each row is left-padded to its space width (empty buffer slots pad the left, so the
+     * server-phase and local-variable tail stays aligned) before matching; without this the
+     * lookup fails silently. Mirrors MATLAB solver_ctmc.m.
+     */
+    private static int initialStateIndex(NetworkStruct sn, int nstateful, Matrix stateSpace) {
+        if (sn.state == null || sn.state.isEmpty()) {
+            return -1;
+        }
+        Matrix initRow = new Matrix(0, 0);
+        for (int isf = 0; isf < nstateful; isf++) {
+            Matrix row_isf = sn.state.get(sn.stateful.get(isf));
+            if (row_isf == null || row_isf.isEmpty()) {
+                return -1;
+            }
+            row_isf = Matrix.extractRows(row_isf, 0, 1, null);
+            Matrix space_isf = sn.space.get(sn.stateful.get(isf));
+            int w_isf = space_isf == null ? row_isf.getNumCols() : space_isf.getNumCols();
+            if (row_isf.getNumCols() < w_isf) {
+                Matrix pad = new Matrix(1, w_isf - row_isf.getNumCols());
+                pad.zero();
+                row_isf = pad.concatCols(row_isf);
+            }
+            initRow = initRow.isEmpty() ? row_isf : initRow.concatCols(row_isf);
+        }
+        if (initRow.getNumCols() != stateSpace.getNumCols()) {
+            return -1;
+        }
+        return Matrix.matchrow(stateSpace, initRow);
     }
 
     /**
@@ -1356,6 +1526,57 @@ public class Solver_ctmc {
             for (int j = 0; j < nstateful; j++) {
                 for (int k = 0; k < nclasses; k++) {
                     out[i][j][k] = rates[r][j][k];
+                }
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Tabulates the globally state-dependent rate scaling phi(n) declared through
+     * {@link jline.lang.Network#setGlobalDependence}, one evaluation per CTMC state.
+     * Returns an (nstates x nstations*nclasses) matrix whose (s, i + r*M) entry is
+     * the scaling of class r at station i in state s, i.e. the column-major
+     * flattening of the (nstations x nclasses) matrix phi returns.
+     *
+     * <p>The handle is evaluated ONCE per state and never per transition: phi may be
+     * expensive, and within a state it is a constant multiplying every rate there.
+     */
+    private static Matrix gdFactorTable(NetworkStruct sn, Matrix stateSpaceAggr, SolverOptions options) {
+        int M = sn.nstations;
+        int K = sn.nclasses;
+        int nstates = stateSpaceAggr.getNumRows();
+        long entries = (long) nstates * M * K;
+        long maxEntries = 30000000L;
+        if (entries > maxEntries) {
+            throw new IllegalArgumentException("The global dependence table would hold " + entries
+                    + " entries (" + nstates + " states x " + M + " stations x " + K
+                    + " classes), above the budget " + maxEntries + ". Lower options.cutoff.");
+        }
+        Matrix out = new Matrix(nstates, M * K);
+        Matrix n = new Matrix(M, K);
+        for (int s = 0; s < nstates; s++) {
+            // columns (i*K)..(i*K+K-1) of stateSpaceAggr hold station i
+            for (int i = 0; i < M; i++) {
+                for (int r = 0; r < K; r++) {
+                    n.set(i, r, stateSpaceAggr.get(s, i * K + r));
+                }
+            }
+            Matrix v = sn.gdscaling.apply(n);
+            for (int i = 0; i < M; i++) {
+                for (int r = 0; r < K; r++) {
+                    double f;
+                    if (v.length() == 1) {
+                        f = v.get(0);
+                    } else if (v.getNumCols() == 1) {
+                        f = v.get(i, 0);
+                    } else {
+                        f = v.get(i, r);
+                    }
+                    if (!Double.isFinite(f) || f < 0) {
+                        throw new IllegalArgumentException("The global dependence handle returned a non-finite or negative scaling at state " + s + ".");
+                    }
+                    out.set(s, i + r * M, f);
                 }
             }
         }

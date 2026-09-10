@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Order two is determined by (p, F, B); order three needs the second-order
  * backward moment as well, because the canonical D1 has one more nonzero. The
  * independent characteristic set is derived in
- * sage/proofs/mmap3k_marking_inverse.py.
+ * io/sage/proofs/mmap3k_marking_inverse.py.
  */
 public class Mmap3kFitTest {
 

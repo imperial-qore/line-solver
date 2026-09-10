@@ -337,6 +337,62 @@ def _find_param(section: ET.Element, name: str) -> Optional[ET.Element]:
     return None
 
 
+def _param_int(section: ET.Element, name: str) -> Optional[int]:
+    """Read a scalar integer <parameter name=...> of a section."""
+    param = _find_param(section, name)
+    if param is None:
+        return None
+    value = param.find('value')
+    if value is None or not value.text:
+        return None
+    try:
+        return int(float(value.text))
+    except ValueError:
+        return None
+
+
+def _parse_class_switch_matrix(section: ET.Element) -> Dict[str, Dict[str, float]]:
+    """Parse the ClassSwitch section into {from class: {to class: probability}}.
+
+    The matrix is a per-class array of per-class rows, so the interleaved
+    refClass/subParameter layout appears twice, once per index.
+    """
+    matrix: Dict[str, Dict[str, float]] = {}
+    param = _find_param(section, 'matrix')
+    if param is None:
+        return matrix
+    for from_class, row in _walk_class_array(param):
+        entries: Dict[str, float] = {}
+        for to_class, cell in _walk_class_array(row):
+            value = cell.find('value')
+            if value is not None and value.text:
+                try:
+                    entries[to_class] = float(value.text)
+                except ValueError:
+                    pass
+        matrix[from_class] = entries
+    return matrix
+
+
+def _parse_join_required(section: ET.Element) -> Dict[str, int]:
+    """Parse the Join section into {class: numRequired}, JMT's -1 meaning all."""
+    required: Dict[str, int] = {}
+    param = _find_param(section, 'JoinStrategy')
+    if param is None:
+        return required
+    for class_name, strat in _walk_class_array(param):
+        for sub in strat.findall('subParameter'):
+            if sub.get('name') != 'numRequired':
+                continue
+            value = sub.find('value')
+            if value is not None and value.text:
+                try:
+                    required[class_name] = int(float(value.text))
+                except ValueError:
+                    pass
+    return required
+
+
 def _parse_jmt_distr(strat_elem: ET.Element) -> Optional[Dict[str, Any]]:
     """Parse a JMT ServiceTimeStrategy subParameter into a distribution spec.
 
@@ -363,10 +419,18 @@ def _parse_jmt_distr(strat_elem: ET.Element) -> Optional[Dict[str, Any]]:
 
 
 def _parse_service_array(section: ET.Element) -> Dict[str, Optional[Dict[str, Any]]]:
-    """Parse the per-class ServiceStrategy array of a RandomSource/Server/Delay
-    section into {className: distr_spec_or_None}."""
+    """Parse the per-class service/arrival distribution array of a
+    RandomSource/Server/PSServer/Delay section into {className: distr_spec_or_None}.
+
+    JMT names the distribution array 'ServiceStrategy' in RandomSource, Server and
+    Delay sections but 'ServerStrategy' in a PSServer section, so both keys are
+    accepted here; otherwise the per-class service rates of a processor-sharing
+    queue are silently dropped (MATLAB/JAR read this array positionally and do
+    not hit the mismatch)."""
     result = {}
     param = _find_param(section, 'ServiceStrategy')
+    if param is None:
+        param = _find_param(section, 'ServerStrategy')
     if param is None:
         return result
     for class_name, strat in _walk_class_array(param):
@@ -568,10 +632,15 @@ def _parse_jsim_node(node_elem: ET.Element) -> Optional[Dict[str, Any]]:
         node_spec['type'] = 'Delay'
     elif 'ClassSwitch' in sec_classes:
         node_spec['type'] = 'ClassSwitch'
+        node_spec['csmatrix'] = _parse_class_switch_matrix(sections_map['ClassSwitch'])
     elif 'Fork' in sec_classes:
         node_spec['type'] = 'Fork'
+        tasks = _param_int(sections_map['Fork'], 'jobsPerLink')
+        if tasks is not None:
+            node_spec['tasks_per_link'] = tasks
     elif 'Join' in sec_classes:
         node_spec['type'] = 'Join'
+        node_spec['join_required'] = _parse_join_required(sections_map['Join'])
     elif any(sc in ('Server', 'PSServer') for sc in sec_classes):
         node_spec['type'] = 'Queue'
 

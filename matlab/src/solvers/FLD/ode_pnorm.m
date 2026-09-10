@@ -7,6 +7,23 @@ function dx = ode_pnorm(x, Phi, Mu, PH, M, K, enabled, q_indices, rt, Kic, nserv
 % This provides a smoother approximation than softmin, improving ODE stability
 % for stiff problems.
 %
+% @param x State vector: per (station, class) blocks of phase populations,
+%        laid out at the offsets given by q_indices
+% @param Phi Cell array Phi{i}{c}(k), completion probability of phase k of
+%        class c at station i
+% @param Mu Cell array Mu{i}{c}(k), phase-k service rate of class c at station i
+% @param PH Cell array of the phase-type service representations per station
+%        and class, read for the entry vector of a restarted service
+% @param M Number of stations
+% @param K Number of classes
+% @param enabled (M x K) flag marking the station-class pairs that are active
+% @param q_indices (M x K) index of the first phase of class c at station i
+%        within x
+% @param rt ((M*K) x (M*K)) routing table between station-class pairs
+% @param Kic (M x K) number of phases of class c at station i
+% @param nservers (M x 1) server count per station, Inf for infinite server
+% @param w (M x K) scheduling weights, used by the share disciplines
+% @param sched_id (M x 1) numeric scheduling strategy per station
 % @param pstar Smoothing parameter vector (one per station) or scalar
 %
 % Copyright (c) 2012-2026, Imperial College London

@@ -735,6 +735,60 @@ public class Maths {
         return v;
     }
 
+    /**
+     * Pick vectors of S units from the units available in vector n.
+     *
+     * <p>Twin of the MATLAB util multichoosecon.m. Unlike multichoose, which
+     * enumerates every composition of S, this one is bounded above by n
+     * entrywise, which is what "choose S of the jobs actually present" means.
+     * S = 0 has the single all-zero answer.</p>
+     *
+     * @param n available units per bin, as a row vector
+     * @param S number of units to pick
+     * @return one row per admissible pick
+     */
+    public static Matrix multichoosecon(Matrix n, int S) {
+        LineTimeout.checkpoint("Enumeration (multichoosecon)");
+        int R = n.getNumRows() * n.getNumCols();
+        if (S == 0) {
+            Matrix z = new Matrix(1, R);
+            z.zero();
+            return z;
+        }
+        double[] avail = new double[R];
+        int k = 0;
+        for (int i = 0; i < n.getNumRows(); i++) {
+            for (int j = 0; j < n.getNumCols(); j++) {
+                avail[k++] = n.get(i, j);
+            }
+        }
+        List<double[]> rows = new ArrayList<double[]>();
+        multichooseconRec(avail, S, new double[R], 0, rows);
+        Matrix v = new Matrix(rows.size(), R);
+        for (int i = 0; i < rows.size(); i++) {
+            for (int j = 0; j < R; j++) {
+                v.set(i, j, rows.get(i)[j]);
+            }
+        }
+        return v;
+    }
+
+    private static void multichooseconRec(double[] avail, int left, double[] cur, int pos,
+                                          List<double[]> out) {
+        if (pos == avail.length) {
+            if (left == 0) {
+                out.add(cur.clone());
+            }
+            return;
+        }
+        int hi = (int) Math.min(left, Math.floor(avail[pos]));
+        for (int v = 0; v <= hi; v++) {
+            cur[pos] = v;
+            multichooseconRec(avail, left - v, cur, pos + 1, out);
+        }
+        cur[pos] = 0;
+    }
+
     public static double multinomialln(Matrix n) {
         return factln(n.elementSum()) - Matrix.factln(n).elementSum();
     }
@@ -1432,7 +1486,36 @@ public class Maths {
         return newSpace;
     }
 
-    public static Matrix uniquePerms(Matrix vec) {
+    /**
+     * All distinct permutations of the multiset held in a row vector, one per row.
+     *
+     * ROW ORDER IS PART OF THE CONTRACT, not an implementation detail: these rows
+     * become the local state space in {@link jline.lang.state.FromMarginal}, whose
+     * first row (after the reversal the builders apply) is the default initial
+     * state, so reordering them moves which state a chain starts in. Two orders
+     * are produced and which applies depends on the vector: an all-distinct vector
+     * goes through {@link #permutations}, which lists REVERSE lexicographically,
+     * while a vector with a repeat is grouped by leading value and recurses on the
+     * remainder. The mixture is the one the MATLAB twin
+     * {@code matlab/util/multiset_perms.m} produces, and the python
+     * ({@code api/state/multiset_perms.py}) and C++ ({@code pas_multiset_perms} in
+     * {@code lang/qn/state.h}) twins reproduce it too.
+     *
+     * Distinct values are taken in FIRST-APPEARANCE order rather than sorted. That
+     * is what this has always done, and it agrees with MATLAB's ascending
+     * {@code unique} because every caller assembles the vector in ascending class
+     * order.
+     *
+     * Replaced the transliterated {@code uniqueperms.m} (J. D'Errico) on
+     * 2026-08-19: the vendored original carried an author byline but no license
+     * grant. This is written from the enumeration rule above rather than from that
+     * source, and it collects the recursive blocks before allocating instead of
+     * growing the result by a full copy per block.
+     *
+     * @param vec a single-row Matrix, repeats allowed
+     * @return one row per distinct permutation; an empty 0x0 Matrix for empty input
+     */
+    public static Matrix multisetPerms(Matrix vec) {
 
         // Vector is empty
         if (vec.isEmpty()) {
@@ -1441,16 +1524,15 @@ public class Maths {
 
         // Vector is not a single row
         if (vec.getNumRows() != 1) {
-            throw new RuntimeException("Matrix passed to uniquePerms has more than one row. Unsupported.");
+            throw new RuntimeException("Matrix passed to multisetPerms has more than one row. Unsupported.");
         }
 
         // Number of elements in the vector
         int n = vec.length();
 
-        // Number of unique elements in the vector
-        int nu = 0;
-        LinkedList<Double> uniqueElements = new LinkedList<>();
-        for (int i = 0; i < vec.length(); i++) {
+        // The distinct values, in the order they first appear
+        LinkedList<Double> uniqueElements = new LinkedList<Double>();
+        for (int i = 0; i < n; i++) {
             double element = vec.get(0, i);
             boolean unique = true;
             for (Double uniqueElement : uniqueElements) {
@@ -1463,47 +1545,52 @@ public class Maths {
                 uniqueElements.add(element);
             }
         }
-        nu = uniqueElements.size();
+        int nu = uniqueElements.size();
 
-        // Only one unique element
+        // Only one distinct value: every arrangement is the same one
         if (nu == 1) {
             return vec;
         }
 
-        // Every element is unique
+        // No repeats: defer to the reverse-lexicographic listing
         if (n == nu) {
             return permutations(vec);
         }
-        Matrix[] output = new Matrix[nu];
+
+        // At least one value repeats. Enumerate by leading value: strike its first
+        // copy, permute what is left, and put the value back in front. Every block
+        // is built before anything is allocated, so the result is filled once
+        // rather than reallocated and copied nu times.
+        Matrix[] blocks = new Matrix[nu];
+        int rows = 0;
         for (int i = 0; i < nu; i++) {
-            Matrix v = vec.copy();
-
-            int ind = -1;
-            double target = uniqueElements.get(i);
-            for (int j = 0; j < v.length(); j++) {
-                if (target == v.get(j)) {
-                    ind = j;
-                    break;
+            double head = uniqueElements.get(i);
+            Matrix rest = new Matrix(1, n - 1);
+            boolean struck = false;
+            for (int j = 0, destCol = 0; j < n; j++) {
+                double value = vec.get(0, j);
+                if (!struck && value == head) {
+                    struck = true;
+                    continue;
                 }
+                rest.set(0, destCol++, value);
             }
-            Matrix newV = new Matrix(1, v.getNumCols() - 1);
-            for (int j = 0, destCol = 0; j < v.getNumCols(); j++) {
-                if (j != ind) {
-                    newV.set(0, destCol++, v.get(j));
-                }
-            }
-            v = newV.copy();
-            Matrix temp = uniquePerms(v);
-            Matrix repeated = new Matrix(temp.getNumRows(), 1);
-            repeated.fill(uniqueElements.get(i));
-            output[i] = repeated.concatCols(temp);
+            blocks[i] = multisetPerms(rest);
+            rows += blocks[i].getNumRows();
         }
 
-        Matrix result = output[0];
-        for (int i = 1; i < output.length; i++) {
-            result = Matrix.concatRows(result, output[i], null).copy();
+        Matrix result = new Matrix(rows, n);
+        int row = 0;
+        for (int i = 0; i < nu; i++) {
+            double head = uniqueElements.get(i);
+            Matrix block = blocks[i];
+            for (int r = 0; r < block.getNumRows(); r++, row++) {
+                result.set(row, 0, head);
+                for (int c = 0; c < n - 1; c++) {
+                    result.set(row, c + 1, block.get(r, c));
+                }
+            }
         }
-
         return result;
     }
 

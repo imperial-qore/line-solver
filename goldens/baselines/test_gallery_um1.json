@@ -1,0 +1,30 @@
+{
+  "class": {
+    "MVA": "deterministic"
+  },
+  "example": "test_gallery_um1",
+  "solvers": {
+    "MVA": [
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class1",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.66667,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.66667,
+        "JobClass": "Class1",
+        "QLen": 0.35874,
+        "ResidT": 0.53811,
+        "RespT": 0.53811,
+        "Station": "Queue",
+        "Tput": 0.66667,
+        "Util": 0.33333
+      }
+    ]
+  }
+}

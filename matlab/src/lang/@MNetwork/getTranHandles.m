@@ -38,7 +38,9 @@ for ist=1:M
             Ut{ist,r}.disabled = true;
         end
         if ~strcmpi(class(self.stations{ist}.server),'ServiceTunnel')
-            if isempty(self.stations{ist}.server.serviceProcess{r}) || strcmpi(class(self.stations{ist}.server.serviceProcess{r}{end}),'Disabled')
+            if r > numel(self.stations{ist}.server.serviceProcess) || ...
+                    isempty(self.stations{ist}.server.serviceProcess{r}) || ...
+                    strcmpi(class(self.stations{ist}.server.serviceProcess{r}{end}),'Disabled')
                 Tt{ist,r}.disabled = true;
                 Qt{ist,r}.disabled = true;
                 %                Rt{i,r}.disabled = true;

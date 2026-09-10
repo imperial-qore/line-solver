@@ -65,6 +65,24 @@ public class SSAResult extends SolverResult {
     public Matrix WNCI;
 
     /**
+     * Derived START rate [stations x classes]: how often per unit time a
+     * class-r job begins, or resumes, holding a server at station i. An
+     * annotation on the transitions the engine already fires, so it adds no
+     * getAvgTable column. At a lossless station StartN == TN + PreemptN.
+     */
+    public Matrix startRate;
+
+    /** Derived PREEMPT rate [stations x classes]; zero at a non-preemptive station. */
+    public Matrix preemptRate;
+
+    /**
+     * Per-step tags of the sampled path, as [statefulIndex, class, kind] rows
+     * with kind 0 = START and 1 = PREEMPT. sn.sync carries no derived tag, so
+     * a trace can only report them from here.
+     */
+    public Map<Integer, int[][]> tranTags;
+
+    /**
      * Constructs an empty SSAResult to allow field population from different sources.
      */
     public SSAResult() {

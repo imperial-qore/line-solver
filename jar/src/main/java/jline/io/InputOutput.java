@@ -130,6 +130,13 @@ public final class InputOutput {
      * Print debug message if verbose level is DEBUG
      */
     public static void line_debug(VerboseLevel verbose, String message) {
+        // The solver console narrates the run, and these messages are exactly
+        // the steps it wants to report: they are routed to it whether or not
+        // the session is at DEBUG level. LineConsole deduplicates and caps them.
+        if (LineConsole.ownsLog()) {
+            LineConsole.detail(message);
+            return;
+        }
         if (verbose == VerboseLevel.DEBUG) {
             line_printf("[DEBUG] " + message);
         }
@@ -194,12 +201,39 @@ public final class InputOutput {
         Logger.getLogger(FileUtils.class.getName()).log(level, message);
     }
 
+    /**
+     * Report a deliberate LINE diagnostic and abort.
+     *
+     * <p>Throws {@link LineException}, which carries no stack trace of its own
+     * unless the session is at {@link VerboseLevel#DEBUG}, so the message is
+     * reported alone instead of under the internal frames that led to it. See
+     * that class for why.</p>
+     */
     public static void line_error(String caller, String msg) {
         String finalmsg = String.format("[%s] %s", caller, msg);
         if (GlobalConstants.Verbose != VerboseLevel.SILENT) {
             line_printf(finalmsg, Level.SEVERE);
         }
-        throw new RuntimeException(finalmsg);
+        throw new LineException(finalmsg);
+    }
+
+    /**
+     * Report an error that was caused by another throwable, keeping the cause.
+     *
+     * <p>Re-reporting a caught exception with only its message discards the
+     * stack trace of where it was actually raised, which leaves a failure like
+     * "Outside of matrix bounds" with no indication of the line that indexed out
+     * of bounds. Pass the original through so the chain survives.</p>
+     *
+     * <p>Only THIS wrapper's frames are dropped by {@link LineException}; the
+     * cause keeps its own trace and still prints under "Caused by:".</p>
+     */
+    public static void line_error(String caller, String msg, Throwable cause) {
+        String finalmsg = String.format("[%s] %s", caller, msg);
+        if (GlobalConstants.Verbose != VerboseLevel.SILENT) {
+            line_printf(finalmsg, Level.SEVERE);
+        }
+        throw new LineException(finalmsg, cause);
     }
 
     /**
@@ -240,9 +274,10 @@ public final class InputOutput {
      * line_solver.lineStart do.
      *
      * <p>Using the JAR as a library stays silent otherwise, so this is the
-     * explicit entry point for a session banner. It also names where to obtain
-     * the third-party dependencies and the algorithm references: attribution in
-     * LINE is pull-based, in the spirit of Sage, so nothing is printed during a
+     * explicit entry point for a session banner. It also names where to ask
+     * which solvers support a model, and where to obtain the third-party
+     * dependencies and the algorithm references: attribution in LINE is
+     * pull-based, in the spirit of Sage, so nothing is printed during a
      * solve.
      *
      * @return the LINE version string
@@ -253,7 +288,8 @@ public final class InputOutput {
                 + "CoarseTol=%.1e, FineTol=%.1e, Zero=%.1e, MaxInt=%d%n",
                 version, GlobalConstants.Verbose, GlobalConstants.CoarseTol,
                 GlobalConstants.FineTol, GlobalConstants.Zero, GlobalConstants.MaxInt);
-        System.out.println("Type solver.libraries() for third-party dependencies, "
+        System.out.println("Type model.help() for the solvers that support a model, "
+                + "solver.libraries() for third-party dependencies, "
                 + "solver.citations() for references.");
         return version;
     }
@@ -306,7 +342,7 @@ public final class InputOutput {
                     + "  pages = {3--10}\n"
                     + "}";
         } else if ("LQNS".equals(key) || "QNS".equals(key)) {
-            return "@ARTICLE{fran.ea09,\n"
+            return "@ARTICLE{FraAWDD09,\n"
                     + "  author = {G. Franks and T. Al-Omari and M. Woodside and O. Das and S. Derisavi},\n"
                     + "  title = {Enhanced Modeling and Solution of Layered Queueing Networks},\n"
                     + "  journal = {IEEE Trans. Software Engineering},\n"
@@ -323,7 +359,7 @@ public final class InputOutput {
      * One-line reference to the canonical paper of each tool, printed under the
      * acknowledgement. It describes the same work as
      * {@link #line_citation(String)} (keys {@code BerCS07} and
-     * {@code fran.ea09} in {@code doc/latex/biblio.bib}), which is where the
+     * {@code FraAWDD09} in {@code doc/latex/biblio.bib}), which is where the
      * citation key belongs: this line is for the reader.
      */
     private static String ackCitation(String toolName) {

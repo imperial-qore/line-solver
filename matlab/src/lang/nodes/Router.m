@@ -67,7 +67,7 @@ classdef Router < StatefulNode
                     self.numberOfServers = 1;
                     if ~model.addNode(self) % if not a replacement
                         for r=1:length(classes)
-                            self.setRouting(RoutingStrategy.RAND,classes{r});
+                            self.setRouting(classes{r},RoutingStrategy.RAND);
                         end
                     end
                 else
@@ -87,7 +87,7 @@ classdef Router < StatefulNode
                 self.numberOfServers = 1;
                 if ~self.model.addNode(self) % if not a replacement
                     for r=1:length(classes)
-                        self.setRouting(RoutingStrategy.RAND,classes{r});
+                        self.setRouting(classes{r},RoutingStrategy.RAND);
                     end
                 end
             elseif model.isJavaNative()

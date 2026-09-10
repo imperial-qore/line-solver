@@ -5,6 +5,11 @@ function [Q,U,R,T,C,X,lG,runtime,iter,method] = solver_mvald_analyzer(sn, option
 % All rights reserved.
 
 Tstart = tic;
+% The 'amva.' spellings are aliases the caller may pass and listValidMethods
+% advertises, so they have to reach the same arms as the bare names: without
+% this, 'amva.lin' on a load-dependent model fell to the refusal below naming a
+% method the solver does in fact implement.
+options.method = regexprep(options.method, '^amva\.', '');
 method = options.method;
 
 line_debug('MVA load-dependent analyzer starting: method=%s, nclasses=%d, njobs=%s', method, sn.nclasses, mat2str(sn.njobs));

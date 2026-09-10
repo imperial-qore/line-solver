@@ -98,7 +98,7 @@ def _scan_negative_density(alpha_row, A):
     t_min = 0.0
     f_absmax = 0.0
     for k in range(npts):
-        f = float(v @ ve)
+        f = float(np.asarray(v @ ve).reshape(-1)[0])
         if f < f_min:
             f_min = f
             t_min = k * step
@@ -227,7 +227,8 @@ class PH(ContinuousDistribution, Markovian):
     def __init__(self, alpha: Union[list, np.ndarray], T: Union[list, np.ndarray]):
         super().__init__()
         self._name = 'PH'
-        self._alpha = np.atleast_1d(np.array(alpha, dtype=float))
+        # alpha is a row vector; a caller may hand it in as (1,n) or (n,1)
+        self._alpha = np.atleast_1d(np.array(alpha, dtype=float)).flatten()
         self._T = np.atleast_2d(np.array(T, dtype=float))
 
         n = len(self._alpha)
@@ -246,6 +247,23 @@ class PH(ContinuousDistribution, Markovian):
     def T(self) -> np.ndarray:
         """Get the sub-generator matrix."""
         return self._T.copy()
+
+    def evalLST(self, s):
+        """
+        Laplace-Stieltjes transform, alpha (sI - T)^-1 t, mirroring MATLAB.
+
+        The inherited fallback is a rectangle rule over evalPDF, which carries
+        percent-level error on a phase-type law and returns zero for a COMPLEX
+        argument, since it evaluates math.exp. Every subclass here (Exp, Erlang,
+        HyperExp, Coxian, APH) is phase type, so the closed form applies to all
+        of them, and it is analytic, so it serves the complex arguments that
+        transform inversion and root location need.
+        """
+        n = len(self._alpha)
+        M = s * np.eye(n) - self._T
+        val = self._alpha @ np.linalg.solve(M.astype(complex) if np.iscomplexobj(M) or
+                                            isinstance(s, complex) else M, self._t)
+        return complex(val) if isinstance(s, complex) else float(np.real(val))
 
     @property
     def t(self) -> np.ndarray:
@@ -609,6 +627,49 @@ class APH(PH):
 
         return alpha, A
 
+    def evalCDF(self, t=None):
+        """Evaluate the CDF, as MATLAB ``APH.evalCDF`` does.
+
+        Three call forms, all matching the reference:
+
+        - ``evalCDF()`` returns the law tabulated on its own grid, an
+          ``(n, 2)`` array whose columns are ``[F(t), t]`` -- the column order
+          every CDF getter in LINE uses, NOT ``[t, F(t)]``. The grid is 500
+          uniform points over ``[0, mean + 10*sigma]``, the reference's own
+          horizon.
+        - ``evalCDF(t)`` with a scalar returns ``F(t)`` as a float.
+        - ``evalCDF(t)`` with a vector returns ``F`` at those points, without
+          the time column, again as the reference does.
+
+        Args:
+            t: time point, sequence of time points, or None for the default
+               grid.
+
+        Returns:
+            An ``(n, 2)`` array of ``[F, t]`` when called with no argument, a
+            float for a scalar argument, or an array of ``F`` values.
+        """
+        if t is None:
+            sigma = np.sqrt(self.getVar())
+            grid = np.linspace(0.0, self.getMean() + 10.0 * sigma, 500)
+            return np.column_stack([self._eval_cdf_vec(grid), grid])
+        if np.isscalar(t):
+            return super().evalCDF(float(t))
+        return self._eval_cdf_vec(np.asarray(t, dtype=float))
+
+    def _eval_cdf_vec(self, t: np.ndarray) -> np.ndarray:
+        """F(t) = 1 - alpha*expm(T*t)*e over a grid, one expm per point."""
+        e = np.ones(len(self._alpha))
+        F = np.empty(t.size, dtype=float)
+        for i, ti in enumerate(t.ravel()):
+            if ti <= 0:
+                F[i] = 0.0
+            else:
+                F[i] = 1.0 - float(self._alpha @ linalg.expm(self._T * ti) @ e)
+        return F
+
+    eval_cdf = evalCDF
+
     @classmethod
     def fit(cls, mean: float, scv: float, skew: float = None) -> 'APH':
         """Fit an APH to (mean, SCV, skewness), as MATLAB APH.fit does."""
@@ -756,6 +817,19 @@ class Coxian(PH):
         self._alpha = alpha
         self._T = T
         self._t = -self._T.sum(axis=1)
+
+    def get_feature_name(self) -> str:
+        """'Cox2' at two phases, 'Coxian' otherwise.
+
+        The registry carries both names, and the Cox2 entry can only mean the
+        two-phase Coxian: MATLAB has no Cox2 object to mark (Cox2 there is a
+        static factory returning a Coxian) and the C++ port already types every
+        two-phase Coxian as ProcessType.COX2. Reading the entry off the phase
+        count is therefore the one reading all four codebases share. A solver
+        declaring just 'Coxian' stays accepting through
+        SolverFeatureSet.GENERALIZATION_OF.
+        """
+        return 'Cox2' if len(self._means) == 2 else self._name
 
     def _build_representation(self) -> Tuple[np.ndarray, np.ndarray]:
         """Build the phase-type representation."""
@@ -1308,7 +1382,7 @@ class Cox2(Coxian):
         # Completion probability of phase 1. With the two rates fixed by the
         # second and third moments, the mean determines it:
         # e1 = 1/mu1 + (1-phi)/mu2  =>  phi = 1 - mu2*e1 + mu2/mu1. Verified in
-        # sage/proofs/distribution_fitters.py.
+        # io/sage/proofs/distribution_fitters.py.
         phi1 = 1.0 - mu21 * e1 + mu21 / mu11
         phi2 = 1.0 - mu22 * e1 + mu22 / mu12
 
@@ -1415,7 +1489,7 @@ class MMPP2(MAP):
         """MMPP(2) matching three raw moments and the lag-1 autocorrelation.
 
         rho1 = gamma2 * (1 - 1/SCV)/2 for every MMPP(2) (proved in
-        sage/proofs/mmpp2_fit3.py), which is the conversion used here.
+        io/sage/proofs/mmpp2_fit3.py), which is the conversion used here.
         """
         scv = (m2 - m1 * m1) / (m1 * m1)
         rho0 = (1 - 1 / scv) / 2
@@ -2128,7 +2202,7 @@ class ME(ContinuousDistribution, Markovian):
             q = 1
             d = [0] * m
             alpha_mat = np.zeros((m, m))
-            beta = np.zeros((m, 1))
+            beta = np.zeros(m)
 
             def shift(arr):
                 sh = np.roll(arr, 1)
@@ -2136,7 +2210,7 @@ class ME(ContinuousDistribution, Markovian):
                 return sh
 
             for i in range(2*m):
-                ro = q * np.dot(rm, f)
+                ro = float(np.asarray(q * np.dot(rm, f)).reshape(-1)[0])
                 nold = n
                 n = nold + 1
                 yold = y

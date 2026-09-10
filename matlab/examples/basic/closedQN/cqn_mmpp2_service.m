@@ -38,7 +38,7 @@ node{3}.setRouting(jobclass{2},RoutingStrategy.RAND);
 solver={};
 options = Solver.defaultOptions;
 options.seed = 23000;
-%solver{end+1} = CTMC(model,options);
+%solver{end+1} = CTMC(model, 'exact',options);
 solver{end+1} = JMT(model,options);
 % Solver.defaultOptions carries the GENERIC samples budget (1e4), which
 % overrides SolverLDES's own default (2e5) and leaves the simulation 20x

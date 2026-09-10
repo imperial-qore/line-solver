@@ -5,260 +5,231 @@
 
 package jline.io;
 
-import jline.lang.*;
-import jline.lang.nodes.*;
-import jline.lang.processes.*;
+import jline.api.sn.SnMapModulation;
+import jline.api.sn.SnMapModulation.MapModulation;
+import jline.lang.Environment;
+import jline.lang.JobClass;
+import jline.lang.Network;
+import jline.lang.NetworkStruct;
+import jline.GlobalConstants;
+import jline.lang.nodes.ServiceStation;
+import jline.lang.nodes.Source;
+import jline.lang.nodes.Station;
+import jline.lang.processes.Exp;
+import jline.solvers.SolverOptions;
 import jline.util.matrix.Matrix;
 
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 /**
- * Transforms a queueing network with MMPP2 service into a random environment model.
+ * Markov-modulated image of a network with MAP/MMPP/MMAP arrival or service
+ * processes as a queueing network in a random environment.
  *
- * The transformation converts MMPP2 (2-phase Markov Modulated Poisson Process) service
- * distributions into an equivalent random environment model with exponential services.
- * The environment has two stages (one per MMPP phase) with transitions defined by the
- * MMPP D0 matrix.
+ * <p>Every non-renewal process is a point process modulated by the CTMC with
+ * generator Q = D0 + D1, whose conditional intensity in phase k is
+ * lambda(k) = sum_j D1(k,j). The transformation freezes each phase into an
+ * environment stage in which the process is the Poisson process of that
+ * intensity, i.e. an exponential arrival or service time, and lets the
+ * environment switch stages at the rates of Q. With P modulated processes the
+ * stage set is the Cartesian product of their phase spaces and the environment
+ * generator is the Kronecker sum of the individual Q's, so only one process
+ * changes phase at a time, as in the original model.
+ *
+ * <p>The image is exact in structure for an MMPP (diagonal D1): the modulating
+ * chain, its stationary distribution and the phase-conditional intensities are
+ * all preserved. For a general MAP the phase jumps that occur AT an event epoch
+ * (off-diagonal D1) are aggregated into Q and their correlation with the event
+ * stream is lost, so the image matches the modulating chain and the conditional
+ * intensities but not the full inter-event autocorrelation.
+ *
+ * <p>Populations are carried across stage switches unchanged (identity reset),
+ * as a phase switch moves no job.
+ *
+ * <p>Mirrors matlab/src/io/map2renv.m.
  */
 public class MAPQN2RENV {
 
+    /** Default cap on the number of environment stages. */
+    public static final int DEFAULT_MAX_STAGES = 64;
+
+    /** The environment image together with the shape of the transformation. */
+    public static final class RenvImage {
+        /** The random-environment model. */
+        public final Environment env;
+        /** Number of stages, i.e. the product of the phase orders. */
+        public final int nstages;
+        /** Phase order of each modulated process. */
+        public final int[] orders;
+        /** True when every modulated process was an MMPP (diagonal D1). */
+        public final boolean isMMPP;
+        /** Longest mean stage sojourn of the environment. */
+        public final double maxHoldTime;
+
+        RenvImage(Environment env, int nstages, int[] orders, boolean isMMPP, double maxHoldTime) {
+            this.env = env;
+            this.nstages = nstages;
+            this.orders = orders;
+            this.isMMPP = isMMPP;
+            this.maxHoldTime = maxHoldTime;
+        }
+    }
+
     /**
-     * Transform a queueing network with MMPP2 service into a random environment model.
+     * Retained name for the transformation now implemented by
+     * {@link #map2renv(Network, SolverOptions)}, which generalizes it from a
+     * single MMPP2 service process to any number of MAP, MMPP2 or MMAP arrival
+     * and service processes of arbitrary phase order.
      *
-     * @param model Network with MMPP2 service distributions
-     * @return Environment model with exponential services modulated by MMPP phases
-     * @throws RuntimeException if no MMPP2 service distribution is found
+     * @param model Network with at least one MAP/MMPP2/MMAP process
+     * @return Environment model with exponential rates modulated by the phases
      */
     public static Environment mapqn2renv(Network model) {
-        // Phase 1: Validate and extract MMPP parameters
-        MMPP2Params params = validateAndExtractMMPP(model);
-
-        if (params == null) {
-            throw new RuntimeException("Network must contain at least one MMPP2 service distribution");
-        }
-
-        // Phase 2: Extract MMPP Parameters
-        Matrix D0 = params.D0;
-        Matrix D1 = params.D1;
-
-        // Extract service rates from D1 diagonal
-        double lambda0 = D1.get(0, 0);
-        double lambda1 = D1.get(1, 1);
-
-        // Extract transition rates from D0 off-diagonal
-        double sigma01 = D0.get(0, 1);
-        double sigma10 = D0.get(1, 0);
-
-        // Validate rates are non-negative
-        if (lambda0 < 0 || lambda1 < 0 || sigma01 < 0 || sigma10 < 0) {
-            throw new RuntimeException("All extracted rates must be non-negative");
-        }
-
-        // Phase 3: Create Environment Model
-        Environment envModel = new Environment("MAPQN_Env", 2);
-
-        // Phase 4: Build Stage Networks
-        // Create stage network for Phase 0
-        Network stageNet0 = buildStageNetwork(model, "Phase0", lambda0);
-        envModel.addStage(0, "Phase0", "item", stageNet0);
-
-        // Create stage network for Phase 1
-        Network stageNet1 = buildStageNetwork(model, "Phase1", lambda1);
-        envModel.addStage(1, "Phase1", "item", stageNet1);
-
-        // Phase 5: Add Environment Transitions
-        if (sigma01 > 0) {
-            envModel.addTransition(0, 1, new Exp(sigma01));
-        }
-
-        if (sigma10 > 0) {
-            envModel.addTransition(1, 0, new Exp(sigma10));
-        }
-
-        return envModel;
+        return map2renv(model, null);
     }
 
     /**
-     * Holds MMPP2 D0 and D1 matrices.
+     * @param model   Network with at least one MAP/MMPP2/MMAP process
+     * @param options solver options; config.map_env_maxstages caps the stage count
+     * @return Environment model with exponential rates modulated by the phases
      */
-    private static class MMPP2Params {
-        Matrix D0;
-        Matrix D1;
-
-        MMPP2Params(Matrix D0, Matrix D1) {
-            this.D0 = D0;
-            this.D1 = D1;
-        }
+    public static Environment map2renv(Network model, SolverOptions options) {
+        return map2renvImage(model, options).env;
     }
 
     /**
-     * Validate the network has MMPP2 service and extract parameters.
+     * @param model   Network with at least one MAP/MMPP2/MMAP process
+     * @param options solver options; config.map_env_maxstages caps the stage count
+     * @return the environment image and the shape of the transformation
      */
-    private static MMPP2Params validateAndExtractMMPP(Network model) {
-        MMPP2 firstMMPP2 = null;
+    public static RenvImage map2renvImage(Network model, SolverOptions options) {
+        if (model == null) {
+            throw new RuntimeException("map2renv requires a Network model.");
+        }
+        int maxStages = DEFAULT_MAX_STAGES;
+        if (options != null && options.config != null && options.config.map_env_maxstages > 0) {
+            maxStages = options.config.map_env_maxstages;
+        }
 
-        // Iterate through all nodes to find MMPP2 distributions
-        for (Node node : model.getNodes()) {
-            // Check if node is a Queue or Delay
-            if (!(node instanceof Queue) && !(node instanceof Delay)) {
-                continue;
+        NetworkStruct sn = model.getStruct(false);
+        List<MapModulation> mods = SnMapModulation.snMapModulation(sn);
+        if (mods.isEmpty()) {
+            throw new RuntimeException(
+                    "The model declares no MAP, MMPP2 or MMAP process, so it has no random-environment image.");
+        }
+
+        int P = mods.size();
+        int[] orders = new int[P];
+        int nstages = 1;
+        boolean isMMPP = true;
+        for (int p = 0; p < P; p++) {
+            orders[p] = mods.get(p).order;
+            nstages *= orders[p];
+            isMMPP = isMMPP && mods.get(p).isMMPP;
+        }
+        if (nstages > maxStages) {
+            StringBuilder ord = new StringBuilder();
+            for (int p = 0; p < P; p++) {
+                ord.append(p > 0 ? " " : "").append(orders[p]);
             }
+            throw new RuntimeException(String.format(
+                    "The random-environment image of this model has %d stages (phase orders [%s]), above the "
+                            + "options.config.map_env_maxstages cap of %d. Reduce the order of the modulating "
+                            + "processes or raise the cap.", nstages, ord.toString(), maxStages));
+        }
 
-            if (node instanceof Queue) {
-                Queue queue = (Queue) node;
-                // Check service distributions for all classes
-                for (JobClass jobClass : model.getClasses()) {
-                    Distribution dist = queue.getService(jobClass);
-                    if (dist instanceof MMPP2) {
-                        if (firstMMPP2 == null) {
-                            firstMMPP2 = (MMPP2) dist;
-                        }
+        // Stage s enumerates the phase tuples in column-major order, phaseOf[s][p]
+        // is the phase of process p in stage s.
+        int[][] phaseOf = new int[nstages][P];
+        for (int s = 0; s < nstages; s++) {
+            int rem = s;
+            for (int p = 0; p < P; p++) {
+                phaseOf[s][p] = rem % orders[p];
+                rem = rem / orders[p];
+            }
+        }
+
+        Environment envModel = new Environment(model.getName() + "_renv", nstages);
+        for (int s = 0; s < nstages; s++) {
+            String name = stageName(phaseOf[s]);
+            envModel.addStage(s, name, "item", buildStage(model, mods, phaseOf[s], name));
+        }
+
+        // Kronecker sum of the phase generators: a transition changes the phase of
+        // one process only, at the rate that process assigns to it.
+        double[] exitRate = new double[nstages];
+        for (int s = 0; s < nstages; s++) {
+            for (int p = 0; p < P; p++) {
+                Matrix Qp = mods.get(p).phaseGenerator();
+                int k = phaseOf[s][p];
+                int stride = 1;
+                for (int q = 0; q < p; q++) {
+                    stride *= orders[q];
+                }
+                for (int l = 0; l < orders[p]; l++) {
+                    if (l == k || Qp.get(k, l) <= GlobalConstants.Zero) {
+                        continue;
                     }
+                    int t = s + (l - k) * stride;
+                    envModel.addTransition(s, t, new Exp(Qp.get(k, l)));
+                    exitRate[s] += Qp.get(k, l);
                 }
             }
         }
-
-        if (firstMMPP2 != null) {
-            Matrix D0 = firstMMPP2.D(0);
-            Matrix D1 = firstMMPP2.D(1);
-            return new MMPP2Params(D0, D1);
+        double maxHold = 0;
+        for (int s = 0; s < nstages; s++) {
+            if (exitRate[s] > 0) {
+                maxHold = Math.max(maxHold, 1.0 / exitRate[s]);
+            }
         }
 
-        return null;
+        envModel.init();
+        return new RenvImage(envModel, nstages, orders, isMMPP, maxHold);
+    }
+
+    private static String stageName(int[] phases) {
+        StringBuilder sb = new StringBuilder("Phase");
+        for (int p = 0; p < phases.length; p++) {
+            sb.append('_').append(phases[p] + 1);
+        }
+        return sb.toString();
     }
 
     /**
-     * Build a stage network by cloning the original and replacing MMPP2 with Exp.
+     * Copy of the base model in which every modulated process is the exponential
+     * process of its phase-conditional intensity.
      */
-    private static Network buildStageNetwork(Network originalModel, String stageName, double expRate) {
-        // Clone the network structure and replace MMPP2 with Exp
-        Network stageNet = new Network(originalModel.getName() + "_" + stageName);
-
-        // Build mapping from original nodes to cloned nodes
-        Map<String, Node> nodeMap = new HashMap<String, Node>();
-        List<JobClass> origClasses = originalModel.getClasses();
-
-        // PASS 1: Create all nodes first
-        for (Node origNode : originalModel.getNodes()) {
-            Node newNode = null;
-            if (origNode instanceof Source) {
-                newNode = new Source(stageNet, origNode.getName());
-            } else if (origNode instanceof Sink) {
-                newNode = new Sink(stageNet, origNode.getName());
-            } else if (origNode instanceof Delay) {
-                newNode = new Delay(stageNet, origNode.getName());
-            } else if (origNode instanceof Queue) {
-                Queue origQueue = (Queue) origNode;
-                newNode = new Queue(stageNet, origNode.getName(), origQueue.getSchedStrategy());
-                if (origQueue.getNumberOfServers() > 1) {
-                    ((Queue) newNode).setNumberOfServers(origQueue.getNumberOfServers());
-                }
-            }
-            if (newNode != null) {
-                nodeMap.put(origNode.getName(), newNode);
-            }
-        }
-
-        // PASS 2: Create all job classes
-        for (JobClass origClass : origClasses) {
-            if (origClass instanceof OpenClass) {
-                new OpenClass(stageNet, origClass.getName());
-            } else if (origClass instanceof ClosedClass) {
-                ClosedClass closedClass = (ClosedClass) origClass;
-                Station refStat = closedClass.getReferenceStation();
-                Node newRefStat = nodeMap.get(refStat.getName());
-                if (newRefStat instanceof Station) {
-                    new ClosedClass(stageNet, origClass.getName(),
-                                   (int) closedClass.getPopulation(), (Station) newRefStat, 0);
-                }
-            }
-        }
-
-        // PASS 3: Set arrivals from Source nodes
-        for (Node origNode : originalModel.getNodes()) {
-            if (origNode instanceof Source && nodeMap.containsKey(origNode.getName())) {
-                Source origSource = (Source) origNode;
-                Source newSource = (Source) nodeMap.get(origNode.getName());
-
-                for (int r = 0; r < origClasses.size(); r++) {
-                    JobClass origJobClass = origClasses.get(r);
-                    Distribution arrDist = origSource.getArrivalDistribution(origJobClass);
-                    if (arrDist != null && r < stageNet.getClasses().size()) {
-                        JobClass newJobClass = stageNet.getClasses().get(r);
-                        newSource.setArrival(newJobClass, arrDist);
+    private static Network buildStage(Network model, List<MapModulation> mods, int[] phases, String stageName) {
+        Network stageNet = model.copy();
+        stageNet.setName(model.getName() + "_" + stageName);
+        List<Station> stations = stageNet.getStations();
+        List<JobClass> classes = stageNet.getClasses();
+        for (int p = 0; p < mods.size(); p++) {
+            MapModulation mod = mods.get(p);
+            Station station = stations.get(mod.ist);
+            for (int c = 0; c < mod.classes.size(); c++) {
+                int r = mod.classes.get(c);
+                double rate = mod.intensity(c, phases[p]);
+                if (mod.arrival) {
+                    // A silent phase (zero intensity) is an ON/OFF source: keep it as a
+                    // rate rather than a disabled class, so that the class still exists
+                    // in every stage and the rate-averaged limit averages a zero.
+                    ((Source) station).setArrival(classes.get(r), new Exp(Math.max(rate, GlobalConstants.Zero)));
+                } else {
+                    if (rate <= GlobalConstants.Zero) {
+                        throw new RuntimeException(String.format(
+                                "Phase %d of the service process of class %d at station %d has zero completion "
+                                        + "rate: the station never empties while the environment sits in that "
+                                        + "stage, so the stage has no steady state and the random-environment "
+                                        + "image is not defined. Model the stalled server as a breakdown stage "
+                                        + "instead.", phases[p] + 1, r + 1, mod.ist + 1));
                     }
+                    ((ServiceStation) station).setService(classes.get(r), new Exp(rate));
                 }
             }
         }
-
-        // PASS 4: Set services on Queue/Delay nodes, replacing MMPP2 with Exp
-        for (Node origNode : originalModel.getNodes()) {
-            if ((origNode instanceof Queue || origNode instanceof Delay)
-                && nodeMap.containsKey(origNode.getName())) {
-
-                Node newNode = nodeMap.get(origNode.getName());
-
-                for (int r = 0; r < origClasses.size(); r++) {
-                    JobClass origJobClass = origClasses.get(r);
-                    Distribution origDist = null;
-
-                    if (origNode instanceof Queue) {
-                        origDist = ((Queue) origNode).getService(origJobClass);
-                    } else if (origNode instanceof Delay) {
-                        origDist = ((Delay) origNode).getService(origJobClass);
-                    }
-
-                    if (origDist != null && r < stageNet.getClasses().size()) {
-                        JobClass newJobClass = stageNet.getClasses().get(r);
-                        Distribution newDist;
-
-                        if (origDist instanceof MMPP2) {
-                            // Replace with exponential
-                            newDist = new Exp(expRate);
-                        } else {
-                            // Keep other distributions as-is
-                            newDist = origDist;
-                        }
-
-                        if (newNode instanceof Queue) {
-                            ((Queue) newNode).setService(newJobClass, newDist);
-                        } else if (newNode instanceof Delay) {
-                            ((Delay) newNode).setService(newJobClass, newDist);
-                        }
-                    }
-                }
-            }
-        }
-
-        // PASS 5: Setup routing
-        boolean isClosedNetwork = false;
-        for (JobClass c : origClasses) {
-            if (c instanceof ClosedClass) {
-                isClosedNetwork = true;
-                break;
-            }
-        }
-
-        // Collect route nodes in order
-        List<Node> routeNodes = new ArrayList<Node>();
-        for (Node origNode : originalModel.getNodes()) {
-            if (nodeMap.containsKey(origNode.getName())) {
-                routeNodes.add(nodeMap.get(origNode.getName()));
-            }
-        }
-
-        // Setup routing based on network type
-        if (routeNodes.size() >= 2) {
-            try {
-                stageNet.link(Network.serialRouting(routeNodes.toArray(new Node[0])));
-            } catch (Exception e) {
-                // If serial routing fails, skip
-            }
-        }
-
+        // The copy inherited the base model's cached NetworkStruct, so the edits
+        // above are invisible until the struct is rebuilt.
+        stageNet.refreshStruct(true);
         return stageNet;
     }
 }

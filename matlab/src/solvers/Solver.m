@@ -38,7 +38,7 @@ classdef Solver < handle
         end
     end
 
-    methods (Abstract) % implemented with errors for Octave compatibility
+    methods (Abstract)
         sn = getStruct(self);
         runtime = runAnalyzer(self, options)% generic method to run the solver
         bool = supports(self,model);
@@ -130,19 +130,9 @@ classdef Solver < handle
 
         function bool = isJavaAvailable()
             % BOOL = ISJAVAAVAILABLE()
-            % Check if Java dependencies are available for the solver
-            bool = true;
-            if ispc % windows
-                [~,ret] = dos('java -version');
-                if strfind(ret,'not recognized') %#ok<STRIFCND>
-                    bool = false;
-                end
-            else %linux
-                [~,ret] = unix('java -version');
-                if strfind(ret,'command not found') %#ok<STRIFCND>
-                    bool = false;
-                end
-            end
+            % Check if a Java runtime is reachable, either on the PATH or
+            % through JAVA_HOME/LINE_JAVA or the JRE bundled with MATLAB.
+            bool = ~isempty(line_java_exe());
         end
 
         function [optList, allOpt] = listValidOptions()
@@ -150,18 +140,19 @@ classdef Solver < handle
             % List valid fields for options data structure
             optList = {'cache','cutoff','force','init_sol','iter_max','iter_tol','lang','tol', ...
                 'keep','method','odesolvers','samples','seed','stiff', 'timespan','timestep','timeout','verbose','config.multiserver','config.fork_join','fork_join','confint','level'};
-            %,'amva.aql','aql','amva.qdaql','qdaql','mom','brute','jmva.ls','jmt.jmva.ls'
+            %,'amva.aql','aql','amva.qdaql','qdaql','brute','jmva.ls','jmt.jmva.ls'
             allOpt = {'cache','cutoff','force','init_sol','iter_max','iter_tol','lang','tol', ...
                 'keep','method','odesolvers','samples','seed','stiff', 'timespan','timestep','timeout','verbose','config.multiserver','config.fork_join','fork_join','confint','level', ...
-                'default','exact','auto','ctmc','ctmc.gpu','gpu','mva','mva.exact','mva.amva','mva.qna','sqni','mva.sqni',...
+                'default','exact','auto','heur','tree','sim','fast','accurate','bound',... % SolverAUTO selection method names
+                'ctmc','ctmc.gpu','gpu','mva','mva.exact','mva.amva','mva.qna','sqni','mva.sqni',...
                 'amva','amva.bs','amva.qd','bs','qd','amva.qli','qli','amva.fli','fli','amva.lin','lin','amva.qdlin','qdlin',...
                 'ssa','ssa.parallel','serial','parallel','nrm',...
                 'jmt','jsim','replication','jmva','jmva.amva','jmva.mva','jmva.recal','jmva.mom','jmva.comom','jmva.chow','jmva.bs','jmva.aql','jmva.lin','jmva.dmlin','jmt.jsim',...
                 'jmt.jmva','jmt.jmva.mva','jmt.jmva.amva','jmt.jmva.recal','jmt.jmva.comom','jmt.jmva.chow','jmt.jmva.bs','jmt.jmva.aql','jmt.jmva.lin','jmt.jmva.dmlin',...
-                'ca','comom','comomld','gm','propfair','recal','kt', 'rd', 'nrp', 'nrl', ...
-                'nc.brute','nc.ca','nc.comom','nc.comomld','nc.gm','nc.mom','nc.propfair','nc.recal','nc.kt', 'nc.rd', 'nc.nr.probit', 'nc.nr.logit', ...
-                'fluid','matrix','softmin','statedep','closing','diffusion','fluid.softmin','fluid.statedep','fluid.closing','fluid.matrix','fluid.diffusion',...
-                'nc','nc.exact','nc.imci','ls','nc.ls','nc.cub','cub','le','nc.le','nc.panacea','panacea','nc.panaceald','panaceald','nc.mmint2','mmint2','nc.gleint','gleint','mam','dec.source','dec.mmap',...
+                'ca','comom','comomld','gm','propfair','recal','kt','bkt','lekt', 'rd', 'nrp', 'nrl', 'nre', ...
+                'nc.brute','nc.ca','nc.comom','nc.comomld','nc.gm','nc.propfair','nc.recal','nc.kt', 'nc.rd', 'nc.nr.probit', 'nc.nr.logit', ...
+                'fluid','matrix','softmin','statedep','closing','diffusion','kp','fluid.softmin','fluid.statedep','fluid.closing','fluid.matrix','fluid.diffusion',...
+                'nc','nc.exact','nc.imci','ls','nc.ls','nc.cub','cub','le','nc.le','ble','nc.ble','aghq','nc.aghq','mcmc','nc.mcmc','nc.pana','pana','nc.panald','panald','nc.mmint2','mmint2','nc.gleint','gleint','mam','dec.source','dec.mmap',...
                 'mmk','gigk', 'gigk.kingman_approx', ...
                 'mm1','mg1','gm1','gig1','gim1','gig1.kingman','gig1.gelenbe','gig1.heyman','gig1.kimura','gig1.allen','gig1.kobayashi','gig1.klb','gig1.marchal',...
                 'aba.upper','aba.lower','gb.upper','gb.lower','sb.upper','sb.lower','bjb.upper','bjb.lower','pb.upper','pb.lower','mwba.upper','mwba.lower', ...
@@ -200,16 +191,41 @@ classdef Solver < handle
             end
         end
 
+        function options = mergeOptions(userOptions, defaultOptions)
+            % OPTIONS = MERGEOPTIONS(USEROPTIONS, DEFAULTOPTIONS)
+            % Overlay a caller-supplied options struct on the solver defaults so
+            % that a struct built by hand inherits every field it omits.
+            % Caller-supplied fields always win; struct-valued fields present in
+            % both (config, odesolvers) are merged by the same rule one level
+            % down, so a partial config does not discard the rest of it.
+            options = defaultOptions;
+            if ~isstruct(userOptions)
+                options = userOptions;
+                return
+            end
+            fn = fieldnames(userOptions);
+            for i = 1:numel(fn)
+                f = fn{i};
+                if isfield(defaultOptions, f) && isstruct(userOptions.(f)) && ...
+                        isstruct(defaultOptions.(f)) && isscalar(userOptions.(f)) && ...
+                        isscalar(defaultOptions.(f))
+                    options.(f) = Solver.mergeOptions(userOptions.(f), defaultOptions.(f));
+                else
+                    options.(f) = userOptions.(f);
+                end
+            end
+        end
+
         function options = parseOptions(varargin, defaultOptions)
             % OPTIONS = PARSEOPTIONS(VARARGIN, DEFAULTOPTIONS)
             % Parse option parameters into options data structure
             if isempty(varargin)
                 options = defaultOptions;
             elseif isstruct(varargin{1})
-                options = varargin{1};
+                options = Solver.mergeOptions(varargin{1}, defaultOptions);
             elseif ischar(varargin{1})
                 if length(varargin)>1 && isstruct(varargin{2}) % options struct after method field
-                    options = varargin{2};
+                    options = Solver.mergeOptions(varargin{2}, defaultOptions);
                     varargin(2) = [];
                 elseif isscalar(varargin)
                     options = defaultOptions;
@@ -220,6 +236,17 @@ classdef Solver < handle
                 [optList, allOpt] = Solver.listValidOptions();
                 allMethodsList = setdiff(allOpt, optList);
                 while ~isempty(varargin)
+                    % REMOVED OPTIONS ARE NAMED, NOT IGNORED. An unknown option
+                    % is dropped silently below (the warning is commented out),
+                    % so a caller carrying 'console',true from before the console
+                    % became VerboseLevel.DEBUG would lose the NAME, leave the
+                    % VALUE to be read as the next option name, and fail
+                    % somewhere unrelated. Say what replaced it instead.
+                    if ischar(varargin{1}) && strcmpi(varargin{1},'console')
+                        line_error(mfilename, ['The ''console'' option was removed: the solver console IS ' ...
+                            'VerboseLevel.DEBUG. Use ''verbose'',VerboseLevel.DEBUG for one run, or ' ...
+                            'line_verbosity(VerboseLevel.DEBUG) for the session.']);
+                    end
                     if Solver.isValidOption(varargin{1}) || startsWith(varargin{1},'config.')
                         switch varargin{1}
                             case allMethodsList

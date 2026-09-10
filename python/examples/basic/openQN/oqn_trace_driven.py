@@ -23,17 +23,19 @@ if __name__ == "__main__":
 
     source.set_arrival(jobclass, Exp(1))
 
-    # Get path to trace file in the same directory as the MATLAB example
-    trace_file = '/home/gcasale/Dropbox/code/line-dev.git/matlab/examples/basic/openQN/example_trace.txt'
-    queue.set_service(jobclass, Replayer(trace_file))
+    # The trace ships with the MATLAB twin of this example
+    here = os.path.dirname(os.path.abspath(__file__))
+    trace_file = os.path.join(here, '..', '..', '..', '..', 'matlab', 'examples',
+                              'basic', 'openQN', 'example_trace.txt')
+    queue.set_service(jobclass, Replayer(os.path.normpath(trace_file)))
 
     model.link(Network.serial_routing([source, queue, sink]))
 
     # Run solvers
     avg_table_1 = JMT(model, seed=23000).avg_table()
-    print('JMT Result:')
+    print('JMT Solver:')
     print(avg_table_1)
 
     avg_table_2 = LDES(model, seed=23000).avg_table()
-    print('\nDES Result:')
+    print('\nLDES Solver:')
     print(avg_table_2)

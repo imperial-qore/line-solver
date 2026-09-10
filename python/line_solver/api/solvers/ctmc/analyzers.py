@@ -14,7 +14,8 @@ from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
 import time
 
-from .memory_guard import ctmc_memory_gate, DEFAULT_SAFETY_FRACTION
+from .memory_guard import (ctmc_memory_gate, state_space_log_size,
+                           DEFAULT_SAFETY_FRACTION)
 from ...sn import NetworkStruct, SchedStrategy, NodeType
 from .handler import (
     solver_ctmc,
@@ -92,16 +93,7 @@ def solver_ctmc_analyzer(
     K = sn.nclasses
 
     if sn.njobs is not None:
-        N = sn.njobs.flatten()
-        # worst-case log state-space size (stars-and-bars per class); open
-        # classes are truncated at the (already-resolved) cutoff.
-        log_nstates = 0.0
-        for k in range(K):
-            nk = (options.cutoff if np.isinf(N[k]) else int(N[k]))
-            # log C(nk + M - 1, nk)
-            log_nstates += (math.lgamma(1 + nk + M - 1)
-                            - math.lgamma(1 + M - 1)
-                            - math.lgamma(1 + nk))
+        log_nstates = state_space_log_size(sn, options)
 
         force = bool(getattr(options, 'force', False))
         safety = float(getattr(options, 'memory_safety_fraction',
@@ -112,8 +104,11 @@ def solver_ctmc_analyzer(
         if not ok:
             raise MemoryError(msg)
 
-    # Select and execute method
-    if method in ['default', 'basic']:
+    # Select and execute method. 'exact' is an explicit alias for the default
+    # state-space path, so a call site can pin the intent without being
+    # re-baselined by a later change of what 'default' selects; it must take the
+    # identical branch, not fall through to the unknown-method warning.
+    if method in ['default', 'exact', 'basic']:
         ret = solver_ctmc_basic(sn, options)
         result.method = 'basic'
     else:

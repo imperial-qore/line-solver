@@ -7,6 +7,8 @@ function [QNclass,UNclass,RNclass,TNclass,ANclass,WNclass] = getAvg(self,Q,U,R,T
 % Copyright (c) 2012-2026, Imperial College London
 % All rights reserved.
 
+self.assertNotChainModel('getAvg');
+
 if isa(self.model, 'LayeredNetwork')
     % Java-backed LQN simulation (SolverLDES): per-LQN-element vectors,
     % same convention as SolverLN/SolverLQNS getAvg
@@ -28,7 +30,17 @@ if strcmp(self.options.lang,'java') && ~strcmp(self.name,'SolverLDES')
         self.model.obj = [];
         self.setLang();
     end
-    self.obj.getOptions.verbose = jline.VerboseLevel.STD;
+    % Carry this solver's verbosity into the JAR object rather than forcing STD:
+    % a layer solve asked to stay quiet (SolverLN, options.verbose=false) would
+    % otherwise print one progress line per layer per iteration.
+    switch self.options.verbose
+        case VerboseLevel.SILENT
+            self.obj.getOptions.verbose = jline.VerboseLevel.SILENT;
+        case VerboseLevel.DEBUG
+            self.obj.getOptions.verbose = jline.VerboseLevel.DEBUG;
+        otherwise
+            self.obj.getOptions.verbose = jline.VerboseLevel.STD;
+    end
     % Carry the JLINE-side fork-join (MMT) iterate across the model rebuild so
     % layers warm-start as in lang='matlab'. see _kb/05-solvers-overview.md
     isMVA = isa(self,'SolverMVA');
@@ -131,7 +143,15 @@ else
 end
 
 if ~self.hasAvgResults() || ~self.options.cache
-    runAnalyzer(self);
+    % A non-renewal (MAP/MMPP/MMAP) process that the resolved method cannot
+    % consume is solved through its random-environment image rather than
+    % rejected; every other unsupported feature keeps its rejection in
+    % runAnalyzer. see _kb/05-solvers-overview.md for rationale
+    if self.needsMapEnv(self.options)
+        self.mapEnvApprox(self.options);
+    else
+        runAnalyzer(self);
+    end
     % the next line is required because getAvg can alter the chain
     % structure in the presence of caches so we need to reload sn
     sn = self.model.getStruct;
@@ -161,6 +181,7 @@ if ~isempty(Q)
         zeroMaskQ = RNclass < 10 * GlobalConstants.FineTol;
     end
     QNclass = filterMetric(Q, self.result.Avg.Q, zeroMaskQ, sn, K, M);
+    maskprobe('Q', QNclass, filterMetric(Q, self.result.Avg.Q, [], sn, K, M), class(self), RNclass);
 else
     QNclass = [];
 end
@@ -173,6 +194,7 @@ if ~isempty(U)
         zeroMaskU = RNclass < 10 * GlobalConstants.FineTol;
     end
     UNclass = filterMetric(U, self.result.Avg.U, zeroMaskU, sn, K, M);
+    maskprobe('U', UNclass, filterMetric(U, self.result.Avg.U, [], sn, K, M), class(self), RNclass);
 else
     UNclass = [];
 end
@@ -209,10 +231,61 @@ if ~isempty(UNclass)
             if ~isfinite(c) || c <= 0 || any(srcStations==i)
                 continue % infinite-server / delay / source station
             end
+            % A STATION WITH A BINDING BUFFER CANNOT BE UNSTABLE, however heavily
+            % it is offered: the buffer bounds the queue and the excess is blocked
+            % or lost. rho = T/(c*rate) reaches exactly 1 at such a station -- that
+            % is what a saturated server WITH a finite buffer looks like -- so
+            % without this the queue length of an M/M/1/K in overload is reported
+            % as Inf while the solver's own answer is the cap. An exact solver
+            % escapes it only because its carried throughput lands a hair below the
+            % service rate; the fluid answer sits exactly on it.
+            bounded = false;
+            if isfield(sn,'cap') && numel(sn.cap) >= i && isfinite(sn.cap(i))
+                bounded = true;
+            end
+            if ~bounded && isfield(sn,'classcap') && size(sn.classcap,1) >= i
+                bounded = any(isfinite(sn.classcap(i,:)));
+            end
+            if ~bounded && isfield(sn,'regionmembers') && ~isempty(sn.regionmembers)
+                for f = 1:numel(sn.regionmembers)
+                    if ~isempty(sn.regionmembers{f}) && numel(sn.regionmembers{f}) >= i ...
+                            && sn.regionmembers{f}(i)
+                        bounded = true;
+                        break
+                    end
+                end
+            end
+            if bounded
+                continue
+            end
+            % A STATION CUSTOMERS ABANDON CANNOT BE UNSTABLE EITHER, and for the
+            % same reason: reneging bounds the queue however heavily it is
+            % offered, the excess leaving instead of accumulating. rho =
+            % T/(c*rate) reaches exactly 1 there -- that is what a saturated
+            % server WITH abandonment looks like -- so without this the Erlang A
+            % queue length that qsys_erlanga and qsys_ggisgi_fluid compute
+            % exactly would be overwritten with Inf.
+            if isfield(sn,'impatienceClass') && ~isempty(sn.impatienceClass) ...
+                    && size(sn.impatienceClass,1) >= i ...
+                    && any(sn.impatienceClass(i,:) == ImpatienceType.RENEGING)
+                continue
+            end
+            % A load-dependent station serves faster than its nominal rate;
+            % without the peak scaling the test reads the rate at population
+            % one and calls a stable station saturated (e.g. the discrete-time
+            % p(n)=p*min(n,s) server of Daduna's example 2.10).
+            lldpeak = 1;
+            if isfield(sn,'lldscaling') && ~isempty(sn.lldscaling) && size(sn.lldscaling,1) >= i
+                row = sn.lldscaling(i,:);
+                row = row(isfinite(row) & row > 0);
+                if ~isempty(row)
+                    lldpeak = max(row);
+                end
+            end
             rho = zeros(1,size(UNclass,2));
             for r = 1:size(UNclass,2)
                 if sn.rates(i,r) > 0 && TNclass(i,r) > 0
-                    rho(r) = TNclass(i,r) / (c * sn.rates(i,r));
+                    rho(r) = TNclass(i,r) / (c * lldpeak * sn.rates(i,r));
                 end
             end
             rhoOpen = sum(rho(openCls));
@@ -235,6 +308,26 @@ if ~isempty(UNclass)
         line_warning(mfilename,'The model has unstable queues (utilization >= 1); station utilization is reported capped at 1.0, queue length and response time as Inf.\n')
     end
 end
+end
+
+function maskprobe(tag, withMask, noMask, solverName, RN)
+% TEMPORARY MEASUREMENT ONLY (task #32 blast radius). Returns nothing and
+% changes no result: it records where dropping the R-based zeroMask at
+% getAvg.m:181/:193 would change the reported metric. Appends to a file rather
+% than a global so an example calling `clear all` cannot wipe the record.
+f = getenv('LINE_MASKPROBE_FILE');
+if isempty(f), return; end
+d = abs(noMask - withMask);
+[ii, rr] = find(d > 0);
+if isempty(ii), return; end
+nm = getenv('LINE_MASKPROBE_NAME');
+fid = fopen(f, 'a');
+if fid < 0, return; end
+for z = 1:numel(ii)
+    fprintf(fid, '%s\t%s\t%s\t%d\t%d\t%.17g\t%.17g\t%.17g\n', nm, solverName, tag, ...
+        ii(z), rr(z), withMask(ii(z), rr(z)), noMask(ii(z), rr(z)), RN(ii(z), rr(z)));
+end
+fclose(fid);
 end
 
 function outData = filterMetric(handle, metric, zeroMask, sn, K, M)

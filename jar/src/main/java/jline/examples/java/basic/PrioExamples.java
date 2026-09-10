@@ -13,10 +13,10 @@ import jline.solvers.ssa.SSA;
 import java.util.Scanner;
 
 /**
- * Priority queueing examples mirroring the Kotlin notebooks in prioModel.
+ * Priority queueing examples mirroring the example notebooks in prioModel.
  * <p>
- * This class contains Java implementations that mirror the Kotlin notebook examples
- * found in jar/src/main/kotlin/jline/examples/kotlin/basic/prioModel/. Each method 
+ * This class contains Java implementations that mirror the example notebooks
+ * found in jar/src/main/java/jline/examples/java/basic/prioModel/. Each method
  * demonstrates a specific priority queueing concept using models from the basic package.
  * <p>
  * The examples cover:
@@ -96,7 +96,8 @@ public class PrioExamples {
         
         // Create solvers as in MATLAB version (lines 35, 36)
         CTMC solverCTMC = new CTMC(model);
-        JMT solverJMT = new JMT(model, "seed", 23000, "verbose", true, "samples", 30000);
+        JMT solverJMT = new JMT(model, "seed", 23000, "verbose", true, "samples", 10000,
+                "keep", true);
         
         solverCTMC.getAvgTable().print();
         solverJMT.getAvgTable().print();

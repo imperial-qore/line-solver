@@ -48,6 +48,8 @@ public class FluidODEsExporter {
         public List<String> schedNames;
         public SchedStrategy[] sched;
         public double[] S;
+        /** S holds the population at an INF station, so isInfinite(S) cannot tell one apart. */
+        public boolean[] isInfStation;
         // form W
         public Matrix W;
         public double[] Alambda;
@@ -64,7 +66,6 @@ public class FluidODEsExporter {
         public String[] factorType;
         public int[] factorStation;
         public int[] factorClass;
-        public double[] factorC0;
         public int[][] factorOthers;
         public double[][] dpsw;
         public double[] fcfsPhaseW;
@@ -138,6 +139,10 @@ public class FluidODEsExporter {
         for (int i = 0; i < M; i++) {
             double si = sn.nservers.get(i, 0);
             S[i] = Double.isInfinite(si) ? njobsSum : si;
+        }
+        sys.isInfStation = new boolean[M];
+        for (int i = 0; i < M; i++) {
+            sys.isInfStation[i] = Double.isInfinite(sn.nservers.get(i, 0));
         }
 
         // station-to-station routing matrix via stochastic complementation
@@ -318,6 +323,10 @@ public class FluidODEsExporter {
             double si = sn.nservers.get(i, 0);
             S[i] = Double.isInfinite(si) ? sn.nclosedjobs : si;
         }
+        sys.isInfStation = new boolean[M];
+        for (int i = 0; i < M; i++) {
+            sys.isInfStation[i] = Double.isInfinite(sn.nservers.get(i, 0));
+        }
 
         boolean weighted = method.equals("statedep") || method.equals("softmin");
         if (weighted) {
@@ -416,7 +425,6 @@ public class FluidODEsExporter {
         List<String> evType = new ArrayList<String>();
         List<Integer> evStation = new ArrayList<Integer>();
         List<Integer> evClass = new ArrayList<Integer>();
-        List<Double> evC0 = new ArrayList<Double>();
         List<int[]> evOthers = new ArrayList<int[]>();
 
         for (int i = 0; i < M; i++) {
@@ -448,7 +456,7 @@ public class FluidODEsExporter {
                                         double base = Phi[i][c].get(ki) * Mu[i][c].get(ki)
                                                 * sn.rt.get(i * K + c, j * K + l) * pieVec.get(kj);
                                         if (base > 0) {
-                                            addEvent(evFrom, evTo, evCoeff, evVar, evType, evStation, evClass, evC0, evOthers,
+                                            addEvent(evFrom, evTo, evCoeff, evVar, evType, evStation, evClass, evOthers,
                                                     xic + ki, xjl + kj, base, method, sys.sched[i], i, c, ki,
                                                     qIndices, Kic, S, K, dpsw, fcfsPhaseW);
                                         }
@@ -473,7 +481,7 @@ public class FluidODEsExporter {
                             if (ki != kip) {
                                 double base = ph.get(0).get(ki, kip);
                                 if (base > 0) {
-                                    addEvent(evFrom, evTo, evCoeff, evVar, evType, evStation, evClass, evC0, evOthers,
+                                    addEvent(evFrom, evTo, evCoeff, evVar, evType, evStation, evClass, evOthers,
                                             xic + ki, xic + kip, base, method, sys.sched[i], i, c, ki,
                                             qIndices, Kic, S, K, dpsw, fcfsPhaseW);
                                 }
@@ -493,7 +501,6 @@ public class FluidODEsExporter {
         sys.factorType = new String[ne];
         sys.factorStation = new int[ne];
         sys.factorClass = new int[ne];
-        sys.factorC0 = new double[ne];
         sys.factorOthers = new int[ne][];
         for (int e = 0; e < ne; e++) {
             sys.eventFrom[e] = evFrom.get(e);
@@ -503,7 +510,6 @@ public class FluidODEsExporter {
             sys.factorType[e] = evType.get(e);
             sys.factorStation[e] = evStation.get(e);
             sys.factorClass[e] = evClass.get(e);
-            sys.factorC0[e] = evC0.get(e);
             sys.factorOthers[e] = evOthers.get(e);
         }
         sys.nstates = nstates;
@@ -522,12 +528,11 @@ public class FluidODEsExporter {
 
     private static void addEvent(List<Integer> evFrom, List<Integer> evTo, List<Double> evCoeff,
                                  List<Integer> evVar, List<String> evType, List<Integer> evStation,
-                                 List<Integer> evClass, List<Double> evC0, List<int[]> evOthers,
+                                 List<Integer> evClass, List<int[]> evOthers,
                                  int from, int to, double base, String method, SchedStrategy schedi,
                                  int i, int c, int ki, int[][] qIndices, int[][] Kic, double[] S,
                                  int K, double[][] dpsw, double[] fcfsPhaseW) {
         String ftype;
-        double c0 = 0.0;
         int[] others = null;
         double coeff = base;
         if (method.equals("closing")) {
@@ -546,14 +551,10 @@ public class FluidODEsExporter {
             } else if (schedi == SchedStrategy.PS || schedi == SchedStrategy.FCFS) {
                 ftype = "min";
             } else if (schedi == SchedStrategy.DPS) {
-                // the closing ODE uses denominator mean(w) + sum_r w_r*n_r
-                ftype = "dps";
-                double mean = 0.0;
-                for (int r = 0; r < K; r++) {
-                    mean += dpsw[i][r];
-                }
-                c0 = mean / K;
-                coeff = coeff * S[i] * dpsw[i][c];
+                // the share w_ir*x/ntilde_i of the capacity min(n_i,S_i), as in
+                // the closing rate factors: no additive seed, not the full S_i
+                ftype = "dpsmin";
+                coeff = coeff * dpsw[i][c];
             } else {
                 // strategies without a case in the closing rates keep rates = x
                 ftype = "lin";
@@ -577,7 +578,6 @@ public class FluidODEsExporter {
         evType.add(ftype);
         evStation.add(i);
         evClass.add(c);
-        evC0.add(c0);
         evOthers.add(others);
     }
 
@@ -738,12 +738,11 @@ public class FluidODEsExporter {
         String[] varType = new String[n];
         int[] varStation = new int[n];
         int[] varClass = new int[n];
-        double[] varC0 = new double[n];
         int[][] varOthers = new int[n][];
         double[] constTerm = new double[n];
-        buildTerms(sys, T, varType, varStation, varClass, varC0, varOthers, constTerm);
+        buildTerms(sys, T, varType, varStation, varClass, varOthers, constTerm);
 
-        List<String> defs = buildDefs(sys, varType, varStation, varClass, varC0);
+        List<String> defs = buildDefs(sys, varType, varStation, varClass);
         if (!defs.isEmpty()) {
             L.add("\\subsection*{Definitions}");
             L.add("\\begin{align*}");
@@ -851,7 +850,7 @@ public class FluidODEsExporter {
                 if (sys.factorType[e].equals("fcfsw") || sys.factorType[e].equals("fcfsws")) {
                     anyFcfsw = true;
                 }
-                if (sys.factorType[e].equals("dps")) {
+                if (sys.factorType[e].equals("dpsmin")) {
                     anyDps = true;
                 }
             }
@@ -859,7 +858,7 @@ public class FluidODEsExporter {
                 L.add("\\item At FCFS stations, the mean phase residence times $w_{u} = -1/[D_{0}]_{kk}$ weight the backlog $\\hat{n}_{i}$; the factors $w_{u}$ of the departing phases are folded into the rate coefficients.");
             }
             if (anyDps) {
-                L.add("\\item At DPS stations, weights are normalized to sum to one and the products $S_{i} w_{ir}$ are folded into the rate coefficients; the constant added to $\\tilde{n}_{i}$ in the denominator mirrors the implementation in \\texttt{ode\\_rates\\_closing}.");
+                L.add("\\item At DPS stations, weights are normalized to sum to one and the weight $w_{ir}$ of the departing class is folded into the rate coefficient; the class shares $w_{ir}x/\\tilde{n}_{i}$ divide the station capacity $\\min(n_{i},S_{i})$, so they sum to one whenever the station is busy.");
             }
         }
         boolean anyFcfsStation = false;
@@ -885,7 +884,7 @@ public class FluidODEsExporter {
     }
 
     private static void buildTerms(SymODEs sys, double[][] T, String[] varType, int[] varStation,
-                                   int[] varClass, double[] varC0, int[][] varOthers, double[] constTerm) {
+                                   int[] varClass, int[][] varOthers, double[] constTerm) {
         int n = sys.nstates;
         if (sys.form.equals("W")) {
             for (int s = 0; s < n; s++) {
@@ -897,7 +896,7 @@ public class FluidODEsExporter {
             for (int v = 0; v < n; v++) {
                 if (!sys.isSource[v]) {
                     int i = sys.stateStation[v];
-                    if (Double.isInfinite(sys.S[i])) {
+                    if (sys.isInfStation != null && sys.isInfStation[i]) {
                         varType[v] = "lin";
                     } else {
                         varType[v] = sys.smoothing;
@@ -915,7 +914,6 @@ public class FluidODEsExporter {
                     varType[v] = sys.factorType[e];
                     varStation[v] = sys.factorStation[e];
                     varClass[v] = sys.factorClass[e];
-                    varC0[v] = sys.factorC0[e];
                     varOthers[v] = sys.factorOthers[e];
                 }
             }
@@ -923,7 +921,7 @@ public class FluidODEsExporter {
     }
 
     private static List<String> buildDefs(SymODEs sys, String[] varType, int[] varStation,
-                                          int[] varClass, double[] varC0) {
+                                          int[] varClass) {
         List<String> defs = new ArrayList<String>();
         int n = sys.nstates;
         int M = sys.stationNames.size();
@@ -948,11 +946,12 @@ public class FluidODEsExporter {
                 gdef[i] = String.format(Locale.US,
                         "g_{%d}(\\mathbf{x}) &= \\Bigl(1 + \\bigl(n_{%d}(\\mathbf{x})/%s\\bigr)^{%s}\\Bigr)^{-1/%s}",
                         i + 1, i + 1, fmtnum(sys.S[i]), fmtnum(sys.pstar[i]), fmtnum(sys.pstar[i]));
-            } else if (f.equals("dps")) {
+            } else if (f.equals("dpsmin")) {
+                needN[i] = true;
                 needNT[i] = true;
                 gdef[i] = String.format(Locale.US,
-                        "g_{%d}(\\mathbf{x}) &= \\frac{1}{%s + \\tilde{n}_{%d}(\\mathbf{x})}",
-                        i + 1, fmtnum(varC0[v]), i + 1);
+                        "g_{%d}(\\mathbf{x}) &= \\frac{\\min(n_{%d}(\\mathbf{x}),\\, %s)}{\\tilde{n}_{%d}(\\mathbf{x})}",
+                        i + 1, i + 1, fmtnum(sys.S[i]), i + 1);
             } else if (f.equals("dpspw")) {
                 needN[i] = true;
                 needNT[i] = true;
@@ -1100,7 +1099,7 @@ public class FluidODEsExporter {
     private static String factorTex(SymODEs sys, int v, String ftype, int station, int classIdx, int[] others) {
         if (ftype.equals("lin")) {
             return String.format(Locale.US, "x_{%d}", v + 1);
-        } else if (ftype.equals("min") || ftype.equals("pnorm") || ftype.equals("dps")
+        } else if (ftype.equals("min") || ftype.equals("pnorm") || ftype.equals("dpsmin")
                 || ftype.equals("fcfsw") || ftype.equals("fcfsws")) {
             return String.format(Locale.US, "x_{%d}\\,g_{%d}(\\mathbf{x})", v + 1, station + 1);
         } else if (ftype.equals("dpspw")) {
@@ -1202,7 +1201,7 @@ public class FluidODEsExporter {
 
     /** Smooth factor types; every other type carries a min or a branch. */
     private static final List<String> SMOOTH_FACTORS =
-            java.util.Arrays.asList("lin", "ext1", "dps", "fcfsws");
+            java.util.Arrays.asList("lin", "ext1", "fcfsws");
 
     /**
      * State variable names of the exported drift, x1 ... xn.
@@ -1321,10 +1320,6 @@ public class FluidODEsExporter {
                     }
                     factor = "(1 - (" + join(parts, " + ") + "))";
                 }
-            } else if ("dps".equals(ftype)) {
-                int i = sys.factorStation[e];
-                String ntilde = weightedStationSum(sys, i, sys.dpsw[i], vars, "0");
-                factor = v + "/(" + num(sys.factorC0[e]) + " + " + ntilde + ")";
             } else {
                 int i = sys.factorStation[e];
                 String ni = stationSum(sys, i, vars, "0");
@@ -1372,20 +1367,6 @@ public class FluidODEsExporter {
         for (int k = 0; k < sys.nstates; k++) {
             if (sys.stateStation[k] == i) {
                 parts.add(vars.get(k));
-            }
-        }
-        return joinSum(parts, offset);
-    }
-
-    private static String weightedStationSum(SymODEs sys, int i, double[] w, List<String> vars,
-                                             String offset) {
-        List<String> parts = new ArrayList<String>();
-        for (int k = 0; k < sys.nstates; k++) {
-            if (sys.stateStation[k] == i) {
-                double wt = w[sys.stateClass[k]];
-                if (wt != 0) {
-                    parts.add("(" + num(wt) + ")*" + vars.get(k));
-                }
             }
         }
         return joinSum(parts, offset);

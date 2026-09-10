@@ -10,7 +10,21 @@ classdef Workflow < Model
     %   - Serial: Sequential execution
     %   - AndFork/AndJoin: Parallel execution with synchronization
     %   - OrFork/OrJoin: Probabilistic branching
-    %   - Loop: Repeated execution
+    %   - Loop: Geometric repetition, with the same semantics as the
+    %     LayeredNetwork POST_LOOP precedence: the loop body is executed a
+    %     geometric number of times of mean COUNT when COUNT>=1, and is
+    %     executed at most once, with probability COUNT, when COUNT<1
+    %
+    % A workflow whose precedence graph is series-parallel is reduced exactly,
+    % by recursive composition of the series-parallel tree; the reduction
+    % handles arbitrary nesting (a fork inside a loop, a branch of a fork that
+    % is itself a fork-join). Graphs that are not series-parallel fall back to
+    % the block-based composition, which is a heuristic.
+    %
+    % Activities model both local computation and, when the workflow stands for
+    % an LQN entry, a synchronous call: the call is an activity whose host
+    % demand is the fitted call-response law. Asynchronous calls contribute no
+    % time and are simply omitted by the builder.
     %
     % Example:
     %   wf = Workflow('myWorkflow');
@@ -30,6 +44,8 @@ classdef Workflow < Model
 
     properties (Hidden)
         cachedPH;               % Cached phase-type distribution result
+        spTree;                 % Cached series-parallel decomposition, [] if not built
+        spFailed = false;       % True if the decomposition was attempted and failed
     end
 
     methods
@@ -44,8 +60,10 @@ classdef Workflow < Model
             self@Model(name);
             self.activities = {};
             self.precedences = [];
-            self.activityMap = containers.Map();
+            self.activityMap = configureDictionary('string','double');
             self.cachedPH = [];
+            self.spTree = [];
+            self.spFailed = false;
         end
 
         function act = addActivity(self, name, hostDemand)
@@ -68,7 +86,7 @@ classdef Workflow < Model
             self.activities{end+1} = act;
             act.index = length(self.activities);
             self.activityMap(name) = act.index;
-            self.cachedPH = [];  % Invalidate cache
+            self.invalidateTopology();
         end
 
         function self = addPrecedence(self, prec)
@@ -86,7 +104,7 @@ classdef Workflow < Model
             else
                 self.precedences = [self.precedences; prec];
             end
-            self.cachedPH = [];  % Invalidate cache
+            self.invalidateTopology();
         end
 
         function act = getActivity(self, name)
@@ -184,9 +202,31 @@ classdef Workflow < Model
             for p = 1:length(self.precedences)
                 prec = self.precedences(p);
                 if prec.postType == ActivityPrecedenceType.POST_LOOP
-                    if isempty(prec.postParams) || prec.postParams <= 0
+                    if isempty(prec.postParams) || ~isscalar(prec.postParams)
+                        isValid = false;
+                        msg = 'Loop count must be a single positive number.';
+                        return;
+                    end
+                    if prec.postParams <= 0
                         isValid = false;
                         msg = 'Loop count must be a positive number.';
+                        return;
+                    end
+                end
+            end
+
+            % Check 5: partial (quorum) AND-joins are refused rather than
+            % silently served as full joins, which would be a different law
+            for p = 1:length(self.precedences)
+                prec = self.precedences(p);
+                if prec.preType == ActivityPrecedenceType.PRE_AND && ~isempty(prec.preParams)
+                    quorum = prec.preParams(1);
+                    if quorum > 0 && quorum < length(prec.preActs)
+                        isValid = false;
+                        msg = sprintf(['AND-join with quorum %d of %d is not supported by Workflow: ', ...
+                            'a partial join is not the maximum of the branches. Use a full join, or ', ...
+                            'SolverLN with method=''default'', which routes the join explicitly.'], ...
+                            quorum, length(prec.preActs));
                         return;
                     end
                 end
@@ -199,7 +239,9 @@ classdef Workflow < Model
             % PH = TOPH(SELF)
             %
             % Returns:
-            %   ph - APH distribution representing the workflow execution time
+            %   ph - APH distribution representing the workflow execution
+            %        time, or PH when the composed generator is cyclic, which
+            %        a geometric loop over a multi-phase body makes it
 
             if ~isempty(self.cachedPH)
                 ph = self.cachedPH;
@@ -211,9 +253,60 @@ classdef Workflow < Model
                 line_error(mfilename, msg);
             end
 
-            [alpha, T] = self.buildCTMC();
-            ph = APH(alpha, T);
+            [alpha, T] = self.composeSeriesParallel();
+            if isempty(alpha)
+                % Not series-parallel: fall back to the block composition
+                [alpha, T] = self.buildCTMC();
+            end
+
+            if Workflow.isAcyclicGenerator(T)
+                ph = APH(alpha, T);
+            else
+                ph = PH(alpha, T);
+            end
             self.cachedPH = ph;
+        end
+
+        function ph = refreshPH(self)
+            % REFRESHPH Recompose the workflow law after a demand change
+            %
+            % PH = REFRESHPH(SELF)
+            %
+            % Recomposes only the series-parallel nodes on the path from a
+            % dirty leaf to the root; nodes whose subtree is unchanged keep
+            % their cached (alpha,T). The topology is not rebuilt. When the
+            % workflow is not series-parallel this degrades to a full
+            % recomposition through the block path.
+
+            ph = self.toPH();
+        end
+
+        function self = setActivityDemand(self, name, hostDemand)
+            % SETACTIVITYDEMAND Change the host demand of one activity
+            %
+            % SELF = SETACTIVITYDEMAND(SELF, NAME, HOSTDEMAND)
+            %
+            % Marks only that leaf dirty, so that the next TOPH/REFRESHPH
+            % recomposes the path from the leaf to the root and reuses every
+            % other cached block. This is the entry point used by iterative
+            % solvers that update call-response laws at each iteration.
+
+            act = self.getActivity(name);
+            act.setHostDemand(hostDemand);
+        end
+
+        function self = setActivityDemandMean(self, name, meanValue)
+            % SETACTIVITYDEMANDMEAN Change only the mean of one activity
+            %
+            % SELF = SETACTIVITYDEMANDMEAN(SELF, NAME, MEANVALUE)
+            %
+            % Rescales the activity law in time, so its SCV and its whole
+            % shape are preserved. The leaf keeps its order and its initial
+            % probability vector, and the cached series-parallel tree keeps
+            % its shape.
+
+            act = self.getActivity(name);
+            act.setHostDemandMean(meanValue);
         end
 
         function [alpha, T] = buildCTMC(self)
@@ -252,7 +345,516 @@ classdef Workflow < Model
         end
     end
 
+    methods (Hidden)
+        function self = invalidateTopology(self)
+            % INVALIDATETOPOLOGY Discard the cached law and decomposition
+            %
+            % Called when an activity or a precedence is added, which can
+            % change the shape of the series-parallel tree.
+
+            self.cachedPH = [];
+            self.spTree = [];
+            self.spFailed = false;
+        end
+
+        function self = invalidateActivity(self, actIdx)
+            % INVALIDATEACTIVITY Mark one activity law as dirty
+            %
+            % SELF = INVALIDATEACTIVITY(SELF, ACTIDX)
+            %
+            % Invalidates the leaf of ACTIDX and its ancestors in the cached
+            % series-parallel tree, keeping every other cached block. The
+            % topology is untouched.
+
+            self.cachedPH = [];
+            if isempty(self.spTree)
+                return;
+            end
+            if actIdx < 1 || actIdx > numel(self.spTree.leafOf) || self.spTree.leafOf(actIdx) == 0
+                % Activity outside the decomposition: rebuild it entirely
+                self.spTree = [];
+                self.spFailed = false;
+                return;
+            end
+            self.spTree = Workflow.invalidateBranch(self.spTree, self.spTree.leafOf(actIdx));
+        end
+
+        function self = rescaleActivityLeaf(self, actIdx, factor)
+            % RESCALEACTIVITYLEAF Time-scale a cached leaf in place
+            %
+            % SELF = RESCALEACTIVITYLEAF(SELF, ACTIDX, FACTOR)
+            %
+            % The leaf law is scaled as T -> T*FACTOR with ALPHA fixed, which
+            % divides its mean by FACTOR and leaves its SCV and its order
+            % untouched. Ancestors still recompose, because they mix phases of
+            % several leaves, but the tree keeps its shape and no APH is
+            % refitted.
+
+            self.cachedPH = [];
+            if isempty(self.spTree)
+                return;
+            end
+            if actIdx < 1 || actIdx > numel(self.spTree.leafOf) || self.spTree.leafOf(actIdx) == 0
+                self.spTree = [];
+                self.spFailed = false;
+                return;
+            end
+            k = self.spTree.leafOf(actIdx);
+            self.spTree = Workflow.invalidateBranch(self.spTree, k);
+            if ~isempty(self.spTree.T{k})
+                self.spTree.T{k} = self.spTree.T{k} * factor;
+                self.spTree.valid(k) = true;
+            end
+        end
+
+        function tree = getSPTree(self)
+            % GETSPTREE Return the cached series-parallel decomposition
+            %
+            % TREE = GETSPTREE(SELF)
+            %
+            % Returns the flat series-parallel tree, or [] if the precedence
+            % graph is not series-parallel. Field EXECS carries the expected
+            % number of executions of each node per workflow execution, which
+            % is what an LQN metric reconstruction splits the layer results by.
+
+            if isempty(self.spTree) && ~self.spFailed
+                self.buildSPTree();
+            end
+            tree = self.spTree;
+        end
+    end
+
     methods (Access = private)
+        function [alpha, T] = composeSeriesParallel(self)
+            % COMPOSESERIESPARALLEL Exact reduction of a series-parallel graph
+            %
+            % [ALPHA, T] = COMPOSESERIESPARALLEL(SELF)
+            %
+            % Decomposes the precedence graph into a series-parallel tree and
+            % composes it bottom-up, reusing every cached node whose subtree
+            % is unchanged. Returns [] when the graph is not series-parallel,
+            % which is the signal to fall back to the block composition.
+
+            alpha = [];
+            T = [];
+            if isempty(self.spTree)
+                if self.spFailed
+                    return;
+                end
+                self.buildSPTree();
+                if isempty(self.spTree)
+                    return;
+                end
+            end
+            [alpha, T] = self.composeNode(self.spTree.root);
+        end
+
+        function ok = buildSPTree(self)
+            % BUILDSPTREE Decompose the precedence graph into an SP tree
+            %
+            % OK = BUILDSPTREE(SELF)
+            %
+            % On success SELF.SPTREE holds a flat tree whose nodes are
+            % 'leaf', 'serial', 'par', 'or' or 'loop'. On failure SELF.SPTREE
+            % stays empty and SELF.SPFAILED is set, so the decomposition is
+            % attempted once per topology.
+
+            ok = false;
+            self.spTree = [];
+            self.spFailed = true;
+
+            n = length(self.activities);
+            if n == 0
+                return;
+            end
+
+            S = struct();
+            S.outP = zeros(n, 1);
+            S.inP = zeros(n, 1);
+            S.consumed = false(n, 1);
+            S.tree = struct('type', {{}}, 'act', [], 'kids', {{}}, 'parent', [], ...
+                'probs', {{}}, 'count', [], 'alpha', {{}}, 'T', {{}}, 'valid', logical([]));
+
+            % An activity may head at most one precedence and be reached by at
+            % most one precedence; otherwise the graph is not series-parallel
+            for p = 1:length(self.precedences)
+                prec = self.precedences(p);
+                for a = 1:length(prec.preActs)
+                    i = self.getActivityIndex(prec.preActs{a});
+                    if i <= 0 || S.outP(i) ~= 0
+                        return;
+                    end
+                    S.outP(i) = p;
+                end
+                for a = 1:length(prec.postActs)
+                    j = self.getActivityIndex(prec.postActs{a});
+                    if j <= 0 || S.inP(j) ~= 0
+                        return;
+                    end
+                    S.inP(j) = p;
+                end
+            end
+
+            starts = find(S.inP == 0);
+            if numel(starts) ~= 1
+                return;
+            end
+
+            [S, kids, status, ~, parsedOk] = self.spParseSeq(S, starts(1), []);
+            if ~parsedOk || ~strcmp(status, 'end') || ~all(S.consumed)
+                return;
+            end
+
+            [S, root] = self.spSerialNode(S, kids);
+            if root == 0
+                return;
+            end
+
+            tree = S.tree;
+            tree.root = root;
+            tree.leafOf = zeros(n, 1);
+            for k = 1:numel(tree.type)
+                if strcmp(tree.type{k}, 'leaf')
+                    tree.leafOf(tree.act(k)) = k;
+                end
+            end
+            tree.execs = Workflow.spExecutionCounts(tree);
+
+            self.spTree = tree;
+            self.spFailed = false;
+            ok = true;
+        end
+
+        function [S, kids, status, stopAt, ok] = spParseSeq(self, S, cur, stopSet)
+            % SPPARSESEQ Parse a maximal sequence of blocks starting at CUR
+            %
+            % Returns the nodes of the sequence and how it terminated:
+            %   'end'  - no successor
+            %   'stop' - reached an activity owned by the caller (STOPAT)
+            %   'join' - reached a join precedence (STOPAT is its index)
+
+            kids = [];
+            status = 'end';
+            stopAt = 0;
+            ok = true;
+
+            while true
+                if cur == 0
+                    status = 'end';
+                    return;
+                end
+                if ~isempty(stopSet) && any(stopSet == cur)
+                    status = 'stop';
+                    stopAt = cur;
+                    return;
+                end
+                if S.consumed(cur)
+                    ok = false;
+                    return;
+                end
+                S.consumed(cur) = true;
+                [S, kleaf] = self.spAddNode(S, 'leaf', cur, [], [], 0);
+                kids(end+1) = kleaf; %#ok<AGROW>
+
+                p = S.outP(cur);
+                if p == 0
+                    status = 'end';
+                    return;
+                end
+                prec = self.precedences(p);
+                if length(prec.preActs) > 1
+                    % CUR is the tail of a branch: the caller composes the join
+                    status = 'join';
+                    stopAt = p;
+                    return;
+                end
+
+                postInds = self.spIndicesOf(prec.postActs);
+                if any(postInds <= 0)
+                    ok = false;
+                    return;
+                end
+
+                switch prec.postType
+                    case ActivityPrecedenceType.POST_AND
+                        [S, knode, cur, ok] = self.spParseFork(S, postInds, [], stopSet, true);
+                        if ~ok
+                            return;
+                        end
+                        kids(end+1) = knode; %#ok<AGROW>
+                    case ActivityPrecedenceType.POST_OR
+                        probs = prec.postParams;
+                        if numel(probs) ~= numel(postInds)
+                            ok = false;
+                            return;
+                        end
+                        [S, knode, cur, ok] = self.spParseFork(S, postInds, probs(:)', stopSet, false);
+                        if ~ok
+                            return;
+                        end
+                        kids(end+1) = knode; %#ok<AGROW>
+                    case ActivityPrecedenceType.POST_LOOP
+                        [S, knode, cur, ok] = self.spParseLoop(S, postInds, prec.postParams, stopSet);
+                        if ~ok
+                            return;
+                        end
+                        kids(end+1) = knode; %#ok<AGROW>
+                    case ActivityPrecedenceType.POST_SEQ
+                        if numel(postInds) ~= 1
+                            ok = false;
+                            return;
+                        end
+                        cur = postInds(1);
+                    otherwise
+                        % POST_CACHE and any other pattern is not a workflow
+                        % composition rule
+                        ok = false;
+                        return;
+                end
+            end
+        end
+
+        function [S, knode, nextAct, ok] = spParseFork(self, S, branchHeads, probs, stopSet, isAnd)
+            % SPPARSEFORK Parse the branches of a fork and their join
+
+            knode = 0;
+            nextAct = 0;
+            ok = true;
+
+            nb = numel(branchHeads);
+            branchNodes = zeros(1, nb);
+            bstatus = cell(1, nb);
+            bstop = zeros(1, nb);
+
+            for b = 1:nb
+                [S, bkids, st, sa, okb] = self.spParseSeq(S, branchHeads(b), stopSet);
+                if ~okb
+                    ok = false;
+                    return;
+                end
+                [S, bn] = self.spSerialNode(S, bkids);
+                if bn == 0
+                    ok = false;
+                    return;
+                end
+                branchNodes(b) = bn;
+                bstatus{b} = st;
+                bstop(b) = sa;
+            end
+
+            if all(strcmp(bstatus, 'join'))
+                if any(bstop ~= bstop(1))
+                    ok = false;
+                    return;
+                end
+                joinPrec = self.precedences(bstop(1));
+                if length(joinPrec.preActs) ~= nb
+                    ok = false;
+                    return;
+                end
+                if isAnd
+                    if joinPrec.preType ~= ActivityPrecedenceType.PRE_AND
+                        ok = false;
+                        return;
+                    end
+                else
+                    if joinPrec.preType ~= ActivityPrecedenceType.PRE_OR
+                        ok = false;
+                        return;
+                    end
+                end
+                postInds = self.spIndicesOf(joinPrec.postActs);
+                if numel(postInds) ~= 1 || postInds(1) <= 0
+                    ok = false;
+                    return;
+                end
+                nextAct = postInds(1);
+            elseif all(strcmp(bstatus, 'end'))
+                % Branches terminate the workflow. An AND-fork with no join
+                % still synchronises at the end of the workflow
+                nextAct = 0;
+            elseif ~isAnd && all(strcmp(bstatus, 'stop')) && all(bstop == bstop(1))
+                nextAct = bstop(1);
+            else
+                ok = false;
+                return;
+            end
+
+            if isAnd
+                [S, knode] = self.spAddNode(S, 'par', 0, branchNodes, [], 0);
+            else
+                [S, knode] = self.spAddNode(S, 'or', 0, branchNodes, probs, 0);
+            end
+        end
+
+        function [S, knode, nextAct, ok] = spParseLoop(self, S, postInds, counts, stopSet)
+            % SPPARSELOOP Parse a loop block
+            %
+            % The last post activity is the continuation after the loop; the
+            % others form the loop body, which repeats geometrically.
+
+            knode = 0;
+            nextAct = 0;
+            ok = true;
+
+            if numel(counts) ~= 1
+                ok = false;
+                return;
+            end
+
+            if numel(postInds) >= 2
+                bodyActs = postInds(1:end-1);
+                endAct = postInds(end);
+            else
+                bodyActs = postInds(1);
+                endAct = 0;
+            end
+
+            loopStop = stopSet(:)';
+            loopStop = [loopStop, bodyActs(:)'];
+            if endAct ~= 0
+                loopStop = [loopStop, endAct];
+            end
+
+            bodyKids = [];
+            j = 1;
+            while j <= numel(bodyActs)
+                a = bodyActs(j);
+                if S.consumed(a)
+                    j = j + 1;
+                    continue;
+                end
+                thisStop = loopStop(loopStop ~= a);
+                [S, kk, st, sa, okb] = self.spParseSeq(S, a, thisStop);
+                if ~okb
+                    ok = false;
+                    return;
+                end
+                bodyKids = [bodyKids, kk]; %#ok<AGROW>
+                switch st
+                    case 'end'
+                        j = j + 1;
+                    case 'stop'
+                        idx = find(bodyActs == sa, 1);
+                        if isempty(idx)
+                            if endAct ~= 0 && sa == endAct
+                                j = numel(bodyActs) + 1;
+                            else
+                                ok = false;
+                                return;
+                            end
+                        else
+                            j = idx;
+                        end
+                    otherwise
+                        % A join reached from inside the body crosses the loop
+                        % boundary, so the graph is not series-parallel
+                        ok = false;
+                        return;
+                end
+            end
+
+            [S, bodyNode] = self.spSerialNode(S, bodyKids);
+            if bodyNode == 0
+                ok = false;
+                return;
+            end
+
+            [S, knode] = self.spAddNode(S, 'loop', 0, bodyNode, [], counts);
+            nextAct = endAct;
+        end
+
+        function [S, k] = spSerialNode(self, S, kids)
+            % SPSERIALNODE Wrap a list of nodes in a serial node
+            %
+            % A single node is returned as is, so the tree carries no trivial
+            % one-child serial nodes.
+
+            if isempty(kids)
+                k = 0;
+                return;
+            end
+            if numel(kids) == 1
+                k = kids(1);
+                return;
+            end
+            [S, k] = self.spAddNode(S, 'serial', 0, kids, [], 0);
+        end
+
+        function [S, k] = spAddNode(self, S, type, act, kids, probs, count) %#ok<INUSL>
+            % SPADDNODE Append a node to the series-parallel tree
+
+            k = numel(S.tree.type) + 1;
+            S.tree.type{k} = type;
+            S.tree.act(k) = act;
+            S.tree.kids{k} = kids(:)';
+            S.tree.probs{k} = probs;
+            S.tree.count(k) = count;
+            S.tree.alpha{k} = [];
+            S.tree.T{k} = [];
+            S.tree.valid(k) = false;
+            S.tree.parent(k) = 0;
+            for c = kids(:)'
+                S.tree.parent(c) = k;
+            end
+        end
+
+        function idx = spIndicesOf(self, names)
+            % SPINDICESOF Map a cell array of activity names to indices
+
+            idx = zeros(1, numel(names));
+            for a = 1:numel(names)
+                idx(a) = self.getActivityIndex(names{a});
+            end
+        end
+
+        function [alpha, T] = composeNode(self, k)
+            % COMPOSENODE Compose the law of one series-parallel node
+            %
+            % Cached nodes are returned untouched, so a demand change only
+            % recomposes the path from the dirty leaf to the root.
+
+            if self.spTree.valid(k)
+                alpha = self.spTree.alpha{k};
+                T = self.spTree.T{k};
+                return;
+            end
+
+            kids = self.spTree.kids{k};
+            switch self.spTree.type{k}
+                case 'leaf'
+                    [alpha, T] = self.activities{self.spTree.act(k)}.getPHRepresentation();
+                case 'serial'
+                    [alpha, T] = self.composeNode(kids(1));
+                    for i = 2:numel(kids)
+                        [a2, T2] = self.composeNode(kids(i));
+                        [alpha, T] = Workflow.composeSerial(alpha, T, a2, T2);
+                    end
+                case 'par'
+                    [alpha, T] = self.composeNode(kids(1));
+                    for i = 2:numel(kids)
+                        [a2, T2] = self.composeNode(kids(i));
+                        [alpha, T] = Workflow.composeParallel(alpha, T, a2, T2);
+                    end
+                case 'or'
+                    alphas = cell(1, numel(kids));
+                    Ts = cell(1, numel(kids));
+                    for i = 1:numel(kids)
+                        [alphas{i}, Ts{i}] = self.composeNode(kids(i));
+                    end
+                    [alpha, T] = Workflow.composeMixture(alphas, Ts, self.spTree.probs{k});
+                case 'loop'
+                    [a1, T1] = self.composeNode(kids(1));
+                    [alpha, T] = Workflow.composeLoopGeometric(a1, T1, self.spTree.count(k));
+                otherwise
+                    line_error(mfilename, sprintf('Unknown series-parallel node type "%s".', self.spTree.type{k}));
+            end
+
+            self.spTree.alpha{k} = alpha;
+            self.spTree.T{k} = T;
+            self.spTree.valid(k) = true;
+        end
+
         function [adjList, inDegree, outDegree, forkInfo, joinInfo, loopInfo] = analyzeStructure(self)
             % ANALYZESTRUCTURE Analyze workflow structure from precedences
             %
@@ -477,8 +1079,9 @@ classdef Workflow < Model
                     end
                 end
 
-                % Create count-fold convolution
-                [alpha_conv, T_conv] = Workflow.composeRepeat(alpha_loop, T_loop, count);
+                % Repeat the body a geometric number of times of mean COUNT,
+                % which is the POST_LOOP semantics of the activity graph
+                [alpha_conv, T_conv] = Workflow.composeLoopGeometric(alpha_loop, T_loop, count);
 
                 % Compose with pre-activity
                 [alpha_result, T_result] = Workflow.composeSerial(...
@@ -745,7 +1348,165 @@ classdef Workflow < Model
             T_out(1:n1, n1+1:end) = absRate1 * alpha2;
             T_out(n1+1:end, n1+1:end) = T2;
 
-            alpha_out = [alpha1, zeros(1, n2)];
+            % A defective alpha1 carries an atom at zero, which starts the
+            % second law immediately; this is aph_simplify pattern 1
+            defect1 = 1 - sum(alpha1);
+            alpha_out = [alpha1, defect1 * alpha2];
+        end
+
+        function [alpha_out, T_out] = composeMixture(alphas, Ts, probs)
+            % COMPOSEMIXTURE Probabilistic mixture of several PH laws
+            %
+            % [ALPHA_OUT, T_OUT] = COMPOSEMIXTURE(ALPHAS, TS, PROBS)
+            %
+            % Block-diagonal generator whose initial vector picks branch I
+            % with probability PROBS(I). This is aph_simplify pattern 3
+            % generalised to any number of branches.
+
+            nBranches = numel(alphas);
+            sizes = zeros(1, nBranches);
+            for i = 1:nBranches
+                sizes(i) = size(Ts{i}, 1);
+            end
+            total = sum(sizes);
+
+            T_out = zeros(total);
+            alpha_out = zeros(1, total);
+
+            offset = 0;
+            for i = 1:nBranches
+                ni = sizes(i);
+                T_out(offset+1:offset+ni, offset+1:offset+ni) = Ts{i};
+                alpha_out(offset+1:offset+ni) = probs(i) * reshape(alphas{i}, 1, []);
+                offset = offset + ni;
+            end
+        end
+
+        function [alpha_out, T_out] = composeLoopGeometric(alpha, T, count)
+            % COMPOSELOOPGEOMETRIC Geometric repetition of a PH law
+            %
+            % [ALPHA_OUT, T_OUT] = COMPOSELOOPGEOMETRIC(ALPHA, T, COUNT)
+            %
+            % Implements the LayeredNetwork POST_LOOP semantics, in which the
+            % number of executions of the loop body is geometric of mean
+            % COUNT. For COUNT>=1 the body runs at least once and repeats on
+            % absorption with probability P = 1-1/COUNT, so
+            %
+            %   T_OUT = T + P/D * (-T*e)*ALPHA,   ALPHA_OUT = ALPHA/D
+            %
+            % with D = 1 - P*(1-ALPHA*e) the correction for an atom at zero in
+            % ALPHA. The order of the law is that of the body, unlike the
+            % COUNT-fold convolution COMPOSEREPEAT, and the mean is COUNT
+            % times the mean of the body in both cases.
+            %
+            % For COUNT<1 the body is executed at most once, with probability
+            % COUNT, which is how a fractional loop count is read when the LQN
+            % activity graph is built; the skipped branch is an immediate
+            % phase, the representation of a zero-time activity used
+            % throughout this class.
+
+            n = size(T, 1);
+            e = ones(n, 1);
+            alpha = reshape(alpha, 1, []);
+
+            if count <= 0
+                alpha_out = 1;
+                T_out = -GlobalConstants.Immediate;  % zero-time branch
+                return;
+            end
+
+            if abs(count - 1) <= GlobalConstants.FineTol
+                alpha_out = alpha;
+                T_out = T;
+                return;
+            end
+
+            if count < 1
+                % Executed with probability COUNT, skipped otherwise
+                alpha_out = [count * alpha, 1 - count];
+                T_out = zeros(n + 1);
+                T_out(1:n, 1:n) = T;
+                T_out(n+1, n+1) = -GlobalConstants.Immediate;  % zero-time skip branch
+                return;
+            end
+
+            p = 1 - 1 / count;
+            defect = 1 - sum(alpha);
+            denom = 1 - p * defect;
+            alpha_out = alpha / denom;
+            T_out = T + (p / denom) * ((-T * e) * alpha);
+        end
+
+        function tf = isAcyclicGenerator(T)
+            % ISACYCLICGENERATOR True if the phase graph of T has no cycle
+            %
+            % TF = ISACYCLICGENERATOR(T)
+            %
+            % A geometric loop over a body of two or more phases closes a
+            % cycle, so the composed law is a PH and not an APH.
+
+            n = size(T, 1);
+            A = (abs(T) > GlobalConstants.ArcTol);
+            A(1:n+1:end) = false;
+            inDeg = sum(A, 1);
+            queue = find(inDeg == 0);
+            visited = 0;
+            while ~isempty(queue)
+                curr = queue(1);
+                queue(1) = [];
+                visited = visited + 1;
+                succ = find(A(curr, :));
+                for s = succ
+                    inDeg(s) = inDeg(s) - 1;
+                    if inDeg(s) == 0
+                        queue(end+1) = s; %#ok<AGROW>
+                    end
+                end
+            end
+            tf = (visited == n);
+        end
+
+        function tree = invalidateBranch(tree, k)
+            % INVALIDATEBRANCH Invalidate a node and all its ancestors
+
+            while k ~= 0
+                tree.valid(k) = false;
+                k = tree.parent(k);
+            end
+        end
+
+        function execs = spExecutionCounts(tree)
+            % SPEXECUTIONCOUNTS Expected executions of each node per run
+            %
+            % EXECS = SPEXECUTIONCOUNTS(TREE)
+            %
+            % Serial and parallel children inherit the count of their parent,
+            % an OR branch is weighted by its probability, and a loop body is
+            % weighted by the loop count. This is the weight by which a layer
+            % result is split back over entries, activities and calls.
+
+            nNodes = numel(tree.type);
+            execs = zeros(1, nNodes);
+            execs(tree.root) = 1;
+            % Nodes are appended after their descendants only for leaves, so
+            % walk the tree explicitly from the root
+            stack = tree.root;
+            while ~isempty(stack)
+                k = stack(end);
+                stack(end) = [];
+                kids = tree.kids{k};
+                for i = 1:numel(kids)
+                    switch tree.type{k}
+                        case 'or'
+                            execs(kids(i)) = execs(k) * tree.probs{k}(i);
+                        case 'loop'
+                            execs(kids(i)) = execs(k) * tree.count(k);
+                        otherwise
+                            execs(kids(i)) = execs(k);
+                    end
+                    stack(end+1) = kids(i); %#ok<AGROW>
+                end
+            end
         end
 
         function [alpha_out, T_out] = composeParallel(alpha1, T1, alpha2, T2)
@@ -834,11 +1595,14 @@ classdef Workflow < Model
         function [alpha_out, T_out] = composeRepeat(alpha, T, count)
             % COMPOSEREPEAT Repeat a PH distribution count times (convolution)
             %
-            % Equivalent to serial composition of the same PH count times.
+            % Equivalent to serial composition of the same PH count times, so
+            % COUNT is a deterministic number of executions. The POST_LOOP
+            % precedence of an activity graph is instead geometric; use
+            % COMPOSELOOPGEOMETRIC for it.
 
             if count <= 0
                 alpha_out = 1;
-                T_out = -1e10;  % Immediate
+                T_out = -GlobalConstants.Immediate;  % zero-time law
                 return;
             end
 

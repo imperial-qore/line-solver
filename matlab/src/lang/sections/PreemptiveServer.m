@@ -21,7 +21,7 @@ classdef PreemptiveServer < ServiceSection
             % INITSERVERS(CUSTOMERCLASSES)
             
             for i = 1 : length(customerClasses)
-                self.serviceProcess{1, i} = {customerClasses{1, i}.name, ServiceStrategy.LI, Exponential()};
+                self.serviceProcess{1, i} = {customerClasses{i}.name, ServiceStrategy.LI, Exp(0.0)};
             end
         end
     end

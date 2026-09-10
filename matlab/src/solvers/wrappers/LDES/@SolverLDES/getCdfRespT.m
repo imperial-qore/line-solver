@@ -17,6 +17,14 @@ function RD = getCdfRespT(self, R)
 % Copyright (c) 2012-2026, Imperial College London
 % All rights reserved.
 
+% A LayeredNetwork has no (station, class) grid: its response times belong to
+% ENTRIES, and it is simulated by the Java LDES ensemble backend rather than
+% through the JSON CLI. Hand it to that backend and return the per-entry laws.
+if isa(self.model, 'LayeredNetwork')
+    RD = getCdfRespTLN(self);
+    return
+end
+
 sn = self.getStruct;
 RD = cell(sn.nstations, sn.nclasses);
 if GlobalConstants.DummyMode

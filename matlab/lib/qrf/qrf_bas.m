@@ -60,7 +60,7 @@ function [result, x, fval, exitflag] = qrf_bas(params, objective, sense)
     BB = params.BB;
     MM = params.MM;
     ZZ = params.ZZ(:);
-    ZM = params.ZM;
+    ZM = max(params.ZZ(:)); % max(ZZ) by definition; a larger one empties the polytope via THM3I
     MM1 = params.MM1;
     if isfield(params, 'verbose')
         verbose = params.verbose;
@@ -806,14 +806,31 @@ function [result, x, fval, exitflag] = qrf_bas(params, objective, sense)
         targetQueue = objective;
     end
 
-    % Utilization = sum over m, k, n of p2(i,n,k,i,n,k,m)
-    for m = 1:MR
-        for ki = 1:K(targetQueue)
-            for ni = 1:F(targetQueue)
-                idx = getP2Idx(targetQueue, ni, ki, targetQueue, ni, ki, m);
-                c(idx) = 1;
-            end
-        end
+    % UTILIZATION, not occupancy. The objective used to be
+    %   sum over m, k, n of p2(i,n,k,i,n,k,m),
+    % which is P(n_i >= 1) over EVERY configuration, blocked ones included. At a
+    % BAS station that is not utilization: a blocked server holds a job it has
+    % already finished and is doing no work. On cqn_bas_blocking (N = 2,
+    % cap(Queue2) = 1) Queue1 always holds a job, so that objective reported
+    % U = 1 where the exact utilization is 0.590164 -- a valid upper bound, but a
+    % vacuous one, and it then propagated into the derived throughput through
+    % U = X*V*s.
+    %
+    % The e variables are already exactly the right quantity. UEFF defines
+    %   e(i,ki) = sum over j, nj, kj and over m with BB(m,i) == 0, of
+    %             p2(j,nj,kj,i,ni,ki,m) for ni >= 1,
+    % i.e. the mass with n_i >= 1 in the configurations where i is NOT blocked,
+    % accumulated once per j -- so sum_ki e(i,ki) / M is P(n_i >= 1 and i
+    % serving), which is utilization as LINE reports it. Measured: e/M equals
+    % SolverCTMC's Util to six digits on cqn_bas_blocking, and on an UNBLOCKED
+    % model (every configuration unblocked) it collapses back onto the old
+    % occupancy objective exactly, which is what pins the 1/M.
+    %
+    % Optimising e rather than reading it out afterwards is what keeps the answer
+    % a BOUND: e is otherwise just a byproduct of whichever vertex maximises
+    % occupancy.
+    for ki = 1:K(targetQueue)
+        c(getEIdx(targetQueue, ki)) = 1 / M;
     end
 
     if strcmp(sense, 'max')
@@ -846,7 +863,24 @@ function [result, x, fval, exitflag] = qrf_bas(params, objective, sense)
         options = optimoptions('linprog', 'Display', 'off', 'Algorithm', lpAlgorithm);
     end
 
-    [x, fval, exitflag] = linprog(c, Aineq, bineq, Aeq, beq, lb, ub, options);
+    % interior-point-legacy is the default because it is about five orders more
+    % accurate on the reference instances, but it FAILS OUTRIGHT on some
+    % well-posed ones (exitflag -2, no feasible point, on a 3-station N=4
+    % no-blocking model that HiGHS and OSQP both solve). Retry with the modern
+    % interior point before giving up; the residual test below decides which
+    % point, if either, is a solution of this LP.
+    algorithms = {lpAlgorithm};
+    if ~strcmp(lpAlgorithm, 'interior-point')
+        algorithms{end+1} = 'interior-point';
+    end
+    for algIdx = 1:numel(algorithms)
+        options.Algorithm = algorithms{algIdx};
+        [x, fval, exitflag] = linprog(c, Aineq, bineq, Aeq, beq, lb, ub, options);
+        if ~isempty(x) && all(isfinite(x)) && ...
+                qrf_lp_residual(x, Aeq, beq, Aineq, bineq, lb, ub) <= 1e-6
+            break
+        end
+    end
 
     if strcmp(sense, 'max')
         fval = -fval;
@@ -870,22 +904,46 @@ function [result, x, fval, exitflag] = qrf_bas(params, objective, sense)
             'linprog returned a non-finite solution (exitflag %d); U and the other metric fields are left unpopulated.', ...
             exitflag);
     end
+    % Finiteness alone is NOT enough: exitflag -2 (no feasible point found)
+    % returns a finite but infeasible x, from which the utilizations below come
+    % out above 1 and are reported as a bound. Every p2 marginal sums to 1 by
+    % the ONE family, so a violated equality means the point is not a solution
+    % of THIS LP and must not be consumed.
+    if hasSolution
+        residual = qrf_lp_residual(x, Aeq, beq, Aineq, bineq, lb, ub);
+        if residual > 1e-6
+            line_error(mfilename, ...
+                ['linprog returned an infeasible point (exitflag %d, max constraint ' ...
+                 'residual %.3e). The bound is not defined for this instance; check ' ...
+                 'params.F, params.BB and params.MR.'], exitflag, residual);
+        end
+    end
 
     if hasSolution
         % Compute utilizations
         result.U = zeros(M, 1);
         result.e = zeros(M, max(K));
+        result.occupancy = zeros(M, 1);
 
         for i = 1:M
             for ki = 1:K(i)
                 result.e(i, ki) = x(getEIdx(i, ki));
+                % U is read from the SAME quantity the objective optimises, so
+                % the objective station's entry is a genuine bound rather than
+                % an incidental value at that vertex. See the objective build.
+                result.U(i) = result.U(i) + x(getEIdx(i, ki)) / M;
             end
 
+            % P(n_i >= 1) over every configuration, blocked included. This is
+            % what U used to hold; at a BAS station it counts a blocked server
+            % as busy, so it is occupancy and NOT utilization. Kept because it
+            % is the quantity the QRF papers report and a caller comparing
+            % against them needs it, but it is no longer what U means.
             for m = 1:MR
                 for ki = 1:K(i)
                     for ni = 1:F(i)
                         idx = getP2Idx(i, ni, ki, i, ni, ki, m);
-                        result.U(i) = result.U(i) + x(idx);
+                        result.occupancy(i) = result.occupancy(i) + x(idx);
                     end
                 end
             end

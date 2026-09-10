@@ -221,7 +221,14 @@ public final class Solver_nc {
             Matrix Qchain = ret.Q;
             method = ret.method;
 
-            if (Zms.sumCols().elementMin() > GlobalConstants.FineTol) {
+            // Seidmann's surrogate delay makes the by-product measures inconsistent with
+            // the approximated model, so they are discarded and the constant-ratio route
+            // below is taken instead. 'mcmc' is EXEMPT: it obtains X and Q from ONE
+            // simulation of the regularized network, so discarding them would cost
+            // R + M*R further simulations to recover the same means by differencing lG.
+            // The surrogate delay is added back to Qchain in the fill branch below.
+            if (Zms.sumCols().elementMin() > GlobalConstants.FineTol
+                    && !"mcmc".equalsIgnoreCase(options.method)) {
                 Xchain = new Matrix(0, 0);
                 Qchain = new Matrix(0, 0);
             }
@@ -240,7 +247,7 @@ public final class Solver_nc {
                     Matrix Nchain_tmp_append_1 = new Matrix(1, Nchain.getNumCols() + 1);
                     Nchain_tmp_append_1.set(Nchain.getNumCols(), 1.0);
                     Matrix.extract(Nchain_tmp, 0, 1, 0, Nchain_tmp.length(), Nchain_tmp_append_1, 0, 0);
-                    Xchain.set(r, FastMath.exp(Pfqn_nc.pfqn_nc(lambda, Lms, Nchain_tmp, Z_new, options).lG - lG));
+                    Xchain.set(r, FastMath.exp(Pfqn_nc.pfqn_nc(lambda, Lms, Nchain_tmp, Z_new, options, false).lG - lG));
                     for (int i = 0; i < M; i++) {
                         if (Lchain.get(i, r) > 1e-6) {
                             if (Utils.isInf(nservers.get(i))) {
@@ -264,7 +271,7 @@ public final class Solver_nc {
                                 Matrix.extract(Lms, i, i + 1, 0, Lms.getNumCols(), L_tmp_row, 0, 0);
                                 L_tmp = Matrix.concatRows(L_tmp, L_tmp_row, null);
 
-                                Ret.pfqnNcXQ ret_tmp = Pfqn_nc.pfqn_nc(lambda_tmp, L_tmp, Nchain_tmp_append_1, Z_tmp_append_0, options);
+                                Ret.pfqnNcXQ ret_tmp = Pfqn_nc.pfqn_nc(lambda_tmp, L_tmp, Nchain_tmp_append_1, Z_tmp_append_0, options, false);
                                 double res = ret_tmp.lG;
                                 method = ret_tmp.method;
                                 Qchain.set(i, r, Zms.get(i, r) * Xchain.get(r) + Lms.get(i, r) * Math.exp(res - lG));
@@ -293,11 +300,17 @@ public final class Solver_nc {
                     }
                 }
             } else {
+                // just fill the delay servers, and restore the population that Seidmann's
+                // surrogate delay holds outside the queueing station (Zms is zero unless
+                // the station is a multiserver, so this is a no-op for a method that
+                // reaches this branch with single servers only)
                 for (int r = 0; r < C; r++) {
                     for (int i = 0; i < M; i++) {
                         if (Lchain.get(i, r) > 1e-6) {
                             if (Utils.isInf(nservers.get(i))) {
                                 Qchain.set(i, r, Lchain.get(i, r) * Xchain.get(r));
+                            } else if (nservers.get(i) > 1) {
+                                Qchain.set(i, r, Qchain.get(i, r) + Zms.get(i, r) * Xchain.get(r));
                             }
                         }
                     }

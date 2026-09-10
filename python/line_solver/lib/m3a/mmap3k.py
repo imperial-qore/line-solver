@@ -2,7 +2,7 @@
 
 The MMAP(2,K) argument does not depend on the order. Two facts carry over
 unchanged (both verified symbolically, see
-sage/proofs/mmap3k_marking_inverse.py):
+io/sage/proofs/mmap3k_marking_inverse.py):
 
 1. every per-class characteristic in which the class matrix appears exactly
    once is LINEAR in the marking fractions. With z = nnz(D1) fractions per
@@ -62,7 +62,7 @@ def marking_orders(n: int) -> List[Tuple[int, int]]:
     """(backward, forward) orders of an independent characteristic set.
 
     Verified independent for orders 2 and 3 in
-    sage/proofs/mmap3k_marking_inverse.py; the same greedy rule (lowest total
+    io/sage/proofs/mmap3k_marking_inverse.py; the same greedy rule (lowest total
     order first) extends to higher orders.
     """
     if n == 2:

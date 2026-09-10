@@ -106,8 +106,7 @@ public final class Wf_pattern_updater {
                 int lastNode = sequence.get(sequence.size() - 1);
                 replaceNodeReferences(finalMatrix, lastNode, firstNode);
 
-                List<ServiceParameters> sequenceParams = new ArrayList<ServiceParameters>();
-                for (Integer n : sequence) sequenceParams.add(serviceParams.get(n));
+                List<ServiceParameters> sequenceParams = collectParams(sequence, serviceParams);
                 ServiceParameters convolvedParams = convolveSequence(sequenceParams);
                 serviceParams.put(firstNode, convolvedParams);
 
@@ -137,13 +136,12 @@ public final class Wf_pattern_updater {
 
                 if (forkNode != null && joinNode != null) {
                     List<Integer> rowsToRemove = findRowsInvolvingNodes(updatedMatrix, parallel);
-                    removeMatrixRows(updatedMatrix, rowsToRemove);
+                    updatedMatrix = removeMatrixRows(updatedMatrix, rowsToRemove);
 
                     replaceNodeReferences(updatedMatrix, forkNode, firstNode);
                     replaceNodeReferences(updatedMatrix, joinNode, firstNode);
 
-                    List<ServiceParameters> parallelParams = new ArrayList<ServiceParameters>();
-                    for (Integer n : parallel) parallelParams.add(serviceParams.get(n));
+                    List<ServiceParameters> parallelParams = collectParams(parallel, serviceParams);
                     ServiceParameters convolvedParams = convolveParallel(parallelParams);
                     serviceParams.put(firstNode, convolvedParams);
 
@@ -172,15 +170,16 @@ public final class Wf_pattern_updater {
             if (loopProb > GlobalConstants.Zero) {
                 List<Integer> involvedRouters = findRoutersForLoop(updatedMatrix, loopNode, routerSet);
                 List<Integer> rowsToRemove = findLoopConnections(updatedMatrix, loopNode, involvedRouters);
-                removeMatrixRows(updatedMatrix, rowsToRemove);
+                updatedMatrix = removeMatrixRows(updatedMatrix, rowsToRemove);
                 for (Integer router : involvedRouters) {
                     replaceNodeReferences(updatedMatrix, router, loopNode);
                 }
                 updateLoopTransitionProbabilities(updatedMatrix, loopNode);
 
                 ServiceParameters originalParams = serviceParams.get(loopNode);
-                ServiceParameters loopedParams = convolveLoop(originalParams, loopProb);
-                serviceParams.put(loopNode, loopedParams);
+                if (originalParams != null) {
+                    serviceParams.put(loopNode, convolveLoop(originalParams, loopProb));
+                }
             }
         }
         return updatedMatrix;
@@ -199,15 +198,14 @@ public final class Wf_pattern_updater {
             if (branchNodes.size() >= 2 && branch.getForkNode() != null) {
                 int firstNode = branchNodes.get(0);
                 List<Integer> rowsToRemove = findRowsInvolvingNodes(updatedMatrix, branchNodes);
-                removeMatrixRows(updatedMatrix, rowsToRemove);
+                updatedMatrix = removeMatrixRows(updatedMatrix, rowsToRemove);
 
                 replaceNodeReferences(updatedMatrix, branch.getForkNode(), firstNode);
                 if (branch.getJoinNode() != null) {
                     replaceNodeReferences(updatedMatrix, branch.getJoinNode(), firstNode);
                 }
 
-                List<ServiceParameters> branchParams = new ArrayList<ServiceParameters>();
-                for (Integer n : branchNodes) branchParams.add(serviceParams.get(n));
+                List<ServiceParameters> branchParams = collectParams(branchNodes, serviceParams);
                 ServiceParameters convolvedParams = convolveBranches(branchParams, branch.getProbabilities());
                 serviceParams.put(firstNode, convolvedParams);
 
@@ -220,27 +218,36 @@ public final class Wf_pattern_updater {
         return updatedMatrix;
     }
 
-    private static Matrix removeMatrixRows(Matrix matrix, List<Integer> rowsToRemove) {
-        if (rowsToRemove.isEmpty()) return matrix;
-        List<Integer> sorted = new ArrayList<Integer>(rowsToRemove);
-        java.util.Collections.sort(sorted, java.util.Collections.<Integer>reverseOrder());
-        Matrix result = matrix.copy();
+    /** The laws of the listed nodes, skipping the ones with none, as in the reference. */
+    private static List<ServiceParameters> collectParams(
+            List<Integer> nodes, Map<Integer, ServiceParameters> serviceParams) {
+        List<ServiceParameters> out = new ArrayList<ServiceParameters>();
+        for (Integer n : nodes) {
+            ServiceParameters p = serviceParams.get(n);
+            if (p != null) out.add(p);
+        }
+        return out;
+    }
 
-        for (Integer row : sorted) {
-            if (row >= 0 && row < result.getNumRows()) {
-                int newRows = result.getNumRows() - 1;
-                Matrix newMatrix = Matrix.zeros(newRows, result.getNumCols());
-                int newRowIndex = 0;
-                for (int i = 0; i < result.getNumRows(); i++) {
-                    if (i != row) {
-                        for (int j = 0; j < result.getNumCols(); j++) {
-                            newMatrix.set(newRowIndex, j, result.get(i, j));
-                        }
-                        newRowIndex++;
-                    }
-                }
-                return newMatrix;
+    static Matrix removeMatrixRows(Matrix matrix, List<Integer> rowsToRemove) {
+        if (rowsToRemove.isEmpty() || matrix.getNumRows() == 0) return matrix;
+        boolean[] keep = new boolean[matrix.getNumRows()];
+        java.util.Arrays.fill(keep, true);
+        for (Integer row : rowsToRemove) {
+            if (row != null && row >= 0 && row < matrix.getNumRows()) keep[row] = false;
+        }
+        int newRows = 0;
+        for (int i = 0; i < keep.length; i++) {
+            if (keep[i]) newRows++;
+        }
+        Matrix result = Matrix.zeros(newRows, matrix.getNumCols());
+        int newRowIndex = 0;
+        for (int i = 0; i < matrix.getNumRows(); i++) {
+            if (!keep[i]) continue;
+            for (int j = 0; j < matrix.getNumCols(); j++) {
+                result.set(newRowIndex, j, matrix.get(i, j));
             }
+            newRowIndex++;
         }
         return result;
     }
@@ -312,23 +319,206 @@ public final class Wf_pattern_updater {
         }
     }
 
-    private static ServiceParameters convolveSequence(List<ServiceParameters> params) {
-        if (!params.isEmpty()) return params.get(0);
+    /** Flatten an entry law held as a row or a column matrix. */
+    private static double[] alphaVector(Matrix alpha) {
+        double[] v = new double[alpha.getNumRows() * alpha.getNumCols()];
+        int k = 0;
+        for (int i = 0; i < alpha.getNumRows(); i++) {
+            for (int j = 0; j < alpha.getNumCols(); j++) {
+                v[k++] = alpha.get(i, j);
+            }
+        }
+        return v;
+    }
+
+    private static Matrix rowVector(double[] v) {
+        Matrix m = Matrix.zeros(1, v.length);
+        for (int i = 0; i < v.length; i++) {
+            m.set(0, i, v[i]);
+        }
+        return m;
+    }
+
+    /** -T e, the exit rate out of each phase. */
+    private static double[] exitRate(Matrix T) {
+        double[] r = new double[T.getNumRows()];
+        for (int i = 0; i < T.getNumRows(); i++) {
+            double s = 0.0;
+            for (int j = 0; j < T.getNumCols(); j++) {
+                s += T.get(i, j);
+            }
+            r[i] = -s;
+        }
+        return r;
+    }
+
+    /** 1 - alpha e, the mass the entry law leaves for instantaneous completion. */
+    private static double exitProb(double[] alpha) {
+        double s = 0.0;
+        for (int i = 0; i < alpha.length; i++) {
+            s += alpha[i];
+        }
+        return 1.0 - s;
+    }
+
+    /** Copy src into dst with its top-left corner at (r0, c0). */
+    private static void place(Matrix dst, Matrix src, int r0, int c0) {
+        for (int i = 0; i < src.getNumRows(); i++) {
+            for (int j = 0; j < src.getNumCols(); j++) {
+                dst.set(r0 + i, c0 + j, src.get(i, j));
+            }
+        }
+    }
+
+    private static ServiceParameters unitParams() {
         return new ServiceParameters(Matrix.ones(1, 1), Matrix.zeros(1, 1));
     }
 
-    private static ServiceParameters convolveParallel(List<ServiceParameters> params) {
-        if (!params.isEmpty()) return params.get(0);
-        return new ServiceParameters(Matrix.ones(1, 1), Matrix.zeros(1, 1));
+    /** Convolution of the durations, i.e. the service laws run one after another. */
+    static ServiceParameters convolveSequence(List<ServiceParameters> params) {
+        if (params.isEmpty()) return unitParams();
+        if (params.size() == 1) return params.get(0);
+
+        double[] alpha = alphaVector(params.get(0).getAlpha());
+        Matrix T = params.get(0).getT();
+        for (int k = 1; k < params.size(); k++) {
+            double[] a2 = alphaVector(params.get(k).getAlpha());
+            Matrix T2 = params.get(k).getT();
+            int n1 = alpha.length;
+            int n2 = a2.length;
+            double ex = exitProb(alpha);
+            double[] er = exitRate(T);
+
+            double[] na = new double[n1 + n2];
+            System.arraycopy(alpha, 0, na, 0, n1);
+            for (int j = 0; j < n2; j++) {
+                na[n1 + j] = ex * a2[j];
+            }
+
+            Matrix nt = Matrix.zeros(n1 + n2, n1 + n2);
+            place(nt, T, 0, 0);
+            place(nt, T2, n1, n1);
+            for (int i = 0; i < n1; i++) {
+                for (int j = 0; j < n2; j++) {
+                    nt.set(i, n1 + j, er[i] * a2[j]);
+                }
+            }
+
+            alpha = na;
+            T = nt;
+        }
+        return new ServiceParameters(rowVector(alpha), T);
     }
 
-    private static ServiceParameters convolveLoop(ServiceParameters params, double loopProb) {
-        return params;
+    /** Maximum of the durations, i.e. a fork whose join waits for every branch. */
+    static ServiceParameters convolveParallel(List<ServiceParameters> params) {
+        if (params.isEmpty()) return unitParams();
+        if (params.size() == 1) return params.get(0);
+
+        double[] alpha = alphaVector(params.get(0).getAlpha());
+        Matrix T = params.get(0).getT();
+        for (int k = 1; k < params.size(); k++) {
+            double[] a2 = alphaVector(params.get(k).getAlpha());
+            Matrix T2 = params.get(k).getT();
+            int n1 = alpha.length;
+            int n2 = a2.length;
+            int np = n1 * n2;
+            double e1 = exitProb(alpha);
+            double e2 = exitProb(a2);
+            double[] r1 = exitRate(T);
+            double[] r2 = exitRate(T2);
+
+            double[] na = new double[np + n1 + n2];
+            for (int i = 0; i < n1; i++) {
+                for (int j = 0; j < n2; j++) {
+                    na[i * n2 + j] = alpha[i] * a2[j];
+                }
+            }
+            for (int i = 0; i < n1; i++) {
+                na[np + i] = e2 * alpha[i];
+            }
+            for (int j = 0; j < n2; j++) {
+                na[np + n1 + j] = e1 * a2[j];
+            }
+
+            Matrix nt = Matrix.zeros(np + n1 + n2, np + n1 + n2);
+            for (int i = 0; i < n1; i++) {
+                for (int j = 0; j < n2; j++) {
+                    int r = i * n2 + j;
+                    // T1 (x) I + I (x) T2 on the block where both branches are alive
+                    for (int ii = 0; ii < n1; ii++) {
+                        nt.set(r, ii * n2 + j, nt.get(r, ii * n2 + j) + T.get(i, ii));
+                    }
+                    for (int jj = 0; jj < n2; jj++) {
+                        nt.set(r, i * n2 + jj, nt.get(r, i * n2 + jj) + T2.get(j, jj));
+                    }
+                    // branch 2 finishes first -> only branch 1 is left, in phase i
+                    nt.set(r, np + i, r2[j]);
+                    // branch 1 finishes first -> only branch 2 is left, in phase j
+                    nt.set(r, np + n1 + j, r1[i]);
+                }
+            }
+            place(nt, T, np, np);
+            place(nt, T2, np + n1, np + n1);
+
+            alpha = na;
+            T = nt;
+        }
+        return new ServiceParameters(rowVector(alpha), T);
     }
 
-    private static ServiceParameters convolveBranches(List<ServiceParameters> params, List<Double> probs) {
-        if (!params.isEmpty()) return params.get(0);
-        return new ServiceParameters(Matrix.ones(1, 1), Matrix.zeros(1, 1));
+    /** Geometric repetition: the exit flow re-enters through alpha with probability loopProb. */
+    static ServiceParameters convolveLoop(ServiceParameters params, double loopProb) {
+        if (loopProb <= 0.0 || loopProb >= 1.0) return params;
+        double[] alpha = alphaVector(params.getAlpha());
+        double[] er = exitRate(params.getT());
+        Matrix nt = params.getT().copy();
+        for (int i = 0; i < nt.getNumRows(); i++) {
+            for (int j = 0; j < nt.getNumCols(); j++) {
+                nt.set(i, j, nt.get(i, j) + loopProb * er[i] * alpha[j]);
+            }
+        }
+        return new ServiceParameters(rowVector(alpha), nt);
+    }
+
+    /** Probabilistic choice among the alternatives, on a block-diagonal generator. */
+    static ServiceParameters convolveBranches(List<ServiceParameters> params, List<Double> probs) {
+        if (params.isEmpty()) return unitParams();
+        if (params.size() == 1) return params.get(0);
+
+        double[] w = new double[params.size()];
+        double total = 0.0;
+        for (int i = 0; i < params.size(); i++) {
+            Double pi = (probs != null && i < probs.size()) ? probs.get(i) : null;
+            w[i] = (pi == null) ? 0.0 : pi.doubleValue();
+            total += w[i];
+        }
+        if (total > 0.0) {
+            for (int i = 0; i < w.length; i++) {
+                w[i] /= total;
+            }
+        } else {
+            for (int i = 0; i < w.length; i++) {
+                w[i] = 1.0 / params.size();
+            }
+        }
+
+        int n = 0;
+        for (int i = 0; i < params.size(); i++) {
+            n += params.get(i).getAlpha().getNumRows() * params.get(i).getAlpha().getNumCols();
+        }
+        double[] alpha = new double[n];
+        Matrix T = Matrix.zeros(n, n);
+        int off = 0;
+        for (int i = 0; i < params.size(); i++) {
+            double[] ai = alphaVector(params.get(i).getAlpha());
+            for (int j = 0; j < ai.length; j++) {
+                alpha[off + j] = w[i] * ai[j];
+            }
+            place(T, params.get(i).getT(), off, off);
+            off += ai.length;
+        }
+        return new ServiceParameters(rowVector(alpha), T);
     }
 
     public static boolean validateUpdatedWorkflow(UpdatedWorkflow workflow) {

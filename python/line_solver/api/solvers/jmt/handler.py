@@ -25,6 +25,8 @@ from xml.etree import ElementTree as ET
 from xml.dom import minidom
 import time
 
+from .runner import run_jmt, has_java, result_path_for, JMTBackendError
+
 from ...sn import (
     NetworkStruct,
     NodeType,
@@ -33,7 +35,7 @@ from ...sn import (
     sn_deaggregate_chain_results,
     sn_get_arvr_from_tput,
 )
-from ....constants import ProcessType, PollingType, EventType
+from ....constants import ProcessType, PollingType, EventType, JoinStrategy
 
 
 @dataclass
@@ -47,6 +49,12 @@ class SolverJMTOptions:
     max_rel_err: float = 0.03
     verbose: bool = False
     keep: bool = False
+    # Backend selection, see api/solvers/jmt/runner.py. rest_url points at a
+    # JMT REST server; container overrides the Docker image used when no local
+    # JVM exists. Both empty means the local JVM plus common/JMT.jar.
+    rest_url: Optional[str] = None
+    container: Optional[str] = None
+    timeout: float = float('inf')
 
 
 @dataclass
@@ -90,6 +98,10 @@ class SolverJMTReturn:
     runtime: float = 0.0
     method: str = "jsim"
     timedOut: bool = False
+    # log normalizing constant, reported by the JMVA engine only (its
+    # <normconst logValue>); NaN on the simulation path and on the JMVA
+    # algorithms that do not compute one.
+    logNormConstAggr: float = float('nan')
 
 
 def _get_jmt_jar_path() -> str:
@@ -120,15 +132,8 @@ def _get_jmt_jar_path() -> str:
 def is_jmt_available() -> bool:
     """Check if JMT is available."""
     # Check for JMT
-    try:
-        result = subprocess.run(
-            ['java', '-version'],
-            capture_output=True,
-            timeout=5
-        )
-        if result.returncode != 0:
-            return False
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+    from .runner import has_java
+    if not has_java():
         return False
 
     # Check for JMT.jar
@@ -336,6 +341,157 @@ def _write_switchover_service_time_strategy(parent: ET.Element, procid: int, pro
         lambda_param.set('name', 'lambda')
         value = ET.SubElement(lambda_param, 'value')
         value.text = f'{rate:.12f}'
+
+
+def _server_pools(node_idx: int, sn: NetworkStruct, nclasses: int):
+    """Server pools and job parallelism of a node, or None when it declares neither.
+
+    JMT's Server section takes classParallelism, serverNames, serversPerServerType,
+    serverCompatibilities and schedulingPolicy as one positional block of its
+    constructor (jmt.engine.NodeSections.Server), so the five are emitted together
+    or not at all, and always after the service strategies. A station declaring
+    parallelism alone is therefore given one synthetic pool holding all of its
+    servers, since the pool counts, not numberOfServers, size the server pool once
+    any pool is declared.
+
+    Returns:
+        dict with keys names, counts, compat, policy, parallelism; or None
+    """
+    from ....lang.base import HeteroSchedPolicy
+
+    param = None
+    if sn.nodeparam and node_idx in sn.nodeparam:
+        param = sn.nodeparam[node_idx]
+    if not isinstance(param, dict):
+        return None
+
+    n_types = int(param.get('nservertypes', 0) or 0)
+    names = param.get('servertypenames')
+    counts = param.get('serverspertype')
+    compat = param.get('servercompat')
+    has_types = n_types > 0 and names is not None and counts is not None and compat is not None
+
+    declared = param.get('serverparallelism')
+    has_parallelism = declared is not None and any(float(x) > 1 for x in np.asarray(declared).ravel())
+
+    if not has_types and not has_parallelism:
+        return None
+
+    parallelism = np.ones(nclasses, dtype=int)
+    if declared is not None:
+        flat = np.asarray(declared).ravel()
+        for r in range(min(nclasses, flat.size)):
+            parallelism[r] = max(1, int(flat[r]))
+
+    if has_types:
+        policy = param.get('heteroschedpolicy') or HeteroSchedPolicy.ORDER
+        return {'names': list(names), 'counts': np.asarray(counts).ravel(),
+                'compat': np.asarray(compat).reshape(n_types, -1),
+                'policy': policy, 'parallelism': parallelism}
+
+    ist = int(sn.nodeToStation[node_idx])
+    nservers = sn.nservers[ist] if len(sn.nservers.shape) == 1 else sn.nservers[ist, 0]
+    node_name = sn.nodenames[node_idx] if node_idx < len(sn.nodenames) else f'node {node_idx}'
+    return {'names': [f'{node_name} - Server Type 1'],
+            'counts': np.array([int(nservers)]),
+            'compat': np.ones((1, nclasses)),
+            'policy': HeteroSchedPolicy.ORDER, 'parallelism': parallelism}
+
+
+def _write_server_pools(server_elem: ET.Element, node_idx: int, sn: NetworkStruct, classnames: List[str]):
+    """Write classParallelism and the heterogeneous pool block of a Server section.
+
+    Mirrors MATLAB saveClassParallelism/saveServerTypeNames/saveServersPerType/
+    saveServerCompatibilities/saveHeteroSchedPolicy, in that order.
+    """
+    K = len(classnames)
+    pools = _server_pools(node_idx, sn, K)
+    if pools is None:
+        return
+
+    par_param = ET.SubElement(server_elem, 'parameter')
+    par_param.set('array', 'true')
+    par_param.set('classPath', 'java.lang.Integer')
+    par_param.set('name', 'classParallelism')
+    for r in range(K):
+        ref_class = ET.SubElement(par_param, 'refClass')
+        ref_class.text = classnames[r]
+        sub_param = ET.SubElement(par_param, 'subParameter')
+        sub_param.set('classPath', 'java.lang.Integer')
+        sub_param.set('name', 'serverParallelism')
+        value = ET.SubElement(sub_param, 'value')
+        value.text = str(int(pools['parallelism'][r]))
+
+    names_param = ET.SubElement(server_elem, 'parameter')
+    names_param.set('array', 'true')
+    names_param.set('classPath', 'java.lang.String')
+    names_param.set('name', 'serverNames')
+    for name in pools['names']:
+        sub_param = ET.SubElement(names_param, 'subParameter')
+        sub_param.set('classPath', 'java.lang.String')
+        sub_param.set('name', 'serverTypesNames')
+        value = ET.SubElement(sub_param, 'value')
+        value.text = str(name)
+
+    counts_param = ET.SubElement(server_elem, 'parameter')
+    counts_param.set('array', 'true')
+    counts_param.set('classPath', 'java.lang.Integer')
+    counts_param.set('name', 'serversPerServerType')
+    for count in pools['counts']:
+        sub_param = ET.SubElement(counts_param, 'subParameter')
+        sub_param.set('classPath', 'java.lang.Integer')
+        sub_param.set('name', 'serverTypesNumOfServers')
+        value = ET.SubElement(sub_param, 'value')
+        value.text = str(int(count))
+
+    compat_param = ET.SubElement(server_elem, 'parameter')
+    compat_param.set('array', 'true')
+    compat_param.set('classPath', 'java.lang.Object')
+    compat_param.set('name', 'serverCompatibilities')
+    for t in range(pools['compat'].shape[0]):
+        type_node = ET.SubElement(compat_param, 'subParameter')
+        type_node.set('array', 'true')
+        type_node.set('classPath', 'java.lang.Boolean')
+        type_node.set('name', 'serverTypesCompatibilities')
+        for r in range(K):
+            class_node = ET.SubElement(type_node, 'subParameter')
+            class_node.set('classPath', 'java.lang.Boolean')
+            class_node.set('name', 'compatibilities')
+            value = ET.SubElement(class_node, 'value')
+            value.text = 'true' if pools['compat'][t, r] > 0 else 'false'
+
+    policy_param = ET.SubElement(server_elem, 'parameter')
+    policy_param.set('classPath', 'java.lang.String')
+    policy_param.set('name', 'schedulingPolicy')
+    value = ET.SubElement(policy_param, 'value')
+    value.text = pools['policy'].to_jmt_text()
+
+    _warn_hetero_rates(node_idx, sn)
+
+
+def _warn_hetero_rates(node_idx: int, sn: NetworkStruct):
+    """Warn that per-server-type service rates cannot reach the JMT engine.
+
+    JMT keys the ServiceStrategy array of a station by refClass, so its loader
+    (jmt.engine.simEngine.SimLoader) keeps one strategy per class however many
+    (type, class) entries are written, and every pool of a station ends up serving
+    at the class rate. Pool sizes, class compatibilities and the assignment policy
+    do cross; set_hetero_service rates do not.
+    """
+    param = sn.nodeparam[node_idx] if (sn.nodeparam and node_idx in sn.nodeparam) else None
+    if not isinstance(param, dict):
+        return
+    rates = param.get('heterorates')
+    if rates is None:
+        return
+    flat = [float(x) for x in np.asarray(rates).ravel() if float(x) > 0]
+    if len(flat) < 2 or max(flat) - min(flat) < 1e-12:
+        return
+    import warnings
+    node_name = sn.nodenames[node_idx] if node_idx < len(sn.nodenames) else f'node {node_idx}'
+    warnings.warn(f"JMT keys service strategies by job class, so the per-server-type service "
+                  f"rates of station {node_name} cannot be exported; every pool will serve at "
+                  f"the class service rate. Use the LDES or CTMC solver for per-type rates.")
 
 
 def _write_switchover_strategy(server_elem: ET.Element, node_idx: int, sn: NetworkStruct, classnames: List[str]):
@@ -667,6 +823,104 @@ def _has_queue_length_balking(sn: NetworkStruct, ist: int, r: int) -> bool:
     return int(strategy[ist, r]) == int(BalkingStrategy.QUEUE_LENGTH)
 
 
+def _matlab_num2str(v: float) -> str:
+    """MATLAB num2str() of a real scalar.
+
+    The service weights are the one JMT field MATLAB writes with num2str
+    (savePreemptiveWeights.m) rather than %.12f, and num2str spells an
+    integer-valued double without a decimal point and everything else with
+    floor(log10(|v|))+5 significant digits. Writing repr(1.0) = '1.0' where
+    MATLAB writes '1' is a document difference for no reason.
+    """
+    v = float(v)
+    if not np.isfinite(v):
+        return str(v)
+    if v == int(v):
+        return '%d' % int(v)
+    digits = int(np.floor(np.log10(abs(v)))) + 5
+    if digits < 1:
+        digits = 1
+    return ('%.' + str(digits) + 'g') % v
+
+
+_DROP_STRATEGY_TEXT = {
+    -1: 'waiting queue',   # WAITQ
+    1: 'drop',             # DROP
+    2: 'BAS blocking',     # BAS
+    3: 'BBS blocking',     # BBS
+    4: 'RSRD blocking',    # RSRD
+    5: 'retrial',          # RETRIAL
+    6: 'retrial with limit',
+}
+
+
+def _jmt_is_bas_destination(sn: NetworkStruct, ist: int, r: int) -> bool:
+    """True when station ist is the RECEIVING side of a true-BAS relation for class r.
+
+    That is, an arrival of r that finds ist full must block an upstream station
+    rather than be lost. LINE accepts the BAS declaration in two places -- on the
+    blocking (upstream) station, as cqn_bas_blocking does, or on the full
+    destination, as a model read back from JMT does -- and ctmc_ssg resolves both
+    into sn.isbasdestination (BUG-83). Reading sn.droprule at the capped station
+    sees only the second form, which is what made SolverJMT refuse the first one.
+    """
+    isbd = getattr(sn, 'isbasdestination', None)
+    if isbd is None or ist is None or ist < 0:
+        return False
+    isbd = np.atleast_2d(np.asarray(isbd))
+    if ist >= isbd.shape[0] or r >= isbd.shape[1]:
+        return False
+    return bool(isbd[ist, r])
+
+
+#: The only dropStrategy ids JMT's queue section reads: DROP, BAS, WAITQ, RETRIAL.
+#: It matches them with a lookupswitch on String.hashCode in
+#: jmt/engine/NodeSections/Queue.class (the Storage section of a Place is even
+#: narrower and drops 'retrial'); an unrecognized value falls through the default
+#: arm with NO flag set, so BBS, RSRD and retrial-with-limit are not approximated,
+#: they are IGNORED.
+_JMT_READABLE_DROP_IDS = frozenset((1, 2, -1, 5))
+
+
+def _drop_strategy_text(sn: NetworkStruct, ist: int, r: int) -> str:
+    """JMT dropStrategy string for station ist, class r.
+
+    Mirrors MATLAB jmtDropStrategyText.m: an unset slot (no station, NaN, or 0)
+    is the bufferless-node field 'drop'; otherwise the DropStrategy id is spelled
+    out. The ids are shared across the codebases (see lang/base.py DropStrategy),
+    so they are read here as numbers.
+
+    Beyond the id table this resolves the two ways LINE can declare BAS blocking
+    onto the one way JMT can read it. JMT's queue section says what happens to an
+    arrival that finds THIS buffer full, so it only understands the rule on the
+    destination; a WAITQ slot that _jmt_is_bas_destination marks is therefore
+    written out as 'BAS blocking'.
+
+    It also keeps the written file VALID: a strategy outside
+    _JMT_READABLE_DROP_IDS is spelled 'waiting queue', JMT's own no-limit
+    default. That substitution is only ever reached where the rule cannot be
+    consulted (infinite size, or a closed capacity equal to the population): a
+    buffer that can actually fill under one of those is refused outright by
+    _jmt_station_cap_assert.
+    """
+    droprule = getattr(sn, 'droprule', None)
+    if droprule is None or ist is None or ist < 0:
+        return 'drop'
+    droprule = np.asarray(droprule)
+    if droprule.ndim < 2 or ist >= droprule.shape[0] or r >= droprule.shape[1]:
+        return 'drop'
+    drop_val = droprule[ist, r]
+    if np.isnan(drop_val) or int(drop_val) == 0:
+        return 'drop'
+    if int(drop_val) == -1 and _jmt_is_bas_destination(sn, ist, r):
+        return _DROP_STRATEGY_TEXT[2]   # WAITQ slot standing in for upstream-declared BAS
+    if int(drop_val) not in _JMT_READABLE_DROP_IDS:
+        if int(drop_val) not in _DROP_STRATEGY_TEXT:
+            raise ValueError('Unrecognized drop strategy type: %s' % drop_val)
+        return _DROP_STRATEGY_TEXT[-1]  # unreachable rule, written as JMT's no-limit default
+    return _DROP_STRATEGY_TEXT[int(drop_val)]
+
+
 def _balking_thresholds(sn: NetworkStruct, ist: int, r: int):
     thresholds = getattr(sn, 'balkingThresholds', None)
     if thresholds is None:
@@ -877,6 +1131,13 @@ def _write_jsim_file(sn: NetworkStruct, model_path: str, options: SolverJMTOptio
     """
     M = sn.nstations
     K = sn.nclasses
+
+    # BUG-83: sn.isbasdestination is derived, and unlike MATLAB/JAR/C++ the
+    # native struct refresh does not build it, so it is populated here exactly
+    # as ssa/serial.py does. _drop_strategy_text and _jmt_station_cap_assert
+    # both read it to see BAS declared on the UPSTREAM station.
+    from ...state.ctmc_ssg import _populate_isbasblocking
+    _populate_isbasblocking(sn)
 
     from datetime import datetime
     timestamp = datetime.now().strftime('%a %b %d %H:%M:%S %Y')
@@ -1128,6 +1389,22 @@ def _write_jsim_file(sn: NetworkStruct, model_path: str, options: SolverJMTOptio
             metric.set('type', 'Tardiness')
             metric.set('verbose', 'false')
 
+    # 7. System Tardiness - one per class, no station. MATLAB saveMetrics.m
+    # emits the SysTard handles right after the per-station Tard ones, and
+    # saveMetric.m blanks nodeType/referenceNode for a system-level index. The
+    # measure list is what JMT tests its precision target against, so a missing
+    # one is not merely a missing column.
+    for r in range(K):
+        metric = ET.SubElement(sim, 'measure')
+        metric.set('alpha', alpha_str)
+        metric.set('name', 'Performance_1')
+        metric.set('nodeType', '')
+        metric.set('precision', str(options.max_rel_err))
+        metric.set('referenceNode', '')
+        metric.set('referenceUserClass', classnames[r])
+        metric.set('type', 'System Tardiness')
+        metric.set('verbose', 'false')
+
     # FCR metrics: region-aggregate QLen/RespT/ResidT/Tput (no per-class
     # breakdown), named "FCRegion{n}" to match saveRegions; mirrors JAR/MATLAB.
     if model is not None:
@@ -1297,9 +1574,11 @@ def _write_jsim_file(sn: NetworkStruct, model_path: str, options: SolverJMTOptio
         if s0 is not None and stationToStateful is not None:
             stateful_idx = int(stationToStateful[ist]) if ist < len(stationToStateful) else -1
             if stateful_idx >= 0 and stateful_idx < len(s0):
-                state_i = np.asarray(s0[stateful_idx]).flatten()
-                for r in range(min(K, len(state_i))):
-                    nir[r] = state_i[r]
+                # State.toMarginal as in writeJSIM: the raw state is per-class-per-phase, so its first K entries are not the per-class counts.
+                from ...state.marginal import toMarginal
+                _, nir_states, _, _ = toMarginal(
+                    sn, node_idx, np.asarray(s0[stateful_idx]))
+                nir = np.asarray(nir_states)[0, :K].astype(float)
                 has_explicit_state = True
 
         # For closed classes, use reference station logic ONLY if state was not explicitly set
@@ -1654,7 +1933,7 @@ def _write_delay_node(node_elem: ET.Element, node_idx: int, sn: NetworkStruct, c
         sub_param.set('classPath', 'java.lang.String')
         sub_param.set('name', 'dropStrategy')
         value = ET.SubElement(sub_param, 'value')
-        value.text = 'waiting queue'  # Match Java format
+        value.text = _drop_strategy_text(sn, ist, r)
 
     # Queue get strategy (FCFS)
     strategy_param = ET.SubElement(queue, 'parameter')
@@ -1685,9 +1964,13 @@ def _write_delay_node(node_elem: ET.Element, node_idx: int, sn: NetworkStruct, c
         ref_class = ET.SubElement(impatience_param, 'refClass')
         ref_class.text = classnames[r]
 
+        # The ARRAY is named for the abstract Impatience type; each ENTRY names
+        # the concrete strategy, which is Reneging even when it carries no
+        # distribution (MATLAB saveImpatience.m). A Delay never renege-s, so the
+        # value stays null.
         sub_param = ET.SubElement(impatience_param, 'subParameter')
-        sub_param.set('classPath', 'jmt.engine.NetStrategies.ImpatienceStrategies.Impatience')
-        sub_param.set('name', 'Impatience')
+        sub_param.set('classPath', 'jmt.engine.NetStrategies.ImpatienceStrategies.Reneging')
+        sub_param.set('name', 'Reneging')
         value = ET.SubElement(sub_param, 'value')
         value.text = 'null'
 
@@ -1964,7 +2247,7 @@ def _write_queue_node(node_elem: ET.Element, node_idx: int, sn: NetworkStruct, c
     queue.set('className', 'Queue')
 
     # Size parameter: JMT "size" = K (total capacity), -1 = infinite.
-    # Mirrors MATLAB saveBufferCapacity.m: cap==sum(njobs) also treated as infinite.
+    # Mirrors MATLAB saveBufferCapacity.m: cap>=sum(njobs) also treated as infinite.
     size_param = ET.SubElement(queue, 'parameter')
     size_param.set('classPath', 'java.lang.Integer')
     size_param.set('name', 'size')
@@ -1973,10 +2256,26 @@ def _write_queue_node(node_elem: ET.Element, node_idx: int, sn: NetworkStruct, c
     if hasattr(sn, 'cap') and sn.cap is not None and ist < len(sn.cap):
         cap_val = sn.cap[ist]
         if not np.isinf(cap_val):
-            # Check if capacity equals sum of jobs (effectively infinite for closed networks)
-            total_jobs = np.sum(sn.njobs) if sn.njobs is not None else 0
-            if cap_val == total_jobs:
-                # Capacity equals total jobs - treat as infinite
+            # A capacity the population cannot reach is unbounded, and the test
+            # is >= and not ==: refresh_capacity DERIVES sn.cap for a station the
+            # user never capped, as sum over the classes served there of the
+            # chain population, so a multi-class station gets (#classes) x N --
+            # 8 on a two-class model of 4 jobs. Under == only the single-class
+            # case matched, and every multi-class one fell through to
+            # _jmt_station_cap_assert and was refused as a "binding" buffer
+            # nobody declared.
+            # An absent njobs establishes no bound, so it must not read as one:
+            # inf keeps the capacity on the exported-and-asserted path, where
+            # the old `== 0` left it, rather than silently dropping it.
+            #
+            # THE POPULATION COMPARED AGAINST IS THE ONE THAT CAN REACH ist, not
+            # the model total. A class that never visits this station cannot
+            # fill it, so counting its jobs makes a capacity that is exactly the
+            # reachable population look like a buffer -- which is what a
+            # SELF-LOOPING CLASS does. See the MATLAB twin in
+            # JMTIO/saveBufferCapacity.m.
+            total_jobs = _jmt_reachable_population(sn, ist)
+            if cap_val >= total_jobs:
                 capacity = -1
             else:
                 # Check for infinite servers (delay node) - no buffer needed
@@ -1984,6 +2283,7 @@ def _write_queue_node(node_elem: ET.Element, node_idx: int, sn: NetworkStruct, c
                 if np.isinf(nservers):
                     capacity = -1
                 else:
+                    _jmt_station_cap_assert(sn, ist)
                     capacity = int(cap_val)
     value.text = str(capacity)
 
@@ -2001,23 +2301,13 @@ def _write_queue_node(node_elem: ET.Element, node_idx: int, sn: NetworkStruct, c
         sub_param.set('classPath', 'java.lang.String')
         sub_param.set('name', 'dropStrategy')
         value = ET.SubElement(sub_param, 'value')
-        # Check if there's a drop rule defined in sn.droprule
-        # Uses network_struct.DropStrategy values: WAITQ=0, DROP=1, BAS=2
-        drop_text = 'drop'  # Default to drop for finite capacity
-        if hasattr(sn, 'droprule') and sn.droprule is not None:
-            if ist < sn.droprule.shape[0] and r < sn.droprule.shape[1]:
-                drop_val = sn.droprule[ist, r]
-                if np.isnan(drop_val):
-                    drop_text = 'drop'
-                elif drop_val == 0:  # WAITQ
-                    drop_text = 'waiting queue'
-                elif drop_val == 1:  # DROP
-                    drop_text = 'drop'
-                elif drop_val == 2:  # BAS
-                    drop_text = 'BAS blocking'
-                else:
-                    drop_text = 'drop'
-        value.text = drop_text
+        # Port of MATLAB saveDropStrategy.m: 0 is not a DropStrategy value, it
+        # is the "no rule recorded" slot, which JMT spells 'drop' (the field a
+        # bufferless node carries); every other value goes through
+        # DropStrategy.toText. WAITQ is -1 in all three codebases, so the
+        # earlier `drop_val == 0 -> waiting queue` test never fired and every
+        # blocking queue was exported as a DROPPING one instead.
+        value.text = _drop_strategy_text(sn, ist, r)
 
     # 3. Queue get strategy
     # Check if this is a polling queue
@@ -2122,8 +2412,12 @@ def _write_queue_node(node_elem: ET.Element, node_idx: int, sn: NetworkStruct, c
             imp_sub.set('name', 'Reneging')
             _write_distribution_param(imp_sub, pdist)
         else:
-            imp_sub.set('classPath', 'jmt.engine.NetStrategies.ImpatienceStrategies.Impatience')
-            imp_sub.set('name', 'Impatience')
+            # No impatience configured: still a Reneging entry, carrying null.
+            # Naming the entry after the abstract Impatience type left JMT's
+            # SimLoader with a class it cannot instantiate (MATLAB
+            # saveImpatience.m emits Reneging in both cases).
+            imp_sub.set('classPath', 'jmt.engine.NetStrategies.ImpatienceStrategies.Reneging')
+            imp_sub.set('name', 'Reneging')
             value = ET.SubElement(imp_sub, 'value')
             value.text = 'null'
 
@@ -2476,6 +2770,11 @@ def _write_queue_node(node_elem: ET.Element, node_idx: int, sn: NetworkStruct, c
     if sched != SchedStrategy.POLLING:
         _write_delayoff_strategy(server, node_idx, classnames, model)
 
+    # Job parallelism and heterogeneous pools, only for the plain Server class:
+    # SimLoader picks the constructor by the positional types of the parameters.
+    if server.get('className') == 'Server':
+        _write_server_pools(server, node_idx, sn, classnames)
+
     # PSStrategy (for PS/DPS/GPS and priority variants)
     if sched in (SchedStrategy.PS, SchedStrategy.DPS, SchedStrategy.GPS,
                  SchedStrategy.PSPRIO, SchedStrategy.DPSPRIO, SchedStrategy.GPSPRIO,
@@ -2537,7 +2836,7 @@ def _write_queue_node(node_elem: ET.Element, node_idx: int, sn: NetworkStruct, c
                         w = sn.schedparam[ist, r]
                         if not np.isnan(w) and w > 0:
                             weight = w
-            value.text = str(weight)
+            value.text = _matlab_num2str(weight)
 
     # Switchover strategy for polling queues
     if sched == SchedStrategy.POLLING:
@@ -3662,23 +3961,27 @@ def _fill_hyperexp_distribution(distr: ET.Element, distr_par: ET.Element,
     distr_par.set('classPath', 'jmt.engine.random.HyperExpPar')
     distr_par.set('name', 'distrPar')
 
+    # %.12f, not repr: MATLAB saveServiceStrategy.m and JAR SaveHandlers write
+    # every JMT distribution parameter at twelve decimals. A full-precision
+    # rate here is a DIFFERENT model from the one the other two codebases hand
+    # to the same JMT.jar, which at a fixed seed is a different sample path.
     p_param = ET.SubElement(distr_par, 'subParameter')
     p_param.set('classPath', 'java.lang.Double')
     p_param.set('name', 'p')
     value = ET.SubElement(p_param, 'value')
-    value.text = str(p)
+    value.text = '%.12f' % p
 
     l1_param = ET.SubElement(distr_par, 'subParameter')
     l1_param.set('classPath', 'java.lang.Double')
     l1_param.set('name', 'lambda1')
     value = ET.SubElement(l1_param, 'value')
-    value.text = str(lambda1)
+    value.text = '%.12f' % lambda1
 
     l2_param = ET.SubElement(distr_par, 'subParameter')
     l2_param.set('classPath', 'java.lang.Double')
     l2_param.set('name', 'lambda2')
     value = ET.SubElement(l2_param, 'value')
-    value.text = str(lambda2)
+    value.text = '%.12f' % lambda2
 
 
 def _write_phase_type_service_distribution(parent: ET.Element, sn: NetworkStruct, ist: int, r: int) -> None:
@@ -3694,29 +3997,26 @@ def _write_phase_type_service_distribution(parent: ET.Element, sn: NetworkStruct
         ist: Station index
         r: Class index
     """
-    # Get phase-type representation from proc and pie
-    # proc stores [alpha, T] for PH distributions
+    # Get phase-type representation from proc and pie. sn.proc holds (D0, D1);
+    # proc_to_ph returns the PH view of it, so this reader never has to tell
+    # (D0, D1) from a legacy [alpha, T] by shape -- both are a pair of arrays
+    # and the guess was wrong for every Markovian family since the storage form
+    # was unified (see _kb/04-networkstruct.md).
     T = None
     alpha = None
 
     if hasattr(sn, 'proc') and sn.proc is not None:
         try:
             proc = sn.proc[ist][r]
-            if proc is not None and isinstance(proc, (list, tuple)) and len(proc) >= 2:
-                # proc = [alpha, T] - alpha is initial probability vector, T is sub-generator matrix
-                alpha_candidate = np.asarray(proc[0], dtype=np.float64)
-                T_candidate = np.asarray(proc[1], dtype=np.float64)
-                # T should be 2D (n x n matrix), alpha should be 1D (n vector)
-                if T_candidate.ndim == 2:
-                    T = T_candidate
-                    alpha = alpha_candidate
-                elif alpha_candidate.ndim == 2:
-                    # Reversed order: proc = [T, alpha]
-                    T = alpha_candidate
-                    alpha = T_candidate
-            elif proc is not None and isinstance(proc, (list, tuple)) and len(proc) == 1:
-                # Single element - assume it's T
-                T = np.asarray(proc[0], dtype=np.float64)
+            if proc is not None:
+                from ...sn.proc_form import proc_to_ph
+                alpha_candidate, T_candidate = proc_to_ph(proc)
+                if T_candidate is not None:
+                    T = np.asarray(T_candidate, dtype=np.float64)
+                    alpha = np.asarray(alpha_candidate, dtype=np.float64)
+                elif isinstance(proc, (list, tuple)) and len(proc) == 1:
+                    # Single element - assume it's T
+                    T = np.asarray(proc[0], dtype=np.float64)
         except (IndexError, TypeError, KeyError):
             pass
 
@@ -3966,10 +4266,16 @@ def _write_fork_node(node_elem: ET.Element, node_idx: int, sn: NetworkStruct, cl
 
     # Get fanOut (tasks per link), default to 1
     fan_out = 1
+    fan_out_link = None
+    fan_out_prob = None
+    fan_out_dist = None
     if hasattr(sn, 'nodeparam') and sn.nodeparam is not None:
         if node_idx in sn.nodeparam and sn.nodeparam[node_idx] is not None:
             if isinstance(sn.nodeparam[node_idx], dict):
                 fan_out = sn.nodeparam[node_idx].get('fanOut', 1)
+                fan_out_link = sn.nodeparam[node_idx].get('fanOutLink', None)
+                fan_out_prob = sn.nodeparam[node_idx].get('fanOutProb', None)
+                fan_out_dist = sn.nodeparam[node_idx].get('fanOutDist', None)
 
     # 1. Queue section (buffer)
     queue = ET.SubElement(node_elem, 'section')
@@ -4026,9 +4332,11 @@ def _write_fork_node(node_elem: ET.Element, node_idx: int, sn: NetworkStruct, cl
         ref_class = ET.SubElement(impatience_param, 'refClass')
         ref_class.text = classnames[r]
 
+        # Concrete strategy name, as at every other buffer: MATLAB's Buffer
+        # branch runs the same saveImpatience.m for a Fork.
         sub_param = ET.SubElement(impatience_param, 'subParameter')
-        sub_param.set('classPath', 'jmt.engine.NetStrategies.ImpatienceStrategies.Impatience')
-        sub_param.set('name', 'Impatience')
+        sub_param.set('classPath', 'jmt.engine.NetStrategies.ImpatienceStrategies.Reneging')
+        sub_param.set('name', 'Reneging')
         value = ET.SubElement(sub_param, 'value')
         value.text = 'null'
 
@@ -4045,7 +4353,9 @@ def _write_fork_node(node_elem: ET.Element, node_idx: int, sn: NetworkStruct, cl
     jpl_param.set('classPath', 'java.lang.Integer')
     jpl_param.set('name', 'jobsPerLink')
     value = ET.SubElement(jpl_param, 'value')
-    value.text = str(fan_out)
+    # sn.nodeparam carries fanOut as a float; the parameter is declared
+    # java.lang.Integer, so JMT's Integer(String) ctor rejects "1.0" outright.
+    value.text = str(int(round(float(fan_out))))
 
     # block parameter
     block_param = ET.SubElement(fork, 'parameter')
@@ -4054,12 +4364,21 @@ def _write_fork_node(node_elem: ET.Element, node_idx: int, sn: NetworkStruct, cl
     value = ET.SubElement(block_param, 'value')
     value.text = '-1'
 
-    # isSimplifiedFork parameter
+    # isSimplifiedFork lets JMT ignore the branch list and send one job down
+    # every link. That is only the same model when every branch is certain and
+    # carries the same number of tasks, so a variable forking level switches it
+    # off and makes JMT read the per-branch entries emitted below.
+    is_simplified = True
+    if fan_out_link is not None:
+        taken = fan_out_prob > 0
+        is_simplified = (bool(np.all(fan_out_prob[taken] == 1.0))
+                         and bool(np.all(fan_out_link[taken] == fan_out))
+                         and all(d is None for row in fan_out_dist for d in row))
     simpl_param = ET.SubElement(fork, 'parameter')
     simpl_param.set('classPath', 'java.lang.Boolean')
     simpl_param.set('name', 'isSimplifiedFork')
     value = ET.SubElement(simpl_param, 'value')
-    value.text = 'true'
+    value.text = 'true' if is_simplified else 'false'
 
     # ForkStrategy parameter
     strategy_param = ET.SubElement(fork, 'parameter')
@@ -4108,10 +4427,12 @@ def _write_fork_node(node_elem: ET.Element, node_idx: int, sn: NetworkStruct, cl
         emp_array.set('classPath', 'jmt.engine.NetStrategies.ForkStrategies.OutPath')
         emp_array.set('name', 'EmpiricalEntryArray')
 
-        # Simplified fork mode: one OutPath entry suffices (JMT auto-sends to
-        # all connected outputs); use the last output to match MATLAB/JAR.
+        # One OutPathEntry per outgoing link. This used to emit only the last
+        # output, matching a MATLAB/JAR defect that was invisible because
+        # isSimplifiedFork makes JMT send one job down every link and ignore the
+        # branch list; all four codebases now emit the full list.
         if r in classes_using_fork and outgoing_nodes:
-            fork_outputs = [outgoing_nodes[-1]]
+            fork_outputs = list(outgoing_nodes)
         else:
             fork_outputs = []
         for out_node in fork_outputs:
@@ -4131,36 +4452,51 @@ def _write_fork_node(node_elem: ET.Element, node_idx: int, sn: NetworkStruct, cl
             value = ET.SubElement(station_name, 'value')
             value.text = nodenames[out_node]
 
-            # probability
+            # probability: the branch activation probability
+            branch_p = 1.0 if fan_out_prob is None else float(fan_out_prob[out_node, r])
             prob_param = ET.SubElement(emp_entry, 'subParameter')
             prob_param.set('classPath', 'java.lang.Double')
             prob_param.set('name', 'probability')
             value = ET.SubElement(prob_param, 'value')
-            value.text = '1.0'
+            value.text = repr(branch_p)
 
-            # JobsPerLinkDis
+            # JobsPerLinkDis is an EmpiricalEntry ARRAY: one entry per point of
+            # the jobs-per-link distribution. A deterministic fork emits the
+            # single degenerate entry it always did.
+            dist = None if fan_out_dist is None else fan_out_dist[out_node][r]
+            if dist is not None:
+                jpl_points = list(dist.values)
+                jpl_probs = list(dist.probs)
+            elif fan_out_link is not None:
+                jpl_points = [fan_out_link[out_node, r]]
+                jpl_probs = [1.0]
+            else:
+                jpl_points = [fan_out]
+                jpl_probs = [1.0]
+
             jpl_dis = ET.SubElement(out_path, 'subParameter')
             jpl_dis.set('classPath', 'jmt.engine.random.EmpiricalEntry')
             jpl_dis.set('array', 'true')
             jpl_dis.set('name', 'JobsPerLinkDis')
 
-            jpl_entry = ET.SubElement(jpl_dis, 'subParameter')
-            jpl_entry.set('classPath', 'jmt.engine.random.EmpiricalEntry')
-            jpl_entry.set('name', 'EmpiricalEntry')
+            for point, prob in zip(jpl_points, jpl_probs):
+                jpl_entry = ET.SubElement(jpl_dis, 'subParameter')
+                jpl_entry.set('classPath', 'jmt.engine.random.EmpiricalEntry')
+                jpl_entry.set('name', 'EmpiricalEntry')
 
-            # numbers (jobs per link)
-            numbers_param = ET.SubElement(jpl_entry, 'subParameter')
-            numbers_param.set('classPath', 'java.lang.String')
-            numbers_param.set('name', 'numbers')
-            value = ET.SubElement(numbers_param, 'value')
-            value.text = str(fan_out)
+                # numbers (jobs per link)
+                numbers_param = ET.SubElement(jpl_entry, 'subParameter')
+                numbers_param.set('classPath', 'java.lang.String')
+                numbers_param.set('name', 'numbers')
+                value = ET.SubElement(numbers_param, 'value')
+                value.text = str(int(round(float(point))))
 
-            # probability for this distribution
-            prob_param2 = ET.SubElement(jpl_entry, 'subParameter')
-            prob_param2.set('classPath', 'java.lang.Double')
-            prob_param2.set('name', 'probability')
-            value = ET.SubElement(prob_param2, 'value')
-            value.text = '1.0'
+                # probability for this distribution point
+                prob_param2 = ET.SubElement(jpl_entry, 'subParameter')
+                prob_param2.set('classPath', 'java.lang.Double')
+                prob_param2.set('name', 'probability')
+                value = ET.SubElement(prob_param2, 'value')
+                value.text = repr(float(prob))
 
 
 def _write_join_node(node_elem: ET.Element, node_idx: int, sn: NetworkStruct, classnames: List[str],
@@ -4190,22 +4526,37 @@ def _write_join_node(node_elem: ET.Element, node_idx: int, sn: NetworkStruct, cl
     strategy_param.set('classPath', 'jmt.engine.NetStrategies.JoinStrategy')
     strategy_param.set('name', 'JoinStrategy')
 
+    # Per-class join rule, as recorded by Network._refresh_node_param
+    join_strategy = None
+    join_required = None
+    if sn.nodeparam is not None and node_idx in sn.nodeparam and isinstance(sn.nodeparam[node_idx], dict):
+        join_strategy = sn.nodeparam[node_idx].get('joinStrategy')
+        join_required = sn.nodeparam[node_idx].get('joinRequired')
+
     for r in range(K):
         ref_class = ET.SubElement(strategy_param, 'refClass')
         ref_class.text = classnames[r]
 
-        # Default: Standard Join (wait for all tasks)
+        # A quorum (PARTIAL with 1 <= k < siblings) is a PartialJoin, every
+        # other rule a Standard Join. see saveJoinStrategy.m for the reference
+        strategy_r = join_strategy[r] if join_strategy is not None and r < len(join_strategy) else JoinStrategy.STD
+        required_r = int(join_required[r]) if join_required is not None and r < len(join_required) else -1
+        is_quorum = strategy_r != JoinStrategy.STD and 0 < required_r < fan_in
+
         join_strat = ET.SubElement(strategy_param, 'subParameter')
-        join_strat.set('classPath', 'jmt.engine.NetStrategies.JoinStrategies.NormalJoin')
-        join_strat.set('name', 'Standard Join')
+        if is_quorum:
+            join_strat.set('classPath', 'jmt.engine.NetStrategies.JoinStrategies.PartialJoin')
+            join_strat.set('name', 'Quorum')
+        else:
+            join_strat.set('classPath', 'jmt.engine.NetStrategies.JoinStrategies.NormalJoin')
+            join_strat.set('name', 'Standard Join')
 
         req_param = ET.SubElement(join_strat, 'subParameter')
         req_param.set('classPath', 'java.lang.Integer')
         req_param.set('name', 'numRequired')
         value = ET.SubElement(req_param, 'value')
-        # Use -1 for automatic join (JMT determines the required count based on fork)
-        # This matches MATLAB behavior
-        value.text = '-1'
+        # -1 on a standard join is JMT's automatic count, taken from the fork
+        value.text = str(required_r) if is_quorum else '-1'
 
     # 2. ServiceTunnel section
     tunnel = ET.SubElement(node_elem, 'section')
@@ -4323,7 +4674,13 @@ def _write_routing_strategy(router: ET.Element, node_idx: int, sn: NetworkStruct
             k_param.set('classPath', 'java.lang.Integer')
             k_param.set('name', 'k')
             k_value = ET.SubElement(k_param, 'value')
-            k_value.text = '2'  # Default k=2
+            # sn.nodeparam[node][class]['d'] as in MATLAB saveRoutingStrategy; this was hardcoded 2, so SQ(d) was simulated as SQ(2) for every d.
+            sq_d = 2
+            try:
+                sq_d = int(sn.nodeparam[node_idx][r]['d'])
+            except (AttributeError, IndexError, TypeError, KeyError):
+                pass
+            k_value.text = str(sq_d)
 
             mem_param = ET.SubElement(sub_param, 'subParameter')
             mem_param.set('classPath', 'java.lang.Boolean')
@@ -4577,6 +4934,231 @@ def _parse_jsim_results(result_path: str, sn: NetworkStruct) -> Tuple[np.ndarray
                 U[i, r] = 0.0
 
     return Q, U, R, T, A
+
+
+def _is_jmva_method(method) -> bool:
+    """True for the analytical JMVA methods, false for the simulation ones.
+
+    The accepted spellings are MATLAB's (@SolverJMT/runAnalyzer.m): 'jmva'
+    plus the ten algorithm suffixes, each also reachable with a 'jmt.' prefix.
+    """
+    m = str(method or '').lower()
+    return m.startswith('jmva') or m.startswith('jmt.jmva')
+
+
+def _parse_jmva_results(result_path: str, sn: NetworkStruct):
+    """Parse a JMVA result file and disaggregate its chains back into classes.
+
+    JMVA solves the CHAIN-AGGREGATED model that `write_jmva` hands it (one
+    'ChainNN' customer class per chain, source stations omitted), so its
+    station results are per chain and have to be pushed back onto the classes
+    before they mean anything to LINE. This is a port of MATLAB
+    `@SolverJMT/getResultsJMVA.m`, whose factors are specific to JMVA's own
+    conventions -- in particular its 'Residence time' is per chain visit, not
+    per class visit -- and therefore deliberately not the generic
+    `sn_deaggregate_chain_results`.
+
+    Stations are matched BY NAME rather than by position. MATLAB indexes the
+    result list positionally against the station index, which holds only while
+    the model has no Source: `writeJMVA.m` skips Source stations, so on an open
+    model every station in the result is read against the wrong row of
+    `rates`/`nservers`. Matching by name is right on both.
+
+    Returns:
+        (Q, U, R, T, lG) with the four (M x K) matrices and the log normalizing
+        constant, NaN when the algorithm reported none.
+    """
+    M = sn.nstations
+    K = sn.nclasses
+
+    Q = np.zeros((M, K))
+    U = np.zeros((M, K))
+    R = np.zeros((M, K))
+    T = np.zeros((M, K))
+    lG = float('nan')
+
+    if not os.path.exists(result_path):
+        raise RuntimeError("JMT did not output a result file, the analysis has likely failed.")
+
+    root = ET.parse(result_path).getroot()
+    alg = root.find('./solutions/algorithm')
+    if alg is None:
+        raise RuntimeError("JMVA result file carries no solution: %s" % result_path)
+
+    normconst = alg.find('normconst')
+    if normconst is not None:
+        try:
+            lG = float(normconst.get('logValue'))
+        except (TypeError, ValueError):
+            lG = float('nan')
+
+    demands = sn_get_demands_chain(sn)
+    STchain = np.asarray(demands.STchain, dtype=float)
+    Vchain = np.asarray(demands.Vchain, dtype=float)
+    alpha = np.asarray(demands.alpha, dtype=float)
+
+    rates = np.asarray(sn.rates, dtype=float)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        ST = np.where(rates != 0, 1.0 / rates, 0.0)
+    ST = np.where(np.isnan(ST), 0.0, ST)
+
+    nservers = np.asarray(sn.nservers, dtype=float).ravel()
+    refstat = np.asarray(sn.refstat).ravel().astype(int)
+    station_to_node = np.asarray(sn.stationToNode).ravel().astype(int)
+    nodenames = sn.nodenames if sn.nodenames else []
+
+    station_of_name = {}
+    for i in range(M):
+        node_idx = int(station_to_node[i])
+        if node_idx < len(nodenames):
+            station_of_name[nodenames[node_idx]] = i
+
+    for statres in alg.findall('stationresults'):
+        name = statres.get('station')
+        if name not in station_of_name:
+            raise RuntimeError("JMVA reported station '%s', which is not in the model" % name)
+        i = station_of_name[name]
+        for pos, classres in enumerate(statres.findall('classresults')):
+            # 'ChainNN' is written by write_jmva in chain order; the name is
+            # authoritative and the position is the fallback.
+            c = pos
+            cname = classres.get('customerclass') or ''
+            if cname.lower().startswith('chain'):
+                try:
+                    c = int(cname[5:]) - 1
+                except ValueError:
+                    c = pos
+            if c < 0 or c >= sn.nchains:
+                raise RuntimeError("JMVA reported chain '%s', which is not in the model" % cname)
+            inchain = np.asarray(sn.inchain[c]).ravel().astype(int)
+            # A multiserver Queue is written as <ldstation servers="1">, and one
+            # ldstation switches JMVA to its load-dependent algorithm, whose
+            # Utilization is 1-p_i(0) at EVERY station, delay ones included. That
+            # is a different random variable from LINE's E[busy servers], so no
+            # rescaling recovers it; derive U from the chain throughput, which
+            # both JMVA algorithms report alike.
+            chain_tput = float('nan')
+            for measure in classres.findall('measure'):
+                if measure.get('measureType') == 'Throughput':
+                    try:
+                        chain_tput = float(measure.get('meanValue'))
+                    except (TypeError, ValueError):
+                        chain_tput = float('nan')
+                    break
+            for measure in classres.findall('measure'):
+                mtype = measure.get('measureType')
+                try:
+                    value = float(measure.get('meanValue'))
+                except (TypeError, ValueError):
+                    value = float('nan')
+                for k in inchain:
+                    # A zero denominator means this class does not load this
+                    # station in this chain, so it holds none of the chain's
+                    # measure. MATLAB reaches the same rows as 0*Inf = NaN.
+                    stc = STchain[i, c]
+                    vref = Vchain[int(refstat[k]), c]
+                    if mtype == 'Utilization':
+                        if vref == 0:
+                            continue
+                        U[i, k] = ST[i, k] * chain_tput / vref * alpha[i, k]
+                        # The divisor is the capacity write_jmva exported, which is
+                        # max(nservers, max(lldscaling)): a load-dependent station
+                        # carries its c in the scaling and leaves sn.nservers at 1,
+                        # so reading nservers alone reported U = c * E[busy]/c.
+                        c_eff = nservers[i]
+                        lld = getattr(sn, 'lldscaling', None)
+                        if lld is not None:
+                            lld = np.atleast_2d(np.asarray(lld, dtype=float))
+                            if i < lld.shape[0] and lld.shape[1] > 0:
+                                c_eff = max(c_eff, float(np.max(lld[i, :])))
+                        if np.isfinite(c_eff):
+                            U[i, k] /= c_eff
+                    elif mtype == 'Throughput':
+                        T[i, k] = value * alpha[i, k]
+                    elif mtype == 'Number of Customers':
+                        if stc == 0 or vref == 0:
+                            continue
+                        Q[i, k] = value * ST[i, k] / stc / vref * alpha[i, k]
+                    elif mtype == 'Residence time':
+                        # JMVA reports residence over the chain's visits; LINE
+                        # wants response time per visit of THIS class.
+                        visits_c = np.asarray(sn.visits[c], dtype=float)
+                        vik = visits_c[i, k] if i < visits_c.shape[0] and k < visits_c.shape[1] else 0.0
+                        if stc == 0 or vref == 0 or vik == 0:
+                            continue
+                        R[i, k] = (value / vik) * ST[i, k] / stc / vref * alpha[i, k]
+
+    # A Source carries no queue: JMVA never sees it (writeJMVA.m skips it), and
+    # its throughput is the arrival rate the model already declares.
+    nodetype = sn.nodetype
+    for i in range(M):
+        node_idx = int(station_to_node[i])
+        if node_idx < len(nodetype) and nodetype[node_idx] == NodeType.SOURCE:
+            for r in range(K):
+                T[i, r] = 0.0 if np.isnan(rates[i, r]) else rates[i, r]
+
+    return Q, U, R, T, lG
+
+
+def _solve_jmva(sn: NetworkStruct, options: SolverJMTOptions, jmt_path, start_time) -> SolverJMTReturn:
+    """Run one analytical JMVA solve and return its class-level metrics.
+
+    Mirrors the 'jmva*' branch of MATLAB @SolverJMT/runAnalyzer.m: write the
+    chain-aggregated .jmva, run the JMT command line in 'mva' mode, parse and
+    disaggregate, then derive the arrival rates from the routing matrix, which
+    is what MATLAB does here too -- an analytical solve measures nothing.
+    """
+    from ....solvers.wrappers.solver_qns.jmva_writer import write_jmva
+
+    M = sn.nstations
+    K = sn.nclasses
+    method = str(getattr(options, 'method', 'jmva') or 'jmva').lower()
+
+    workspace_dir = os.path.join(tempfile.gettempdir(), 'workspace', 'jmva')
+    os.makedirs(workspace_dir, exist_ok=True)
+    temp_dir = tempfile.mkdtemp(dir=workspace_dir)
+    try:
+        # 'model.jmva' matches MATLAB getJMVATempPath.m; the result path must
+        # stay derived from it (Jmt.java writes args[1] + '-result.jmva').
+        model_path = os.path.join(temp_dir, 'model.jmva')
+        write_jmva(sn, model_path, {'method': method, 'samples': options.samples})
+        print(f"JMT Model: {model_path}")
+
+        returncode, _stdout, stderr = run_jmt(
+            'mva', model_path, options.seed, jmt_jar=jmt_path, options=options,
+            timeout=getattr(options, 'timeout', None), verbose=bool(options.verbose))
+        if returncode != 0:
+            raise RuntimeError(f"JMVA analysis failed: {stderr}")
+
+        Q, U, R, T, lG = _parse_jmva_results(result_path_for(model_path, 'mva'), sn)
+    finally:
+        if not getattr(options, 'keep', False):
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    W = R.copy()
+    A = sn_get_arvr_from_tput(sn, T, T)
+    if A is None or np.asarray(A).size == 0:
+        A = np.zeros((M, K))
+
+    X = np.zeros((1, K))
+    refstat = np.asarray(sn.refstat).ravel().astype(int) if sn.refstat is not None else np.zeros(K, dtype=int)
+    for r in range(K):
+        if int(refstat[r]) < M:
+            X[0, r] = T[int(refstat[r]), r]
+
+    C = np.zeros((1, K))
+    njobs = np.asarray(sn.njobs, dtype=float).ravel()
+    for r in range(K):
+        if not np.isinf(njobs[r]) and X[0, r] > 0:
+            C[0, r] = njobs[r] / X[0, r]
+
+    result = SolverJMTReturn(
+        Q=Q, U=U, R=R, T=T, A=A, W=W, C=C, X=X,
+        runtime=time.time() - start_time,
+        method=method,
+    )
+    result.logNormConstAggr = lG
+    return result
 
 
 def _parse_jsim_fcr_results(result_path, sn):
@@ -5022,13 +5604,25 @@ def solver_jmt(
     if options is None:
         options = SolverJMTOptions()
 
-    if not is_jmt_available():
-        raise RuntimeError(
-            "SolverJMT requires Java and JMT.jar.\n"
-            "Ensure Java is installed and JMT.jar is in the common/ directory."
-        )
+    # A local JVM is the default backend but no longer the only one: the runner
+    # also speaks to a JMT REST server (options.rest_url) and, when no JVM
+    # exists, to the JMT Docker image with the user's consent. Only the local
+    # backend needs the jar, so its absence is not fatal by itself.
+    # The jar is resolved (and, when absent, downloaded) only for the local
+    # backend: a host with no JVM must reach the Docker fallback without first
+    # fetching 50MB it will never load.
+    rest_url = getattr(options, 'rest_url', None)
+    jmt_path = None
+    if not rest_url and has_java():
+        jmt_path = _get_jmt_jar_path()
 
-    jmt_path = _get_jmt_jar_path()
+    # THE METHOD SELECTS THE ENGINE, and until 2026-08-09 it selected nothing:
+    # this handler wrote a .jsim and simulated whatever was asked, so a caller
+    # asking for the analytical JMVA silently received a simulation (and the
+    # ten jmva* aliases that listValidMethods advertises had no test covering
+    # any of them). MATLAB @SolverJMT/runAnalyzer.m branches here.
+    if _is_jmva_method(getattr(options, 'method', None)):
+        return _solve_jmva(sn, options, jmt_path, start_time)
 
     M = sn.nstations
     K = sn.nclasses
@@ -5042,7 +5636,7 @@ def solver_jmt(
         # 'model.jsim' matches MATLAB getJSIMTempPath.m and the JAR; the
         # result path must stay derived from model_path (Jmt.java:128 args[1]+'-result.jsim').
         model_path = os.path.join(temp_dir, 'model.jsim')
-        result_path = model_path + '-result.jsim'  # JMT creates <model>-result.jsim
+        result_path = result_path_for(model_path, 'sim')  # JMT creates <model>-result.jsim
 
         # Write model to JSIM format
         _write_jsim_file(sn, model_path, options, model)
@@ -5050,41 +5644,38 @@ def solver_jmt(
         # Print model path (matching wrapper behavior)
         print(f"JMT Model: {model_path}")
 
-        # Build command
-        cmd = [
-            'java',
-            '-cp', jmt_path,
-            'jmt.commandline.Jmt',
-            'sim',
-            model_path,
-            '-seed', str(options.seed),
-        ]
-
-        if options.verbose:
-            print(f"SolverJMT command: {' '.join(cmd)}")
-
-        # Wall-clock budget (options.timeout); infinite falls back to a 600s safety cap.
+        # Wall-clock budget: only a FINITE options.timeout is one. An infinite
+        # one is the default and means the caller asked for no budget, as in
+        # MATLAB (the local JVM arm is untimed) and the JAR
+        # (simulationTimeoutSeconds = 0). See run_jmt for why the old 600 s
+        # fallback was a wrong answer rather than a safety net.
         _tmo = float(getattr(options, 'timeout', float('inf')))
-        _sub_timeout = _tmo if math.isfinite(_tmo) and _tmo > 0 else 600
+        _sub_timeout = _tmo if math.isfinite(_tmo) and _tmo > 0 else None
 
-        # Execute command
+        # Execute through the backend the options select: local JVM by default,
+        # a JMT REST server when rest_url is set, the JMT Docker image when no
+        # JVM exists and the user consents.
         try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                cwd=temp_dir,
-                timeout=_sub_timeout
-            )
+            returncode, _stdout, _stderr = run_jmt(
+                'sim', model_path, options.seed,
+                jmt_jar=jmt_path, options=options,
+                timeout=_sub_timeout, verbose=bool(options.verbose))
         except subprocess.TimeoutExpired:
-            import warnings as _warnings
-            _warnings.warn("SolverJMT exceeded the wall-clock time budget "
-                           "(timeout=%gs) and was terminated; returning an empty result." % _tmo)
-            empty = SolverJMTReturn(runtime=time.time() - start_time, method='jsim')
-            empty.timedOut = True
-            return empty
+            # A KILLED SIMULATION IS NOT A RESULT. Returning an empty table left
+            # the analysis reading as COMPLETED with no rows, which every
+            # consumer downstream reports as the solver never having run -- the
+            # parity harness says "solver JMT missing from the recorded
+            # results", indistinguishable from a solver that refused the model.
+            # The budget is the caller's, so its expiry is theirs to hear about.
+            raise RuntimeError(
+                "JMT simulation exceeded the %gs wall-clock budget (options.timeout) "
+                "and was terminated after %.1fs, so it produced no result."
+                % (_tmo, time.time() - start_time)) from None
+        except JMTBackendError as exc:
+            raise RuntimeError(str(exc)) from None
 
-        if result.returncode != 0:
-            stderr = result.stderr.decode('utf-8', errors='ignore')
+        if returncode != 0:
+            stderr = _stderr
             raise RuntimeError(f"JMT simulation failed: {stderr}")
 
         # Parse results (includes arrival rates from JMT)
@@ -5184,3 +5775,120 @@ def solver_jmt(
         # Clean up temporary directory (unless keep=True)
         if not getattr(options, 'keep', False):
             shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def _jmt_station_cap_assert(sn, ist):
+    """Refuse a binding station capacity that a CLOSED class can reach.
+
+    Refused on two counts.
+
+    (1) THE RULE IS ONE JMT CANNOT READ -- BBS, RSRD or retrial-with-limit; see
+    ``_JMT_READABLE_DROP_IDS``. Such a value is not approximated, it is IGNORED,
+    so the capacity stops being enforced and JMT returns the unconstrained
+    answer.
+
+    (2) THE RULE IS WAITQ AND A CLOSED CLASS CAN REACH THE LIMIT, the same reason
+    ``jmtClassCapAssert`` (MATLAB ``saveRegions.m``, C++
+    ``assert_class_cap_exportable``) refuses the per-class one: JMT cannot hold
+    a blocked closed job at its upstream station. Note this is the case where NO
+    blocking rule is declared. A model that does declare BAS is exported as JMT
+    "BAS blocking", which is the same queueing model, under either declaration
+    form -- see ``_jmt_is_bas_destination``. That the limit CAN be reached is the
+    caller's to establish and is not retested here: the buffer-capacity writer
+    reaches this function only for a capacity strictly below the total
+    population, which is the one thing that makes a buffer a buffer.
+
+    That entry advised expressing the limit as the STATION capacity instead;
+    measured on 2026-08-19 the advice was wrong, and neither of the two
+    strategies a WAITQ station maps onto reproduces the UNDECLARED case:
+
+    ``waiting queue``
+        does not enforce ``size`` at all. On a closed 3-queue tandem, N=6,
+        Exp(1) FCFS, cap 2 at Q2, JMT returned the UNCONSTRAINED
+        [2.03 1.99 1.98], X = 0.750, against the exact [3.6090 0.9711 1.4199],
+        X = 0.6522.
+    ``BAS blocking``
+        enforces it, but completes the service BEFORE blocking, so the blocked
+        job moves the instant room frees -- a different queueing model, not a
+        rounding: same fixture, [2.871 1.373 1.756], X = 0.7126.
+
+    With no rule declared LINE instead disables the upstream departure while the
+    destination is full, which for exponential service is repetitive service (RS)
+    and is what SolverCTMC, SolverSSA and SolverLDES all agree on. So THAT model
+    is refused rather than exported as either of the two things JMT can say. See
+    BUG-81. A declared-BAS model is a different model and is exported, not
+    refused: blocking after service is precisely what JMT's "BAS blocking" does.
+    """
+    cap = np.asarray(sn.cap).flatten()
+    if ist >= cap.size or np.isinf(cap[ist]):
+        return
+    njobs = np.asarray(sn.njobs).flatten()
+    rates = np.atleast_2d(np.asarray(sn.rates, dtype=float))
+    droprule = np.atleast_2d(np.asarray(sn.droprule))
+    for r in range(int(sn.nclasses)):
+        if ist < rates.shape[0] and r < rates.shape[1] and np.isnan(rates[ist, r]):
+            continue   # class r is not served at this station
+        # -1 is DropStrategy.WAITQ; the ids are shared across the codebases and
+        # read here as numbers, as _drop_strategy_text does.
+        dr = int(droprule[ist, r]) if ist < droprule.shape[0] and r < droprule.shape[1] else -1
+        if dr != 0 and dr not in _JMT_READABLE_DROP_IDS:
+            # Unmappable for EITHER class type, so this test precedes the open-class skip
+            raise ValueError(
+                "SolverJMT: station '%s' applies drop strategy \"%s\" to class '%s' and carries "
+                "a finite capacity %d it can reach. JMT's queue section reads only \"drop\", "
+                "\"waiting queue\", \"BAS blocking\" and \"retrial\"; it does not approximate "
+                "anything else, it ignores it, so the capacity would stop being enforced and the "
+                "run would return the unconstrained answer. Use SolverCTMC, SolverSSA or "
+                "SolverLDES."
+                % (sn.nodenames[int(sn.stationToNode[ist])],
+                   _DROP_STRATEGY_TEXT.get(dr, str(dr)), sn.classnames[r], int(cap[ist])))
+        if r >= njobs.size or np.isinf(njobs[r]):
+            continue   # open class: JMT loses its arrivals, as LINE does
+        if dr != -1:
+            continue   # a mappable declared blocking rule is exported as itself
+        if _jmt_is_bas_destination(sn, ist, r):
+            # BAS declared on the UPSTREAM station: _drop_strategy_text moves it
+            # onto this one, which is where JMT reads it
+            continue
+        raise ValueError(
+            "SolverJMT: station '%s' carries a finite capacity %d that binds for the closed "
+            "class '%s'. LINE blocks a closed job that finds no room -- the upstream departure "
+            "is disabled and the job stays where it is -- and no JMT drop strategy reproduces "
+            "that: \"waiting queue\" does not enforce the size at all, and \"BAS blocking\" "
+            "completes the service before blocking, which is a different queueing model. "
+            "Use SolverCTMC, SolverSSA or SolverLDES, or declare DropStrategy.BAS if "
+            "blocking after service is the model you want, which SolverJMT does export."
+            % (sn.nodenames[int(sn.stationToNode[ist])], int(cap[ist]), sn.classnames[r]))
+
+
+def _jmt_reachable_population(sn, ist):
+    """Most jobs that can be present at station ``ist``.
+
+    Read the way ``refresh_capacity`` derives the capacity itself: per CHAIN,
+    because a chain's whole population can reach a station that serves any one
+    of its classes (class switching moves jobs between them), and a chain none
+    of whose classes is served there cannot put a single job on it.
+
+    Deliberately NOT read off ``sn.classcap``, which ``refresh_capacity`` has
+    already clamped by the station's own cap: comparing a capacity against a
+    quantity derived from it would make every user-declared buffer look
+    non-binding. ``inf`` when an open chain is served here, which is what the
+    model total gave before and which sends the station to
+    ``_jmt_station_cap_assert``, where the open classes are skipped by name.
+    """
+    if getattr(sn, 'njobs', None) is None:
+        return np.inf
+    njobs = np.asarray(sn.njobs).ravel()
+    inchain = getattr(sn, 'inchain', None)
+    rates = getattr(sn, 'rates', None)
+    if inchain is None or rates is None:
+        return np.sum(njobs)
+    total = 0.0
+    for c in range(int(getattr(sn, 'nchains', 0))):
+        members = np.asarray(inchain[c]).ravel().astype(int)
+        if members.size == 0:
+            continue
+        served = any(not np.isnan(rates[ist, r]) for r in members if r < rates.shape[1])
+        if served:
+            total += float(np.sum(njobs[members]))
+    return total

@@ -159,10 +159,11 @@ classdef LINE < SolverAuto
                         'pbh.upper','pbh.lower', ...
                         'pbk.upper','pbk.lower','bjbk.upper','bjbk.lower', ...
                         'cbh.upper','cbh.lower','ssd.upper','ssd.lower', ...
-                        'cub.upper','mbjb.lower','sib.upper','sib.lower','ldbcmp.lower', ...
+                        'cub.upper','mbjb.lower','sib.upper','sib.lower', ...
+                        'scb.upper','scb.lower','ldbcmp.lower', ...
                         'qr','lr', ...
-                        'qrf.mmi','qrf.mem','qrf.mmi.ld','qrf.mmi.linear', ...
-                        'qrf.bas.mmi','qrf.bas.mem','qrf.bas','qrf.rsrd', ...
+                        'qrf.mmi','qrf.mem','qrf.bethe','qrf.mmi.ld','qrf.mmi.linear', ...
+                        'qrf.bas.mmi','qrf.bas.mem','qrf.bas.bethe','qrf.bas','qrf.rsrd', ...
                         'ba.default'}
                     % Bound analysis (incl. QRF LP-based reduction bounds)
                     % lives in SolverBA (moved out of SolverMVA and SolverCTMC)
@@ -181,7 +182,7 @@ classdef LINE < SolverAuto
                     if strcmp(options.method,'fluid'), options.method='default'; end
                     options.method = erase(options.method,'fluid.');
                     result = SolverFluid(model, options);
-                case {'nc','nc.exact','nc.imci','nc.ls','comom','comomld','cub','ls','nc.le','le','mmint2','nc.panacea','nc.pana','nc.panaceald','panaceald','nc.mmint2','nc.kt','nc.deterministic','nc.sampling','nc.propfair','nc.comom','nc.comomld','nc.mom','nc.cub','nc.brute','nc.rd', 'nc.nr.probit', 'nc.nr.logit','nc.gm'}
+                case {'nc','nc.exact','nc.imci','nc.ls','comom','comomld','cub','ls','nc.le','le','nc.ble','ble','mmint2','nc.pana','nc.panald','panald','nc.mmint2','nc.kt','nc.bkt','bkt','nc.lekt','lekt','nc.deterministic','nc.sampling','nc.propfair','nc.comom','nc.comomld','nc.cub','nc.brute','nc.rd', 'nc.nr.probit', 'nc.nr.logit','nc.gm'}
                     if strcmp(options.method,'nc'), options.method='default'; end
                     options.method = erase(options.method,'nc.');
                     result = SolverNC(model, options);
@@ -189,8 +190,23 @@ classdef LINE < SolverAuto
                     if strcmp(options.method,'mam'), options.method='default'; end
                     options.method = erase(options.method,'mam.');
                     result = SolverMAM(model, options);
+                case {'ag','ag.inap','ag.inapplus','ag.inapinf','inap','inapplus','inapinf'}
+                    if strcmp(options.method,'ag'), options.method='default'; end
+                    options.method = erase(options.method,'ag.');
+                    result = SolverAG(model, options);
                 otherwise
+                    % The SolverAUTO selection intents ('default','heur','sim',
+                    % 'fast','accurate','bound',...) land here and are answered by
+                    % the auto solver. An UNRECOGNISED name must not: without this
+                    % gate the branch accepted any string and silently returned a
+                    % full answer from the auto solver, so 'nc.bogus' and a removed
+                    % name such as 'nc.mom' looked like supported methods. The list
+                    % is the same cross-solver vocabulary the JAR LINE.load gates on.
                     if strcmp(options.method,'auto'), options.method='default'; end
+                    [~, allOpt] = Solver.listValidOptions();
+                    if ~any(strcmp(options.method, allOpt))
+                        error('LINE:load', 'The ''%s'' method is unsupported by this solver.', options.method);
+                    end
                     result = LINE(model, options);
             end
         end

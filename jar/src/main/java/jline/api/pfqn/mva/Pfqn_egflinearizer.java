@@ -34,8 +34,33 @@ public final class Pfqn_egflinearizer {
                                                    int maxiter,
                                                    Matrix alpha,
                                                    Matrix QN0) {
+        return pfqn_egflinearizer(L, N, Z, type, tol, maxiter, alpha, QN0, 3);
+    }
+
+    /**
+     * @param tol     convergence tolerance on the Frobenius norm of dQ; NaN selects the published
+     *                Linearizer termination test of Chandy and Neuse, Commun. ACM 25(2), 1982,
+     *                p.129, under which each Core call stops when max_{i,r}|dQ(i,r)|/N_r falls
+     *                below Pfqn_cntol.pfqn_cntol evaluated at the population Core is running at
+     * @param npasses number of Delta refresh passes; 3 is the Chandy-Neuse fixed
+     *                rule, Pfqn_scat passes 1
+     */
+    public static Ret.pfqnAMVA pfqn_egflinearizer(Matrix L,
+                                                   Matrix N,
+                                                   Matrix Z,
+                                                   SchedStrategy[] type,
+                                                   double tol,
+                                                   int maxiter,
+                                                   Matrix alpha,
+                                                   Matrix QN0,
+                                                   int npasses) {
         int M = L.getNumRows();
         int R = L.getNumCols();
+
+        // The Chandy-Neuse cutoff is population-dependent, so it is recomputed inside each Core
+        // call rather than once here; tol stays NaN so that the Pfqn_bs warm-start below inherits
+        // the same test.
+        boolean cntest = Pfqn_cntol.isCntol(tol);
 
         if (Z == null || Z.isEmpty()) {
             Z = new Matrix(1, R);
@@ -103,7 +128,7 @@ public final class Pfqn_egflinearizer {
 
         int totiter = 0;
 
-        for (int I = 0; I < 3; I++) {
+        for (int I = 0; I < npasses; I++) {
             for (int s = -1; s < R; s++) {
                 ArrayList<Integer> sList = new ArrayList<Integer>(Collections.singletonList(Integer.valueOf(s)));
                 Matrix N_1 = Matrix.oner(N, sList);
@@ -113,7 +138,7 @@ public final class Pfqn_egflinearizer {
                         Q1.set(i, j, Q[i].get(j, 1 + s));
                     }
                 }
-                Ret.LinearizerResult ret1 = egflinearizer_core(L, M, R, N_1, Z, Q1, Delta, type, tol, maxiter - totiter, alpha);
+                Ret.LinearizerResult ret1 = egflinearizer_core(L, M, R, N_1, Z, Q1, Delta, type, tol, maxiter - totiter, alpha, cntest);
                 for (int i = 0; i < M; i++) {
                     for (int j = 0; j < R; j++) {
                         Q[i].set(j, 1 + s, ret1.Q.get(i, j));
@@ -151,7 +176,7 @@ public final class Pfqn_egflinearizer {
                 Q1.set(i, j, Q[i].get(j, 0));
             }
         }
-        Ret.LinearizerResult ret1 = egflinearizer_core(L, M, R, N, Z, Q1, Delta, type, tol, maxiter - totiter, alpha);
+        Ret.LinearizerResult ret1 = egflinearizer_core(L, M, R, N, Z, Q1, Delta, type, tol, maxiter - totiter, alpha, cntest);
         Matrix newQ = ret1.Q;
         Matrix W = ret1.W;
         Matrix X = ret1.T;
@@ -180,11 +205,18 @@ public final class Pfqn_egflinearizer {
                                                     SchedStrategy[] type,
                                                     double tol,
                                                     int maxiter,
-                                                    Matrix alpha) {
+                                                    Matrix alpha,
+                                                    boolean cntest) {
         boolean hasConverged = false;
         Matrix W = new Matrix(L);
         int iter = 0;
         Matrix T = null;
+        if (cntest) {
+            // Chandy and Neuse (1982), p.129 and appendix: the cutoff is a function of the
+            // population Core is running at, so it is recomputed here rather than once for the
+            // whole Linearizer.
+            tol = Pfqn_cntol.pfqn_cntol(N_1);
+        }
         while (!hasConverged) {
             Matrix Qlast = new Matrix(Q);
             Ret.pfqnLinearizerEstimate ret1 = egflinearizer_estimate(L, M, R, N_1, Z, Q, Delta, W, alpha);
@@ -193,7 +225,26 @@ public final class Pfqn_egflinearizer {
             Q = ret2.Q;
             W = ret2.W;
             T = ret2.T;
-            if (Q.sub(Qlast).norm() < tol || iter > maxiter) {
+            double dev;
+            if (cntest) {
+                // max_{i,r} |dQ(i,r)| / N_r over the non-empty classes; an empty class would
+                // divide by zero and it carries no jobs to converge.
+                dev = 0.0;
+                for (int i = 0; i < M; i++) {
+                    for (int r = 0; r < R; r++) {
+                        if (N_1.get(r) <= 0.0) {
+                            continue;
+                        }
+                        double d = FastMath.abs(Q.get(i, r) - Qlast.get(i, r)) / N_1.get(r);
+                        if (d > dev) {
+                            dev = d;
+                        }
+                    }
+                }
+            } else {
+                dev = Q.sub(Qlast).norm();
+            }
+            if (dev < tol || iter > maxiter) {
                 hasConverged = true;
             }
             iter++;

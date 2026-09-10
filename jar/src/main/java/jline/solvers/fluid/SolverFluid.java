@@ -29,11 +29,20 @@ import jline.solvers.*;
 import jline.io.Ret.DistributionResult;
 import jline.io.Ret.ProbabilityResult;
 import jline.solvers.fluid.analyzers.ClosingAndStateDepMethodsAnalyzer;
+import jline.solvers.fluid.analyzers.DiffusionAnalyzer;
+import jline.solvers.fluid.analyzers.DaeAnalyzer;
 import jline.solvers.fluid.analyzers.FluidAnalyzer;
+import jline.solvers.fluid.analyzers.KoPenderAnalyzer;
 import jline.solvers.fluid.analyzers.MFQAnalyzer;
+import jline.solvers.fluid.analyzers.QsysLimitAnalyzer;
 import jline.solvers.fluid.analyzers.MatrixMethodAnalyzer;
+import jline.solvers.fluid.analyzers.MinNormalAnalyzer;
 import jline.solvers.fluid.analyzers.RMFAnalyzer;
 import jline.solvers.fluid.analyzers.TbiAnalyzer;
+import jline.solvers.fluid.moments.FluidDaeApplicable;
+import jline.solvers.fluid.moments.FluidMinNormalApplicable;
+import jline.solvers.fluid.moments.FluidNonHyperbolicException;
+import jline.solvers.fluid.moments.MvnRectangle;
 import jline.solvers.fluid.handlers.MethodStepHandler;
 import jline.solvers.fluid.handlers.PassageTimeODE;
 import jline.util.Maths;
@@ -50,6 +59,7 @@ import java.util.*;
 import static java.lang.Double.*;
 import static jline.api.npfqn.Npfqn_nonexp_approx.npfqn_nonexp_approx;
 import static jline.api.sn.SnGetArvRFromTput.snGetArvRFromTput;
+import static jline.api.sn.SnOpenProbTerms.snOpenProbTerms;
 import static jline.io.InputOutput.*;
 import static org.apache.commons.math3.util.FastMath.abs;
 import static org.apache.commons.math3.util.FastMath.min;
@@ -144,18 +154,33 @@ public class SolverFluid extends NetworkSolver {
                 "ClassSwitch", "Delay", "DelayStation", "Queue",
                 "Cache", "CacheClassSwitcher",  // CacheRetrieval deliberately NOT declared: no fluid code implements delayed-hit retrieval
                 "Cox2", "Coxian", "Erlang", "Exp", "HyperExp",
-                "APH", "Det",
+                // MAP and MMPP2 are accepted at their stationary rate: the fluid
+                // ODE has no representation of the arrival phase process, so the
+                // autocorrelation is lost while flow stays conserved, exactly as
+                // in MATLAB SolverFLD.
+                "APH", "Det", "MAP", "MMPP2",
                 // Non-Markovian renewal distributions: converted to acyclic PH via
                 // snNonmarkovToPh in runAnalyzer, so the fluid ODE can solve them.
                 "Gamma", "Lognormal", "Pareto", "Uniform", "Weibull",
                 "StatelessClassSwitcher", "InfiniteServer", "SharedServer", "Buffer", "Dispatcher",
                 "Server", "ServiceTunnel",
+                "LoadDependence", // closing family only, see getMethodFeatureSet
                 "SchedStrategy_INF", "SchedStrategy_PS",
                 "SchedStrategy_DPS", "SchedStrategy_FCFS",
+                "SchedStrategy_GPS", // minnormal only, see getMethodFeatureSet
                 "SchedStrategy_SIRO", "SchedStrategy_LCFS", "SchedStrategy_LCFSPR",
                 // Native fluid cache models: RANDOM(m)/FIFO(m) (refined mean field)
                 // and strict FIFO(m) (position-resolved mean field). LRU/HLRU/CLIMB/
                 // QLRU have no drift-based fluid model and are rejected at runtime.
+                // Petri-net constructs, for the 'dae' Petri arm (PetriSolver). A
+                // stochastic Petri net has no drift outside the DAE form: its
+                // conserved quantities are P-invariants rather than chain
+                // populations, and an immediate transition is an algebraic FLOW
+                // rather than an event with a rate. getMethodFeatureSet takes them
+                // back off every other method, which would integrate the net as an
+                // empty model and report zeros without a warning.
+                "Place", "Transition", "Enabling", "Inhibiting", "Timing", "Firing",
+                "Storage", "Linkage",
                 "ReplacementStrategy_RR", "ReplacementStrategy_FIFO",
                 "ReplacementStrategy_SFIFO",
                 "RoutingStrategy_PROB", "RoutingStrategy_RAND",
@@ -164,9 +189,452 @@ public class SolverFluid extends NetworkSolver {
                 // nominal (time-average) rate, getTranAvg tracks lambda(t)
                 // through the per-event rate multiplier of the closing ODE.
                 "NHPP",
-                "RandomSource", "Sink", "Source", "OpenClass", "JobSink"
+                // Correlated Markovian arrivals: the closing and matrix ODEs carry the
+                // full (D0, D1) phase structure, so a MAP or MMPP2 keeps its exact
+                // stationary rate. Omitting them here rejected models the fluid solver
+                // could already solve, and matched neither MATLAB nor python.
+                "MAP", "MMPP2",
+                "MAPt",
+                "PHt",
+                // Fork-join through the MMT transformation, driven by
+                // jline.solvers.fj.FJFixedPoint with fldDispatch as the inner
+                // solve (as in SolverMVA and SolverNC). The transform emits only
+                // Source, Delay, Queue, Router and ClassSwitch, all of which the
+                // fluid drift already carries.
+                "Fork", "Forker", "Join", "Joiner",
+                // quorum join: the MMT fixed point charges the k-th branch completion (fj_ordstat_exp)
+                "JoinPartial",
+                "RandomSource", "Sink", "Source", "OpenClass", "JobSink",
+                // c-server stations: the drifts carry min(n,c); withdrawn from
+                // "diffusion" and "mfq" in getMethodFeatureSet.
+                "MultiServer",
+                // A binding buffer: "dae" carries it as an algebraic constraint,
+                // "mol" IS the Mt/G/s/0 loss system and the AoI arm of "mfq" is a
+                // bufferless or single-buffer queue. WHICH method serves one is the
+                // structural rule supportsModelMethod asks and runAnalyzer stops
+                // on, so no per-method delta duplicates it here.
+                "FiniteCapacity"
         });
         return featSupported;
+    }
+
+    /**
+     * Per-method feature envelope, mirroring the MATLAB
+     * {@code SolverFLD.getMethodFeatureSet}.
+     *
+     * <p>Defining this is what lets the solver gate name the offending features:
+     * with no method feature set the check falls back to the coarse
+     * {@code supports(model)}, which returns an empty reason, so a rejection
+     * could only say "features not supported" without saying which ones.</p>
+     *
+     * @param method the concrete method name
+     * @return the features that method accepts
+     */
+    @Override
+    public FeatureSet getMethodFeatureSet(String method) {
+        FeatureSet featSupported = SolverFluid.getFeatureSet();
+        // EVERY TEST BELOW IS ON THE CANONICAL NAME. Enumerating each spelling by
+        // hand is what let the four codebases drift apart over an alias: the
+        // Reneging branch below listed the qualified spellings but not the bare
+        // "ggisgi"/"tga" that QsysLimitAnalyzer.handles accepts, and HOL was not
+        // gated here at all. Canonicalize once and an alias cannot carry a
+        // different envelope than the name it resolves to.
+        String m = canonicalMethod(method);
+        // Limited load dependence composes with the closure as a rate multiplier
+        // alpha(n_i) on the scheduling share, which only the closing family evaluates.
+        // The matrix, softmin, statedep, tbi, mfq and rmf paths build their drift
+        // independently and would silently ignore alpha, so they must keep rejecting it.
+        if (!isClosingFamily(m)) {
+            featSupported.setFalse(new String[]{"LoadDependence"});
+        }
+        // Scheduling disciplines with no branch in the drift. A station without a case
+        // in FluidRateFactors keeps rates = x, i.e. it is integrated as an INFINITE
+        // SERVER, and the answer is wrong without any warning: on Delay(Z=1) ->
+        // Queue(c=1), N=4, exact Q2 = 3.0154, the fall-through returns 2.0000. The
+        // closing metric reader accepts SIRO as FCFS, so the ODE integrated it as INF
+        // while the metrics were read as if it shared the server. Reject at the featset
+        // gate instead, where the message names the offending discipline. matrix builds
+        // a PS drift for every queueing station, which is the right aggregate for any
+        // work-conserving discipline, so it is unaffected.
+        if (isClosingFamily(m) || "statedep".equals(m) || "softmin".equals(m)
+                || "tbi".equals(m)) {
+            featSupported.setFalse(new String[]{
+                    "SchedStrategy_SIRO", "SchedStrategy_LCFS", "SchedStrategy_LCFSPR"});
+        }
+        // GPS divides the server by weight among the BACKLOGGED classes, so its share is
+        // a function of the backlog INDICATOR. A first-order closure cannot express it at
+        // all: with continuous x_k > 0 every class is always backlogged and the share
+        // collapses to the constant w_k/sum_j w_j, the heavy-traffic limit, regardless of
+        // load. Only minnormal supplies the P(X_k >= 1) that the closure needs. matrix
+        // builds a PS drift, and GPS is not PS: equal-weight GPS gives each backlogged
+        // CLASS an equal share, PS each JOB.
+        if (!"minnormal".equals(m)) {
+            featSupported.setFalse(new String[]{"SchedStrategy_GPS"});
+        }
+        // HOL allocates capacity in PRIORITY order, not in proportion to population,
+        // and no fluid drift reads sn.classprio except the single-queue MFQ priority
+        // branch. This port declared HOL for EVERY fluid method, so a priority model
+        // was offered to drifts that answer it as if the classes shared the server
+        // proportionally. MATLAB SolverFLD and the C++ twin both gate it here.
+        if (!"mfq".equals(m)) {
+            featSupported.setFalse(new String[]{"SchedStrategy_HOL"});
+        }
+        // MULTISERVER (registry name since 2026-09-05): the drifts carry min(n,c)
+        // except the diffusion SDE, which is written for one or infinitely many
+        // servers, and MFQ, a single-queue model on the same server counts (off
+        // them "mfq" resolves to "matrix", so the delta binds only where it runs
+        // as itself). The structural refusal keeps wording the diffusion case.
+        if ("diffusion".equals(m) || "mfq".equals(m)) {
+            featSupported.setFalse(new String[]{"MultiServer"});
+        }
+        if ("ggisgi.fluid".equals(m) || "ggingi.tga".equals(m) || "tvms".equals(m)) {
+            // The only fluid methods in LINE stated for a queue customers
+            // ABANDON. Reneging stays out of the base FLD envelope: the network
+            // drift carries no abandonment flow, so every other method would
+            // integrate the model as if nobody left.
+            featSupported.setTrue(new String[]{"Reneging"});
+        }
+        if (QsysLimitAnalyzer.handles(m)) {
+            // Every one of them is stated for a single open station; the base
+            // envelope's closed classes have no meaning there.
+            featSupported.setFalse(new String[]{"ClosedClass", "SelfLoopingClass"});
+        }
+        if ("refined".equals(m)) {
+            // CLOSED MODELS ONLY, which the MATLAB runAnalyzer has always
+            // enforced by name and the featset never stated: the 1/N correction
+            // is solved on orth(D) over the FULL state, so on an open model it
+            // adds a perturbation to the SOURCE POOL mass, a normalisation
+            // constant rather than a population. Only "minnormal" was validated
+            // open. Stating it here is what lets a report withdraw the pair
+            // instead of offering a run that stops -- on an open fork-join model
+            // the same restriction surfaced as a failure inside the MMT fixed
+            // point rather than as a refusal.
+            featSupported.setFalse(new String[]{"OpenClass", "Source", "Sink",
+                    "RandomSource", "JobSink"});
+        }
+        if ("diffusion".equals(m) || "kp".equals(m)) {
+            // NEITHER OF THESE TWO INTEGRATES A FORK-JOIN MODEL, and each says so
+            // by answering rather than by refusing, which is the reason to state
+            // it here. Measured on a SYMMETRIC closed fork-join (Delay -> Fork ->
+            // two identical FCFS queues -> Join, N = 2) whose exact chain is
+            // Q1 = Q2 = 0.664, J = 0.624, D = 1.024: "diffusion" returns the
+            // whole population on ONE station and zero elsewhere -- a different
+            // station on a rerun, so the SDE is not integrating this model at
+            // all -- and "kp" returns an ALL-ZERO table on a symmetric OPEN
+            // fork-join fed at rate 0.5, an empty network where jobs are
+            // arriving. The C++ featset has always withheld the names.
+            featSupported.setFalse(new String[]{"Fork", "Join", "Forker", "Joiner",
+                    "JoinPartial"});
+        }
+        if ("diffusion".equals(m)) {
+            // The diffusion SDE PROJECTS each class back onto its own fixed
+            // population at every step, which is the closed-network constraint
+            // itself: an open class has no population to project onto, and a
+            // Source is not a station the SDE has a coordinate for.
+            featSupported.setFalse(new String[]{"OpenClass", "Source", "Sink",
+                    "RandomSource", "JobSink"});
+        }
+        if ("tbi".equals(m)) {
+            // Trajectory-based iteration decomposes the CLOSED population into
+            // cells and relaxes the waveforms between them; there is no cell for
+            // an unbounded open stream. A cache model is solved by decomposition
+            // rather than by one drift, so the cell partition has nothing to
+            // partition -- use "rmf".
+            featSupported.setFalse(new String[]{"OpenClass", "Source", "Sink",
+                    "RandomSource", "JobSink", "Cache", "CacheClassSwitcher",
+                    "ReplacementStrategy_RR", "ReplacementStrategy_FIFO",
+                    "ReplacementStrategy_SFIFO"});
+        }
+        if ("kp".equals(m)) {
+            // The Ko-Pender limits are proved for an OPEN network of stations fed
+            // by external arrival processes: a closed class has no arrival process
+            // to modulate and no source phase to carry, and the cache and
+            // class-switch machinery has no counterpart in the paper's event set.
+            // Narrow the envelope rather than return the drift of a model the
+            // limits do not describe. Mirrors native python and the MATLAB
+            // reference.
+            featSupported.setFalse(new String[]{"ClosedClass", "SelfLoopingClass",
+                    "Cache", "CacheClassSwitcher", "ClassSwitch", "StatelessClassSwitcher",
+                    "ReplacementStrategy_RR", "ReplacementStrategy_FIFO",
+                    "ReplacementStrategy_SFIFO"});
+        }
+        // A stochastic Petri net has no drift outside the DAE form: its conserved
+        // quantities are P-invariants rather than chain populations, an immediate
+        // transition is an algebraic FLOW rather than an event with a rate, and a
+        // bounded place is a linear inequality on the marking. Every other fluid
+        // method builds its drift from the station/class/phase encoding, where a
+        // Place contributes no coordinate at all, so it would integrate the net as
+        // an empty model and report zeros without a warning.
+        if (!"dae".equals(m)) {
+            featSupported.setFalse(new String[]{"Place", "Transition", "Enabling", "Inhibiting",
+                    "Timing", "Firing", "Storage", "Linkage"});
+        }
+        if ("dae".equals(m)) {
+            // DPS closes on the covariance BETWEEN the class coordinates of a
+            // station, not on the station total. 'minnormal' carries those
+            // blocks through its outer iteration; the DAE form has no unknown for
+            // them, since a matrix block per station restores the quartic cost
+            // that keeping Sigma out of the Newton vector avoids. GPS is already
+            // excluded above, for 'minnormal' only.
+            featSupported.setFalse(new String[]{"SchedStrategy_DPS"});
+            // A finite capacity region is a linear inequality on the state, which
+            // the DAE form can carry as an algebraic equation beside the drift
+            // and no ODE method can carry at all. The gate is where this has to
+            // be declared: the static getFeatureSet must keep Region false
+            // because every other method has to go on rejecting one.
+            // DaeAnalyzer still refuses, by name, the region forms that are not
+            // constraints on this drift.
+            featSupported.setTrue(new String[]{"Region"});
+        }
+        return featSupported;
+    }
+
+    /**
+     * The structural finite-capacity gate {@code runAnalyzer} enforces at solve
+     * time, stated here so that a CALLER can see it before running.
+     *
+     * <p>Nothing in the fluid tree reads sn.cap or sn.classcap, so every method
+     * but two integrates a capped station as an unbounded one. "dae" carries
+     * the buffer as an algebraic constraint on the drift, and "mol" is stated
+     * for the Mt/G/s/0 LOSS system, where the server count IS the buffer. There is no
+     * registry feature name for plain capacity, hence the structural test;
+     * SolverNC and SolverMVA gate the same way. The exemption list is the one
+     * runAnalyzer applies, so the two cannot disagree.
+     *
+     * <p>Left only in runAnalyzer the rule was invisible to every gate above it,
+     * and SolverAUTO.listValidMethods offered every fluid method on the
+     * BAS-blocking model of cqn_bas_blocking, each of which then threw when
+     * asked to run.
+     *
+     * @param method the concrete method name
+     * @return empty string if supported, else the offending reason
+     */
+    @Override
+    public String supportsModelMethod(String method) {
+        String reason = super.supportsModelMethod(method);
+        if (reason != null && !reason.isEmpty()) {
+            return reason;
+        }
+        // The time-varying single-station limits report a TRAJECTORY, so they
+        // need a finite options.timespan. A horizon is an option and not a model
+        // feature, hence the structural test; the predicate is the one
+        // QsysLimitAnalyzer stops on, so the report and the run cannot answer
+        // differently.
+        if (isTimeVaryingLimit(method)) {
+            String horizonReason = QsysLimitAnalyzer.horizonReason(this.options);
+            if (!horizonReason.isEmpty()) {
+                return "The '" + method + "' method reports a trajectory. " + horizonReason;
+            }
+        }
+        // A fork-join model is answered by the MMT fixed point rather than by
+        // one drift, and not every method can run it. Fork and OpenClass are
+        // both declared names, so the featset cannot state a rule that is their
+        // CONJUNCTION; it is structural, and it is the predicate runAnalyzer
+        // stops on.
+        if (this.model != null) {
+            String fjReason = forkJoinAdmitsReason(this.model.getStruct(false), method);
+            if (!fjReason.isEmpty()) {
+                return fjReason;
+            }
+        }
+        if ("dae".equals(method) || "fluid.dae".equals(method)
+                || "mol".equals(method) || "fluid.mol".equals(method)) {
+            return "";
+        }
+        if (this.model == null) {
+            return "";
+        }
+        // 'default' IS ASKED THROUGH ITS RESOLUTION, not as a name of its own.
+        // On a capped model runAnalyzer now resolves it to "dae" (see
+        // blockedResolvesToDae), so gating the literal name against the
+        // capacity rule would refuse the very run that goes on to succeed.
+        if (("default".equals(method) || "fluid.default".equals(method))
+                && blockedResolvesToDae(this.model, this.model.getStruct(false), this.options)) {
+            return "";
+        }
+        String capReason = NetworkSolver.bindingCapacityReason(this.model,
+                this.model.getStruct(false), "SolverFluid");
+        if (capReason != null) {
+            return capReason + " Use options.method = \"dae\", which carries the buffer as an "
+                    + "algebraic constraint on the drift.";
+        }
+        return "";
+    }
+
+    /**
+     * Does {@code options.method = "default"} stand for {@code "dae"} on this
+     * model? True exactly when a buffer or a capacity region BINDS and the DAE
+     * route accepts the model.
+     *
+     * <p>A BINDING BUFFER OR A REGION HAS ONE FLUID ROUTE, for the same reason a
+     * Petri net does: nothing else in the fluid tree reads sn.cap, sn.classcap or
+     * the region limit, so every other method integrates the capped station as an
+     * unbounded one -- which is why runAnalyzer refuses them. Resolving "default"
+     * to one of those turned a model this solver CAN answer into an error whose
+     * advice was to type the very method the resolution should have picked.
+     *
+     * <p>The capacity test is the gate's own, so the two cannot disagree. Where
+     * the DAE route declines, this returns false and the gate speaks, naming the
+     * blocking feature. Mirrors the MATLAB fluid_resolve_default_method.
+     *
+     * @param model   the network
+     * @param sn      its struct
+     * @param options the solver options, for the dae applicability limits
+     * @return true when "default" must resolve to "dae"
+     */
+    public static boolean blockedResolvesToDae(Network model, NetworkStruct sn, SolverOptions options) {
+        if (model == null || sn == null) {
+            return false;
+        }
+        boolean blocked = sn.nregions > 0
+                || NetworkSolver.bindingCapacityReason(model, sn, "SolverFluid") != null;
+        return blocked && FluidDaeApplicable.reasonToDecline(sn, options) == null;
+    }
+
+    /** Methods that evaluate the closing rate factors, and so the load-dependent scaling. */
+    /**
+     * The method name without its {@code fluid.} prefix, which names the same
+     * method, with {@code butools} and {@code aoi} folded onto {@code mfq}: they
+     * name the MFQ branch's backend and its age-of-information reading rather
+     * than methods of their own, which is how native python spells them and how
+     * getAvgAoI reaches it (it requires method='mfq').
+     *
+     * @param method the requested method name
+     * @return the canonical spelling
+     */
+    public static String fluidUnqualify(String method) {
+        if (method == null) {
+            return null;
+        }
+        String m = method;
+        if (m.length() > 6 && m.startsWith("fluid.")) {
+            m = m.substring(6);
+        }
+        if ("butools".equals(m) || "aoi".equals(m)) {
+            return "mfq";
+        }
+        return m;
+    }
+
+    /**
+     * Can {@code method} run the fluid fork-join fixed point on this model?
+     *
+     * <p>A fork-join model is not integrated as one drift: the MMT transform
+     * replaces the fork by auxiliary classes and the answer is the fixed point
+     * of solving that transformed model repeatedly. On a CLOSED model the
+     * transform stays closed and every fluid method takes it. On an OPEN one the
+     * auxiliary classes arrive at a Source, and the DAE form has no unknowns for
+     * them: the inner solve fails on the class count rather than returning a
+     * drift, so the method is refused by name instead.</p>
+     *
+     * <p>"refined" is NOT listed here even though it fails the same way, because
+     * it is already refused on every open model, fork-join or not, by its own
+     * closed-model restriction (see {@link #getMethodFeatureSet}).</p>
+     *
+     * <p>Called by runAnalyzer, so the run stops on it, and by
+     * {@link #supportsModelMethod}, so a caller sees the same verdict before
+     * paying for the fixed point. One predicate, two callers.</p>
+     *
+     * @param sn     the network structure
+     * @param method the concrete method name
+     * @return empty string when the method may run the fixed point here, else the refusal
+     */
+    public static String forkJoinAdmitsReason(NetworkStruct sn, String method) {
+        if (!("dae".equals(method) || "fluid.dae".equals(method))) {
+            return "";
+        }
+        boolean anyFork = false;
+        for (NodeType nt : sn.nodetype) {
+            if (nt == NodeType.Fork) {
+                anyFork = true;
+                break;
+            }
+        }
+        if (!anyFork) {
+            return "";
+        }
+        boolean anyOpen = false;
+        for (int r = 0; r < sn.njobs.getNumElements(); r++) {
+            if (Double.isInfinite(sn.njobs.get(r))) {
+                anyOpen = true;
+                break;
+            }
+        }
+        if (!anyOpen) {
+            return "";
+        }
+        return "The dae method has no route through the fork-join fixed point on an OPEN "
+                + "model: the MMT transform hands the inner solve a mixed network whose "
+                + "auxiliary open classes the DAE form carries no unknowns for. Use "
+                + "options.method = \"minnormal\", which is the same closure and does run "
+                + "that fixed point.";
+    }
+
+    /**
+     * The three single-station limits that report a trajectory rather than a
+     * stationary point, and so need a finite options.timespan; "ggisgi" and
+     * "tga" are stationary and are not among them.
+     *
+     * @param method the concrete method name
+     * @return true when the method integrates over a finite horizon
+     */
+    private static boolean isTimeVaryingLimit(String method) {
+        return "tvms".equals(method) || "fluid.tvms".equals(method)
+                || "mtginf".equals(method) || "fluid.mtginf".equals(method)
+                || "mol".equals(method) || "fluid.mol".equals(method);
+    }
+
+    /**
+     * The one spelling of a fluid method that every gate tests against.
+     *
+     * <p>Three families of alias reach this solver and they used to be expanded by
+     * hand at each branch, which is why the four codebases drifted apart: a
+     * {@code fluid.} qualifier the dispatch accepts on every name, the MFQ backend
+     * aliases {@code butools} and {@code aoi}, and the short spellings
+     * {@code ggisgi} and {@code tga} of the two single-station limits.
+     * Canonicalizing once is what makes an alias carry the same feature envelope as
+     * the name it resolves to; MATLAB {@code SolverFLD.canonicalMethod}, native
+     * python and C++ apply the same three rules in the same order.</p>
+     *
+     * @param method the method name as the caller spelled it
+     * @return the canonical spelling
+     */
+    public static String canonicalMethod(String method) {
+        if (method == null) {
+            return null;
+        }
+        String m = method.startsWith("fluid.") ? method.substring(6) : method;
+        // The MFQ backend and its age-of-information reading are the same drift as
+        // 'mfq': the dispatch sends all three to the MFQ analyzer.
+        if ("butools".equals(m) || "aoi".equals(m)) {
+            return "mfq";
+        }
+        // The short spellings of the two single-station limits, as
+        // QsysLimitAnalyzer.canonical and the C++ fluid_qsys_canonical map them.
+        if ("ggisgi".equals(m)) {
+            return "ggisgi.fluid";
+        }
+        if ("tga".equals(m)) {
+            return "ggingi.tga";
+        }
+        return m;
+    }
+
+    private static boolean isClosingFamily(String method) {
+        String m = canonicalMethod(method);
+        return "closing".equals(m)
+                || "minnormal".equals(m)
+                // 'refined' IS the min-normal closure with the O(1/N) correction on
+                // top: same drift, same rate factors, so it evaluates the same
+                // alpha(n_i) multiplier and needs the same SIRO/LCFS/LCFSPR strip.
+                // Omitting it here refused a load-dependent model on 'refined' that
+                // MATLAB and C++ both answer, and left 'refined' declaring three
+                // disciplines its drift silently integrates as INF.
+                || "refined".equals(m)
+                // 'dae' IS the min-normal closure -- same drift, same rate
+                // factors -- solved as one system instead of by substitution, so
+                // it evaluates the same alpha(n_i) multiplier.
+                || "dae".equals(m);
     }
 
     /**
@@ -190,14 +658,60 @@ public class SolverFluid extends NetworkSolver {
         String previousMethod = this.options.method;
         if (this.options.config != null && !sched.isEmpty()) {
             this.options.config.nhpp_sched = sched;
-            // Only the closing ODE carries the per-event rate multiplier; TBI
-            // integrates the same closing rates by cell decomposition and keeps
-            // its method. Mirrors the MATLAB getTranAvg method switch.
-            if (!"closing".equals(previousMethod) && !"tbi".equals(previousMethod)
-                    && !"fluid.tbi".equals(previousMethod)) {
-                this.options.method = "closing";
-                this.reset();
-            }
+        }
+        // THE TRANSIENT MEANS ARE READ OFF AN INTEGRATED TRAJECTORY, so the
+        // method has to be one that produces one. Switching only on an NHPP
+        // schedule left "default" to resolve to "minnormal", whose moment
+        // closure returns a CONVERGED FIXED POINT rather than a trajectory: on
+        // renv_node_breakdown's UP stage (lambda 0.8, mu 2.0, fluid mean
+        // lambda/mu = 0.4) this engine reported 0.5095 where MATLAB, native
+        // Python and C++ all report 0.4000, and SolverENV -- which couples its
+        // stages THROUGH these trajectories -- carried that into a 6% error on
+        // QLen and an 11% one on throughput, breaking flow balance against an
+        // arrival rate it must reproduce. Mirrors the switch in MATLAB
+        // SolverFLD/getTranAvg.m:
+        //   default/matrix/closing  -> closing;
+        //   tbi                     -> kept, it integrates the closing rates by
+        //                              cell decomposition and is a trajectory;
+        //   minnormal/refined       -> kept, they integrate the closing ODEs
+        //                              with the converged variance held fixed,
+        //                              unless an NHPP makes the drift
+        //                              non-autonomous, which has no stationary
+        //                              covariance to hold fixed.
+        // `rmf` is the one arm NOT mirrored: MATLAB switches it and recovers the
+        // cache transient through solver_fld_cacheqn_tran, which this port does
+        // not carry, so switching here would answer a cache model's transient
+        // with the non-cache closing ODE.
+        // `kp` is kept for the opposite reason: KoPenderAnalyzer INTEGRATES the
+        // fluid and diffusion limits over the horizon, so it already returns a
+        // trajectory, and it is the only method that also carries the second
+        // moment (QVart/Sigmat) getTranAvgVar reads. Switching it away discards
+        // that covariance and hands a MAPt/PHt source to the closing ODE, which
+        // builds its per-event multiplier from the time-averaged nominal and
+        // raises on the segment matrices (1xh against hxh).
+        String m = (previousMethod == null) ? "default" : previousMethod;
+        boolean isTbi = "tbi".equals(m) || "fluid.tbi".equals(m);
+        boolean isRmf = "rmf".equals(m) || "fluid.rmf".equals(m);
+        boolean isKp = "kp".equals(m) || "fluid.kp".equals(m);
+        boolean isClosure = "minnormal".equals(m) || "fluid.minnormal".equals(m)
+                || "refined".equals(m) || "fluid.refined".equals(m)
+                // 'dae' integrates the closure itself over the horizon, with
+                // conservation as an algebraic equation and the covariance
+                // advancing alongside the mean, so its trajectory is the
+                // transient of the closed system rather than a first-order
+                // stand-in. Same non-autonomous exclusion as the other closures:
+                // a time-varying drift has no stationary covariance for the seed
+                // solve to converge to.
+                || "dae".equals(m) || "fluid.dae".equals(m);
+        // The single-station fluid limits produce their own trajectory over the
+        // horizon -- that is what they are -- so switching them to the closing
+        // ODE would answer a different model with a time-averaged rate.
+        boolean isQsysLimit = QsysLimitAnalyzer.handles(m);
+        boolean toClosing = !isTbi && !isRmf && !isKp && !isQsysLimit
+                && !(isClosure && sched.isEmpty());
+        if (toClosing && !"closing".equals(m) && !"fluid.closing".equals(m)) {
+            this.options.method = "closing";
+            this.reset();
         }
         try {
             super.getTranAvg();
@@ -253,7 +767,93 @@ public class SolverFluid extends NetworkSolver {
         return distResult;
     }
 
+    /**
+     * Get cumulative distribution function of response times, handle form.
+     *
+     * <p>The handle only names which metrics the caller wants; the passage-time
+     * solve computes every (station, class) anyway, exactly as the reference
+     * {@code @SolverFLD/getCdfRespT.m}, so it is accepted for signature
+     * compatibility and not read. Without this override a caller holding a
+     * {@code NetworkSolver} reference would silently fall through to the base
+     * class exponential fit.</p>
+     *
+     * @param R the response time handles, accepted for signature compatibility
+     * @return DistributionResult containing the response time CDF data
+     */
+    @Override
+    public DistributionResult getCdfRespT(AvgHandle R) {
+        return getCdfRespT();
+    }
+
+    /** Per-station population variance as a column Matrix, null-preserving. */
+    private static Matrix sigma2Matrix(double[] sigma2) {
+        if (sigma2 == null) {
+            return null;
+        }
+        Matrix out = new Matrix(sigma2.length, 1, sigma2.length);
+        for (int i = 0; i < sigma2.length; i++) {
+            out.set(i, 0, sigma2[i]);
+        }
+        return out;
+    }
+
+    /** Whether the model owns a cache node, i.e. needs the decomposition route. */
+    private static boolean hasCacheNodes(NetworkStruct sn) {
+        if (sn == null || sn.nodetype == null) {
+            return false;
+        }
+        for (int ind = 0; ind < sn.nodetype.size(); ind++) {
+            if (sn.nodetype.get(ind) == jline.lang.constant.NodeType.Cache) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Per-class job counts at a station: the caller's {@code state_a} when given,
+     * else the marginal of the model's own state row.
+     */
+    private Matrix perClassCounts(int ist, Matrix state_a) {
+        if (state_a != null && state_a.length() > 0) {
+            Matrix out = new Matrix(1, sn.nclasses, sn.nclasses);
+            for (int r = 0; r < sn.nclasses && r < state_a.length(); r++) {
+                out.set(0, r, state_a.get(r));
+            }
+            return out;
+        }
+        State.StateMarginalStatistics stats =
+                ToMarginal.toMarginal(
+                        this.sn,
+                        ist,
+                        sn.state.get(this.model.getStations().get((int) sn.stationToStateful.get(0, ist))),
+                        null,
+                        null,
+                        null,
+                        null,
+                        null);
+        return stats.nir;
+    }
+
     public ProbabilityResult getProbAggr(int ist) {
+        return getProbAggr(ist, null);
+    }
+
+    /**
+     * Probability of a given per-class job distribution at a station. A null
+     * {@code state_a} reads the model's own state, as the one-argument form does.
+     *
+     * <p>The explicit form exists for the delegating callers: the model
+     * interchange carries no initial state, so a caller that set one with
+     * {@code initFromMarginal} has to name the cell it is asking about, or every
+     * query would be answered at the default initialization.</p>
+     *
+     * @param ist     station index
+     * @param state_a per-class job counts, or null to read the model state
+     * @return scalar probability in [0,1]
+     */
+    @Override
+    public ProbabilityResult getProbAggr(int ist, Matrix state_a) {
 
         if (ist > sn.nstations) {
             throw new RuntimeException("Station number exceeds the number of stations in the model.");
@@ -261,6 +861,23 @@ public class SolverFluid extends NetworkSolver {
 
         if (!this.hasAvgResults()) {
             this.getAvg();
+        }
+
+        // Re-read the struct AFTER the analysis: the one captured at construction
+        // predates the model's default initialization, so its state rows are not
+        // the ones every metric above was computed for.
+        this.sn = this.model.getStruct(false);
+
+        // The moment closure supplies the JOINT law of the per-class populations,
+        // so the answer is the probability its multivariate normal assigns to the
+        // unit cell around the current state. A Source is excluded because its
+        // coordinate is a normalisation constant rather than a population and
+        // carries no covariance (see FluidMomentTerms).
+        FluidResult fres = (FluidResult) this.result;
+        if (fres.momentSigma != null && fres.momentClassBlock != null
+                && sn.sched.get(this.model.getStations().get(ist)) != SchedStrategy.EXT
+                && !hasOpenClassAt(ist, fres.momentClassBlock)) {
+            return gaussianCellProb(ist, state_a);
         }
 
         boolean allAreFinite = true;
@@ -272,21 +889,11 @@ public class SolverFluid extends NetworkSolver {
         }
 
         if (allAreFinite) {
-            State.StateMarginalStatistics stats =
-                    ToMarginal.toMarginal(
-                            this.sn,
-                            ist,
-                            sn.state.get(this.model.getStations().get((int) sn.stationToStateful.get(0, ist))),
-                            null,
-                            null,
-                            null,
-                            null,
-                            null);
             // Binomial approximation with mean fitted to queue-lengths.
             // Rainer Schmidt, "An approximate MVA ...", PEVA 29:245-254, 1997.
             Matrix N = sn.njobs;
             Matrix Q = this.result.QN;
-            Matrix nir = stats.nir;
+            Matrix nir = perClassCounts(ist, state_a);
             ((FluidResult) this.result).logPnir = 0;
             for (int r = 0; r < nir.getNumCols(); r++) {
                 int Nr = (int) N.get(0, r);
@@ -299,8 +906,129 @@ public class SolverFluid extends NetworkSolver {
             ((FluidResult) this.result).Pnir = FastMath.exp(((FluidResult) this.result).logPnir);
             return new ProbabilityResult(((FluidResult) this.result).Pnir);
         } else {
-            throw new RuntimeException("getProbAggr not yet implemented for models with open classes.");
+            // Mixed or open model: the open classes' product form at this
+            // station, times the closed classes' binomials.
+            Matrix N = sn.njobs;
+            Matrix Q = this.result.QN;
+            Matrix nir = perClassCounts(ist, state_a);
+            double logPnir = snOpenProbTerms(this.sn, Q, this.result.UN, nir, ist);
+            for (int r = 0; r < nir.getNumCols(); r++) {
+                if (isInfinite(N.get(0, r))) {
+                    continue;
+                }
+                int Nr = (int) N.get(0, r);
+                int nirVal = (int) nir.get(0, r);
+                double Qir = Q.get(ist, r);
+                logPnir += Maths.logBinomial(Nr, nirVal);
+                logPnir += nirVal * FastMath.log(Qir / Nr);
+                logPnir += (Nr - nirVal) * FastMath.log(1 - Qir / Nr);
+            }
+            ((FluidResult) this.result).logPnir = logPnir;
+            ((FluidResult) this.result).Pnir = FastMath.exp(logPnir);
+            return new ProbabilityResult(((FluidResult) this.result).Pnir);
         }
+    }
+
+    /**
+     * Joint probability of the per-class populations at a station under the linear
+     * noise approximation solved by the moment closure. Java twin of the local
+     * {@code local_gaussian_cell} of the MATLAB {@code @SolverFLD/getProbAggr}.
+     *
+     * <p>The state coordinates of class r at the station are
+     * {@code momentClassBlock[ist*K+r]} (one per service phase), so the class
+     * population is their sum: its mean is the reported QN and the class-to-class
+     * covariance is the sum of the corresponding block of momentSigma. The integer
+     * count n is then read off the continuous law as the unit cell [n-1/2, n+1/2],
+     * with the two ends extended to infinity at the boundaries of the state space,
+     * so that the mass the normal puts on negative populations lands on the empty
+     * station and the mass above a closed population lands on the full one.</p>
+     */
+    /**
+     * Whether an OPEN class is served at a station.
+     *
+     * <p>The Gaussian cell is used only where it beats the alternative. For an
+     * open class the first-order path is not an independence heuristic but the
+     * exact product form of the underlying queue, geometric at a queue and
+     * Poisson at a Delay, so replacing it by a normal approximation of the same
+     * law would be a loss: on M/M/1 at rho = 0.5 the product form is exact where
+     * the cell of the linear noise approximation returns 0.39 for the empty queue
+     * against 0.50. The closure earns its place on the CLOSED populations, where
+     * the alternative is Schmidt's binomial, itself an approximation, and where
+     * correlation between the classes is real.</p>
+     */
+    private boolean hasOpenClassAt(int ist, int[][] classBlock) {
+        int K = sn.nclasses;
+        for (int r = 0; r < K; r++) {
+            int[] blk = classBlock[ist * K + r];
+            if (blk != null && blk.length > 0 && isInfinite(sn.njobs.get(0, r))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private ProbabilityResult gaussianCellProb(int ist, Matrix state_a) {
+        FluidResult fres = (FluidResult) this.result;
+        int K = sn.nclasses;
+        Matrix nir = perClassCounts(ist, state_a);
+        Matrix sigma = fres.momentSigma;
+        int[][] classBlock = fres.momentClassBlock;
+
+        List<Integer> idx = new ArrayList<Integer>();
+        for (int r = 0; r < K; r++) {
+            int[] blk = classBlock[ist * K + r];
+            if (blk == null || blk.length == 0) {
+                // the class has no service process here, so it has no coordinate:
+                // any positive count is impossible rather than improbable
+                if (nir.get(0, r) > 0) {
+                    fres.logPnir = NEGATIVE_INFINITY;
+                    fres.Pnir = 0;
+                    return new ProbabilityResult(0.0);
+                }
+                continue;
+            }
+            idx.add(r);
+        }
+
+        int nr = idx.size();
+        if (nr == 0) {
+            fres.logPnir = 0;
+            fres.Pnir = 1;
+            return new ProbabilityResult(1.0);
+        }
+
+        double[] m = new double[nr];
+        double[] a = new double[nr];
+        double[] b = new double[nr];
+        for (int u = 0; u < nr; u++) {
+            int r = idx.get(u);
+            m[u] = this.result.QN.get(ist, r);
+            double n = nir.get(0, r);
+            a[u] = (n <= 0) ? NEGATIVE_INFINITY : n - 0.5;
+            double nr_jobs = sn.njobs.get(0, r);
+            b[u] = (!isInfinite(nr_jobs) && n >= nr_jobs) ? POSITIVE_INFINITY : n + 0.5;
+        }
+
+        double[][] C = new double[nr][nr];
+        for (int u = 0; u < nr; u++) {
+            int[] bu = classBlock[ist * K + idx.get(u)];
+            for (int v = u; v < nr; v++) {
+                int[] bv = classBlock[ist * K + idx.get(v)];
+                double acc = 0;
+                for (int p = 0; p < bu.length; p++) {
+                    for (int q = 0; q < bv.length; q++) {
+                        acc += sigma.get(bu[p], bv[q]);
+                    }
+                }
+                C[u][v] = acc;
+                C[v][u] = acc;
+            }
+        }
+
+        double p = MvnRectangle.probability(m, C, a, b);
+        fres.Pnir = p;
+        fres.logPnir = p > 0 ? FastMath.log(p) : NEGATIVE_INFINITY;
+        return new ProbabilityResult(p);
     }
 
     public DistributionResult getTranCdfPassT() {
@@ -322,9 +1050,20 @@ public class SolverFluid extends NetworkSolver {
         }
 
         initSol();
-        ((FluidResult) this.result).distribC = passageTime();
+        Matrix[][] passageTimeResults = passageTime();
+        ((FluidResult) this.result).distribC = passageTimeResults;
         ((FluidResult) this.result).distribRuntime = (System.nanoTime() - startTime) / 1000000000.0;
-        return new DistributionResult(sn.nstations, sn.nclasses, "passage_time");
+
+        DistributionResult distResult = new DistributionResult(sn.nstations, sn.nclasses, "passage_time");
+        for (int i = 0; i < sn.nstations; i++) {
+            for (int k = 0; k < sn.nclasses; k++) {
+                if (passageTimeResults[i][k] != null && !passageTimeResults[i][k].isEmpty()) {
+                    distResult.setCdf(i, k, passageTimeResults[i][k]);
+                }
+            }
+        }
+        distResult.runtime = ((FluidResult) this.result).distribRuntime;
+        return distResult;
     }
 
     /**
@@ -338,6 +1077,13 @@ public class SolverFluid extends NetworkSolver {
             if (sn.isstateful.get(ind, 0) == 1) {
                 int isf = (int) sn.nodeToStateful.get(ind);
                 int ist = (int) sn.nodeToStation.get(ind);
+                if (ist < 0) {
+                    // A stateful node that is not a station: a Router, which the
+                    // MMT transformation puts where every fork was. It holds no
+                    // jobs, so it contributes no coordinate to the initial
+                    // condition. solver_fluid_initsol.m skips it the same way.
+                    continue;
+                }
                 Matrix state_i = new Matrix(1, 0);
                 // Compared to state_i, initSol_i does not track disabled classes
                 // and removes Inf entries in the Sources
@@ -382,9 +1128,12 @@ public class SolverFluid extends NetworkSolver {
 
                     case FCFS:
                     case SIRO:
+                    case LCFS:
+                    case LCFSPR:
                     case PS:
                     case INF:
                     case DPS:
+                    case GPS:
                     case HOL:
                         // Guard against empty kir_i which occurs with unsupported node types (e.g., Fork/Join)
                         if (kir_i.isEmpty()) {
@@ -433,6 +1182,38 @@ public class SolverFluid extends NetworkSolver {
         options.init_sol = initSol;
     }
 
+    /**
+     * The options the passage-time ODE runs under: the solver's own, plus the
+     * closure the mean solve finished at when that solve was a moment-closure one.
+     *
+     * <p>The per-station variance is layout-free, so it transfers to the extended
+     * (transient-class) model unchanged. The coordinate covariance block is not:
+     * its rows are state coordinates, and the transient class adds one block of
+     * them per station, so it is left out and the class share stays the plug-in
+     * ratio. The capacity term is what separates the two closures at a busy
+     * station, and that one does transfer.</p>
+     *
+     * @return options carrying the fixed-point closure, or the solver's own when
+     *         the mean was solved by a first-order method
+     */
+    private SolverOptions passageTimeOptions() {
+        if (!(this.result instanceof FluidResult)) {
+            return options;
+        }
+        Matrix sigma2 = ((FluidResult) this.result).momentSigma2Drift;
+        if (sigma2 == null || sigma2.isEmpty()) {
+            return options;
+        }
+        SolverOptions ptOptions = options.copy();
+        double[] s2 = new double[sigma2.getNumRows()];
+        for (int i = 0; i < s2.length; i++) {
+            s2[i] = sigma2.get(i, 0);
+        }
+        ptOptions.config.moment_sigma2 = s2;
+        ptOptions.config.moment_cov = null;
+        return ptOptions;
+    }
+
     private Matrix[][] passageTime() {
 
         int M = sn.nstations; // Number of Stations
@@ -446,6 +1227,18 @@ public class SolverFluid extends NetworkSolver {
             }
         }
         Matrix[][][] tmpRT = new Matrix[M][K][2];
+
+        // The passage-time ODE is a SECOND solve on the fixed point the mean solve
+        // reached, so it has to be driven by the same drift. Under the moment closure
+        // that drift closes min(n_i,c_i) at the fixed-point variance; evaluating the
+        // first-order min() there instead drains a station the mean solve holds below
+        // capacity at full rate, and the response-time distribution then contradicts
+        // the mean the same solver reports (measured on cdf_respt_populationsN4: CDF
+        // mean 3.4504 against RN 4.5181). Only the per-STATION variance transfers:
+        // it is the variance of a station population, which the transient class only
+        // relabels, whereas the coordinate covariance block is indexed by a state
+        // layout the transient class changes.
+        SolverOptions ptOptions = passageTimeOptions();
 
         // Initialisation
         Matrix slowrate = new Matrix(M, K);
@@ -705,16 +1498,34 @@ public class SolverFluid extends NetworkSolver {
                             // Set-up the ODEs for the new QN with extended structure
                             FirstOrderDifferentialEquations ode =
                                     new PassageTimeODE(
-                                            extendedSn, newMu, newPi, newProc, newRT, S, options, initialState.length);
+                                            extendedSn, newMu, newPi, newProc, newRT, S, ptOptions,
+                                            initialState.length);
 
                             // ODE analysis
+                            // The window loop advances initialState, so the CDF
+                            // refinement below keeps the state the trajectory
+                            // STARTED from: it re-integrates the whole curve on
+                            // the refined grid.
+                            double[] passageStart = initialState.clone();
                             Matrix tFull = new Matrix(0, 0);
                             Matrix stateFull = new Matrix(0, 0);
                             int iter = 1;
                             boolean finished = false;
                             double tref = 0;
                             boolean stiff = options.stiff;
-                            double ptTol = options.tol;
+                            // THE CDF IS READ BACK BY RIEMANN-STIELTJES QUADRATURE, so the
+                            // undepleted transient fluid the integrator is entitled to leave
+                            // is weighted by t for the mean and by t^2 for the second moment.
+                            // At the generic tol that residual is O(1e-4) while the horizon is
+                            // O(1e2), so the SECOND moment inherits O(1) of pure integration
+                            // noise: measured on cdf_respt_closed_threeclasses, 7.6e-6 of fluid
+                            // still undepleted past t=20 put 0.022 into m2 and read the Exp(1)
+                            // response-time SCV as 1.0416 against the reference 1.0101. MATLAB's
+                            // ode15s and the C++ LSODA both settle far below their stated atol
+                            // on this model; LSODAExt settles ON it, so the passage solve has to
+                            // ask for more than the mean solve does. A caller asking for tighter
+                            // still gets it.
+                            double ptTol = Math.min(options.tol, 1e-6);
 
                             while (iter <= options.iter_max && !finished) {
 
@@ -758,8 +1569,8 @@ public class SolverFluid extends NetworkSolver {
                                     System.arraycopy(tempState, 0, nextState, 0, tempState.length);
 
                                 } catch (RuntimeException e) {
-                                    e.printStackTrace();
-                                    throw new RuntimeException("ODE Solver Failed: " + e.getMessage());
+                                    // chain the cause: dropping it here left the ODE failure with no trace
+                                    throw new RuntimeException("ODE Solver Failed: " + e.getMessage(), e);
                                 }
 
                                 iter++;
@@ -811,132 +1622,131 @@ public class SolverFluid extends NetworkSolver {
                                     tmpRT[i][c][1].set(row, 0, cdfValue);
                                 }
                                 
-                                // Iterative CDF refinement - detect and refine large CDF jumps
+                                // Iterative CDF refinement - detect and refine large CDF jumps.
+                                // The rule of MATLAB solver_fluid_passage_time.m, the C++
+                                // fluid_passage_time and the Python passage_time: while some
+                                // adjacent pair of CDF values differs by more than maxCdfJump,
+                                // split EVERY offending interval and re-integrate the whole
+                                // curve on the new grid. Refining ONE interval per round spends
+                                // the round cap on five intervals and leaves the jump target
+                                // unmet, and the curve is read back by quadrature: on
+                                // cdf_respt_closed_threeclasses a 130-point grid over [0,200]
+                                // made the right-endpoint mean read 1.126 for a response time
+                                // that is exactly Exp(1). Both caps bound WORK, not accuracy.
                                 double maxCdfJump = 0.0005;
-                                int maxRefinementIterations = 5;
-                                int refinementIter = 0;
+                                int maxRefinementRounds = 5;
+                                int maxPoints = 20001;
+                                int numRefinedPoints = 20;
 
-                                // Create ODE solver for refinement
+                                // The refinement re-integrates the SAME passage, so it answers to
+                                // ptTol as well: leaving it on the mean solve's tol would put the
+                                // residual back into the curve one round after the first pass
+                                // removed it. Both helpers hand back the caller's own integrator
+                                // untouched when one was supplied.
                                 FirstOrderIntegrator refineOdeSolver;
                                 if (options.stiff) {
-                                    refineOdeSolver = options.odesolvers.accurateStiffODESolver;
+                                    refineOdeSolver = options.odesolvers.stiffIntegratorFor(0, T, ptTol, false);
                                 } else {
-                                    refineOdeSolver = options.odesolvers.accurateODESolver;
+                                    refineOdeSolver = options.odesolvers.integratorFor(0, T, ptTol, false);
                                 }
 
-                                boolean keepRefining = true;
-                                while (keepRefining && refinementIter < maxRefinementIterations) {
-                                    keepRefining = false;
-
-                                    for (int row = 1; row < fullTMax; row++) {
-                                        double cdfCurrent = tmpRT[i][c][1].get(row, 0);
-                                        double cdfPrevious = tmpRT[i][c][1].get(row - 1, 0);
-                                        double cdfJump = cdfCurrent - cdfPrevious;
-
-                                        if (cdfJump > maxCdfJump) {
-                                            refinementIter++;
-
-                                            // Get the time interval where refinement is needed
-                                            int refineStartIdx = row - 1;
-                                            double t1 = tmpRT[i][c][0].get(refineStartIdx, 0);
-                                            double t2 = tmpRT[i][c][0].get(refineStartIdx + 1, 0);
-
-                                            // Create refined time points with linear spacing
-                                            int numRefinedPoints = 20;
-                                            Matrix refinedT = new Matrix(numRefinedPoints, 1);
-                                            Matrix refinedStates = new Matrix(numRefinedPoints, initialState.length);
-
-                                            for (int rp = 0; rp < numRefinedPoints; rp++) {
-                                                double alpha = rp / (double)(numRefinedPoints - 1);
-                                                double tRefined = t1 + alpha * (t2 - t1);
-                                                refinedT.set(rp, 0, tRefined);
-
-                                                double[] refinedState = new double[initialState.length];
-                                                try {
-                                                    double[] startState = new double[initialState.length];
-                                                    for (int j = 0; j < initialState.length; j++) {
-                                                        startState[j] = stateFull.get(refineStartIdx, j);
-                                                    }
-                                                    refineOdeSolver.integrate(ode, t1, startState, tRefined, refinedState);
-
-                                                    for (int j = 0; j < refinedState.length; j++) {
-                                                        refinedStates.set(rp, j, Math.max(0, refinedState[j]));
-                                                    }
-                                                } catch (Exception e) {
-                                                    for (int j = 0; j < initialState.length; j++) {
-                                                        double v1 = stateFull.get(refineStartIdx, j);
-                                                        double v2 = stateFull.get(refineStartIdx + 1, j);
-                                                        refinedStates.set(rp, j, v1 + alpha * (v2 - v1));
-                                                    }
-                                                }
-                                            }
-
-                                            // Merge refined points into the results
-                                            Matrix newTFull = new Matrix(fullTMax + numRefinedPoints - 2, 1);
-                                            Matrix newStateFull = new Matrix(fullTMax + numRefinedPoints - 2, initialState.length);
-
-                                            for (int mrow = 0; mrow <= refineStartIdx; mrow++) {
-                                                newTFull.set(mrow, 0, tFull.get(mrow, 0));
-                                                for (int j = 0; j < initialState.length; j++) {
-                                                    newStateFull.set(mrow, j, stateFull.get(mrow, j));
-                                                }
-                                            }
-
+                                for (int round = 0; round < maxRefinementRounds; round++) {
+                                    if (fullTMax >= maxPoints) {
+                                        break;
+                                    }
+                                    // A jump at EQUAL times is an atom of the law, not a
+                                    // resolution failure: its refined points would all be
+                                    // the same instant.
+                                    List<Double> grid = new ArrayList<Double>();
+                                    boolean refined = false;
+                                    for (int row = 0; row + 1 < fullTMax; row++) {
+                                        double t1 = tFull.get(row, 0);
+                                        double t2 = tFull.get(row + 1, 0);
+                                        grid.add(t1);
+                                        double jump = tmpRT[i][c][1].get(row + 1, 0) - tmpRT[i][c][1].get(row, 0);
+                                        if (jump > maxCdfJump && t2 > t1) {
+                                            refined = true;
                                             for (int rp = 1; rp < numRefinedPoints; rp++) {
-                                                int newRow = refineStartIdx + rp;
-                                                newTFull.set(newRow, 0, refinedT.get(rp, 0));
-                                                for (int j = 0; j < initialState.length; j++) {
-                                                    newStateFull.set(newRow, j, refinedStates.get(rp, j));
-                                                }
+                                                grid.add(t1 + (t2 - t1) * rp / (double) numRefinedPoints);
                                             }
-
-                                            for (int mrow = refineStartIdx + 2; mrow < fullTMax; mrow++) {
-                                                int newRow = mrow + numRefinedPoints - 2;
-                                                newTFull.set(newRow, 0, tFull.get(mrow, 0));
-                                                for (int j = 0; j < initialState.length; j++) {
-                                                    newStateFull.set(newRow, j, stateFull.get(mrow, j));
-                                                }
-                                            }
-
-                                            tFull = newTFull;
-                                            stateFull = newStateFull;
-                                            fullTMax = tFull.getNumRows();
-
-                                            // Recompute CDF with refined points
-                                            tmpRT[i][c][0] = tFull;
-                                            tmpRT[i][c][1] = tFull.copy();
-                                            for (int cdfRow = 0; cdfRow < fullTMax; cdfRow++) {
-                                                tmpSum = 0;
-                                                for (Integer idx : idxN) {
-                                                    tmpSum += stateFull.get(cdfRow, idx);
-                                                }
-                                                double cdfValue = 1 - tmpSum / fluid_c;
-                                                tmpRT[i][c][1].set(cdfRow, 0, cdfValue);
-                                            }
-
-                                            // Verbose: refined CDF grid
-                                            // System.out.printf("INFO: Added %d refined points between t=%.6f and t=%.6f%n",
-                                            //     numRefinedPoints, t1, t2);
-
-                                            keepRefining = true;
-                                            break; // Restart inner loop with updated arrays (matching MATLAB)
                                         }
                                     }
+                                    if (fullTMax > 0) {
+                                        grid.add(tFull.get(fullTMax - 1, 0));
+                                    }
+                                    if (!refined || grid.size() > maxPoints || grid.size() < 2) {
+                                        break;
+                                    }
+
+                                    Matrix newTFull = new Matrix(grid.size(), 1);
+                                    Matrix newStateFull = new Matrix(grid.size(), passageStart.length);
+                                    double[] walk = passageStart.clone();
+                                    double tWalk = grid.get(0);
+                                    boolean failed = false;
+                                    for (int g = 0; g < grid.size(); g++) {
+                                        double tg = grid.get(g);
+                                        if (tg > tWalk) {
+                                            double[] out = new double[passageStart.length];
+                                            try {
+                                                refineOdeSolver.integrate(ode, tWalk, walk, tg, out);
+                                            } catch (Exception e) {
+                                                failed = true;
+                                                break;
+                                            }
+                                            walk = out;
+                                            tWalk = tg;
+                                        }
+                                        newTFull.set(g, 0, tg);
+                                        for (int j = 0; j < passageStart.length; j++) {
+                                            newStateFull.set(g, j, Math.max(0, walk[j]));
+                                        }
+                                    }
+                                    if (failed) {
+                                        break;
+                                    }
+
+                                    tFull = newTFull;
+                                    stateFull = newStateFull;
+                                    fullTMax = tFull.getNumRows();
+                                    tmpRT[i][c][0] = tFull;
+                                    tmpRT[i][c][1] = tFull.copy();
+                                    for (int cdfRow = 0; cdfRow < fullTMax; cdfRow++) {
+                                        tmpSum = 0;
+                                        for (Integer idx : idxN) {
+                                            tmpSum += stateFull.get(cdfRow, idx);
+                                        }
+                                        tmpRT[i][c][1].set(cdfRow, 0, 1 - tmpSum / fluid_c);
+                                    }
                                 }
-                                
-                                // Check if first CDF value F(t0) > 1% and iteratively extend time interval if needed
-                                double firstCdfValue = tmpRT[i][c][1].get(0, 0);
+
+                                // Horizon extension - extend while the TAIL misses the law.
+                                // The test is on the LAST grid point. It used to read the
+                                // FIRST, tmpRT[i][c][1].get(0,0), which is the CDF at the start
+                                // of the horizon: the marked class holds all of fluid_c at t=0
+                                // by construction, so that value is 0 whatever the horizon is,
+                                // and lengthening the horizon cannot move it. The loop it
+                                // guarded was unreachable, and reachable only into harm -- its
+                                // body REPLACED the refined curve with raw LSODA steps over a
+                                // fresh horizon, discarding the grid the refinement rounds
+                                // above had just paid for. Same fix as MATLAB
+                                // solver_fluid_passage_time.m.
                                 int extendIterations = 0;
                                 final int maxExtendIterations = 10; // Prevent infinite loops
-                                
-                                while (firstCdfValue > 0.01 && extendIterations < maxExtendIterations) {
+
+                                while (tmpRT[i][c][1].get(fullTMax - 1, 0) < 0.99
+                                        && extendIterations < maxExtendIterations) {
                                     extendIterations++;
-                                    
-                                    // Extend the time interval by starting earlier
-                                    double extendedT = T * (1 + extendIterations); // Increase time span
-                                    double[] extendedTRange = {0, extendedT};
-                                    
-                                    // Re-run ODE integration with extended time using raw LSODA steps
+
+                                    // CONTINUE the same trajectory from where it stopped and
+                                    // APPEND, as the window loop above does: initialState is
+                                    // the end state and tref the elapsed time, and the ODE is
+                                    // autonomous, so [0, extendedT] from it is the next stretch
+                                    // of the SAME passage. Doubling each round reaches a 1024x
+                                    // horizon within the cap instead of 11x.
+                                    double extendedT = T * Math.pow(2, extendIterations);
+
+                                    Matrix extTIter;
+                                    Matrix extStateIter;
                                     try {
                                         LSODAExt extLsoda = new LSODAExt(
                                                 1e-12, options.odesolvers.odemaxstep,
@@ -949,8 +1759,8 @@ public class SolverFluid extends NetworkSolver {
                                         ArrayList<Double[]> extYHist = extLsoda.getYvec();
 
                                         // Use raw LSODA steps (no densification)
-                                        Matrix extTIter = new Matrix(extSteps, 1);
-                                        Matrix extStateIter = new Matrix(extSteps, initialState.length);
+                                        extTIter = new Matrix(extSteps, 1);
+                                        extStateIter = new Matrix(extSteps, initialState.length);
                                         for (int step = 0; step < extSteps; step++) {
                                             extTIter.set(step, 0, extTHist.get(step));
                                             Double[] extYStep = extYHist.get(step);
@@ -958,26 +1768,41 @@ public class SolverFluid extends NetworkSolver {
                                                 extStateIter.set(step, j, Math.max(0, extYStep[j]));
                                             }
                                         }
-
-                                        // Update results
-                                        tFull = extTIter;
-                                        stateFull = extStateIter;
-                                        fullTMax = tFull.getNumRows();
-
-                                        tmpRT[i][c][0] = tFull;
-                                        tmpRT[i][c][1] = tFull.copy();
-                                        for (int row = 0; row < fullTMax; row++) {
-                                            tmpSum = 0;
-                                            for (Integer idx : idxN) {
-                                                tmpSum += stateFull.get(row, idx);
-                                            }
-                                            double cdfValue = 1 - tmpSum / fluid_c;
-                                            tmpRT[i][c][1].set(row, 0, cdfValue);
-                                        }
-
-                                        firstCdfValue = tmpRT[i][c][1].get(0, 0);
                                     } catch (Exception e) {
                                         break;
+                                    }
+                                    int extRows = extTIter.getNumRows();
+                                    if (extRows < 2) {
+                                        break;
+                                    }
+
+                                    // drop the duplicated first row: it repeats the instant the
+                                    // curve already ends on
+                                    Matrix appendT = new Matrix(extRows - 1, 1);
+                                    Matrix appendState = new Matrix(extRows - 1, initialState.length);
+                                    for (int row = 1; row < extRows; row++) {
+                                        appendT.set(row - 1, 0, extTIter.get(row, 0) + tref);
+                                        for (int j = 0; j < initialState.length; j++) {
+                                            appendState.set(row - 1, j, extStateIter.get(row, j));
+                                        }
+                                    }
+                                    tFull = Matrix.concatRows(tFull, appendT, null);
+                                    stateFull = Matrix.concatRows(stateFull, appendState, null);
+                                    fullTMax = tFull.getNumRows();
+
+                                    tref += extTIter.get(extRows - 1, 0);
+                                    for (int idx = 0; idx < initialState.length; idx++) {
+                                        initialState[idx] = extStateIter.get(extRows - 1, idx);
+                                    }
+
+                                    tmpRT[i][c][0] = tFull;
+                                    tmpRT[i][c][1] = tFull.copy();
+                                    for (int row = 0; row < fullTMax; row++) {
+                                        tmpSum = 0;
+                                        for (Integer idx : idxN) {
+                                            tmpSum += stateFull.get(row, idx);
+                                        }
+                                        tmpRT[i][c][1].set(row, 0, 1 - tmpSum / fluid_c);
                                     }
                                 }
                             } else {
@@ -1037,6 +1862,12 @@ public class SolverFluid extends NetworkSolver {
         return RTret;
     }
 
+    @Override
+    public boolean supportsTransientAnalysis() {
+        // Transient averages are available (fluid ODE integrated over options.timespan).
+        return true;
+    }
+
     /**
      * Runs the fluid analyzer to solve the queueing network.
      * This method executes the fluid approximation algorithm and stores
@@ -1044,16 +1875,79 @@ public class SolverFluid extends NetworkSolver {
      */
     @Override
     public void runAnalyzer() {
+        // A MODEL HOLDING ANY Transition NODE IS A DIFFERENT FORMALISM and goes
+        // to a dedicated runner rather than through the queueing dispatch. The
+        // post-processing of the queueing path rewrites UN from sn.rates (NaN at
+        // a Place) and RN from the station scheduling, and would overwrite the
+        // Petri conventions PetriSolver reports -- a place's utilization IS its
+        // token count, and its throughput is the token departure rate, not a
+        // service completion rate. The branch is taken before
+        // runAnalyzerChecks, whose feature gate is written about queueing
+        // stations. See PetriSolver, and matlab solver_fluid_petri.m.
+        if (isPetriNet(this.model.getStruct(false))) {
+            runPetriAnalyzer();
+            return;
+        }
         // Validate model compatibility before starting analysis
         runAnalyzerChecks(this.options);
 
         // Finite Capacity Region: the fluid ODEs do not enforce the aggregate
         // per-region job limit and would silently return the unconstrained answer.
-        if (this.model.getStruct(false).nregions > 0) {
+        //
+        // 'dae' IS THE EXCEPTION, AND THE ONLY ONE. A region cap is a linear
+        // inequality on the state and blocking is a throttle on the admission
+        // flow that keeps it satisfied, so the DAE form has somewhere to put it
+        // -- an algebraic equation beside the drift -- where an ODE has not.
+        // DaeAnalyzer refuses, by name, the forms that are NOT constraints on
+        // this drift (BAS/BBS/RSRD, retrial, per-class admission weights). Every
+        // other method keeps the blanket refusal, because for them it is still
+        // true.
+        // A BINDING BUFFER OR A CAPACITY REGION RESOLVES 'default' TO 'dae'
+        // before either gate below reads the method, because 'dae' is the only
+        // fluid route that carries the constraint at all: the reference resolves
+        // 'default' ahead of its own gate for the same reason. Every other
+        // resolution stays where it is, in the dispatch switch, which cannot run
+        // before the struct is phase-type converted.
+        if ("default".equals(fluidUnqualify(this.options.method))
+                && blockedResolvesToDae(this.model, this.model.getStruct(false), this.options)) {
+            this.options.method = "dae";
+            line_debug(options.verbose, "FLD default resolved to dae: the model has a binding "
+                    + "finite buffer or capacity region");
+        }
+        boolean daeMethod = "dae".equals(this.options.method)
+                || "fluid.dae".equals(this.options.method);
+        // 'mol' is exempt from the CAPACITY gate for the opposite reason to
+        // 'dae': a finite capacity is not something it ignores, it IS the
+        // model. The approximation is stated for the Mt/G/s/0 LOSS system, so
+        // the server count is the buffer, and refusing a capped station would
+        // refuse the only shape the method answers. It is NOT exempt from the
+        // REGION gate above, which constrains a SET of stations and has no
+        // counterpart in a single-station limit. MATLAB
+        // (@@SolverFLD/runAnalyzer.m) and native python draw the line in the
+        // same place; this port exempted 'dae' alone.
+        boolean capExempt = daeMethod
+                || "mol".equals(this.options.method) || "fluid.mol".equals(this.options.method);
+        if (!daeMethod && this.model.getStruct(false).nregions > 0) {
             throw new RuntimeException("This model uses a Finite Capacity Region (addRegion), "
                     + "which is not supported by SolverFluid (the region's aggregate job limit "
-                    + "is not enforced). Use SolverCTMC, SolverJMT, SolverSSA or SolverLDES, "
-                    + "or setCapacity for a single-station limit.");
+                    + "is not enforced). Use options.method = \"dae\", or SolverCTMC, "
+                    + "SolverJMT, SolverSSA or SolverLDES.");
+        }
+
+        // A BINDING STATION BUFFER WAS SILENTLY IGNORED, by every fluid method
+        // including this one: nothing in the fluid tree reads sn.cap or sn.classcap,
+        // so a capped station was integrated as an unbounded one and the table
+        // reported more jobs in the buffer than the buffer holds. MVA and NC have
+        // refused that model through the shared structural gate since they gained
+        // one; the fluid solver now does too, except on the route that can enforce
+        // it as an algebraic constraint on the drift.
+        if (!capExempt) {
+            String capReason = NetworkSolver.bindingCapacityReason(this.model,
+                    this.model.getStruct(false), "SolverFluid");
+            if (capReason != null) {
+                throw new RuntimeException(capReason + " Use options.method = \"dae\", which "
+                        + "carries the buffer as an algebraic constraint on the drift.");
+            }
         }
 
         long startTime = System.nanoTime();
@@ -1061,6 +1955,14 @@ public class SolverFluid extends NetworkSolver {
             options.method, options.iter_max));
         
         // Store the original method before any modifications
+        // Unqualify the method BEFORE the dispatch. Every method name has a
+        // 'fluid.'-qualified spelling, which the reference accepts arm by arm
+        // (erase(options.method,'fluid.')) and which the featset and the
+        // dispatch switches here matched only for a handful; 'butools' names the
+        // MFQ backend and 'aoi' its age-of-information reading, and both are
+        // aliases of 'mfq'. Doing it once, here, is what keeps the two switches
+        // below and getMethodFeatureSet from disagreeing on a qualified name.
+        options.method = fluidUnqualify(options.method);
         String origMethod = options.method;
         
         // see _kb/06-solver-catalog.md (JAR-only implementation notes: non-Markovian to phase-type conversion before initSol)
@@ -1070,15 +1972,22 @@ public class SolverFluid extends NetworkSolver {
         sn = SnNonmarkovToPh.snNonmarkovToPh(this.model.getStruct(), this.options, false);
         this.options.config.phfit = phfit0;
 
-        // Explicit check for Fork/Join nodes - SolverFluid does not support them
-        for (int i = 0; i < sn.nnodes; i++) {
-            NodeType nodeType = sn.nodetype.get(i);
-            if (nodeType == NodeType.Fork || nodeType == NodeType.Join) {
-                throw new RuntimeException("SolverFluid does not support Fork and Join nodes. " +
-                        "Use SolverMVA or SolverJMT for fork-join models.");
+        // Fork-join: the same solver-agnostic fixed point MVA and NC drive
+        // (jline.solvers.fj.FJFixedPoint), with fldDispatch as the inner solve.
+        // The MMT transformation emits only Source, Delay, Queue, Router and
+        // ClassSwitch, all of which the fluid drift already carries.
+        if (this.model.hasFork()) {
+            // Not every method can run that fixed point. forkJoinAdmitsReason is
+            // the same predicate supportsModelMethod asks, so the report and the
+            // run cannot disagree about which forks this method serves.
+            String fjReason = forkJoinAdmitsReason(sn, this.options.method);
+            if (!fjReason.isEmpty()) {
+                throw new RuntimeException(fjReason);
             }
+            runForkJoinAnalyzer(startTime);
+            return;
         }
-        
+
         boolean hasOpenClasses = false;
         for (NodeType nodetype : sn.nodetype) {
             if (nodetype == NodeType.Source) {
@@ -1103,6 +2012,29 @@ public class SolverFluid extends NetworkSolver {
 
         String actualMethod = origMethod;
         switch (origMethod) {
+            case "pnorm":
+                // The p-norm smoothing of Ruuskanen et al., PEVA 151 (2021): the
+                // matrix drift with the hard min replaced by a p-norm, which
+                // MatrixMethodODE already builds when config.pstar is non-empty.
+                // pstar defaults to 20, the value solver_fluid_odes.m uses and
+                // the one whose behaviour matches softmin at alpha = 20. The
+                // method was neither listed nor dispatched here although the ODE
+                // has always carried the smoothing.
+                if (options.config.pstar == null) {
+                    options.config.pstar = new java.util.ArrayList<Double>();
+                }
+                if (options.config.pstar.isEmpty()) {
+                    options.config.pstar.add(20.0);
+                }
+                if (hasDPS) {
+                    if (options.verbose != VerboseLevel.SILENT) {
+                        line_error(mfilename(new Object(){}),
+                                "The matrix solver does not support DPS scheduling. Using options.method = \"closing\" instead.");
+                    }
+                    actualMethod = "closing";
+                    options.method = actualMethod;
+                }
+                break;
             case "matrix":
                 if (hasDPS) {
                     if (options.verbose != VerboseLevel.SILENT) {
@@ -1113,21 +2045,74 @@ public class SolverFluid extends NetworkSolver {
                 }
                 break;
             case "default":
+                // A blocked model never reaches here: runAnalyzer resolved it to
+                // "dae" above, ahead of the finite-capacity gate that would
+                // otherwise have refused whatever this arm picked.
+                //
+                // Preference order: rmf for cache models, then minnormal wherever it
+                // applies, then the historical closing-for-DPS / matrix. The
+                // second-order closure dominates the first-order methods on every
+                // family measured against exact CTMC and is the only method that can
+                // represent GPS at all.
                 if (hasCache) {
                     actualMethod = "rmf";
-                    options.method = "rmf";
+                } else if (FluidMinNormalApplicable.reasonToDecline(sn, options) == null) {
+                    actualMethod = "minnormal";
                 } else if (hasDPS) {
                     actualMethod = "closing";
-                    options.method = "closing";
                 } else {
                     actualMethod = "matrix";
-                    options.method = "matrix";
                 }
+                options.method = actualMethod;
                 break;
             case "closing":
+            case "diffusion":
+            case "refined":
             case "statedep":
+            // 'softmin' is ode_statedep with the hard min replaced by the smooth
+            // one (PassageTimeODE already builds that drift, alpha = 20). It was
+            // advertised by listValidMethods and had no arm here, so it fell to
+            // the default: line_error below and a listed method always threw.
+            case "softmin":
             case "mfq":
             case "rmf":
+            case "minnormal":
+            case "ggisgi.fluid":
+            case "fluid.ggisgi":
+            case "ggisgi":
+            case "ggingi.tga":
+            case "fluid.tga":
+            case "tga":
+            case "tvms":
+            case "fluid.tvms":
+            case "mtginf":
+            case "fluid.mtginf":
+            case "mol":
+            case "fluid.mol":
+                break;
+            case "dae":
+                // The DAE route inherits the moment-closure envelope, with two
+                // extra limits refused here so the message names the model
+                // feature rather than surfacing from inside the Newton solve.
+                //
+                // A CACHE MODEL IS A DECOMPOSITION, not one system: the caches
+                // are solved in isolation and the network with them relabeled,
+                // so there is no single drift for the constraint to be attached
+                // to. The 'rmf' alternation carries the closure inside its
+                // network step for 'minnormal'; no such route exists for the
+                // DAE form.
+                if (hasCacheNodes(sn)) {
+                    line_error(mfilename(new Object(){}),
+                            "The dae method does not support caching stations: a cache model is solved by decomposition, so it has no single drift to constrain. Use options.method = \"minnormal\" for the same closure, or \"rmf\".");
+                }
+                break;
+            case "kp":
+                // Ko-Pender limits are proved for an OPEN network fed by external arrival
+                // processes: a closed class has no arrival process to modulate.
+                if (!hasOpenClasses) {
+                    line_error(mfilename(new Object(){}),
+                            "The kp method analyses the open (MAP_t/Ph_t/inf)^N network of Ko and Pender (2017); a closed class has no arrival process to modulate. Use options.method = \"closing\".");
+                }
                 break;
             case "tbi":
                 // Trajectory-based iteration is a closed-network transient
@@ -1150,6 +2135,20 @@ public class SolverFluid extends NetworkSolver {
         }
         result.method = actualMethod;
 
+        // Method-aware feature gate, applied AFTER "default" has been resolved.
+        // runAnalyzerChecks above can only see the coarse solver envelope, and
+        // "default" is not "minnormal", so gating there would reject a GPS model
+        // before the resolution ever ran. Keeping the decision and the gate in this
+        // order is what stops them from disagreeing.
+        // NetworkSolver.model shadows Solver.model, so the base supportsModelMethod
+        // would dereference a null; resolve the feature set against this solver's model
+        String methodReason =
+                FeatureSet.supportsReason(getMethodFeatureSet(actualMethod), this.model.getUsedLangFeatures());
+        if (methodReason != null && !methodReason.isEmpty()) {
+            throw new RuntimeException("The '" + actualMethod
+                    + "' method of the Fluid solver does not support this model: " + methodReason);
+        }
+
         if (isInfinite(options.timespan[0])) {
             if (options.verbose == VerboseLevel.DEBUG) {
                 line_warning(mfilename(new Object(){}),
@@ -1162,13 +2161,50 @@ public class SolverFluid extends NetworkSolver {
                     "SolverFluid does not support a timespan that is a single point. Setting options.timespan[0] to 0.");
             options.timespan[0] = 0;
         }
-        if (this.enableChecks && !supports(this.model)) {
+        // THE COARSE GATE AGAIN, and deferred for 'dae' for the same reason as in
+        // runAnalyzerChecks: supports() reads the STATIC getFeatureSet, while
+        // getMethodFeatureSet is strictly finer and has already run. The two can
+        // only disagree where a method WIDENS the set, and 'dae' is the one that
+        // does -- it declares Region, which the static set must keep false so
+        // that every other method goes on rejecting a finite capacity region.
+        boolean daeWidens = "dae".equals(options.method) || "fluid.dae".equals(options.method)
+                || QsysLimitAnalyzer.handles(options.method);
+        if (this.enableChecks && !daeWidens && !supports(this.model)) {
             line_error(mfilename(new Object(){}), "This model contains features not supported by the solver.");
             return;
         }
 
         int M = sn.nstations;
         int K = sn.nclasses;
+
+        // The single-station fluid limits are closed forms, not integrations of
+        // the network drift: they take the whole model in one call and have no
+        // initial state to average over.
+        if (QsysLimitAnalyzer.handles(actualMethod)) {
+            FluidAnalyzer qsysAnalyzer = new QsysLimitAnalyzer(actualMethod);
+            qsysAnalyzer.analyze(sn, options.copy(), result);
+            ((FluidResult) this.result).odeStateVec = qsysAnalyzer.getXVecIt();
+            return;
+        }
+
+        // MFQ IS A SINGLE-QUEUE METHOD AND FALLS BACK, which is what the reference
+        // does: solver_fluid_analyzer.m warns "MFQ not applicable: ... Falling
+        // back to matrix method" and re-enters solver_fluid_matrix. Refusing
+        // instead made 'mfq' -- and therefore its aliases 'butools' and 'aoi' --
+        // reject every multi-station model that MATLAB, native python and C++ all
+        // answer. The substitution has to be decided HERE and not inside
+        // MFQAnalyzer: the branch below diverts around the state-space
+        // preparation that the matrix method reads back (options.init_sol above
+        // all), so delegating from within the analyzer indexes past it.
+        if (Objects.equals(actualMethod, "mfq")) {
+            String why = jline.solvers.fluid.analyzers.MFQAnalyzer.mfqNotApplicableReason(sn);
+            if (why != null) {
+                line_warning(mfilename(new Object() {
+                }), "MFQ not applicable: %s. Falling back to matrix method.", why);
+                actualMethod = "matrix";
+                options.method = "matrix";
+            }
+        }
 
         // MFQ is a direct steady-state method that doesn't need state space iteration
         if (Objects.equals(actualMethod, "mfq")) {
@@ -1182,16 +2218,57 @@ public class SolverFluid extends NetworkSolver {
             return;
         }
 
-        // RMF is a direct steady-state method for cache-queueing networks
-        if (Objects.equals(actualMethod, "rmf")) {
+        // The decomposition route for cache-queueing networks. "rmf" solves the
+        // network layer with the first-order matrix method; "minnormal" solves
+        // the SAME decomposition with the moment closure in its place, which is
+        // how the closure reaches a cache model at all (one ODE cannot express
+        // it: the caches are solved in isolation and the network with them
+        // relabeled as class switches).
+        boolean cacheClosure = Objects.equals(actualMethod, "minnormal") && hasCacheNodes(sn);
+        if (Objects.equals(actualMethod, "rmf") || cacheClosure) {
             // see _kb/06-solver-catalog.md (JAR-only implementation notes: sn.rt is a Java reference, save/restore around cache rewrite)
             Matrix rtOrig = sn.rt != null ? sn.rt.copy() : null;
 
-            FluidAnalyzer analyzer = new RMFAnalyzer();
-            analyzer.analyze(sn, options.copy(), result);
+            RMFAnalyzer analyzer = new RMFAnalyzer();
+            SolverOptions rmfOptions = options.copy();
+            rmfOptions.method = cacheClosure ? "minnormal" : "rmf";
+            // THIS ROUTE HAS ITS OWN LADDER, because it returns before the one
+            // below and would otherwise let a FluidNonHyperbolicException out
+            // of runAnalyzer as a LineException -- reporting a fallback in the
+            // message that never happened. The rungs are NOT the general
+            // ladder's: dae has no decomposition arm (FluidDaeApplicable
+            // declines a cache model by name), so the closure's only fallback
+            // here is the first-order network step of the SAME alternation,
+            // which is exactly what "rmf" is.
+            try {
+                analyzer.analyze(sn, rmfOptions, result);
+            } catch (FluidNonHyperbolicException e) {
+                if (!cacheClosure) {
+                    throw e;
+                }
+                line_debug(options.verbose,
+                        "Fluid minnormal declined inside the cache decomposition (" + e.getMessage()
+                                + "); falling back to rmf");
+                cacheClosure = false;
+                rmfOptions.method = "rmf";
+                options.method = "rmf";
+                analyzer = new RMFAnalyzer();
+                analyzer.analyze(sn, rmfOptions, result);
+            }
             ((FluidResult) this.result).odeStateVec = analyzer.getXVecIt();
             ((FluidResult) this.result).snFinal = this.sn;
-            result.method = "rmf";
+            result.method = cacheClosure ? "minnormal" : "rmf";
+            if (cacheClosure && analyzer.lastMinNormal != null) {
+                MinNormalAnalyzer mn = analyzer.lastMinNormal;
+                FluidResult fr = (FluidResult) this.result;
+                fr.momentSigma = mn.sigmaMatrix;
+                fr.momentQVar = mn.qVar;
+                fr.momentClassBlock = mn.classBlock;
+                fr.momentStationBlock = mn.stationBlock;
+                fr.momentSigma2 = sigma2Matrix(mn.sigma2);
+                fr.momentSigma2Drift = sigma2Matrix(mn.sigma2Drift);
+                fr.momentOuterIters = mn.outerIters;
+            }
 
             // Store hit/miss probs on cache nodes
             FluidResult fluidResult = (FluidResult) this.result;
@@ -1279,14 +2356,20 @@ public class SolverFluid extends NetworkSolver {
         Matrix s0_sz = new Matrix(1, sn.state.size()); // Number of possible states for each station
         Matrix s0_id = s0_sz.copy(); // Used to iterate over all possible initial states
 
+        // s0_sz is read below at the STATEFUL index (s0_id.get(isf)), so it has to
+        // be filled in stateful order, as solver_fluid_analyzer.m does with
+        // cellfun over sn.space. Filling it in STATION order agreed with that
+        // only while every stateful node was a station; the MMT transformation
+        // puts a Router where every fork was, and the two orders then diverge.
         int i = 0;
-        for (Station station : this.model.getStations()) {
+        for (StatefulNode statefulNode : this.model.getStatefulNodes()) {
             // Use sn.space for state count (matching MATLAB sn.space), fall back to sn.state
-            Matrix spaceMatrix = (sn.space != null) ? sn.space.get(station) : null;
+            Matrix spaceMatrix = (sn.space != null) ? sn.space.get(statefulNode) : null;
             if (spaceMatrix != null && spaceMatrix.getNumRows() > 0) {
                 s0_sz.set(0, i, spaceMatrix.getNumRows());
             } else {
-                s0_sz.set(0, i, sn.state.get(station).getNumRows());
+                Matrix stateMatrix = sn.state.get(statefulNode);
+                s0_sz.set(0, i, stateMatrix == null ? 1 : stateMatrix.getNumRows());
             }
             i++;
         }
@@ -1301,6 +2384,15 @@ public class SolverFluid extends NetworkSolver {
                 if (sn.isstateful.get(ind) == 1) { // check if node is stateful
 
                     int isf = (int) sn.nodeToStateful.get(ind); // get stateful index of the node
+                    int istate = (int) sn.nodeToStation.get(ind);
+                    if (istate < 0) {
+                        // A stateful node that is not a station: a Router, which
+                        // the MMT transformation puts where every fork was. It
+                        // holds no jobs, so it contributes nothing to the initial
+                        // condition and has no station row to write back to.
+                        // solver_fluid_initsol.m skips it the same way.
+                        continue;
+                    }
 
                     // Update prior
                     s0prior_val *= sn.stateprior.get(this.model.getStatefulNodes().get(isf)).get((int) (s0_id.get(isf)));
@@ -1314,7 +2406,7 @@ public class SolverFluid extends NetworkSolver {
                                     null);
 
                     // Update the state of the node
-                    this.model.getStations().get((int) sn.nodeToStation.get(ind)).setState(newState);
+                    this.model.getStations().get(istate).setState(newState);
                 }
             }
 
@@ -1333,7 +2425,73 @@ public class SolverFluid extends NetworkSolver {
             if (s0prior_val > 0) {
                 // Clear init_sol so initSol() is called fresh for each state iteration
                 options.init_sol = new Matrix(1, 0);
-                runMethodSpecificAnalyzer(sn_cur); // run analyzer
+                // A non-hyperbolic fluid fixed point (balanced bottlenecks, a
+                // saturated multiclass station, an overloaded open station) leaves
+                // the linear noise approximation with no stationary covariance. It
+                // cannot be seen before the mean is solved, so
+                // FluidMinNormalApplicable cannot decline it and MinNormalAnalyzer
+                // throws at the Lyapunov step.
+                //
+                // THE LADDER HAS TWO RUNGS, AND THE FIRST ONE KEEPS THE CLOSURE.
+                // Most of these failures are not a property of the model at all:
+                // MinNormalAnalyzer must start its alternation at sigma2 = 0, where
+                // min(n,c) has no derivative, so a saturated or balanced model's
+                // first-order fixed point lands on the kink, sits on a continuum of
+                // equilibria, and the Jacobian there is neutral. DaeAnalyzer seeds
+                // the variance POSITIVE and never adopts sigma2 = 0 as an iterate,
+                // so the smoothed E[min(X,c)] breaks the degeneracy and the fixed
+                // point is isolated and hyperbolic -- it answers the same closure,
+                // with a covariance, where the alternation cannot. Dropping straight
+                // to first order instead is not merely a lost second moment: on a
+                // balanced two-station PS cycle at N=10 it returns [9 1] against the
+                // exact [5 5], because a first-order method has no reason to prefer
+                // one point of the continuum over another.
+                //
+                // The second rung is the first-order method, taken when dae declines
+                // the model in advance (FluidDaeApplicable) or throws on the same
+                // exception, which is the genuinely non-hyperbolic case: an unstable
+                // open station has no stationary distribution to approximate under
+                // any closure. Fall back whether "minnormal" was RESOLVED from
+                // "default" or REQUESTED outright: the closure has no stationary
+                // covariance either way, so refusing an explicit request would only
+                // deny the caller the mean that is still available. matrix is that
+                // method, except under DPS where closing is the one that applies.
+                try {
+                    runMethodSpecificAnalyzer(sn_cur); // run analyzer
+                } catch (FluidNonHyperbolicException e) {
+                    if (!options.method.equals("minnormal")) {
+                        throw e;
+                    }
+                    boolean solved = false;
+                    String daeReason = FluidDaeApplicable.reasonToDecline(sn_cur, options);
+                    if (daeReason == null) {
+                        String requested = options.method;
+                        options.method = "dae";
+                        options.init_sol = new Matrix(1, 0);
+                        try {
+                            runMethodSpecificAnalyzer(sn_cur);
+                            solved = true;
+                            line_debug(options.verbose,
+                                    "Fluid minnormal declined at the Lyapunov step (" + e.getMessage()
+                                            + "); falling back to dae");
+                        } catch (FluidNonHyperbolicException daeEx) {
+                            options.method = requested;
+                            line_debug(options.verbose,
+                                    "Fluid dae also declined at the Lyapunov step (" + daeEx.getMessage() + ")");
+                        }
+                    } else {
+                        line_debug(options.verbose,
+                                "Fluid dae not applicable as a fallback (" + daeReason + ")");
+                    }
+                    if (!solved) {
+                        options.method = hasDPS ? "closing" : "matrix";
+                        line_debug(options.verbose,
+                                "Fluid moment closure declined at the Lyapunov step (" + e.getMessage()
+                                        + "); falling back to " + options.method);
+                        options.init_sol = new Matrix(1, 0);
+                        runMethodSpecificAnalyzer(sn_cur);
+                    }
+                }
 
                 // Handles the results returned by the solver
 
@@ -1551,6 +2709,11 @@ public class SolverFluid extends NetworkSolver {
         result.method = finalMethod;
         // WN (waiting times) is not computed by the Fluid solver (matching MATLAB which passes [])
         this.setAvgResults(result.QN, result.UN, result.RN, result.TN, AN, new Matrix(0, 0), result.CN, result.XN, result.runtime, finalMethod, result.iter);
+        // The resolution of "default" is PER SOLVE, not a property of the solver:
+        // the non-hyperbolic fallback above fires only for a RESOLVED "default",
+        // so leaving the resolved name here would make a second solve request it
+        // explicitly. Matches @SolverFLD/runAnalyzer.m, which persists origMethod.
+        options.method = origMethod;
     }
 
     private SolverResult runMethodSpecificAnalyzer(NetworkStruct sn) {
@@ -1565,15 +2728,30 @@ public class SolverFluid extends NetworkSolver {
         Matrix gamma = new Matrix(M, 1);
         Matrix S = sn.nservers.copy();
 
+        // sn.visits is indexed by STATEFUL node, not by station, so the chain
+        // visits have to be read at each station's stateful row. Adding the
+        // matrices whole worked only while the two index spaces coincided, i.e.
+        // on a model with no stateful non-station node; the MMT transformation
+        // puts a Router where every fork was, and the shapes then disagree.
         Matrix V = new Matrix(M, K);
-        for (int i = 0; i < sn.visits.size(); i++) {
-            V = V.add(1, sn.visits.get(i));
+        for (int c = 0; c < sn.visits.size(); c++) {
+            Matrix Vc = sn.visits.get(c);
+            for (int i = 0; i < M; i++) {
+                int isf = (int) sn.stationToStateful.get(i);
+                if (isf < 0 || isf >= Vc.getNumRows()) {
+                    continue;
+                }
+                for (int k = 0; k < K; k++) {
+                    V.set(i, k, V.get(i, k) + Vc.get(isf, k));
+                }
+            }
         }
 
         FluidAnalyzer analyzer;
         switch (options.method) {
             case "statedep":
             case "closing":
+            case "softmin":
                 line_debug(options.verbose, "Using ClosingAndStateDepMethodsAnalyzer for fluid analysis");
                 analyzer = new ClosingAndStateDepMethodsAnalyzer();
                 break;
@@ -1582,12 +2760,34 @@ public class SolverFluid extends NetworkSolver {
                 analyzer = new TbiAnalyzer();
                 break;
             case "matrix":
+            case "pnorm":
                 line_debug(options.verbose, "Using MatrixMethodAnalyzer for fluid analysis");
                 analyzer = new MatrixMethodAnalyzer();
                 break;
             case "mfq":
                 line_debug(options.verbose, "Using MFQAnalyzer for fluid analysis");
                 analyzer = new MFQAnalyzer();
+                break;
+            case "minnormal":
+            // 'refined' is the SAME closure plus the O(1/N) correction of Gast
+            // (POMACS 2017), taken about the mean-field fixed point; the
+            // analyzer branches on the method name, as solver_fluid_moments.m
+            // does.
+            case "refined":
+                line_debug(options.verbose, "Using MinNormalAnalyzer for fluid analysis");
+                analyzer = new MinNormalAnalyzer();
+                break;
+            case "diffusion":
+                line_debug(options.verbose, "Using DiffusionAnalyzer for fluid analysis");
+                analyzer = new DiffusionAnalyzer();
+                break;
+            case "dae":
+                line_debug(options.verbose, "Using DaeAnalyzer for fluid analysis");
+                analyzer = new DaeAnalyzer();
+                break;
+            case "kp":
+                line_debug(options.verbose, "Using KoPenderAnalyzer for fluid analysis");
+                analyzer = new KoPenderAnalyzer();
                 break;
             default:
                 // Use default method as fallback
@@ -1601,6 +2801,59 @@ public class SolverFluid extends NetworkSolver {
         }
         analyzer.analyze(sn, options.copy(), result);
 
+        if (analyzer instanceof MinNormalAnalyzer) {
+            MinNormalAnalyzer mn = (MinNormalAnalyzer) analyzer;
+            FluidResult fr = (FluidResult) this.result;
+            fr.momentSigma = mn.sigmaMatrix;
+            fr.momentQVar = mn.qVar;
+            fr.momentClassBlock = mn.classBlock;
+            fr.momentStationBlock = mn.stationBlock;
+            fr.momentSigma2 = sigma2Matrix(mn.sigma2);
+            fr.momentSigma2Drift = sigma2Matrix(mn.sigma2Drift);
+            fr.momentOuterIters = mn.outerIters;
+        }
+
+        if (analyzer instanceof DaeAnalyzer) {
+            DaeAnalyzer da = (DaeAnalyzer) analyzer;
+            FluidResult fr = (FluidResult) this.result;
+            fr.momentSigma = da.sigmaMatrix;
+            fr.momentQVar = da.qVar;
+            fr.momentClassBlock = da.classBlock;
+            fr.momentStationBlock = da.stationBlock;
+            fr.momentSigma2 = sigma2Matrix(da.sigma2);
+            fr.momentSigma2Drift = sigma2Matrix(da.sigma2Drift);
+            fr.momentOuterIters = da.outerIters;
+            fr.daeResidual = da.residual;
+            fr.daeConverged = da.converged;
+            fr.daeConservation = da.conservation;
+            fr.daeCapacityLabel = da.capacityLabel;
+            fr.daeCapacityB = da.capacityB;
+            fr.daeCapacityValue = da.capacityValue;
+            fr.daeCapacityActive = da.capacityActive;
+            fr.daeStaging = da.staging;
+            fr.daeStagingRegion = da.stagingRegion;
+            fr.daeStagingClass = da.stagingClass;
+            fr.daeBlocked = da.blocked;
+            fr.daeDrain = da.drain;
+            fr.daeCapacityStaged = da.capacityStaged;
+            fr.daeCapacityRegion = da.capacityRegion;
+            fr.daeCapacityStation = da.capacityStation;
+            fr.daeCapacitySwitches = da.capacitySwitches;
+            // The transient second moment, on the SAME grid the mean was
+            // reported on, so the two need no interpolation onto one another.
+            fr.Sigmat = da.sigmat;
+            if (da.qVart != null) {
+                int mm = sn.nstations;
+                int kk = sn.nclasses;
+                fr.QVart = new Matrix[mm][kk];
+                for (int i = 0; i < mm; i++) {
+                    for (int k = 0; k < kk; k++) {
+                        fr.QVart[i][k] = da.qVart[i * kk + k];
+                    }
+                }
+            }
+        }
+
         // MFQ is handled by early return above; this is a safety check
         if (Objects.equals(options.method, "mfq")) {
             ((FluidResult) this.result).odeStateVec = analyzer.getXVecIt();
@@ -1608,8 +2861,10 @@ public class SolverFluid extends NetworkSolver {
             return this.result;
         }
 
-        // Single iteration is sufficient for statedep, so do nothing unless matrix or closing
-        if ((Objects.equals(options.method, "matrix")) || (Objects.equals(options.method, "closing"))) {
+        // Single iteration is sufficient for statedep, so do nothing unless matrix,
+        // closing or the moment closure, which shares the closing FCFS treatment
+        if ((Objects.equals(options.method, "matrix")) || (Objects.equals(options.method, "closing"))
+                || (Objects.equals(options.method, "minnormal"))) {
             if (sn.sched.containsValue(SchedStrategy.FCFS)) {
                 int iter = 0;
                 Matrix eta_1 = new Matrix(M, 1);
@@ -1773,14 +3028,19 @@ public class SolverFluid extends NetworkSolver {
             result.t.set(0, 0, 0.00000001);
         }
 
+        // A CLASS THE MODEL NEVER ROUTES HERE HAS NO RESPONSE TIME, and QN
+        // alone does not say so: it holds a remnant of the initial state the
+        // integrator was still draining when it stopped. See
+        // fluidVisitedPairs -- the visit ratios decide it, a threshold on QN
+        // or TN cannot.
+        boolean[][] visited = fluidVisitedPairs(sn, M, K);
         Matrix Ufull0 = result.UN.copy();
         for (int i = 0; i < M; i++) {
             List<Integer> sdCols = new LinkedList<>();
             for (int k = 0; k < K; k++) {
-                if (result.QN.get(i, k) > 0) {
+                if (result.QN.get(i, k) > 0 && visited[i][k]) {
                     sdCols.add(k);
-                }
-                if (result.QN.get(i, k) == 0) {
+                } else {
                     result.UN.set(i, k, 0);
                     result.RN.set(i, k, 0);
                 }
@@ -1810,7 +3070,17 @@ public class SolverFluid extends NetworkSolver {
                                             result.QN.get(i, k) / sn.nservers.get(i, 0),
                                             sumUfull0sd * result.TN.get(i, k) / rates0.get(i, k) / sumTNDivRates0sd)));
                     result.UNt[i][k].scaleEq(sn.rates.get(i, k) * sn.nservers.get(i, 0), result.TNt[i][k]);
-                    result.RN.set(i, k, (result.QN.get(i, k) / result.TN.get(i, k)));
+                    // NO DEPARTURES MEANS NO RESIDENCE TIME TO READ, and a QN the
+                    // integrator has not finished draining must not be divided by a TN of
+                    // the same origin: the ratio is O(1) and the residual QN is rounded
+                    // away later, leaving a queue length of 0 beside a response time of 10.
+                    // The pairs the model never routes to are out of sdCols already; this
+                    // guards what is left. MinNormalAnalyzer guards its own division too.
+                    if (result.TN.get(i, k) > GlobalConstants.Zero) {
+                        result.RN.set(i, k, (result.QN.get(i, k) / result.TN.get(i, k)));
+                    } else {
+                        result.RN.set(i, k, 0);
+                    }
                 }
             }
         }
@@ -1855,6 +3125,111 @@ public class SolverFluid extends NetworkSolver {
 
     public SolverResult runMethodSpecificAnalyzer() {
         return runMethodSpecificAnalyzer(this.sn);
+    }
+
+    /**
+     * Solves a fork-join model through the solver-agnostic fixed point.
+     *
+     * <p>The MMT transformation turns every fork into a router, every join into
+     * a zero-service delay, and carries the parallelism on auxiliary open
+     * classes; the resulting network is built from Source, Delay, Queue, Router
+     * and ClassSwitch alone, every one of which the fluid drift already carries.
+     * Nothing in the loop is fluid-specific, so the driver is the one MVA and NC
+     * use ({@link jline.solvers.fj.FJFixedPoint}).</p>
+     *
+     * <p>Only the steady-state means are produced. The transient tables are
+     * indexed by the ORIGINAL stations and classes, whereas each pass integrates
+     * a different transformed network, so getTranAvg stays unavailable on a
+     * fork-join model.</p>
+     *
+     * @param startTime the wall-clock marker of the enclosing analyzer
+     */
+    private void runForkJoinAnalyzer(long startTime) {
+        jline.solvers.fj.FJFixedPoint.FJState fjState =
+                new jline.solvers.fj.FJFixedPoint.FJState(null, null);
+        jline.solvers.fj.FJFixedPoint.FJOutcome fjOut = jline.solvers.fj.FJFixedPoint.run(
+                this.model, this.model.getStruct(true), this.options, fjState,
+                new jline.solvers.fj.FJFixedPoint.InnerSolve() {
+                    @Override
+                    public jline.solvers.mva.MVAResult solve(Network net, NetworkStruct snIn,
+                                                             SolverOptions opts) {
+                        return SolverFluid.this.fldDispatch(net, snIn, opts);
+                    }
+                }, startTime);
+        jline.solvers.mva.MVAResult fjRet = fjOut.ret;
+        // The driver leaves the transformed struct behind; the tail below indexes
+        // the ORIGINAL stations and classes, so recompile it.
+        this.sn = this.model.getStruct(true);
+        // The transform appends its own Source to carry the auxiliary open
+        // classes, so the metrics come back with one row per TRANSFORMED station.
+        // The original stations are the prefix of that list; trim the rest.
+        int Mfj = this.sn.nstations;
+        fjRet.QN = trimToStations(fjRet.QN, Mfj);
+        fjRet.UN = trimToStations(fjRet.UN, Mfj);
+        fjRet.RN = trimToStations(fjRet.RN, Mfj);
+        fjRet.TN = trimToStations(fjRet.TN, Mfj);
+        AvgHandle TH = getAvgTputHandles();
+        Matrix AN = snGetArvRFromTput(this.sn, fjRet.TN, TH);
+        double runtimeFj = (System.nanoTime() - startTime) / 1000000000.0;
+        // Only setAvgResults writes the result matrices: it trims the transformed
+        // model's extra rows (its own Source) back to the original stations, so
+        // assigning result.QN directly here would leak that row to the caller.
+        ((FluidResult) this.result).snFinal = this.sn;
+        this.setAvgResults(fjRet.QN, fjRet.UN, fjRet.RN, fjRet.TN, AN, new Matrix(0, 0),
+                fjRet.CN, fjRet.XN, runtimeFj, options.method, fjOut.iter);
+    }
+
+    /** Keeps the first {@code M} station rows of a metric matrix. */
+    private static Matrix trimToStations(Matrix metric, int M) {
+        if (metric == null || metric.getNumRows() <= M) {
+            return metric;
+        }
+        return Matrix.extractRows(metric, 0, M, null);
+    }
+
+    /**
+     * One inner solve of the fluid analyzer, in the contract
+     * {@link jline.solvers.fj.FJFixedPoint} expects.
+     *
+     * <p>The transformed model is solved by a fresh SolverFluid built on it
+     * rather than by reusing this one: initSol keys sn.state by the node objects
+     * of the model the struct came from, so this solver, which holds the
+     * ORIGINAL model, cannot integrate the transformed struct. The transformed
+     * model has no fork, so this call takes the ordinary path and never
+     * re-enters the fixed point.</p>
+     *
+     * @param net the transformed network
+     * @param snIn its struct
+     * @param opts the solver options
+     * @return the metrics of that solve
+     */
+    private jline.solvers.mva.MVAResult fldDispatch(Network net, NetworkStruct snIn,
+                                                    SolverOptions opts) {
+        long t0 = System.nanoTime();
+        SolverOptions o = opts.copy();
+        o.init_sol = new Matrix(1, 0);
+        // The fluid ODE integrates from an initial condition, so the transformed
+        // model must carry a consistent state, stateprior and space triple. The
+        // transform builds the model but not its state, and the driver rebuilds
+        // the struct on every pass, so seed it here rather than in the
+        // solver-agnostic driver, which MVA and NC share and which never reads
+        // the state at all.
+        net.initDefault();
+        SolverFluid inner = new SolverFluid(net, o);
+        inner.runAnalyzer();
+        jline.solvers.mva.MVAResult out = new jline.solvers.mva.MVAResult();
+        out.QN = inner.result.QN;
+        out.UN = inner.result.UN;
+        out.RN = inner.result.RN;
+        out.TN = inner.result.TN;
+        out.CN = inner.result.CN;
+        out.XN = inner.result.XN;
+        // The fluid solver produces no normalizing constant.
+        out.logNormConstAggr = Double.NaN;
+        out.runtime = (System.nanoTime() - t0) / 1000000000.0;
+        out.iter = inner.result.iter;
+        out.method = o.method;
+        return out;
     }
 
     /**
@@ -1996,8 +3371,56 @@ public class SolverFluid extends NetworkSolver {
      *
      * @return array of valid method names
      */
+    /**
+     * Transient queue-length VARIANCE per station and class, [stations][classes].
+     *
+     * <p>Only the "kp" method computes a second moment: it integrates the covariance of the
+     * Ko-Pender diffusion limit alongside the fluid mean. The full state covariance, which
+     * keeps cross-station and cross-class terms, is on {@code result.Sigmat}.
+     *
+     * @throws RuntimeException if the solver is not configured with options.method = "kp"
+     */
+    public Matrix[][] getTranAvgVar() {
+        if (!"kp".equals(options.method)) {
+            line_error(mfilename(new Object() {
+            }), "getTranAvgVar needs options.method = \"kp\"; the other fluid methods "
+                    + "integrate the mean only and carry no second moment.");
+        }
+        if (!(result instanceof FluidResult) || ((FluidResult) result).QVart == null) {
+            getTranAvg();
+        }
+        return ((FluidResult) result).QVart;
+    }
+
     public String[] listValidMethods() {
-        return new String[]{"default", "softmin", "statedep", "closing", "matrix", "mfq", "rmf", "tbi"};
+        // Every method the dispatch accepts, INCLUDING the 'fluid.'-qualified
+        // spelling of each, which is the set MATLAB, native python and the C++
+        // port all advertise. 'butools' (the MFQ backend) and 'aoi' (its
+        // age-of-information reading) are aliases of 'mfq'. 'pnorm', 'diffusion'
+        // and 'refined' were the three methods this port did not carry at all
+        // and are now served by MatrixMethodODE's p-norm smoothing, by
+        // DiffusionAnalyzer and by MinNormalAnalyzer's refined branch.
+        return new String[]{"default",
+                "matrix", "fluid.matrix", "pnorm", "fluid.pnorm",
+                "softmin", "fluid.softmin",
+                "statedep", "fluid.statedep",
+                "closing", "fluid.closing",
+                "minnormal", "fluid.minnormal",
+                "refined", "fluid.refined",
+                "tbi", "fluid.tbi",
+                "diffusion", "fluid.diffusion",
+                "mfq", "fluid.mfq", "butools",
+                "rmf", "fluid.rmf",
+                "aoi", "fluid.aoi",
+                "kp", "fluid.kp",
+                "dae", "fluid.dae",
+                // The single-station fluid limits (Source -> Queue -> Sink, one
+                // class). QsysLimitAnalyzer refuses any other shape by name.
+                // "ggisgi" and "tga" are the SHORT spellings, mapped onto the
+                // two primary names as the C++ fluid_qsys_canonical does
+                "ggisgi.fluid", "fluid.ggisgi", "ggisgi",
+                "ggingi.tga", "fluid.tga", "tga",
+                "tvms", "fluid.tvms", "mtginf", "fluid.mtginf", "mol", "fluid.mol"};
     }
 
     /**
@@ -2006,13 +3429,90 @@ public class SolverFluid extends NetworkSolver {
      * @param options solver options containing method specification
      * @throws RuntimeException if model contains unsupported features or method is invalid
      */
+    /** Whether the model holds a Transition node, i.e. is a stochastic Petri net. */
+    private static boolean isPetriNet(jline.lang.NetworkStruct sn) {
+        if (sn == null || sn.nodetype == null) {
+            return false;
+        }
+        for (int i = 0; i < sn.nodetype.size(); i++) {
+            if (sn.nodetype.get(i) == jline.lang.constant.NodeType.Transition) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The 'dae' method's Petri arm.
+     *
+     * <p>'dae' is the ONLY fluid method that can carry a net: the P-invariants, the firing flow of
+     * an immediate transition and a bounded place are all EQUATIONS, and the other methods have
+     * nowhere to put them. A method named explicitly is therefore checked rather than silently
+     * redirected, so a caller who asked for 'closing' on a net is told why it cannot answer.
+     */
+    private void runPetriAnalyzer() {
+        String m = fluidUnqualify(this.options.method);
+        if (!("default".equals(m) || "dae".equals(m))) {
+            throw new RuntimeException("SolverFLD method '" + this.options.method
+                    + "' cannot solve a Petri net: its conserved quantities are P-invariants "
+                    + "rather than chain populations, an immediate transition is an algebraic "
+                    + "FLOW rather than an event with a rate, and a bounded place is a linear "
+                    + "inequality on the marking. Only 'dae' states those as equations; every "
+                    + "other fluid method builds its drift from the station/class/phase encoding, "
+                    + "where a Place contributes no coordinate at all, and would integrate the "
+                    + "net as an empty model and report zeros without a warning.");
+        }
+        jline.lang.NetworkStruct sn = this.model.getStruct(false);
+        jline.solvers.fluid.petri.PetriSolver.Result pr =
+                new jline.solvers.fluid.petri.PetriSolver(sn, this.options).solve();
+        for (String w : pr.warnings) {
+            line_warning(this.getName(), "%s", w);
+        }
+        int M = sn.nstations;
+        int K = sn.nclasses;
+        Matrix CN = new Matrix(1, K);
+        Matrix XN = new Matrix(1, K);
+        for (int k = 0; k < K; k++) {
+            double q = 0.0;
+            double x = 0.0;
+            for (int i = 0; i < M; i++) {
+                q += pr.QN.get(i, k);
+                x = Math.max(x, pr.TN.get(i, k));
+            }
+            XN.set(0, k, x);
+            CN.set(0, k, (x > jline.GlobalConstants.Zero) ? q / x : 0.0);
+        }
+        this.setAvgResults(pr.QN, pr.UN, pr.RN, pr.TN, new Matrix(0, 0), new Matrix(0, 0),
+                CN, XN, pr.runtime, "dae", pr.iters);
+        FluidResult fr = (FluidResult) this.result;
+        fr.momentSigma = pr.Sigma;
+        fr.momentQVar = pr.QVar;
+        fr.daeResidual = pr.resnorm;
+        fr.daeConverged = pr.converged;
+        fr.petri = pr.petri;
+    }
+
     public void runAnalyzerChecks(SolverOptions options) {
         // Propagate solver verbose level to global
         if (options != null) {
             GlobalConstants.Verbose = options.verbose;
         }
-        // Check if model is supported by this solver
-        if (!supports(this.model)) {
+        // THE COARSE GATE, and it is method-agnostic: supports() reads the STATIC
+        // SolverFluid.getFeatureSet, not getMethodFeatureSet. The method-aware
+        // gate is strictly finer -- it starts from the same static set and then
+        // narrows it per method -- so the two can only disagree where a method
+        // WIDENS the set, and 'dae' is the one that does: it declares Region,
+        // which the static set must keep false because every other method has to
+        // go on rejecting a finite capacity region. Deferring to the finer
+        // verdict for that method is what lets the declaration stand; this check
+        // runs unchanged for every other method.
+        // The single-station fluid limits widen the set too: three of them
+        // declare Reneging, which the static set must keep false because the
+        // network drift carries no abandonment flow.
+        boolean isDae = options != null
+                && ("dae".equals(options.method) || "fluid.dae".equals(options.method)
+                    || QsysLimitAnalyzer.handles(options.method));
+        if (!isDae && !supports(this.model)) {
             throw new RuntimeException("This model contains features not supported by the Fluid solver.");
         }
         
@@ -2059,14 +3559,6 @@ public class SolverFluid extends NetworkSolver {
             throw new RuntimeException("State-dependent method does not support mixed open/closed class models.");
         }
         
-        // Check for unsupported Fork/Join nodes
-        for (int i = 0; i < sn.nnodes; i++) {
-            NodeType nodeType = sn.nodetype.get(i);
-            if (nodeType == NodeType.Fork || nodeType == NodeType.Join) {
-                throw new RuntimeException("SolverFluid does not support Fork and Join nodes. " +
-                        "Use SolverMVA or SolverJMT for fork-join models.");
-            }
-        }
     }
 
     /**
@@ -2278,208 +3770,47 @@ public class SolverFluid extends NetworkSolver {
 
     /**
      * Get cumulative distribution function for passage time.
-     * This method computes passage time distributions for job classes
-     * based on completion events at each station.
-     * 
+     *
+     * <p>Delegates verbatim to {@link #getCdfRespT()}, as the reference
+     * {@code @SolverFLD/getCdfPassT.m} does: for the fluid solver the passage
+     * time and the response time are the same second ODE solve from the
+     * steady-state fixed point.</p>
+     *
      * @return DistributionResult containing the passage time CDF data
      */
     @Override
     public DistributionResult getCdfPassT() {
-        long startTime = System.nanoTime();
-        
-        // Get response time handles
-        AvgHandle R = getAvgRespTHandles();
-        
-        // Get network structure
-        NetworkStruct sn = getStruct();
-        
-        // Initialize completion matrix
-        Matrix completes = new Matrix(sn.nnodes, sn.nclasses);
-        
-        // Determine which station-class pairs have completion events
-        for (int i = 0; i < sn.nstations; i++) {
-            for (int r = 0; r < sn.nclasses; r++) {
-                if (R.hasMetric(this.model.getStations().get(i), sn.jobclasses.get(r))) {
-                    // Check if this handle has completion events configured
-                    // Note: In Java implementation, we simplify the completion logic
-                    // compared to MATLAB which has more complex handle introspection
-                    completes.set(i, r, 1.0);
-                }
-            }
-        }
-        
-        // Get current solution state vector if available
-        Matrix odeStateVec = null;
-        if (this.result != null && this.result instanceof FluidResult) {
-            FluidResult fluidResult = (FluidResult) this.result;
-            if (fluidResult.odeStateVec != null && !fluidResult.odeStateVec.isEmpty()) {
-                odeStateVec = fluidResult.odeStateVec;
-            }
-        }
-        
-        // If no state vector available, initialize solution first
-        if (odeStateVec == null) {
-            if (!hasAvgResults()) {
-                getAvg(); // Compute steady-state solution first
-            }
-            if (this.result instanceof FluidResult) {
-                odeStateVec = ((FluidResult) this.result).odeStateVec;
-            }
-        }
-        
-        if (odeStateVec == null || odeStateVec.isEmpty()) {
-            throw new RuntimeException("Unable to obtain fluid state vector for passage time analysis. " +
-                    "Ensure the model has been solved first.");
-        }
-        
-        // For passage time analysis, we use the existing passage time infrastructure
-        Matrix[][] passageTimeResults = passageTime();
-        
-        // Extract the CDF results from the passage time analysis
-        // passageTime() returns Matrix[M][K] where each entry contains [time, CDF] columns
-        Matrix CDc = new Matrix(0, 0);
-        
-        if (passageTimeResults != null && passageTimeResults.length > 0) {
-            // Combine results from all stations and classes
-            int totalResults = 0;
-            for (int i = 0; i < passageTimeResults.length; i++) {
-                for (int k = 0; k < passageTimeResults[i].length; k++) {
-                    if (passageTimeResults[i][k] != null && !passageTimeResults[i][k].isEmpty()) {
-                        totalResults++;
-                    }
-                }
-            }
-            
-            if (totalResults > 0) {
-                // For simplicity, return the first non-empty result
-                // A more sophisticated implementation could aggregate results
-                for (int i = 0; i < passageTimeResults.length; i++) {
-                    for (int k = 0; k < passageTimeResults[i].length; k++) {
-                        if (passageTimeResults[i][k] != null && !passageTimeResults[i][k].isEmpty()) {
-                            CDc = passageTimeResults[i][k];
-                            break;
-                        }
-                    }
-                    if (!CDc.isEmpty()) {
-                        break;
-                    }
-                }
-            }
-        }
-        
-        // If no results obtained, create a default result
-        if (CDc.isEmpty()) {
-            CDc = new Matrix(1, 2);
-            CDc.set(0, 0, 0.0); // time = 0
-            CDc.set(0, 1, 1.0); // CDF = 1 (instantaneous completion)
-        }
-        
-        double runtime = (System.nanoTime() - startTime) / 1000000000.0;
-        setFluidDistribResults(CDc, runtime);
-        
-        return new DistributionResult(sn.nstations, sn.nclasses, "passage_time");
+        return getCdfRespT();
     }
 
     /**
      * Get cumulative distribution function for passage time with specific response time handles.
-     * This method computes passage time distributions for job classes
-     * based on completion events at each station using the provided handles.
-     * 
-     * @param R the response time handles to use for the analysis
+     *
+     * <p>The handle only names which metrics the caller wants; the passage-time
+     * solve computes every (station, class) anyway, exactly as the reference,
+     * so it is accepted for signature compatibility and not read.</p>
+     *
+     * @param R the response time handles, accepted for signature compatibility
      * @return DistributionResult containing the passage time CDF data
      */
     @Override
     public DistributionResult getCdfPassT(AvgHandle R) {
-        long startTime = System.nanoTime();
-        
-        // Get network structure
-        NetworkStruct sn = getStruct();
-        
-        // Initialize completion matrix
-        Matrix completes = new Matrix(sn.nnodes, sn.nclasses);
-        
-        // Determine which station-class pairs have completion events
-        for (int i = 0; i < sn.nstations; i++) {
-            for (int r = 0; r < sn.nclasses; r++) {
-                if (R.hasMetric(this.model.getStations().get(i), sn.jobclasses.get(r))) {
-                    // Check if this handle has completion events configured
-                    // Note: In Java implementation, we simplify the completion logic
-                    // compared to MATLAB which has more complex handle introspection
-                    completes.set(i, r, 1.0);
-                }
-            }
-        }
-        
-        // Get current solution state vector if available
-        Matrix odeStateVec = null;
-        if (this.result != null && this.result instanceof FluidResult) {
-            FluidResult fluidResult = (FluidResult) this.result;
-            if (fluidResult.odeStateVec != null && !fluidResult.odeStateVec.isEmpty()) {
-                odeStateVec = fluidResult.odeStateVec;
-            }
-        }
-        
-        // If no state vector available, initialize solution first
-        if (odeStateVec == null) {
-            if (!hasAvgResults()) {
-                getAvg(); // Compute steady-state solution first
-            }
-            if (this.result instanceof FluidResult) {
-                odeStateVec = ((FluidResult) this.result).odeStateVec;
-            }
-        }
-        
-        if (odeStateVec == null || odeStateVec.isEmpty()) {
-            throw new RuntimeException("Unable to obtain fluid state vector for passage time analysis. " +
-                    "Ensure the model has been solved first.");
-        }
-        
-        // For passage time analysis, we use the existing passage time infrastructure
-        Matrix[][] passageTimeResults = passageTime();
-        
-        // Extract the CDF results from the passage time analysis
-        // passageTime() returns Matrix[M][K] where each entry contains [time, CDF] columns
-        Matrix CDc = new Matrix(0, 0);
-        
-        if (passageTimeResults != null && passageTimeResults.length > 0) {
-            // Combine results from all stations and classes
-            int totalResults = 0;
-            for (int i = 0; i < passageTimeResults.length; i++) {
-                for (int k = 0; k < passageTimeResults[i].length; k++) {
-                    if (passageTimeResults[i][k] != null && !passageTimeResults[i][k].isEmpty()) {
-                        totalResults++;
-                    }
-                }
-            }
-            
-            if (totalResults > 0) {
-                // For simplicity, return the first non-empty result
-                // A more sophisticated implementation could aggregate results
-                for (int i = 0; i < passageTimeResults.length; i++) {
-                    for (int k = 0; k < passageTimeResults[i].length; k++) {
-                        if (passageTimeResults[i][k] != null && !passageTimeResults[i][k].isEmpty()) {
-                            CDc = passageTimeResults[i][k];
-                            break;
-                        }
-                    }
-                    if (!CDc.isEmpty()) {
-                        break;
-                    }
-                }
-            }
-        }
-        
-        // If no results obtained, create a default result
-        if (CDc.isEmpty()) {
-            CDc = new Matrix(1, 2);
-            CDc.set(0, 0, 0.0); // time = 0
-            CDc.set(0, 1, 1.0); // CDF = 1 (instantaneous completion)
-        }
-        
-        double runtime = (System.nanoTime() - startTime) / 1000000000.0;
-        setFluidDistribResults(CDc, runtime);
-        
-        return new DistributionResult(sn.nstations, sn.nclasses, "passage_time");
+        return getCdfRespT();
+    }
+
+    /**
+     * Backward-compatible name for {@link #getCdfPassT()}, to which this
+     * delegates -- the {@code @SolverFLD/getCdfPT.m} twin.
+     *
+     * @return DistributionResult containing the passage time CDF data
+     */
+    public DistributionResult getCdfPT() {
+        return getCdfPassT();
+    }
+
+    /** Backward-compatible name for {@link #getCdfPassT(AvgHandle)}. */
+    public DistributionResult getCdfPT(AvgHandle R) {
+        return getCdfPassT(R);
     }
 
     /**
@@ -2582,7 +3913,7 @@ public class SolverFluid extends NetworkSolver {
      * Get CDF of Age of Information.
      *
      * <p>Computes the cumulative distribution function of AoI and Peak AoI
-     * using matrix exponential representations: F(t) = 1 - g * expm(A*t) * h</p>
+     * using matrix exponential representations: F(t) = 1 + g * expm(A*t) * inv(A) * h</p>
      *
      * @param tValues Time values at which to evaluate CDF. If null, uses
      *               automatic range based on mean AoI (0 to 5*mean, 200 points).
@@ -2627,11 +3958,16 @@ public class SolverFluid extends NetworkSolver {
 
         int n = tValues.getNumRows();
 
-        // Compute AoI CDF: F(t) = 1 - g * expm(A*t) * h
+        // Compute AoI CDF: F(t) = 1 - S(t), S(t) = -g * expm(A*t) * inv(A) * h.
+        // (g,A,h) is a DENSITY triple -- g is normalized by -g*inv(A)*h, so
+        // g*expm(A*t)*h is the density and g*inv(A)^2*h the mean -- and the
+        // survival function carries the extra inv(A). Subtracting the density
+        // gives a curve that falls before it rises, which is not a CDF.
         Matrix aoiCdf = new Matrix(n, 2);
         Matrix aoiG = aoi.getAoiG();
         Matrix aoiA = aoi.getAoiA();
         Matrix aoiH = aoi.getAoiH();
+        Matrix aoiAinvH = aoiA.inv().mult(aoiH);
 
         for (int i = 0; i < n; i++) {
             double t = tValues.get(i, 0);
@@ -2640,16 +3976,17 @@ public class SolverFluid extends NetworkSolver {
                 aoiCdf.set(i, 0, 0.0);
             } else {
                 Matrix expAt = aoiA.scale(t).expm();
-                double ccdf = aoiG.mult(expAt).mult(aoiH).get(0, 0);
-                aoiCdf.set(i, 0, Math.max(0, Math.min(1, 1.0 - ccdf)));
+                double surv = aoiG.mult(expAt).mult(aoiAinvH).get(0, 0);
+                aoiCdf.set(i, 0, Math.max(0, Math.min(1, 1.0 + surv)));
             }
         }
 
-        // Compute Peak AoI CDF
+        // Compute Peak AoI CDF: the same survival form as above
         Matrix paoiCdf = new Matrix(n, 2);
         Matrix paoiG = aoi.getPaoiG();
         Matrix paoiA = aoi.getPaoiA();
         Matrix paoiH = aoi.getPaoiH();
+        Matrix paoiAinvH = paoiA.inv().mult(paoiH);
 
         for (int i = 0; i < n; i++) {
             double t = tValues.get(i, 0);
@@ -2658,8 +3995,8 @@ public class SolverFluid extends NetworkSolver {
                 paoiCdf.set(i, 0, 0.0);
             } else {
                 Matrix expAt = paoiA.scale(t).expm();
-                double ccdf = paoiG.mult(expAt).mult(paoiH).get(0, 0);
-                paoiCdf.set(i, 0, Math.max(0, Math.min(1, 1.0 - ccdf)));
+                double surv = paoiG.mult(expAt).mult(paoiAinvH).get(0, 0);
+                paoiCdf.set(i, 0, Math.max(0, Math.min(1, 1.0 + surv)));
             }
         }
 
@@ -2685,7 +4022,7 @@ public class SolverFluid extends NetworkSolver {
     }
 
     /**
-     * Get sojourn time CDF. Lowercase Kotlin-style alias for getSjrnT().
+     * Get sojourn time CDF. Lowercase alias for getSjrnT.
      *
      * @return DistributionResult containing response time CDFs
      */
@@ -2706,5 +4043,71 @@ public class SolverFluid extends NetworkSolver {
             libs.add("rmf_tool");
         }
         return libs;
+    }
+
+    /**
+     * Mark the (station, class) pairs the model actually routes a job into,
+     * read off the per-chain visit ratios sn.visits.
+     *
+     * A fluid result cannot decide that question from the SIZE of QN or TN.
+     * Both carry a decaying remnant of the initial state, spread over pairs the
+     * class never reaches, and the remnant is whatever the integrator left
+     * behind when it stopped: measured at QN = 1.3e-12 and TN = 1.3e-13 on
+     * picard05 for test_CQN_Cox_CS_7, i.e. ABOVE GlobalConstants.Zero, so a
+     * threshold on them divides one remnant by the other and reports the
+     * station's own service time, 10.0000086, as a response time. The visit
+     * ratios come from the routing solve instead, where an unrouted pair is
+     * zero to the last bits (2.7e-17 on that pair).
+     *
+     * sn.visits is indexed by STATEFUL node, hence the stationToStateful
+     * lookup. A struct carrying no visit information decides nothing and every
+     * pair is reported visited. Mirrors fluid_visited_pairs.m.
+     */
+    private static boolean[][] fluidVisitedPairs(NetworkStruct sn, int M, int K) {
+        boolean[][] visited = new boolean[M][K];
+        boolean haveVisits = false;
+        int maxCols = 0;
+        if (sn.visits != null) {
+            for (Matrix Vc : sn.visits.values()) {
+                if (Vc == null || Vc.isEmpty()) {
+                    continue;
+                }
+                haveVisits = true;
+                maxCols = Math.max(maxCols, Vc.getNumCols());
+                for (int i = 0; i < M; i++) {
+                    // stationToStateful is a row vector here, read linearly as elsewhere
+                    boolean haveMap = sn.stationToStateful != null
+                            && i < sn.stationToStateful.length();
+                    int isf = haveMap ? (int) sn.stationToStateful.get(i) : i;
+                    if (isf < 0 || isf >= Vc.getNumRows()) {
+                        for (int k = 0; k < K; k++) {
+                            visited[i][k] = true;
+                        }
+                        continue;
+                    }
+                    for (int k = 0; k < K && k < Vc.getNumCols(); k++) {
+                        if (Math.abs(Vc.get(isf, k)) > GlobalConstants.Zero) {
+                            visited[i][k] = true;
+                        }
+                    }
+                }
+            }
+        }
+        if (!haveVisits) {
+            for (int i = 0; i < M; i++) {
+                for (int k = 0; k < K; k++) {
+                    visited[i][k] = true;
+                }
+            }
+        } else if (maxCols < K) {
+            // A class NO visit matrix reaches is not evidence of a non-visit, only of
+            // a struct whose visits were refreshed against fewer classes.
+            for (int i = 0; i < M; i++) {
+                for (int k = maxCols; k < K; k++) {
+                    visited[i][k] = true;
+                }
+            }
+        }
+        return visited;
     }
 }

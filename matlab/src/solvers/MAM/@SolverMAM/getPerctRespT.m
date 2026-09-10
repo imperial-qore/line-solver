@@ -26,6 +26,13 @@ function [PercRT, PercTable] = getPerctRespT(self, percentiles, jobclass, method
 
 % The forktail method is topology-driven, not solver-specific: hand it back
 % to the base implementation rather than duplicating it here.
+
+% lang='cpp' needs no arm here: every branch below reads either the FJ_codes
+% percentiles getAvg already stored or the CDF from getCdfRespT, and both are
+% served from line-cli under lang='cpp'. The percentile is an INTERPOLATION of
+% those, so doing it here keeps one implementation of the interpolation rule
+% rather than trusting two to round the same way.
+
 if nargin >= 4 && ~isempty(method) && ~strcmpi(method, 'default')
     if nargin < 3
         jobclass = [];

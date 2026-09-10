@@ -47,6 +47,11 @@ classdef NetworkSolver < Solver
         % ('cdf', 'forktail', ...), so that citations() can report the paper
         % behind a tail estimate the user actually asked for.
         lastPerctMethod = '';
+
+        % Permanent engine of the last getProbSysMarg call ('exact', 'bethe',
+        % ...), so that citations() reports the estimator that produced the
+        % number rather than only the identity behind the metric.
+        lastPermEngine = '';
     end
 
     properties (Access = public)
@@ -80,8 +85,26 @@ classdef NetworkSolver < Solver
             end
             self.result = [];
 
+            % Chain mode (SolverCTMC on a user-supplied MarkovProcess or
+            % MarkovChain): the model carries no stations or classes, so there
+            % are no average-metric handles to initialize.
+            if isa(model,'MarkovProcess') || isa(model,'MarkovChain')
+                return
+            end
+
             if isempty(model.obj) % not a Java object
                 initHandles(self)
+            end
+        end
+
+        function assertNotChainModel(self, callerName)
+            % ASSERTNOTCHAINMODEL(CALLERNAME)
+            % Guard for the average-metric entry points: a solver built from a
+            % MarkovProcess or a MarkovChain has no stations and no classes.
+            if isa(self.model,'MarkovProcess') || isa(self.model,'MarkovChain')
+                line_error(mfilename,['%s requires a Network model. This solver was built from a %s, ', ...
+                    'which has no stations or classes: use getProbSys, getGenerator, getStateSpace, ', ...
+                    'getTranProbSys or sampleSys instead.'], callerName, class(self.model));
             end
         end
 
@@ -114,6 +137,19 @@ classdef NetworkSolver < Solver
                         self.model.obj = JLINE.line_to_jline(self.model);
                     end
                     switch self.name
+                        case 'SolverAG'
+                            % Registered for the same reason as SolverBA below.
+                            % @SolverAG/runAnalyzer.m carries its own lang='java'
+                            % branch, but getAvgTable never reaches it: getAvg
+                            % short-circuits into the generic self.obj path first.
+                            self.obj = JLINE.SolverAG(self.model.obj, joptions);
+                        case 'SolverBA'
+                            % Registered so @NetworkSolver/getAvg.m's lang='java'
+                            % branch has a JLINE object to call. Without this
+                            % self.obj stays a struct and getAvg dies on
+                            % "Unrecognized field name getAvg" before
+                            % @SolverBA/runAnalyzer.m is ever reached.
+                            self.obj = JLINE.SolverBA(self.model.obj, joptions);
                         case 'SolverCTMC'
                             self.obj = JLINE.SolverCTMC(self.model.obj, joptions);
                         case 'SolverLDES'
@@ -159,7 +195,7 @@ classdef NetworkSolver < Solver
             % refreshStruct is called lazily by model.getStruct() when first needed
         end
 
-        function self = runAnalyzerChecks(self, options)
+        function verboseGuard = runAnalyzerChecks(self, options)
             % Single, method-aware feature gate shared by every solver.
             % It resolves the concrete method that will actually run (for
             % options.method='default' this may map to a specific method via
@@ -171,16 +207,47 @@ classdef NetworkSolver < Solver
             % per-solver overrides without changing their behavior.
 
             % Propagate solver verbose level to global so that model-level
-            % messages (e.g., priority info in refreshStruct) respect it
-            GlobalConstants.setVerbose(options.verbose);
+            % messages (e.g., priority info in refreshStruct) respect it. The
+            % returned guard restores the caller's level when the analyzer
+            % returns, so a nested solver run at verbose=0 (an ensemble stage,
+            % an inner solver of AUTO or LN) cannot silence the session that
+            % invoked it. Callers must hold the output for the whole analysis.
+            %
+            % IN EACH BRANCH THE CONSOLE RUN OPENS BEFORE pushVerbose, and the
+            % order matters. LineConsole resolves whether to narrate from the
+            % run's own options.verbose AND, when that is a mere logical (which
+            % cannot name DEBUG), from the SESSION level -- but pushVerbose has
+            % by then replaced the session level with the run's own value, so
+            % reading it afterwards asks the run about itself, and
+            % 'verbose',true silenced the console at a session that had
+            % explicitly asked for DEBUG.
             if ~self.enableChecks
+                % Both guards must be held by the caller for the whole analysis:
+                % the console one closes the run, printing the summary, when the
+                % analyzer returns or errors.
+                consoleGuard = LineConsole.beginRun(self, options);
+                verboseGuard = [GlobalConstants.pushVerbose(options.verbose), consoleGuard];
                 return;
             end
             if ~any(cellfun(@(s) strcmp(s,options.method),self.listValidMethods))
+                % A solver that can SAY something about the name says it
+                % instead. This gate sits above every dispatcher, so without
+                % the ask it silently outranks them: SolverMAM's "the inap
+                % method moved to SolverAG" and SolverCTMC's QRF forwarding
+                % address both sit downstream of here and never reached a
+                % caller, who was told only that the method was unsupported and
+                % left to find the new solver on their own.
+                moved = self.unsupportedMethodReason(options.method);
+                if ~isempty(moved)
+                    line_error(mfilename, moved);
+                end
                 line_error(mfilename,sprintf('The ''%s'' method is unsupported by this solver.\n',options.method));
             end
-            method = self.resolveMethod(options);
-            [bool, reason] = self.supportsModelMethod(method);
+            % opened only once the method name is known to be valid, so that
+            % resolveMethod is never called on a name this solver rejects
+            consoleGuard = LineConsole.beginRun(self, options);
+            verboseGuard = [GlobalConstants.pushVerbose(options.verbose), consoleGuard];
+            [bool, reason, method] = self.supportsResolvedMethod(options);
             if ~bool
                 if strcmp(method, options.method)
                     line_error(mfilename, sprintf('This model contains features not supported by the solver. %s', reason));
@@ -188,6 +255,28 @@ classdef NetworkSolver < Solver
                     line_error(mfilename, sprintf('This model contains features not supported by the solver''s ''%s'' method. %s', method, reason));
                 end
             end
+        end
+
+        function reason = unsupportedMethodReason(self, method) %#ok<INUSD>
+            % REASON = UNSUPPORTEDMETHODREASON(METHOD)
+            %
+            % A BY-NAME explanation for a method this solver does not
+            % implement, or '' when it has none.
+            %
+            % It answers about the NAME and not about the model, which is what
+            % makes it safe to call from runAnalyzerChecks: that gate runs
+            % before the struct is necessarily usable, so an override must not
+            % reach for getStruct or for anything else that depends on the
+            % model. A reason that depends on the model belongs in
+            % supportsModelMethod, which runs later and is allowed to.
+            %
+            % The case this exists for is a method that MOVED. Dropping the
+            % name from listValidMethods is what makes the solver refuse it,
+            % and it is also what loses the forwarding address, so the two have
+            % to be declared together. C++ has always ordered the two this way
+            % -- check_method calls rcat_moved_to_ag BEFORE its unlisted-method
+            % throw -- and this is the MATLAB counterpart of that helper.
+            reason = '';
         end
 
         function [bool, reason] = supportsModelMethod(self, method)
@@ -206,6 +295,86 @@ classdef NetworkSolver < Solver
                 featUsed = self.model.getUsedLangFeatures();
                 [bool, reason] = SolverFeatureSet.supports(featSupported, featUsed);
             end
+        end
+
+        function bool = supportsTransientAnalysis(self) %#ok<MANU>
+            % BOOL = SUPPORTSTRANSIENTANALYSIS()
+            %
+            % Does this solver produce transient averages, i.e. does
+            % getTranAvg return trajectories on a finite options.timespan?
+            % Declared false here and overridden by the solvers that populate
+            % result.Tran.Avg (FLD, CTMC, LDES, JMT). It is a capability claim,
+            % not a state test: it must answer before any run has taken place,
+            % because mapEnvApprox uses it to decide whether the environment
+            % stages can be coupled by the mean-field analyzer (which needs
+            % getTranAvg) or only by the two steady-state limits.
+            bool = false;
+        end
+
+        function [bool, tokens] = needsMapEnv(self, options)
+            % Should this model be solved through the random-environment image
+            % of its MAP/MMPP processes instead of natively?
+            %
+            % True when the ONLY features the resolved method cannot consume are
+            % non-renewal processes, i.e. the model becomes supported once each
+            % modulated process is frozen into an exponential stage (see
+            % mapEnvApprox / map2renv). A model that also uses some other
+            % unsupported feature keeps its original rejection, since the
+            % environment image would not make it solvable. TOKENS returns the
+            % offending process names.
+            bool = false;
+            tokens = {};
+            mapTokens = {'MAP','MMPP2','MMAP'};
+            if ~isa(self.model,'Network')
+                return
+            end
+            if isfield(options,'config') && isfield(options.config,'map_env') ...
+                    && ischar(options.config.map_env) && strcmpi(options.config.map_env,'off')
+                return
+            end
+            if isa(self,'SolverBA')
+                % A bound request must be answered with a bound: the
+                % environment image is an approximation of the model, so its
+                % bounds do not bracket the original one.
+                return
+            end
+            method = self.resolveMethod(options);
+            featSupported = self.getMethodFeatureSet(method);
+            if isempty(featSupported)
+                mc = metaclass(self);
+                if ~any(strcmp({mc.MethodList.Name},'getFeatureSet'))
+                    return % no feature envelope to reason about (e.g. AUTO, LN)
+                end
+                featSupported = feval([class(self),'.getFeatureSet']);
+            end
+            featUsed = self.model.getUsedLangFeatures();
+            [ok, ~, unsupported] = SolverFeatureSet.supports(featSupported, featUsed);
+            if ok || isempty(unsupported) || ~all(ismember(unsupported, mapTokens))
+                return
+            end
+            bool = true;
+            tokens = unsupported;
+        end
+
+        function [bool, reason, method] = supportsResolvedMethod(self, options)
+            % [BOOL, REASON, METHOD] = SUPPORTSRESOLVEDMETHOD(OPTIONS)
+            %
+            % The gate RUNANALYZERCHECKS applies, as one call: METHOD is the
+            % concrete method OPTIONS.METHOD runs as (RESOLVEMETHOD turns
+            % 'default' into 'rqna' on a bursty open model in SolverMVA and
+            % into 'mem' on a non-Markovian open model in SolverNC), and
+            % BOOL/REASON is SUPPORTSMODELMETHOD asked about THAT name.
+            %
+            % ONE PREDICATE, TWO CALLERS. SolverAUTO.findSolver asks this of
+            % every declared name, so a row it calls Runnable is a run this
+            % gate admits and a row it refuses is a run this gate refuses.
+            % While the report gated the literal 'default' against the base
+            % envelope, it refused mva.default on a MAP-fed queue that the run
+            % served through rqna, refused nc.default on a GE/GE/1/N buffer
+            % that mem's blocking arm serves, and offered mva.default on a
+            % MAP-fed fork-join that the run, resolving to rqna, refused.
+            method = self.resolveMethod(options);
+            [bool, reason] = self.supportsModelMethod(method);
         end
 
         function method = resolveMethod(self, options)
@@ -476,7 +645,7 @@ classdef NetworkSolver < Solver
         [ANc]                       = getAvgNodeArvRChain(sef,A);
 
         [CNc,XNc]           = getAvgSys(self,R,T);
-        [CT,XT]             = getAvgSysTable(self,R,T);
+        [AvgSysChainTable,CT,XT] = getAvgSysTable(self,R,T);
         [RN]                = getAvgSysRespT(self,R);
         [TN]                = getAvgSysTput(self,T);
 
@@ -501,6 +670,7 @@ classdef NetworkSolver < Solver
             if isnan(C), C=[]; end
             if isnan(A), A=[]; end
             if isnan(W), W=[]; end
+            [Q,U] = NetworkSolver.zeroSourceMetrics(self.model.getStruct(),Q,U);
             self.result.Avg.Q = real(Q);
             self.result.Avg.R = real(R);
             self.result.Avg.X = real(X);
@@ -510,23 +680,35 @@ classdef NetworkSolver < Solver
             self.result.Avg.A = real(A);
             self.result.Avg.W = real(W);
             self.result.Avg.runtime = runtime;
+            % A Join row's loss is NOT ArvR - Tput: the two rates are in sibling
+            % and in parent units. Derive the sibling-drop rate for any solver
+            % that did not measure one on its own sample path. see
+            % sn_join_droprate and NetworkSolver.getAvgLossTable
+            if ~isfield(self.result,'DropRateJoin') || isempty(self.result.DropRateJoin)
+                snfj = self.model.getStruct();
+                if isfield(snfj,'fj') && ~isempty(snfj.fj) && any(snfj.fj(:))
+                    self.result.DropRateJoin = sn_join_droprate(snfj, real(T), real(A));
+                end
+            end
             if ~isfield(self.result.Avg,'timedOut')
                 % Wall-clock time-budget flag; solvers that stop early on
                 % options.timeout overwrite this with true after calling setAvgResults.
                 self.result.Avg.timedOut = false;
             end
             if getOptions(self).verbose
+                % with the console on this line is held until after DONE
                 try
                     solvername = erase(self.result.solver,'Solver');
                 catch
                     solvername = self.result.solver(7:end);
                 end
+                mtype = line_method_type(solvername, self.result.Avg.method);
                 if isnan(iter) || iter==1 || strcmp(solvername,'LDES') || strcmp(solvername,'SSA')
-                    line_printf('%s analysis [method: %s, lang: %s, env: %s] completed in %fs.',solvername,self.result.Avg.method,self.options.lang,version("-release"),runtime);
+                    LineConsole.deferPrint('%s analysis [method: %s; type: %s; lang: %s; env: %s] completed in %fs.',solvername,self.result.Avg.method,mtype,self.options.lang,version("-release"),runtime);
                 else
-                    line_printf('%s analysis [method: %s, lang: %s, env: %s] completed in %fs. Iterations: %d.',solvername,self.result.Avg.method,self.options.lang,version("-release"),runtime,iter);
+                    LineConsole.deferPrint('%s analysis [method: %s; type: %s; lang: %s; env: %s] completed in %fs. Iterations: %d.',solvername,self.result.Avg.method,mtype,self.options.lang,version("-release"),runtime,iter);
                 end
-                line_printf('\n');
+                LineConsole.deferPrint('\n');
             end
         end
 
@@ -645,6 +827,16 @@ classdef NetworkSolver < Solver
             line_error(mfilename,sprintf('getProbSysAggr is not supported by %s',class(self)));
         end
 
+        function [Pn, lPn] = getProbSysMarg(self, nvec, engine) %#ok<STOUT,INUSD>
+            % [PN, LPN] = GETPROBSYSMARG(NVEC, ENGINE)
+
+            % Return the joint probability of the per-station TOTAL queue
+            % lengths, all classes summed out. Unlike getProbSysAggr this is
+            % not a product form: it sums the per-class joint over every table
+            % with these row sums, which SolverNC does through a permanent.
+            line_error(mfilename,sprintf('getProbSysMarg is not supported by %s',class(self)));
+        end
+
         function Pmarg = getProbMarg(self, node, jobclass, state_m)
             % PMARG = GETPROBMARG(NODE, JOBCLASS, STATE_M)
 
@@ -741,29 +933,29 @@ classdef NetworkSolver < Solver
             line_error(mfilename,sprintf('getTranCdfPassT is not supported by %s',class(self)));
         end
         
-        % Kotlin-style aliases for getAvg* methods
+        % Aliases for getAvg* methods
         function avg_table = avgTable(self)
-            % AVGTABLE Kotlin-style alias for getAvgTable
+            % AVGTABLE Alias for getAvgTable
             avg_table = self.getAvgTable();
         end
         
         function avg_sys_table = avgSysTable(self)
-            % AVGSYSTABLE Kotlin-style alias for getAvgSysTable
+            % AVGSYSTABLE Alias for getAvgSysTable
             avg_sys_table = self.getAvgSysTable();
         end
         
         function avg_node_table = avgNodeTable(self)
-            % AVGNODETABLE Kotlin-style alias for getAvgNodeTable
+            % AVGNODETABLE Alias for getAvgNodeTable
             avg_node_table = self.getAvgNodeTable();
         end
         
         function avg_chain_table = avgChainTable(self)
-            % AVGCHAINTABLE Kotlin-style alias for getAvgChainTable
+            % AVGCHAINTABLE Alias for getAvgChainTable
             avg_chain_table = self.getAvgChainTable();
         end
         
         function avg_node_chain_table = avgNodeChainTable(self)
-            % AVGNODECHAINTABLE Kotlin-style alias for getAvgNodeChainTable
+            % AVGNODECHAINTABLE Alias for getAvgNodeChainTable
             avg_node_chain_table = self.getAvgNodeChainTable();
         end
 
@@ -794,125 +986,125 @@ classdef NetworkSolver < Solver
         end
 
         function varargout = avgChain(self, varargin)
-            % AVGCHAIN Kotlin-style alias for getAvgChain
+            % AVGCHAIN Alias for getAvgChain
             [varargout{1:nargout}] = self.getAvgChain(varargin{:});
         end
         
         function varargout = avgSys(self, varargin)
-            % AVGSYS Kotlin-style alias for getAvgSys
+            % AVGSYS Alias for getAvgSys
             [varargout{1:nargout}] = self.getAvgSys(varargin{:});
         end
         
         function varargout = avgNode(self, varargin)
-            % AVGNODE Kotlin-style alias for getAvgNode
+            % AVGNODE Alias for getAvgNode
             [varargout{1:nargout}] = self.getAvgNode(varargin{:});
         end
         
         function sys_resp_time = avgSysRespT(self, varargin)
-            % AVGSYSRESPT Kotlin-style alias for getAvgSysRespT
+            % AVGSYSRESPT Alias for getAvgSysRespT
             sys_resp_time = self.getAvgSysRespT(varargin{:});
         end
         
         function sys_tput = avgSysTput(self, varargin)
-            % AVGSYSTPUT Kotlin-style alias for getAvgSysTput
+            % AVGSYSTPUT Alias for getAvgSysTput
             sys_tput = self.getAvgSysTput(varargin{:});
         end
         
         function arvr_chain = avgArvRChain(self, varargin)
-            % AVGARVCHAIN Kotlin-style alias for getAvgArvRChain
+            % AVGARVCHAIN Alias for getAvgArvRChain
             arvr_chain = self.getAvgArvRChain(varargin{:});
         end
         
         function qlen_chain = avgQLenChain(self, varargin)
-            % AVGQLENCHAIN Kotlin-style alias for getAvgQLenChain
+            % AVGQLENCHAIN Alias for getAvgQLenChain
             qlen_chain = self.getAvgQLenChain(varargin{:});
         end
         
         function util_chain = avgUtilChain(self, varargin)
-            % AVGUTILCHAIN Kotlin-style alias for getAvgUtilChain
+            % AVGUTILCHAIN Alias for getAvgUtilChain
             util_chain = self.getAvgUtilChain(varargin{:});
         end
         
         function resp_t_chain = avgRespTChain(self, varargin)
-            % AVGRESPTCHAIN Kotlin-style alias for getAvgRespTChain
+            % AVGRESPTCHAIN Alias for getAvgRespTChain
             resp_t_chain = self.getAvgRespTChain(varargin{:});
         end
         
         function resid_t_chain = avgResidTChain(self, varargin)
-            % AVGRESIDTCHAIN Kotlin-style alias for getAvgResidTChain
+            % AVGRESIDTCHAIN Alias for getAvgResidTChain
             resid_t_chain = self.getAvgResidTChain(varargin{:});
         end
         
         function tput_chain = avgTputChain(self, varargin)
-            % AVGTPUTCHAIN Kotlin-style alias for getAvgTputChain
+            % AVGTPUTCHAIN Alias for getAvgTputChain
             tput_chain = self.getAvgTputChain(varargin{:});
         end
         
         function node_arvr_chain = avgNodeArvRChain(self, varargin)
-            % AVGNODERVRCHAIN Kotlin-style alias for getAvgNodeArvRChain
+            % AVGNODERVRCHAIN Alias for getAvgNodeArvRChain
             node_arvr_chain = self.getAvgNodeArvRChain(varargin{:});
         end
         
         function node_qlen_chain = avgNodeQLenChain(self, varargin)
-            % AVGNODEQLENCHAIN Kotlin-style alias for getAvgNodeQLenChain
+            % AVGNODEQLENCHAIN Alias for getAvgNodeQLenChain
             node_qlen_chain = self.getAvgNodeQLenChain(varargin{:});
         end
         
         function node_util_chain = avgNodeUtilChain(self, varargin)
-            % AVGNODEUTILCHAIN Kotlin-style alias for getAvgNodeUtilChain
+            % AVGNODEUTILCHAIN Alias for getAvgNodeUtilChain
             node_util_chain = self.getAvgNodeUtilChain(varargin{:});
         end
         
         function node_resp_t_chain = avgNodeRespTChain(self, varargin)
-            % AVGNODERESPTCHAIN Kotlin-style alias for getAvgNodeRespTChain
+            % AVGNODERESPTCHAIN Alias for getAvgNodeRespTChain
             node_resp_t_chain = self.getAvgNodeRespTChain(varargin{:});
         end
         
         function node_resid_t_chain = avgNodeResidTChain(self, varargin)
-            % AVGNODERESIDTCHAIN Kotlin-style alias for getAvgNodeResidTChain
+            % AVGNODERESIDTCHAIN Alias for getAvgNodeResidTChain
             node_resid_t_chain = self.getAvgNodeResidTChain(varargin{:});
         end
         
         function node_tput_chain = avgNodeTputChain(self, varargin)
-            % AVGNODETPUTCHAIN Kotlin-style alias for getAvgNodeTputChain
+            % AVGNODETPUTCHAIN Alias for getAvgNodeTputChain
             node_tput_chain = self.getAvgNodeTputChain(varargin{:});
         end
         
-        % Kotlin-style aliases for getTran* methods
+        % Aliases for getTran* methods
         function varargout = tranAvg(self, varargin)
-            % TRANAVG Kotlin-style alias for getTranAvg
+            % TRANAVG Alias for getTranAvg
             [varargout{1:nargout}] = self.getTranAvg(varargin{:});
         end
         
         function rd = tranCdfRespT(self, varargin)
-            % TRANCDFRESPT Kotlin-style alias for getTranCdfRespT
+            % TRANCDFRESPT Alias for getTranCdfRespT
             rd = self.getTranCdfRespT(varargin{:});
         end
         
         function rd = tranCdfPassT(self, varargin)
-            % TRANCDFPASST Kotlin-style alias for getTranCdfPassT
+            % TRANCDFPASST Alias for getTranCdfPassT
             rd = self.getTranCdfPassT(varargin{:});
         end
         
-        % Kotlin-style aliases for getCdf* methods
+        % Aliases for getCdf* methods
         function rd = cdfRespT(self, varargin)
-            % CDFRESPT Kotlin-style alias for getCdfRespT
+            % CDFRESPT Alias for getCdfRespT
             rd = self.getCdfRespT(varargin{:});
         end
         
         function rd = cdfPassT(self, varargin)
-            % CDFPASST Kotlin-style alias for getCdfPassT
+            % CDFPASST Alias for getCdfPassT
             rd = self.getCdfPassT(varargin{:});
         end
         
-        % Kotlin-style aliases for getProb* methods
+        % Aliases for getProb* methods
         function pstate = prob(self, varargin)
-            % PROB Kotlin-style alias for getProb
+            % PROB Alias for getProb
             pstate = self.getProb(varargin{:});
         end
         
         function psysstate = probSys(self)
-            % PROBSYS Kotlin-style alias for getProbSys
+            % PROBSYS Alias for getProbSys
             psysstate = self.getProbSys();
         end
         
@@ -927,22 +1119,27 @@ classdef NetworkSolver < Solver
         end
 
         function pnir = probAggr(self, varargin)
-            % PROBAGGR Kotlin-style alias for getProbAggr
+            % PROBAGGR Alias for getProbAggr
             pnir = self.getProbAggr(varargin{:});
         end
         
         function pnjoint = probSysAggr(self)
-            % PROBSYSAGGR Kotlin-style alias for getProbSysAggr
+            % PROBSYSAGGR Alias for getProbSysAggr
             pnjoint = self.getProbSysAggr();
         end
         
+        function pnjointmarg = probSysMarg(self, varargin)
+            % PROBSYSMARG Alias for getProbSysMarg
+            pnjointmarg = self.getProbSysMarg(varargin{:});
+        end
+
         function pmarg = probMarg(self, varargin)
-            % PROBMARG Kotlin-style alias for getProbMarg
+            % PROBMARG Alias for getProbMarg
             pmarg = self.getProbMarg(varargin{:});
         end
         
         function lnormconst = probNormConstAggr(self)
-            % PROBNORMCONSTAGGR Kotlin-style alias for getProbNormConstAggr
+            % PROBNORMCONSTAGGR Alias for getProbNormConstAggr
             lnormconst = self.getProbNormConstAggr();
         end
 
@@ -1057,80 +1254,80 @@ classdef NetworkSolver < Solver
             [varargout{1:nargout}] = self.getAvgRegionLossTable(varargin{:});
         end
 
-        % Kotlin-style aliases for get*Handles methods
+        % Aliases for get*Handles methods
         function varargout = avgHandles(self)
-            % AVGHANDLES Kotlin-style alias for getAvgHandles
+            % AVGHANDLES Alias for getAvgHandles
             [varargout{1:nargout}] = self.getAvgHandles();
         end
         
         function varargout = tranHandles(self)
-            % TRANHANDLES Kotlin-style alias for getTranHandles
+            % TRANHANDLES Alias for getTranHandles
             [varargout{1:nargout}] = self.getTranHandles();
         end
         
         function q = avgQLenHandles(self)
-            % AVGQLENHANDLES Kotlin-style alias for getAvgQLenHandles
+            % AVGQLENHANDLES Alias for getAvgQLenHandles
             q = self.getAvgQLenHandles();
         end
         
         function u = avgUtilHandles(self)
-            % AVGUTILHANDLES Kotlin-style alias for getAvgUtilHandles
+            % AVGUTILHANDLES Alias for getAvgUtilHandles
             u = self.getAvgUtilHandles();
         end
         
         function r = avgRespTHandles(self)
-            % AVGRESPTHANDLES Kotlin-style alias for getAvgRespTHandles
+            % AVGRESPTHANDLES Alias for getAvgRespTHandles
             r = self.getAvgRespTHandles();
         end
         
         function t = avgTputHandles(self)
-            % AVGTPUTHANDLES Kotlin-style alias for getAvgTputHandles
+            % AVGTPUTHANDLES Alias for getAvgTputHandles
             t = self.getAvgTputHandles();
         end
         
         function a = avgArvRHandles(self)
-            % AVGARVRHANDLES Kotlin-style alias for getAvgArvRHandles
+            % AVGARVRHANDLES Alias for getAvgArvRHandles
             a = self.getAvgArvRHandles();
         end
         
         function w = avgResidTHandles(self)
-            % AVGRESIDTHANDLES Kotlin-style alias for getAvgResidTHandles
+            % AVGRESIDTHANDLES Alias for getAvgResidTHandles
             w = self.getAvgResidTHandles();
         end
         
-        % Kotlin-style aliases for basic get* methods
+        % Aliases for basic get* methods
         function qn = avgQLen(self)
-            % AVGQLEN Kotlin-style alias for getAvgQLen
+            % AVGQLEN Alias for getAvgQLen
             qn = self.getAvgQLen();
         end
         
         function un = avgUtil(self)
-            % AVGUTIL Kotlin-style alias for getAvgUtil
+            % AVGUTIL Alias for getAvgUtil
             un = self.getAvgUtil();
         end
         
         function rn = avgRespT(self)
-            % AVGRESPT Kotlin-style alias for getAvgRespT
+            % AVGRESPT Alias for getAvgRespT
             rn = self.getAvgRespT();
         end
         
         function wn = avgResidT(self)
-            % AVGRESIDT Kotlin-style alias for getAvgResidT
+            % AVGRESIDT Alias for getAvgResidT
             wn = self.getAvgResidT();
         end
         
         function wt = avgWaitT(self)
-            % AVGWAITT Kotlin-style alias for getAvgWaitT
+            % AVGWAITT Alias for getAvgWaitT
             wt = self.getAvgWaitT();
         end
         
         function tn = avgTput(self)
-            % AVGTPUT Kotlin-style alias for getAvgTput
+            % AVGTPUT Alias for getAvgTput
             tn = self.getAvgTput();
         end
         
         function an = avgArvR(self)
-            % AVGARVR Kotlin-style alias for getAvgArvR
+            % AVGARVR Alias for getAvgArvR
             an = self.getAvgArvR();
         end
 
@@ -1140,6 +1337,27 @@ classdef NetworkSolver < Solver
         % Integer placement decided by an auxiliary solver steady state
         placement = warmStartPlacement(initSolver, sn)
 
+        function [Q,U] = zeroSourceMetrics(sn,Q,U)
+            % [Q,U] = ZEROSOURCEMETRICS(SN,Q,U)
+            % A Source holds no jobs and occupies no server, so its queue
+            % length and utilization are zero BY DISCIPLINE. Applied here, at
+            % the single sink for result.Avg, so a caller reading result.Avg
+            % directly sees the same thing getAvgTable does. Solvers otherwise
+            % leave arbitrary values in that row (measured on an open M/M/1:
+            % NC U=1, MAM Q=1, CTMC Q=Inf), which the table layer only ever
+            % suppressed incidentally, through a threshold on RESPONSE TIME.
+            if isempty(sn) || ~isfield(sn,'nodetype') || ~isfield(sn,'nodeToStation')
+                return
+            end
+            ist = sn.nodeToStation(sn.nodetype == NodeType.Source);
+            ist = ist(ist > 0);
+            if isempty(ist)
+                return
+            end
+            if ~isempty(Q), Q(ist(ist <= size(Q,1)),:) = 0; end
+            if ~isempty(U), U(ist(ist <= size(U,1)),:) = 0; end
+        end
+
         function [bool, reason] = checkBindingCapacity(model, solverName)
             % [BOOL, REASON] = CHECKBINDINGCAPACITY(MODEL, SOLVERNAME)
             % Shared structural gate for finite station capacity
@@ -1147,58 +1365,32 @@ classdef NetworkSolver < Solver
             % the product-form solvers (MVA, NC). A product-form solver has no
             % representation of a finite buffer, so without this gate it
             % silently returns the UNCONSTRAINED answer (e.g. QLen=4 instead
-            % of the M/M/1/2 value 0.8525). There is no registry feature name
-            % for plain capacity, hence the structural test; this mirrors the
-            % native Python check in solvers/solver_mva/solver_mva.py.
+            % of the M/M/1/2 value 0.8525). This mirrors the native Python
+            % check in solvers/solver_mva/solver_mva.py.
             %
-            % The test reads the node-level cap/classCap set by the user, NOT
-            % sn.cap/sn.classcap: refreshCapacity derives a FINITE sn.classcap
-            % (= the chain population) for every closed model, so an sn-level
-            % test would reject every closed model.
-            %
-            % Only a capacity that can actually BIND is rejected. A closed
-            % model whose station capacity is at least the total population
-            % can never block a job, so the declaration is a no-op and the
-            % product-form answer stays exact (a common idiom: setCap(N) on an
-            % order-independent station of an N-job closed model). njobs is Inf
-            % for an open class, so any finite capacity reachable by an open
-            % class binds.
-            %
-            % Cache models are exempt: Cache.m sets classCap=1 on the
-            % retrieval queues it builds, and MVA/NC solve those through their
-            % dedicated cache/retrieval analyzers rather than as a buffer
-            % constraint.
+            % THE TEST ITSELF IS MNETWORK.FINDBINDINGCAPACITY, one predicate
+            % with two callers: this gate, which words the refusal, and
+            % getUsedLangFeatures, which marks the registry name
+            % 'FiniteCapacity' on the same answer (since 2026-09-05), so a
+            % solver method that does not declare the name is refused by the
+            % feature set on exactly the models this gate refuses. The rules
+            % (node-level caps, not sn.cap/sn.classcap; only a capacity that
+            % can BIND; open classes always bind; Cache models exempt) are
+            % documented on the helper.
             bool = true;
             reason = '';
             if ~isa(model, 'Network')
                 return
             end
-            nodes = model.getNodes();
-            for i = 1:numel(nodes)
-                if isa(nodes{i}, 'Cache')
-                    return
-                end
+            [binds, node, cap, r, isOpen] = model.findBindingCapacity();
+            if ~binds
+                return
             end
-            njobs = model.getStruct().njobs(:)';
-            totalJobs = sum(njobs); % Inf as soon as one class is open
-            for i = 1:numel(nodes)
-                node = nodes{i};
-                if ~isa(node, 'Station') || isa(node, 'Source') || isa(node, 'Sink')
-                    continue
-                end
-                if ~isempty(node.cap) && ~isinf(node.cap) && node.cap >= 0 && node.cap < totalJobs
-                    bool = false;
-                    reason = sprintf('Finite station capacity (setCapacity=%g) at station ''%s'' is not supported by %s. Use SolverCTMC, SolverJMT or SolverLDES.', node.cap, node.getName(), solverName);
-                    return
-                end
-                ccap = node.classCap;
-                for r = 1:min(numel(ccap), numel(njobs))
-                    if ~isinf(ccap(r)) && ccap(r) > 0 && ccap(r) < njobs(r)
-                        bool = false;
-                        reason = sprintf('Finite per-class capacity (classCap=%g for class %d) at station ''%s'' is not supported by %s. Use SolverCTMC, SolverJMT or SolverLDES.', ccap(r), r, node.getName(), solverName);
-                        return
-                    end
-                end
+            bool = false;
+            if r == 0
+                reason = sprintf('Finite station capacity (setCapacity=%g) at station ''%s'' is not supported by %s. %s', cap, node.getName(), solverName, capacityFallbackAdvice(isOpen));
+            else
+                reason = sprintf('Finite per-class capacity (classCap=%g for class %d) at station ''%s'' is not supported by %s. %s', cap, r, node.getName(), solverName, capacityFallbackAdvice(isOpen));
             end
         end
 
@@ -1220,4 +1412,24 @@ classdef NetworkSolver < Solver
         end
     end
 
+end
+
+function advice = capacityFallbackAdvice(isOpenClass)
+% ADVICE = CAPACITYFALLBACKADVICE(ISOPENCLASS)
+%
+% Which solvers to point at when a finite capacity is refused. The two lists
+% differ, and naming the wrong one sends the user to a solver that also refuses.
+%
+% An OPEN refused arrival is LOST, which SolverJMT reproduces (its queue section
+% carries the drop rule directly). A CLOSED one BLOCKS: LINE disables the
+% upstream departure and holds the job where it is, and no JMT drop strategy
+% expresses that -- "waiting queue" does not enforce the size at all and
+% "BAS blocking" completes the service before blocking, a different queueing
+% model. SolverJMT refuses the closed case by name (see JMTIO/saveBufferCapacity
+% and BUG-81), so it must not be advertised here for it.
+if isOpenClass
+    advice = 'Use SolverCTMC, SolverJMT or SolverLDES.';
+else
+    advice = 'Use SolverCTMC, SolverSSA or SolverLDES.';
+end
 end

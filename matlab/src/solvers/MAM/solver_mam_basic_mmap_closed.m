@@ -101,11 +101,13 @@ while max(abs(QN_chain - QNc)) > bisect_tol && it_out < options.iter_max
     try
         [QN, UN, RN, TN, CN, XN, ~] = solver_mam_basic_mmap_inner(sn, inner_options, lambda);
         algorithm_ok = true;
-    catch
+    catch innerME
         % Inner algorithm diverged (typically MMAPPH1FCFS / lyap NaN under
         % saturation). Treat all chains as overloaded so the bisection
         % drops lambda on its next step.
         algorithm_ok = false;
+        line_debug(options, 'mmap closed bisection: it=%d lambda=%s inner threw: %s', ...
+            it_out, mat2str(lambda,10), innerME.message);
     end
 
     if algorithm_ok
@@ -117,12 +119,16 @@ while max(abs(QN_chain - QNc)) > bisect_tol && it_out < options.iter_max
             end
         end
         QN_chain = sum(QN, 1);
+        line_debug(options, 'mmap closed bisection: it=%d lambda=%s QN_chain=%s', ...
+            it_out, mat2str(lambda,10), mat2str(QN_chain,10));
         QN_chain(isnan(QN_chain) | isinf(QN_chain)) = 1/GlobalConstants.FineTol;
         QN_last = QN; UN_last = UN; RN_last = RN;
         TN_last = TN; CN_last = CN; XN_last = XN;
         have_good = true;
     else
         QN_chain = ones(1,K) * (1/GlobalConstants.FineTol);
+        line_debug(options, 'mmap closed bisection: it=%d lambda=%s inner algorithm failed', ...
+            it_out, mat2str(lambda,10));
     end
 end
 
@@ -130,6 +136,26 @@ end
 if ~algorithm_ok && have_good
     QN = QN_last; UN = UN_last; RN = RN_last;
     TN = TN_last; CN = CN_last; XN = XN_last;
+end
+
+% A BISECTION THAT NEVER MET ITS TARGET MUST SAY SO. The loop stops on the
+% bracket collapsing or on ITER_MAX as readily as on the population matching,
+% and what it returns then is wherever the search happened to stop. The
+% redistribution below rescales QN to the exact population, so the queue lengths
+% come back looking right while the THROUGHPUTS carry the whole error -- which
+% is how a 3x wrong TN was recorded as a golden and read back as a solution.
+% Reported once here rather than left to the caller to notice.
+qn_gap = 0;
+for k = 1:K
+    if isfinite(QNc(k)) && QNc(k) > 0 && ~sn.isslc(k)
+        qn_gap = max(qn_gap, abs(QN_chain(k) - QNc(k)));
+    end
+end
+if qn_gap > bisect_tol
+    line_warning(mfilename, ['The MMAP decomposition did not match the closed population: '...
+        'the surrogate arrival rate leaves %g jobs of error against a tolerance of %g after '...
+        '%d bisection steps. Queue lengths are rescaled to the exact population but the '...
+        'throughputs are not, so they carry that error.\n'], qn_gap, bisect_tol, it_out);
 end
 
 % Final SLC pass: pin throughput/utilisation at refstat (mirrors solver_mna_closed)

@@ -19,6 +19,8 @@ import jline.lang.processes.DiscreteSampler;
 import jline.lang.processes.Exp;
 import jline.lang.processes.Immediate;
 import jline.lang.processes.Zipf;
+import jline.lib.rmf.CacheRMF;
+import jline.solvers.SolverOptions;
 import jline.solvers.nc.NC;
 import jline.solvers.ssa.SSA;
 import jline.util.Maths;
@@ -491,6 +493,311 @@ public class CacheModel {
     }
 
     /**
+     * Cache with CLIMB (transposition) replacement, closed model over 5 items.
+     *
+     * <p>On a hit an item moves up one position; on a miss it enters at the tail.
+     * Exact in CTMC, simulated in SSA/LDES. Not product-form, so MVA/NC/FLD
+     * reject it.</p>
+     *
+     * @return configured cache network model
+     */
+    public static Network cache_replc_climb() {
+        Network model = new Network("model");
+
+        int n = 5; // Number of items
+        int m = 2; // Cache capacity
+
+        Delay delay = new Delay(model, "Delay");
+        Cache cacheNode = new Cache(model, "Cache", n, m, ReplacementStrategy.CLIMB);
+
+        ClosedClass jobClass = new ClosedClass(model, "JobClass", 1, delay, 0);
+        ClosedClass hitClass = new ClosedClass(model, "HitClass", 0, delay, 0);
+        ClosedClass missClass = new ClosedClass(model, "MissClass", 0, delay, 0);
+
+        delay.setService(jobClass, new Exp(1.0));
+        cacheNode.setRead(jobClass, new Zipf(1.2, n));
+        cacheNode.setHitClass(jobClass, hitClass);
+        cacheNode.setMissClass(jobClass, missClass);
+
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
+        routingMatrix.set(jobClass, jobClass, delay, cacheNode, 1.0);
+        routingMatrix.set(hitClass, jobClass, cacheNode, delay, 1.0);
+        routingMatrix.set(missClass, jobClass, cacheNode, delay, 1.0);
+        model.link(routingMatrix);
+
+        return model;
+    }
+
+    /**
+     * Cache with q-LRU replacement, closed model over 5 items.
+     *
+     * <p>On a miss the item is admitted (LRU head insert) with probability q,
+     * otherwise it passes through uncached. Admission filtering can raise the
+     * hit ratio over plain LRU under skewed popularity. Exact in CTMC,
+     * simulated in SSA/LDES. Not product-form, so MVA/NC/FLD reject it.</p>
+     *
+     * @return configured cache network model
+     */
+    public static Network cache_replc_qlru() {
+        Network model = new Network("model");
+
+        int n = 5; // Number of items
+        int m = 2; // Cache capacity
+
+        Delay delay = new Delay(model, "Delay");
+        Cache cacheNode = new Cache(model, "Cache", n, m, ReplacementStrategy.QLRU);
+        cacheNode.setAdmissionProb(0.5); // admit a missed item with probability q=0.5
+
+        ClosedClass jobClass = new ClosedClass(model, "JobClass", 1, delay, 0);
+        ClosedClass hitClass = new ClosedClass(model, "HitClass", 0, delay, 0);
+        ClosedClass missClass = new ClosedClass(model, "MissClass", 0, delay, 0);
+
+        delay.setService(jobClass, new Exp(1.0));
+        cacheNode.setRead(jobClass, new Zipf(1.2, n));
+        cacheNode.setHitClass(jobClass, hitClass);
+        cacheNode.setMissClass(jobClass, missClass);
+
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
+        routingMatrix.set(jobClass, jobClass, delay, cacheNode, 1.0);
+        routingMatrix.set(hitClass, jobClass, cacheNode, delay, 1.0);
+        routingMatrix.set(missClass, jobClass, cacheNode, delay, 1.0);
+        model.link(routingMatrix);
+
+        return model;
+    }
+
+    /**
+     * Cache with h-LRU / LRU(m) replacement, open model over 6 items.
+     *
+     * <p>h LRU lists of capacities m[0..h-1]; a miss inserts the item at the head
+     * of list 1, a hit in list l exchanges the item with the tail of list l+1.
+     * Exact in CTMC, simulated in SSA/LDES; MVA uses the characteristic-time
+     * (TTL) approximation of Gast and Van Houdt (SIGMETRICS 2015), which reduces
+     * to the Che approximation for h=1.</p>
+     *
+     * @return configured cache network model
+     */
+    public static Network cache_replc_hlru() {
+        Network model = new Network("model");
+
+        int n = 6; // Number of items
+        Matrix m = new Matrix(1, 2); // list 1 holds 2 items, list 2 holds 1
+        m.set(0, 0, 2);
+        m.set(0, 1, 1);
+
+        Source source = new Source(model, "Source");
+        Cache cacheNode = new Cache(model, "Cache", n, m, ReplacementStrategy.HLRU);
+        Sink sink = new Sink(model, "Sink");
+
+        OpenClass jobClass = new OpenClass(model, "InitClass", 0);
+        OpenClass hitClass = new OpenClass(model, "HitClass", 0);
+        OpenClass missClass = new OpenClass(model, "MissClass", 0);
+
+        source.setArrival(jobClass, new Exp(1.0));
+        cacheNode.setRead(jobClass, new Zipf(1.2, n));
+        cacheNode.setHitClass(jobClass, hitClass);
+        cacheNode.setMissClass(jobClass, missClass);
+
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
+        routingMatrix.set(jobClass, jobClass, source, cacheNode, 1.0);
+        routingMatrix.set(hitClass, hitClass, cacheNode, sink, 1.0);
+        routingMatrix.set(missClass, missClass, cacheNode, sink, 1.0);
+        model.link(routingMatrix);
+
+        return model;
+    }
+
+    /**
+     * Cache with per-item storage costs (sizes) and per-list cost caps.
+     *
+     * <p>Each item i carries a storage cost sigma_i and list j may hold items of
+     * total cost at most k_j. A promotion that would breach a cap serves the
+     * request without changing the cache state. SolverNC evaluates the
+     * constrained normalizing constant E(m,k) of Casale-Gast (IEEE/ACM ToN
+     * 29(2), 2021), Sec. IX; SolverLDES simulates the same rule directly.</p>
+     *
+     * @return configured cache network model
+     */
+    public static Network cache_itemsize_costcap() {
+        Network model = new Network("model");
+
+        int n = 6;                   // number of items
+        Matrix m = new Matrix(1, 2); // two lists, one item each
+        m.set(0, 0, 1);
+        m.set(0, 1, 1);
+
+        Matrix sizes = new Matrix(1, n); // small and large items
+        double[] sizeValues = {1, 1, 1, 2, 2, 2};
+        for (int i = 0; i < n; i++) sizes.set(0, i, sizeValues[i]);
+        Matrix caps = new Matrix(1, 2); // list 2 admits small items only
+        caps.set(0, 0, 2);
+        caps.set(0, 1, 1);
+
+        Source source = new Source(model, "Source");
+        Cache cacheNode = new Cache(model, "Cache", n, m, ReplacementStrategy.RR);
+        Sink sink = new Sink(model, "Sink");
+
+        OpenClass jobClass = new OpenClass(model, "InitClass", 0);
+        OpenClass hitClass = new OpenClass(model, "HitClass", 0);
+        OpenClass missClass = new OpenClass(model, "MissClass", 0);
+
+        source.setArrival(jobClass, new Exp(2.0));
+        cacheNode.setRead(jobClass, new DiscreteSampler(new Matrix(1, n).fill(1.0 / n)));
+        cacheNode.setItemSizes(sizes);
+        cacheNode.setCostCaps(caps);
+        cacheNode.setHitClass(jobClass, hitClass);
+        cacheNode.setMissClass(jobClass, missClass);
+
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
+        routingMatrix.set(jobClass, jobClass, source, cacheNode, 1.0);
+        routingMatrix.set(hitClass, hitClass, cacheNode, sink, 1.0);
+        routingMatrix.set(missClass, missClass, cacheNode, sink, 1.0);
+        model.link(routingMatrix);
+
+        return model;
+    }
+
+    /**
+     * Refined mean field (RMF) transient and steady-state analysis of a
+     * two-list RANDOM(m) cache, driven through {@link CacheRMF} directly.
+     *
+     * <p>Prints the steady-state hit and miss probabilities with the 1/N
+     * correction, then the transient evolution X(t) + V(t)/N of the hit rate.
+     * This example has no Network: RMF is a mean-field limit of the cache
+     * chain, not a queueing model, so there is nothing to hand a solver.</p>
+     */
+    public static void cache_rmf_transient() {
+        int n = 10;             // number of items
+        int[] m = {3, 2};       // list capacities (2-list cache)
+        double alpha = 0.8;     // Zipf exponent
+
+        double[] p = new double[n];
+        double sum = 0.0;
+        for (int i = 0; i < n; i++) {
+            p[i] = Math.pow(i + 1, -alpha);
+            sum += p[i];
+        }
+        for (int i = 0; i < n; i++) p[i] /= sum;
+
+        System.out.println("Cache parameters: n=" + n + ", m=[" + m[0] + ", " + m[1]
+                + "], Zipf(" + alpha + ")");
+
+        CacheRMF rmf = new CacheRMF(p, m);
+
+        Object[] ss = rmf.meanFieldExpansionSteadyState(1);
+        double[] pi = (double[]) ss[0];
+        double[] V = (double[]) ss[1];
+        double[] piRefined = new double[pi.length];
+        for (int i = 0; i < pi.length; i++) piRefined[i] = pi[i] + V[i] / n;
+
+        System.out.println("\nSteady-state results (refined mean field):");
+        double totalHit = 0.0;
+        for (int k = 1; k <= m.length; k++) {
+            double hr = rmf.hitRate(piRefined, k);
+            totalHit += hr;
+            // The golden holds these under CACHE, one row per quantity; nothing a
+            // result table carries can answer them, so the example records its own.
+            jline.io.LineResultRecorder.scalar("CACHE", "HitRate_L" + k, "Steady", hr);
+            System.out.printf("  Hit rate (list %d): %.6f%n", k, hr);
+        }
+        double missRate = rmf.hitRate(piRefined, 0);
+        jline.io.LineResultRecorder.scalar("CACHE", "MissRate", "Steady", missRate);
+        jline.io.LineResultRecorder.scalar("CACHE", "TotalHitProb", "Steady", totalHit);
+        jline.io.LineResultRecorder.scalar("CACHE", "TotalMissProb", "Steady", missRate);
+        System.out.printf("  Miss rate:         %.6f%n", missRate);
+        System.out.printf("  Total hit prob:    %.6f%n", totalHit);
+        System.out.printf("  Total miss prob:   %.6f%n", missRate);
+
+        Object[] tr = rmf.meanFieldExpansionTransient(50.0, 200, 1);
+        double[] T = (double[]) tr[0];
+        double[][] X = (double[][]) tr[1];
+        double[][] Vt = (double[][]) tr[2];
+
+        System.out.println("\nTransient hit rates (refined, N=" + n + "):");
+        int[] timeIndices = {0, 20, 50, 100, 199}; // t=0, ~5, ~12.5, ~25, 50
+        for (int idx : timeIndices) {
+            double[] xt = new double[X[idx].length];
+            for (int i = 0; i < xt.length; i++) xt[i] = X[idx][i] + Vt[idx][i] / n;
+            double hr = 0.0;
+            for (int k = 1; k <= m.length; k++) hr += rmf.hitRate(xt, k);
+            jline.io.LineResultRecorder.scalar("CACHE",
+                    String.format("t=%.3f", T[idx]), "Transient", hr);
+            System.out.printf("  t=%7.3f: hit_rate=%.6f%n", T[idx], hr);
+        }
+    }
+
+    /**
+     * MMAP-fed small RR cache with two correlated classes.
+     *
+     * <p>A marked MMPP2 arrival stream feeds a small Round-Robin cache. Its two
+     * marks are bound to two open read classes that share the modulating chain,
+     * so the classes are cross-correlated and autocorrelated in time, and each
+     * reads the cache with a DIFFERENT item popularity. Phase 1 (bursty) emits
+     * mostly class-1 references at a high rate, phase 2 (calm) mostly class-2 at
+     * a low rate, so the shared chain couples "which class arrives" with "how
+     * fast requests arrive".</p>
+     *
+     * @param lambda1 Read1 arrival rate, or a non-positive value to bind the MMAP
+     * @param lambda2 Read2 arrival rate, ignored when the MMAP is bound
+     * @param mmap    the marked arrival process, or null for phase-conditional Poisson
+     * @return configured cache network model
+     */
+    public static Network cache_mmap_rr_env(double lambda1, double lambda2,
+                                            jline.lang.processes.MarkedMAP mmap) {
+        Network model = new Network("MMAPCache");
+
+        int n = 4; // number of items
+        int m = 2; // cache capacity
+
+        Source source = new Source(model, "Source");
+        Cache cacheNode = new Cache(model, "Cache", n, m, ReplacementStrategy.RR);
+        Sink sink = new Sink(model, "Sink");
+
+        OpenClass rd1 = new OpenClass(model, "Read1", 0);
+        OpenClass rd2 = new OpenClass(model, "Read2", 0);
+        OpenClass hit1 = new OpenClass(model, "Hit1", 0);
+        OpenClass mis1 = new OpenClass(model, "Miss1", 0);
+        OpenClass hit2 = new OpenClass(model, "Hit2", 0);
+        OpenClass mis2 = new OpenClass(model, "Miss2", 0);
+
+        // Per-class item-popularity distributions (deliberately different)
+        Matrix p1 = new Matrix(1, n);   // class 1 favors low-index items
+        Matrix p2 = new Matrix(1, n);   // class 2 favors high-index items
+        double[] w1 = {8, 4, 2, 1};
+        for (int i = 0; i < n; i++) {
+            p1.set(0, i, w1[i] / 15.0);
+            p2.set(0, i, w1[n - 1 - i] / 15.0);
+        }
+        cacheNode.setRead(rd1, new DiscreteSampler(p1));
+        cacheNode.setRead(rd2, new DiscreteSampler(p2));
+        cacheNode.setHitClass(rd1, hit1);
+        cacheNode.setMissClass(rd1, mis1);
+        cacheNode.setHitClass(rd2, hit2);
+        cacheNode.setMissClass(rd2, mis2);
+
+        if (mmap != null) {
+            List<jline.lang.JobClass> marks = new ArrayList<jline.lang.JobClass>();
+            marks.add(rd1);
+            marks.add(rd2);
+            source.setMarkedArrival(mmap, marks);
+        } else {
+            source.setArrival(rd1, new Exp(lambda1));
+            source.setArrival(rd2, new Exp(lambda2));
+        }
+
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
+        routingMatrix.set(rd1, rd1, source, cacheNode, 1.0);
+        routingMatrix.set(rd2, rd2, source, cacheNode, 1.0);
+        routingMatrix.set(hit1, hit1, cacheNode, sink, 1.0);
+        routingMatrix.set(mis1, mis1, cacheNode, sink, 1.0);
+        routingMatrix.set(hit2, hit2, cacheNode, sink, 1.0);
+        routingMatrix.set(mis2, mis2, cacheNode, sink, 1.0);
+        model.link(routingMatrix);
+
+        return model;
+    }
+
+    /**
      * Main method for testing and demonstrating cache model examples.
      *
      * <p>Currently configured to:
@@ -590,6 +897,136 @@ public class CacheModel {
             new jline.solvers.mva.MVA(model4).getAvgNodeTable().print();
         } catch (Exception e) {
             System.out.println("MVA Solver failed: " + e.getMessage());
+        }
+
+        // CLIMB and q-LRU are not product-form: CTMC is the reference solver.
+        System.out.println("\n=== Testing cache_replc_climb ===");
+        try {
+            new jline.solvers.ctmc.CTMC(cache_replc_climb(), "keep", false).getAvgNodeTable().print();
+        } catch (Exception e) {
+            System.out.println("CTMC Solver failed: " + e.getMessage());
+        }
+
+        System.out.println("\n=== Testing cache_replc_qlru ===");
+        try {
+            new jline.solvers.ctmc.CTMC(cache_replc_qlru(), "keep", false).getAvgNodeTable().print();
+        } catch (Exception e) {
+            System.out.println("CTMC Solver failed: " + e.getMessage());
+        }
+
+        System.out.println("\n=== Testing cache_replc_hlru ===");
+        Network model5 = cache_replc_hlru();
+        try {
+            System.out.println("--- CTMC Solver (exact) ---");
+            new jline.solvers.ctmc.CTMC(model5, "keep", false, "cutoff", 1).getAvgNodeTable().print();
+            model5.reset();
+        } catch (Exception e) {
+            System.out.println("CTMC Solver failed: " + e.getMessage());
+        }
+        try {
+            System.out.println("--- MVA Solver (TTL approximation) ---");
+            new jline.solvers.mva.MVA(model5).getAvgNodeTable().print();
+            model5.reset();
+        } catch (Exception e) {
+            System.out.println("MVA Solver failed: " + e.getMessage());
+        }
+        try {
+            System.out.println("--- SSA Solver ---");
+            new SSA(model5, "samples", 10000, "seed", 23000).getAvgNodeTable().print();
+        } catch (Exception e) {
+            System.out.println("SSA Solver failed: " + e.getMessage());
+        }
+
+        System.out.println("\n=== Testing cache_itemsize_costcap ===");
+        Network model6 = cache_itemsize_costcap();
+        try {
+            NC nc = new NC(model6, "exact");
+            nc.getAvgNodeTable().print();
+            nc.getAvgCacheTable().print();
+            nc.getAvgItemTable().print();
+            jline.lang.nodes.Cache cache6 = (jline.lang.nodes.Cache) model6.getNodeByName("Cache");
+            System.out.println("Hit Ratio: " + cache6.getHitRatio());
+            System.out.println("Mean per-list storage cost: " + cache6.getListCost());
+        } catch (Exception e) {
+            System.out.println("NC Solver failed: " + e.getMessage());
+        }
+
+        System.out.println("\n=== Testing cache_rmf_transient ===");
+        try {
+            cache_rmf_transient();
+        } catch (Exception e) {
+            System.out.println("CacheRMF failed: " + e.getMessage());
+        }
+
+        System.out.println("\n=== Testing cache_mmap_rr_env ===");
+        // Marked MMPP2 (M3A layout D = {D0, D11, D12}); D1 = D11 + D12 diagonal.
+        // Phase 1 bursty (rate 4, 90% class1); phase 2 calm (rate 1, 80% class2).
+        // Off-diagonal of D0 are the phase-switch rates (both 0.5).
+        Matrix D0 = new Matrix(new double[][] {{-4.5, 0.5}, {0.5, -1.5}});
+        Matrix D11 = new Matrix(new double[][] {{3.6, 0.0}, {0.0, 0.2}});
+        Matrix D12 = new Matrix(new double[][] {{0.4, 0.0}, {0.0, 0.8}});
+        jline.util.matrix.MatrixCell cell = new jline.util.matrix.MatrixCell(3);
+        cell.set(0, D0);
+        cell.set(1, D11);
+        cell.set(2, D12);
+        jline.lang.processes.MarkedMAP mmap = new jline.lang.processes.MarkedMAP(cell, 2);
+
+        Network trueModel = cache_mmap_rr_env(0, 0, mmap);
+        jline.lang.nodes.Cache cacheTrue =
+                (jline.lang.nodes.Cache) trueModel.getNodeByName("Cache");
+        try {
+            System.out.println("--- LDES (simulation of the true MMAP-fed cache) ---");
+            new jline.solvers.ldes.LDES(trueModel, "samples", 200000, "seed", 23000)
+                    .getAvgNodeTable().print();
+            System.out.println("LDES hit ratio: " + cacheTrue.getHitRatio());
+            trueModel.reset();
+        } catch (Exception e) {
+            System.out.println("LDES Solver failed: " + e.getMessage());
+        }
+        try {
+            System.out.println("--- CTMC (exact solution of the true system) ---");
+            new jline.solvers.ctmc.CTMC(trueModel, "exact", "keep", false, "cutoff", 1)
+                    .getAvgNodeTable().print();
+            System.out.println("CTMC hit ratio: " + cacheTrue.getHitRatio());
+        } catch (Exception e) {
+            System.out.println("CTMC Solver failed: " + e.getMessage());
+        }
+
+        // The MMPP2 phase as a random environment modulating phase-conditional
+        // Poisson arrivals (D1 diagonal); the environment switches at the MMPP2
+        // phase-transition rates, i.e. the -D0 diagonal minus that phase's total.
+        jline.lang.Environment env = new jline.lang.Environment("MMPPphase", 2);
+        env.addStage(0, "Phase1", "bursty",
+                cache_mmap_rr_env(D11.get(0, 0), D12.get(0, 0), null));
+        env.addStage(1, "Phase2", "calm",
+                cache_mmap_rr_env(D11.get(1, 1), D12.get(1, 1), null));
+        env.addTransition(0, 1, new Exp(-D0.get(0, 0) - (D11.get(0, 0) + D12.get(0, 0))));
+        env.addTransition(1, 0, new Exp(-D0.get(1, 1) - (D11.get(1, 1) + D12.get(1, 1))));
+        env.init();
+        System.out.println(env.getStageTable());
+
+        jline.solvers.ln.SolverFactory ctmcFactory = new jline.solvers.ln.SolverFactory() {
+            public jline.solvers.NetworkSolver at(Network mdl) {
+                return new jline.solvers.ctmc.CTMC(mdl, "exact", "keep", false, "cutoff", 1);
+            }
+        };
+        String[] methods = {"avg", "dec", "blend"};
+        for (int k = 0; k < methods.length; k++) {
+            try {
+                SolverOptions opt = new SolverOptions();
+                opt.method = methods[k];
+                opt.verbose = jline.VerboseLevel.SILENT;
+                opt.iter_max = 100;
+                opt.iter_tol = 1e-4;
+                jline.solvers.env.ENV envSolver =
+                        new jline.solvers.env.ENV(env, ctmcFactory, opt);
+                envSolver.getAvg();
+                jline.lang.nodes.Cache c0 = (jline.lang.nodes.Cache)
+                        env.getEnsemble().get(0).getNodeByName("Cache");
+                System.out.println("ENV (" + methods[k] + ") hit ratio: " + c0.getHitRatio());
+            } catch (Exception e) {
+                System.out.println("ENV (" + methods[k] + ") failed: " + e.getMessage());
+            }
         }
     }
 }

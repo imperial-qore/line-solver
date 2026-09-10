@@ -43,5 +43,14 @@ struct lsoda_common_t {
 	int      illin, nhnil, nslast,
 					jcur, meth, mused, nq, nst,
 					ncf, nfe, nje, nqu, miter;
+	/* LINE fix: jstart was a LOCAL of lsoda(), rebuilt as 1 by block d on every
+	   continuation call. In the Fortran it lives in a common block: dstoda
+	   leaves it at 1 and the driver overrides it with -1 when a method switch
+	   has to be completed on the next step, so that -1 SURVIVES the return.
+	   Dropping it is invisible under itask=1 over sparse output times, where
+	   the switch is normally completed inside the same call, and fatal in a
+	   stepping mode (itask=2/5): every step returns, the switch is never
+	   completed, and the elco tables stay on the old method. */
+	int      jstart;
 };
 #define _C(x) (ctx->common->x)

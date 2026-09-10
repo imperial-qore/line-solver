@@ -11,10 +11,10 @@ import jline.solvers.wrappers.jmt.JMT;
 import java.util.Scanner;
 
 /**
- * Stochastic Petri net examples mirroring the Kotlin notebooks in stochPetriNet.
+ * Stochastic Petri net examples mirroring the example notebooks in stochPetriNet.
  * <p>
- * This class contains Java implementations that mirror the Kotlin notebook examples
- * found in jar/src/main/kotlin/jline/examples/kotlin/basic/stochPetriNet/. Each method 
+ * This class contains Java implementations that mirror the example notebooks
+ * found in jar/src/main/java/jline/examples/java/basic/stochPetriNet/. Each method
  * demonstrates a specific Petri net concept using models from the basic package.
  * <p>
  * The examples cover:
@@ -54,6 +54,23 @@ public class StochPetriNetExamples {
      * - Multiple solver comparison (CTMC and JMT)
      * - Token conservation analysis
      */
+    /**
+     * Pareto-distributed transition firing (spn_pareto_service.ipynb).
+     *
+     * <p>Simulation only: the golden holds the JMT row at the reference's seed
+     * and run length.
+     */
+    public static void spn_pareto_service() throws Exception {
+        Network model = StochPetriNetModel.spn_pareto_service();
+
+        try {
+            new jline.solvers.wrappers.jmt.JMT(model, "seed", 23000, "samples", 10000)
+                    .getAvgTable().print();
+        } catch (Exception e) {
+            System.out.println("JMT failed: " + e.getMessage());
+        }
+    }
+
     public static void spn_basic_closed() throws Exception {
         Network model = StochPetriNetModel.spn_basic_closed();
         

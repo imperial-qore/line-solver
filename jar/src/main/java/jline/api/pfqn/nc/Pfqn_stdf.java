@@ -141,7 +141,33 @@ public final class Pfqn_stdf {
 
                     double lGk;
                     if (L.getNumRows() == 1) {
+                        // The network WITHOUT station k is EMPTY here, and its
+                        // normalizing constant is the think-only one, NOT 0:
+                        // G = prod_r Z_r^n_r / n_r!. Short-circuiting to 0.0
+                        // asserts G = 1 and makes the returned CDF identically
+                        // 1.0. The reference calls pfqn_comomrm_ld on the empty
+                        // slice (pfqn_stdf.m:73-77), which returns exactly the
+                        // closed form used below (verified to 0.0 over
+                        // n = 1..4, Z = 0.5..2).
+                        // Z HAS ONE ROW PER DELAY NODE, not one row overall:
+                        // snGetProductFormParams builds it as (max(1,Mz) x R).
+                        // The think time of class r is therefore the COLUMN SUM,
+                        // and reading Z.get(0,r) silently used the first delay
+                        // only -- correct on the single-delay models this
+                        // shortcut was validated against, wrong on any other.
+                        // The caller passes Z through untouched, so the summing
+                        // has to happen here; pfqn_comomrm_ld and pfqn_mvald,
+                        // which the other branch delegates to, accept the column
+                        // and are why only this inline shortcut was affected.
                         lGk = 0.0;
+                        for (int rr = 0; rr < R; rr++) {
+                            double nr = Nr.get(0, rr);
+                            if (nr > 0) {
+                                double Ztot = 0.0;
+                                for (int zi = 0; zi < Z.getNumRows(); zi++) Ztot += Z.get(zi, rr);
+                                lGk += nr * Math.log(Ztot) - Maths.factln((int) nr);
+                            }
+                        }
                     } else {
                         Ret.pfqnMVALD result = Pfqn_mvald.pfqn_mvald(LReduced, Nr, Z, muReduced);
                         lGk = result.lG.get(result.lG.size() - 1);
@@ -152,7 +178,14 @@ public final class Pfqn_stdf {
                         for (int m = 0; m < (int) Nr.elementSum(); m++) {
                             if (m + 1 < hkc.getNumCols()) {
                                 double denominator = hkc.get(t, m + 1);
-                                if (Math.abs(denominator) > GlobalConstants.FineTol) {
+                                // > 0, NOT > FineTol: the reference divides
+                                // unconditionally, and hkc is a CDF value that is
+                                // legitimately far below FineTol at small t, so
+                                // the wider guard discarded real terms and left
+                                // gamma at mu. Zero is still excluded because hkc
+                                // underflows to exactly 0 at extreme t, where the
+                                // ratio is undefined rather than merely small.
+                                if (denominator > 0.0) {
                                     gammat.set(kIdx, m, mu.get(kIdx, m) * hkc.get(t, m) / denominator);
                                 }
                             }
@@ -160,7 +193,15 @@ public final class Pfqn_stdf {
 
                         Matrix gammak = Pfqn_mushift.pfqn_mushift(gammat, kIdx);
                         // Extract reduced gammak matrix (excluding one column)
-                        int gammakCols = Math.min(gammak.getNumCols(), (int) Nr.elementSum() - 1);
+                        // Clamped at 0: with a single job the reduced population
+                        // is empty, sum(Nr)-1 is -1, and the Matrix constructor
+                        // below throws on a negative column count. MATLAB's
+                        // `gammak(:,1:(sum(Nr)-1))` yields an EMPTY slice there
+                        // (pfqn_stdf.m:86), which is what 0 columns reproduces.
+                        // The existing `if (gammakCols > 0)` guard sits AFTER
+                        // the constructor and so never prevented the throw.
+                        int gammakCols = Math.max(0,
+                                Math.min(gammak.getNumCols(), (int) Nr.elementSum() - 1));
                         Matrix gammakReduced = new Matrix(gammak.getNumRows(), gammakCols);
                         if (gammakCols > 0) {
                             Matrix.extract(gammak, 0, gammak.getNumRows(), 0, gammakCols, gammakReduced, 0, 0);

@@ -1,6 +1,6 @@
 function estVal = estimateAt(self, nodes)
 
-sn = self.model.getStruct;
+sn = self.model.getStruct(false); % no initial state: the estimated rates may still be NaN
 
 if ~iscell(nodes)
     nodes = {nodes};
@@ -19,8 +19,6 @@ switch self.options.method
         estVal = estimator_mcmc(self, nodes);
     case 'mle' % Maximum Likelihood Estimation
         estVal = estimator_mle(self, nodes);
-    case 'rnn' % Explainable RNN Estimation
-        estVal = estimator_rnn(self, nodes);
     case 'mlps' % Maximum Likelihood for PS
         estVal = estimator_mlps(self, nodes);
     case 'fmlps' % Fluid Maximum Likelihood for PS
@@ -29,12 +27,14 @@ switch self.options.method
         estVal = estimator_qmle(self, nodes);
     case 'gibbs' % Gibbs Sampling
         estVal = estimator_gibbs(self, nodes);
+    case 'vi' % Variational inference over transition counts
+        estVal = estimator_variational(self, nodes);
     otherwise
         error('Unknown inference method: %s.', self.options.method);
 end
 
 % update the model parameters
-for n=1:size(nodes, 2)
+for n=1:numel(nodes) % nodes may arrive as a row or a column cell array
     svcProc = nodes{n}.getService;
     for r=1:sn.nclasses
         svcProc{r}.setMean(estVal(n, r));

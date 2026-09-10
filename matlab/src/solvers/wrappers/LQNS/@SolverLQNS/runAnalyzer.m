@@ -8,36 +8,34 @@ if nargin<2
 end
 line_ack('LQNS', options.verbose);
 
+% Solver console: this wrapper leaves runAnalyzerChecks commented out (see
+% below), so it opens its own run here. The guard must live until this
+% function returns.
+consoleGuard = LineConsole.beginRun(self, options); %#ok<NASGU>
+
 line_debug(options, 'LQNS: starting (method=%s, multiserver=%s)', options.method, options.config.multiserver);
 
-% see _kb/06-solver-catalog.md (Wrappers: three ways to reach an external binary)
-dockerImage = '';
+% see _kb/06-solver-catalog.md (Wrappers: two ways to reach an external binary)
 useRemote = isfield(options.config, 'remote') && options.config.remote;
-if isunix && ~useRemote
-    reqContainer = '';
-    if isfield(options.config, 'container')
-        reqContainer = options.config.container;
-    end
-    if isempty(reqContainer) && ~SolverLQNS.hasLocalBinary()
-        % Native lqns absent: transparently fall back to a Docker image.
-        reqContainer = 'auto';
-    end
-    if ~isempty(reqContainer)
-        dockerImage = SolverLQNS.getDockerImage(reqContainer);
-    end
-end
 
-% Snap-confined Docker cannot bind-mount the system temp dir; stage the model
-% under HOME when dispatching through Docker so the volume mount is visible.
-dirpath = lineTempName('lqns', ~isempty(dockerImage));
+% Refuse a construct the binary cannot model BEFORE the file is written, so the
+% answer is LINE's own named refusal rather than lqns reporting a syntax error
+% for a modelling limit. See SolverLQNS.unsupportedLNConstructs.
+SolverLQNS.assertSupported(self.model, options.method);
+
+dirpath = lineTempName('lqns');
 filename = [dirpath,filesep,'model.lqnx'];
+LineConsole.step('writing the LQN model to %s', filename);
 self.model.writeXML(filename);
 
 %self.runAnalyzerChecks(options);
 Solver.resetRandomGeneratorSeed(options.seed);
 
-if options.verbose
-    %verbose = '-v';
+% The binary's advisories and warnings are its own debug channel, not LINE's:
+% they stay suppressed up to STD and are let through at DEBUG. Before the
+% default verbosity became STD this test was `if options.verbose`, which at
+% the old default (false) took the same branch.
+if options.verbose == VerboseLevel.DEBUG
     verbose = '';
 else
     verbose = '-a -w';
@@ -153,20 +151,10 @@ else
             cmd=['lqns ',verbose,' ',multiserver_praqma,' -Pstop-on-message-loss=false -x ',filename];
     end
 end
-if ~isempty(dockerImage)
-    % see _kb/06-solver-catalog.md (Wrappers: three ways to reach an external binary)
-    [~, hostUid] = unix('id -u'); hostUid = strtrim(hostUid);
-    [~, hostGid] = unix('id -g'); hostGid = strtrim(hostGid);
-    dockerPrefix = ['docker run --rm --user ', hostUid, ':', hostGid, ...
-        ' -v ', dirpath, ':', dirpath, ' -w ', dirpath, ' ', dockerImage, ' '];
-    if strncmp(cmd, 'lqns ', 5)
-        cmd = [dockerPrefix, 'lqns.original ', cmd(6:end)];
-    elseif strncmp(cmd, 'lqsim ', 6)
-        cmd = [dockerPrefix, 'lqsim ', cmd(7:end)];
-    end
-end
-
-if options.verbose
+if LineConsole.isActive()
+    % the console already reports the command through the routed line_debug
+    % below, so printing it again would duplicate the line
+elseif options.verbose
 %    line_printf('\nLQNS model: %s',filename);
     line_printf('\nLQNS command: %s\n',cmd);
 end
@@ -181,11 +169,13 @@ if useRemote
 else
     line_debug(options, 'LQNS: using local execution, command: %s', cmd);
     % see _kb/06-solver-catalog.md (Wrappers: LQNS/lqsim LD_LIBRARY_PATH GLIBCXX strip)
-    if isunix && isempty(dockerImage)
+    if isunix
         cmd = ['env -u LD_LIBRARY_PATH ', cmd];
     end
+    LineConsole.step('running the lqns binary as a subprocess');
     system(cmd);
 end
+LineConsole.step('parsing the lqns XML results');
 self.parseXMLResults(filename);
 
 if ~options.keep

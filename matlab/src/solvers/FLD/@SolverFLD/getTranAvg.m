@@ -60,6 +60,38 @@ function [QNclass_t, UNclass_t, TNclass_t] = getTranAvg(self,Qt,Ut,Tt)
 % All rights reserved.
 
 % temporarily switch to closing method
+
+% lang='cpp' takes the transient means from line-cli (-s fluid -a tran), which
+% integrates the same ODE system over the same horizon. Recomputing them below
+% would report a MATLAB integration as a C++ one.
+%
+% The tables line-cli sends are stored where the native path stores its own and
+% the ANSWER IS THEN BUILT BY @NetworkSolver/getTranAvg: that is what turns a
+% [value, t] table into the metricVal struct (handle, t, metric, isaggregate)
+% callers read, and what puts NaN where a handle is disabled. Returning the raw
+% tables here instead handed back a double matrix under a name every caller
+% dot-indexes.
+if isfield(self.options,'lang') && strcmp(self.options.lang,'cpp')
+    [Qcpp, Ucpp, Tcpp] = CPPLINE.tranAvg(self.name, self.model, self.options);
+    if nargin == 1
+        [Qt,Ut,Tt] = self.getTranHandles;
+    end
+    empt = cell(size(Qcpp));
+    self.setTranAvgResults(Qcpp, Ucpp, empt, Tcpp, empt, empt, 0);
+    [QNclass_t, UNclass_t, TNclass_t] = getTranAvg@NetworkSolver(self,Qt,Ut,Tt);
+    return
+end
+if isfield(self.options,'lang') && strcmp(self.options.lang,'python')
+    [Qpy, Upy, Tpy] = PYLINE.tranAvg(self.name, self.model, self.options);
+    if nargin == 1
+        [Qt,Ut,Tt] = self.getTranHandles;
+    end
+    empt = cell(size(Qpy));
+    self.setTranAvgResults(Qpy, Upy, empt, Tpy, empt, empt, 0);
+    [QNclass_t, UNclass_t, TNclass_t] = getTranAvg@NetworkSolver(self,Qt,Ut,Tt);
+    return
+end
+
 if nargin == 1
     [Qt,Ut,Tt] = self.getTranHandles;
 end
@@ -83,6 +115,29 @@ switch options.method
     case {'tbi','fluid.tbi'}
         % TBI integrates the closing ODEs by cell decomposition and
         % produces a genuine transient; keep the method as is.
+    case {'minnormal','fluid.minnormal','refined','fluid.refined'}
+        % The moment closures integrate the closing ODEs with the converged
+        % variance held fixed, so their trajectory is a genuine transient of
+        % the closed system. A non-homogeneous source breaks that: the drift
+        % is then non-autonomous and has no stationary covariance to converge
+        % to, so fall back rather than let FLUID_MOMENT_TERMS refuse.
+        if ~isempty(self.options.config.nhpp_sched)
+            line_warning(mfilename,'A non-homogeneous source makes the drift time-varying, which the moment closures do not support. Setting the solution method to ''''closing''''.\n');
+            self.options.method = 'closing';
+            self.reset();
+        end
+    case {'dae','fluid.dae'}
+        % The DAE route integrates the closure itself over the horizon, with
+        % conservation as an algebraic equation and the covariance advancing
+        % alongside the mean, so its trajectory is the transient of the closed
+        % system rather than a first-order stand-in. Same non-autonomous
+        % exclusion as the moment closures: a time-varying drift has no
+        % stationary covariance for the seed solve to converge to.
+        if ~isempty(self.options.config.nhpp_sched)
+            line_warning(mfilename,'A non-homogeneous source makes the drift time-varying, which the dae closure does not support. Setting the solution method to ''''closing''''.\n');
+            self.options.method = 'closing';
+            self.reset();
+        end
     otherwise
         line_warning(mfilename,'getTranAvg is not offered by the specified method. Setting the solution method to ''''closing''''.\n');
         self.options.method = 'closing';

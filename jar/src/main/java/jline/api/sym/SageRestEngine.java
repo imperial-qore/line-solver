@@ -21,7 +21,7 @@ import java.util.Map;
 /**
  * {@link SymEngine} backed by the line-sage-rest service.
  *
- * <p>The service is SageMath behind the JSON protocol in {@code sage/server.py}.
+ * <p>The service is SageMath behind the JSON protocol in {@code io/sage/server.py}.
  * Every request is a single POST carrying the whole problem, so nothing is
  * bind-mounted and the client works against a container, a remote host or a
  * hand-started server alike.</p>
@@ -37,6 +37,19 @@ public class SageRestEngine implements SymEngine {
 
     /** Default per-request timeout, in seconds. */
     public static final int DEFAULT_TIMEOUT_SECONDS = 300;
+
+    /** Canary expression for {@link #isUsable()}; see that method for why. */
+    private static final String CANARY_EXPR = "(x*exp(-x) + exp(-1))/(exp(-x) + exp(-1))";
+
+    /** The canary's argument, a 17-digit decimal so the rational is multi-limb. */
+    private static final String CANARY_ARG = "0.68999999999999995";
+
+    /** The canary's value. */
+    private static final double CANARY_VALUE = 0.82116556904906557;
+
+    /** Usability verdicts, keyed by base URL. */
+    private static final Map<String, Boolean> USABLE =
+            java.util.Collections.synchronizedMap(new HashMap<String, Boolean>());
 
     private final String baseUrl;
     private int timeoutSeconds = DEFAULT_TIMEOUT_SECONDS;
@@ -86,6 +99,59 @@ public class SageRestEngine implements SymEngine {
         } catch (IOException e) {
             return false;
         }
+    }
+
+    /**
+     * Checks that the service can actually EVALUATE, not merely that it
+     * answers.
+     * <p>
+     * The line-sage-rest image ships a FLINT built for CPUs that have BMI2 and
+     * ADX. On an older host the first multi-limb exact operation raises
+     * SIGILL, the worker dies mid-request and the call returns no bytes at
+     * all; /api/v1/health is pure Python and keeps answering, so it cannot see
+     * this. The canary is the weighted-average softmin form, which is what the
+     * fluid export actually sends, and is the smallest expression observed to
+     * trigger it. Verdicts are cached per URL, so this costs one small request
+     * the first time a service is considered and nothing after. See
+     * _kb/11-conventions-and-gotchas.md.
+     *
+     * @return true if the service returned the canary's value
+     */
+    public boolean isUsable() {
+        Boolean cached = USABLE.get(this.baseUrl);
+        if (cached != null) {
+            return cached.booleanValue();
+        }
+        boolean ok = false;
+        try {
+            JsonObject request = new JsonObject();
+            JsonArray exprs = new JsonArray();
+            exprs.add(CANARY_EXPR);
+            request.add("exprs", exprs);
+            JsonObject values = new JsonObject();
+            values.addProperty("x", CANARY_ARG);
+            request.add("values", values);
+            request.addProperty("timeout_s", 30);
+            JsonObject response = postJson(baseUrl + "/api/v1/eval", request.toString(), 60000);
+            checkStatus("/api/v1/eval", response);
+            JsonArray arr = response.getAsJsonArray("values");
+            ok = arr != null && arr.size() == 1 && !arr.get(0).isJsonNull()
+                    && Math.abs(arr.get(0).getAsDouble() - CANARY_VALUE) < 1e-9;
+        } catch (IOException e) {
+            // A dead worker closes the connection without a reply, which
+            // surfaces as an IOException rather than a service error. Either
+            // way the backend cannot serve us.
+            ok = false;
+        } catch (RuntimeException e) {
+            ok = false;
+        }
+        if (!ok) {
+            System.err.println("[LINE] Ignoring symbolic backend at " + baseUrl + ": it did "
+                    + "not return the usability canary. On a CPU without BMI2/ADX the image's "
+                    + "FLINT raises SIGILL mid-request.");
+        }
+        USABLE.put(this.baseUrl, Boolean.valueOf(ok));
+        return ok;
     }
 
     /**

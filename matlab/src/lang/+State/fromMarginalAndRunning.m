@@ -115,7 +115,7 @@ switch sn.nodetype(ind)
                 end
                 
                 % gen permutation of their positions in the fcfs buffer
-                mi = uniqueperms(inbuf); %unique(perms(vi),'rows) is notoriously slow
+                mi = multiset_perms(inbuf); %unique(perms(vi),'rows) is notoriously slow
                 if isempty(mi)
                     mi_buf = zeros(1,max(0,sum(n)-S(ist)));
                     state = zeros(1,R);
@@ -170,7 +170,7 @@ switch sn.nodetype(ind)
                 end
                 
                 % gen permutation of their positions in the fcfs buffer
-                mi = uniqueperms(inbuf); %unique(perms(vi),'rows) is notoriously slow
+                mi = multiset_perms(inbuf); %unique(perms(vi),'rows) is notoriously slow
                 if isempty(mi)
                     mi_buf = zeros(1,max(0,sum(n)-S(ist)));
                     state = zeros(1,R);

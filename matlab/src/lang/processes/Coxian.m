@@ -63,6 +63,24 @@ classdef Coxian < Markovian
     end
 
     methods
+        function featName = getFeatureName(self)
+            % FEATNAME = GETFEATURENAME()
+            % 'Cox2' at two phases, 'Coxian' otherwise.
+            %
+            % The registry carries both names, and the Cox2 entry can only mean
+            % the two-phase Coxian here: Cox2 is a static factory returning a
+            % Coxian, so there is no Cox2 object to mark, and without this the
+            % entry is unreachable. The C++ port already types every two-phase
+            % Coxian as ProcessType.COX2, so the reading is shared. A solver
+            % declaring just 'Coxian' stays accepting through
+            % SolverFeatureSet.generalizationOf.
+            if self.getNumberOfPhases() == 2
+                featName = 'Cox2';
+            else
+                featName = self.name;
+            end
+        end
+
         function phases = getNumberOfPhases(self)
             % PHASES = GETNUMBEROFPHASES()
             % Return number of phases in the distribution

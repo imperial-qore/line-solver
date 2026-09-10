@@ -48,26 +48,13 @@ def _extract_ph_for_phm1(sn, station_idx, class_idx=0):
         ph = proc_st[class_idx] if class_idx < len(proc_st) else None
         if ph is None:
             return None, None
-        if isinstance(ph, dict):
-            if 'k' in ph and 'mu' in ph:
-                k_phases = int(ph['k'])
-                mu_phase = float(ph['mu'])
-                alpha = np.zeros(k_phases); alpha[0] = 1.0
-                T = np.zeros((k_phases, k_phases))
-                for i in range(k_phases):
-                    T[i, i] = -mu_phase
-                    if i < k_phases - 1:
-                        T[i, i + 1] = mu_phase
-                return alpha, T
-            if 'rate' in ph:
-                r = float(ph['rate'])
-                return np.array([1.0]), np.array([[-r]])
-            if 'probs' in ph and 'rates' in ph:
-                # HyperExp {'probs': p, 'rates': mu}: parallel exponential phases
-                p = np.asarray(ph['probs'], dtype=float).flatten()
-                mu_h = np.asarray(ph['rates'], dtype=float).flatten()
-                return p, np.diag(-mu_h)
-            return None, None
+        # sn.proc stores (D0, D1); proc_to_ph returns the PH view of it and
+        # also accepts the legacy per-family descriptors.
+        from ...sn.proc_form import proc_to_ph
+        alpha, T = proc_to_ph(ph)
+        if alpha is not None:
+            return alpha, T
+        return None, None
         if isinstance(ph, (list, tuple)) and len(ph) >= 2:
             D0 = np.asarray(ph[0])
             D1 = np.asarray(ph[1])
@@ -96,13 +83,14 @@ except ImportError:
     HAS_MMAPPH1NPPR = False
     MMAPPH1NPPR = None
 
-# Import qbd_setupdelayoff for FunctionTask analysis
+# Import qbd_setupdelayoff for SetupTask analysis
 try:
-    from ...mam.qbd import qbd_setupdelayoff
+    from ...mam.qbd import qbd_setupdelayoff, qbd_setupdelayoff_closed
     HAS_QBD_SETUPDELAYOFF = True
 except ImportError:
     HAS_QBD_SETUPDELAYOFF = False
     qbd_setupdelayoff = None
+    qbd_setupdelayoff_closed = None
 
 # Import ETAQA departure process constructors
 try:
@@ -318,6 +306,38 @@ def _is_source_station(sn: NetworkStruct, station_idx: int) -> bool:
     return sched == SchedStrategy.EXT
 
 
+def _apply_resptime_floor(sn: NetworkStruct, QN, RN, TN, S, V, M: int, klist, fine_tol: float = 1e-8) -> None:
+    """Floor R at one full service time and restate Q = R*T, in place, for the classes in KLIST.
+
+    This is the form in which the dec.source decomposition reports QN and RN, so the
+    closed-chain fixed point has to be calibrated against it rather than against the
+    pre-floor queue lengths; see _kb/06-solver-catalog.md.
+    """
+    for ist in range(M):
+        # Source stations carry no queue
+        if _is_source_station(sn, ist):
+            continue
+        for k in klist:
+            if V[ist, k] > 0:
+                if _is_delay_station(sn, ist):
+                    RN[ist, k] = S[ist, k]
+                else:
+                    # undefined service treated as NaN here (not inf) so a no-service cell ends NaN as in MATLAB, instead of RN=inf, QN=inf*0; MATLAB's max ignores NaN.
+                    s_val = S[ist, k] if np.isfinite(S[ist, k]) else np.nan
+                    qn_tn = QN[ist, k] / TN[ist, k] if TN[ist, k] > fine_tol else np.nan
+                    if np.isnan(qn_tn) and np.isnan(s_val):
+                        RN[ist, k] = np.nan
+                    elif np.isnan(qn_tn):
+                        RN[ist, k] = s_val
+                    elif np.isnan(s_val):
+                        RN[ist, k] = qn_tn
+                    else:
+                        RN[ist, k] = max(s_val, qn_tn)
+            else:
+                RN[ist, k] = 0.0
+            QN[ist, k] = RN[ist, k] * TN[ist, k]
+
+
 def _is_ps_station(sn: NetworkStruct, station_idx: int) -> bool:
     """Check if station uses processor sharing."""
     sched = _get_scheduling(sn, station_idx)
@@ -407,6 +427,95 @@ def _is_renewal_map(D0: np.ndarray, D1: np.ndarray) -> bool:
                 < 1e-9 * max(1.0, np.linalg.norm(D1, 'fro')))
 
 
+def _mam_gk1_applicable(sn, ist: int, K: int, nservers) -> bool:
+    """
+    True when station ``ist`` should be answered by MMAP[K]/G[K]/1.
+
+    The generic MMAPPH1FCFS path reads the service law out of ``sn.proc``, which
+    holds its PHASE-TYPE FIT: for a Uniform, Gamma, Pareto, Weibull, Lognormal or
+    Det that fit matches the mean and, once the SCV exceeds one, nothing else. He
+    (2001) needs only the TRANSFORM of the original law, which ``sn.lst`` carries.
+    A matrix-exponential service qualifies too, its transform being rational; a
+    RAP does NOT, He's analysis assuming INDEPENDENT service times, so reading a
+    correlated service through its marginal transform would discard exactly the
+    autocorrelation the RAP was declared to carry. The result is a /1, so a
+    multiserver station is out, and every class must carry a usable transform
+    handle, since the analysis takes all K together.
+
+    The two exact single-class QBDs come FIRST, as in MATLAB: an ME service at
+    one class and one server is owned by RAP/RAP/1, and a correlated service by
+    MAP/MAP/1. This path is what those two do not reach.
+
+    Mirrors MATLAB ``mam_gk1_applicable``.
+    """
+    if not np.isfinite(nservers[ist]) or int(nservers[ist]) != 1:
+        return False
+    lst = getattr(sn, 'lst', None)
+    if lst is None or len(lst) <= ist or lst[ist] is None:
+        return False
+    if ProcessType is None or getattr(sn, 'procid', None) is None:
+        return False
+    # The DECLARED tags, snapshotted by SolverMAM before sn_nonmarkov_toph: that
+    # conversion retags procid APH/ME/MAP, so reading the live procid would see
+    # the surrogate and leave this path unreachable for every law but Det.
+    procid = getattr(sn, 'procid_declared', None)
+    if procid is None:
+        procid = sn.procid
+    non_ph = (ProcessType.DET, ProcessType.UNIFORM, ProcessType.GAMMA,
+              ProcessType.PARETO, ProcessType.WEIBULL, ProcessType.LOGNORMAL,
+              ProcessType.ME)
+    if not any(procid[ist, k] in non_ph for k in range(K)):
+        return False
+    # RAP/RAP/1 owns a station whose service the user DECLARED matrix-exponential
+    # or rational; a surrogate merely TAGGED ME (a Uniform fit, say) is not that
+    # station, and its declared law is the one this path is here to read.
+    if K == 1 and procid[ist, 0] in (ProcessType.ME, ProcessType.RAP):
+        return False
+    if K == 1 and _service_is_correlated(sn, ist):
+        return False  # MAP/MAP/1 owns a correlated single-class service
+    for k in range(K):
+        if len(lst[ist]) <= k or lst[ist][k] is None:
+            return False
+    return True
+
+
+def _service_is_correlated(sn, ist: int) -> bool:
+    """
+    True if the class-0 service process at station ``ist`` carries lag-1
+    autocorrelation, the condition on which ``_solve_fcfs_mmapph1`` hands the
+    station to the exact MAP/MAP/1 QBD. Mirrors the ``useMapMap1`` test in
+    MATLAB ``solver_mam_basic``.
+    """
+    from ....constants import GlobalConstants
+    from ...mam.map_analysis import map_acf
+    proc = getattr(sn, 'proc', None)
+    if proc is None or ist >= len(proc) or not len(proc[ist]):
+        return False
+    svc = proc[ist][0]
+    if not (isinstance(svc, (list, tuple)) and len(svc) >= 2):
+        return False
+    try:
+        acf1 = float(np.ravel(map_acf(np.asarray(svc[0], dtype=float),
+                                      np.asarray(svc[1], dtype=float), 1))[0])
+    except Exception:
+        return False
+    return bool(abs(acf1) > GlobalConstants.CoarseTol)
+
+
+def _is_source_station(sn: NetworkStruct, jst: int) -> bool:
+    """True when station jst is the model's Source node."""
+    station_to_node = getattr(sn, 'stationToNode', None)
+    nodetype = getattr(sn, 'nodetype', None)
+    if station_to_node is None or nodetype is None:
+        return False
+    station_to_node = np.asarray(station_to_node).ravel()
+    nodetype = np.asarray(nodetype).ravel()
+    if jst >= station_to_node.size:
+        return False
+    ind = int(station_to_node[jst])
+    return 0 <= ind < nodetype.size and nodetype[ind] == NodeType.SOURCE
+
+
 def _srcproc_is_renewal(sn: NetworkStruct, jst: int, k: int = 0) -> bool:
     """
     True if station jst's class-k process is renewal.
@@ -430,9 +539,10 @@ def _srcproc_is_renewal(sn: NetworkStruct, jst: int, k: int = 0) -> bool:
     if entry is None or len(entry) <= k:
         return False
     ph = entry[k]
-    if isinstance(ph, dict):
-        return ('k' in ph and 'mu' in ph) or ('rate' in ph) \
-            or ('probs' in ph and 'rates' in ph)
+    # sn.proc stores (D0, D1); proc_to_map settles readability for every form.
+    from ...sn.proc_form import proc_to_map
+    if proc_to_map(ph)[0] is None:
+        return False
     if not isinstance(ph, (list, tuple)) or len(ph) < 2:
         return False
     D0 = np.asarray(ph[0], dtype=float)
@@ -490,12 +600,12 @@ def _station_name(sn: NetworkStruct, ist: int) -> str:
     return f"#{ist}"
 
 
-def _is_function_station(sn: NetworkStruct, station_idx: int) -> bool:
-    """Check if station is a FunctionTask station (with setup/delayoff)."""
-    if hasattr(sn, 'isfunction') and sn.isfunction is not None:
-        isfunction = np.asarray(sn.isfunction).flatten()
-        if station_idx < len(isfunction):
-            return isfunction[station_idx] == 1
+def _is_setup_station(sn: NetworkStruct, station_idx: int) -> bool:
+    """Check if station is a SetupTask station (with setup/delayoff)."""
+    if hasattr(sn, 'hassetup') and sn.hassetup is not None:
+        hassetup = np.asarray(sn.hassetup).flatten()
+        if station_idx < len(hassetup):
+            return hassetup[station_idx] == 1
     return False
 
 
@@ -546,7 +656,7 @@ def _extract_rate_from_distribution(dist) -> Tuple[Optional[float], float]:
 
 
 def _get_function_params(sn: NetworkStruct, station_idx: int) -> Tuple[Optional[float], Optional[float], Optional[float], Optional[float]]:
-    """Get setup and delayoff parameters for a FunctionTask station.
+    """Get setup and delayoff parameters for a SetupTask station.
 
     Returns:
         (alpharate, alphascv, betarate, betascv) or (None, None, None, None) if not available
@@ -557,7 +667,7 @@ def _get_function_params(sn: NetworkStruct, station_idx: int) -> Tuple[Optional[
     if not isinstance(sn.nodeparam, dict):
         return None, None, None, None
 
-    # FunctionTask setupTime (station-indexed, from SolverMAM._get_sn) vs Queue.setDelayOff (node-indexed nodeparam via _refresh_local_vars) reach here with different shapes; they coincide only when no non-station node precedes the queue.
+    # setupTime station-idx (SolverMAM._get_sn) vs node-idx nodeparam setDelayOff (_refresh_local_vars); same only if no non-station node precedes queue.
     entry = sn.nodeparam.get(station_idx)
     if not (isinstance(entry, dict) and 'setupTime' in entry):
         node_idx = station_idx
@@ -653,35 +763,14 @@ def _build_ph_service_params(
             pie_list.append(ml.matrix([[1.0]]))
             D0_list.append(ml.matrix([[-rate]]))
         elif isinstance(ph, dict):
-            # Check for Erlang distribution {'k': phases, 'mu': rate_per_phase}
-            if 'k' in ph and 'mu' in ph:
-                # Convert Erlang(k, mu) to PH representation
-                k_phases = int(ph['k'])
-                mu = float(ph['mu'])
-                # Initial vector: start in first phase
-                alpha = np.zeros(k_phases)
-                alpha[0] = 1.0
-                # Generator: -mu on diagonal, mu on superdiagonal
-                T = np.zeros((k_phases, k_phases))
-                for i in range(k_phases):
-                    T[i, i] = -mu
-                    if i < k_phases - 1:
-                        T[i, i + 1] = mu
-                pie_list.append(ml.matrix(alpha.reshape(1, -1)))
-                D0_list.append(ml.matrix(T))
-            elif 'rate' in ph:
-                # Simple rate-based service (exponential)
-                rate = float(ph['rate'])
-                pie_list.append(ml.matrix([[1.0]]))
-                D0_list.append(ml.matrix([[-rate]]))
-            elif 'probs' in ph and 'rates' in ph:
-                # HyperExp {'probs': p, 'rates': mu}: parallel exponential phases
-                p = np.asarray(ph['probs'], dtype=float).flatten()
-                mu_h = np.asarray(ph['rates'], dtype=float).flatten()
-                pie_list.append(ml.matrix(p.reshape(1, -1)))
-                D0_list.append(ml.matrix(np.diag(-mu_h)))
+            # Legacy descriptor: sn.proc now stores (D0, D1), so route it
+            # through the one converter instead of a per-family chain.
+            from ...sn.proc_form import proc_to_ph
+            alpha_d, T_d = proc_to_ph(ph)
+            if alpha_d is not None:
+                pie_list.append(ml.matrix(np.asarray(alpha_d, dtype=float).reshape(1, -1)))
+                D0_list.append(ml.matrix(np.asarray(T_d, dtype=float)))
             else:
-                # Unknown dict format, use exponential fallback
                 rate = 1.0 / S[ist, k] if S[ist, k] > 0 else 1.0
                 pie_list.append(ml.matrix([[1.0]]))
                 D0_list.append(ml.matrix([[-rate]]))
@@ -711,7 +800,81 @@ def _build_ph_service_params(
             pie_list.append(ml.matrix([[1.0]]))
             D0_list.append(ml.matrix([[-rate]]))
 
+    # A class DISABLED at this station leaves a null sub-generator (rate 0, so
+    # D0 = [[-0]]), and MMAPPH1FCFS inverts the Kronecker sum of the D0s: one
+    # null block makes T singular and every closed-network station carrying a
+    # disabled class fell out of the branch. The reference substitutes an
+    # immediate service there instead (solver_mam_basic.m:92), which is exact
+    # because the class contributes no arrivals.
+    from ....constants import GlobalConstants as _GC
+    for k in range(K):
+        blk = np.asarray(D0_list[k], dtype=float)
+        if not np.all(np.isfinite(blk)) or not np.any(np.diagonal(blk) < 0):
+            imm = float(_GC.Immediate)
+            pie_list[k] = ml.matrix([[1.0]])
+            D0_list[k] = ml.matrix([[-imm]])
+
     return pie_list, D0_list
+
+
+def _mam_finite_cap_open(
+    sn: NetworkStruct,
+    ist: int,
+    lambdas: np.ndarray,
+    V: np.ndarray,
+    S: np.ndarray,
+    K: int,
+    C: int,
+    capK: int,
+    c_serv: int
+) -> Tuple[Optional[float], Optional[float], Optional[np.ndarray]]:
+    """Finite-buffer FCFS marginal for an open station that is not M/M/c/K.
+
+    A single server takes the exact MMAP[K]/G/1/K analysis of qsys_mmapg1k,
+    whose phase-resolved boundary law resolves the loss ratio by class; more
+    servers take the MMAPPH1FCFS truncate-and-renormalize approximation, which
+    can only report one blocking probability shared by every class. Mirrors the
+    isFiniteCap branch of MATLAB solver_mam_basic.m.
+
+    Args:
+        sn: network struct
+        ist: station index
+        lambdas: arrival rates per chain
+        V: visit ratios
+        S: service times
+        K: number of classes
+        C: number of chains
+        capK: buffer capacity, jobs in system
+        c_serv: number of servers
+
+    Returns:
+        (meanQ, lossAggregate, lossPerClass); lossPerClass is None outside the
+        exact single-server branch, and every entry is None when the station
+        cannot be described as a finite-buffer MMAP/PH queue.
+    """
+    from .mmap_fj import mam_svc_mixture, mam_truncate_renorm
+    from ...qsys import qsys_mmapg1k
+
+    pie_list, D0_list = _build_ph_service_params(sn, ist, S, K)
+    if pie_list is None:
+        return None, None, None
+    D_list, _, total_lambda = _build_mmap_arrival(sn, ist, lambdas, V, K, C)
+    if D_list is None or len(D_list) < K + 1 or total_lambda <= 0:
+        return None, None, None
+    D_arr = [np.asarray(D_list[0], dtype=float)]
+    for k in range(K):
+        D_arr.append(np.asarray(D_list[k + 1], dtype=float))
+
+    if c_serv == 1:
+        svc_mix = mam_svc_mixture(D_arr, pie_list, D0_list)
+        res = qsys_mmapg1k(D_arr[0], D_arr[1:], svc_mix, capK)
+        return (float(res['meanQueueLength']), float(res['lossAggregate']),
+                np.asarray(res['lossRatio'], dtype=float))
+
+    # multi-server FCFS rescales PH to mean S/nservers, as elsewhere in this handler
+    D0_scaled = [ml.matrix(np.asarray(T, dtype=float) * c_serv) for T in D0_list]
+    meanQ, loss, _ = mam_truncate_renorm(D_arr, pie_list, D0_scaled, capK)
+    return float(meanQ), float(loss), None
 
 
 def _build_mmap_arrival(
@@ -752,7 +915,7 @@ def _build_mmap_arrival(
                     if k in sn.inchain[c].flatten().astype(int))
         class_rates.append(rate_k)
 
-    # arrival MMAP built from the source PH processes per mark, rescaled to the per-class arrival rate; falls back to Poisson when source processes are unextractable.
+    # arrival MMAP built from source PH processes per mark, rescaled to per-class rate; falls back to Poisson when source processes are unextractable.
     D_list = _build_source_mmap(sn, class_rates, K)
     if D_list is None:
         # Poisson fallback: D0 diagonal rate, one marking matrix per class
@@ -889,7 +1052,7 @@ def _solve_fcfs_mmapph1_open(
     if D_list is None:
         return None, None
 
-    # ME/RAP service is not phase-type, so the (pie,D0) pair MMAPPH1FCFS reads cannot describe it; RAP/RAP/1 QBD applies whenever service is ME/RAP regardless of arrival type. See _kb/06-solver-catalog.md MAM Exact closed-form fast paths section.
+    # ME/RAP service isn't phase-type; RAP/RAP/1 QBD (not (pie,D0) MMAPPH1FCFS), any arrival. _kb/06-solver-catalog.md MAM Exact closed-form fast paths
     if _is_me_or_rap_service(sn, ist, K):
         if K == 1 and c_serv == 1:
             svc = sn.proc[ist][0] if (getattr(sn, 'proc', None) is not None
@@ -902,7 +1065,7 @@ def _solve_fcfs_mmapph1_open(
             from ...mam.qbd import qbd_raprap1
             D0s = np.asarray(svc[0], dtype=float)
             D1s = np.asarray(svc[1], dtype=float)
-            # ME rescaled by rate alone, not map_scale (which normalizes and would clip legitimate negative entries, replacing it with a different Markovian process); see _kb/06-solver-catalog.md MAM ME/RAP arrival and service processes section.
+            # ME rescaled by rate, not map_scale (normalizing clips legit negatives). _kb/06-solver-catalog.md MAM ME/RAP arrival and service processes
             svc_mean = map_mean(D0s, D1s)
             target_mean = float(S[ist, 0]) / c_serv
             if target_mean > 0 and svc_mean > 0:
@@ -930,7 +1093,7 @@ def _solve_fcfs_mmapph1_open(
                         RN[k] = QN[k] / TN_k
             return QN, RN
         else:
-            # qbd_raprap1 is single-class single-server only; warns via line_warning_always (not warnings.warn/line_warning) so every affected model in the solve is flagged exactly once via me_warned. See _kb/06-solver-catalog.md MAM Exact closed-form fast paths section.
+            # qbd_raprap1: single-class single-server only; line_warning_always flags once (me_warned). _kb/06-solver-catalog.md MAM Exact closed-form fast paths
             if me_warned is None or ist not in me_warned:
                 if me_warned is not None:
                     me_warned.add(ist)
@@ -944,7 +1107,7 @@ def _solve_fcfs_mmapph1_open(
                     "service process.",
                     _station_name(sn, ist), K, c_serv)
 
-    # a genuine correlated MAP service uses the exact MAP/MAP/1 (q_ct_map_map_1), not the renewal-marginal MMAPPH1FCFS, since the renewal approximation discards service autocorrelation and understates queue length by an order of magnitude.
+    # correlated MAP service uses exact MAP/MAP/1 (q_ct_map_map_1), not renewal MMAPPH1FCFS, which discards service autocorrelation, understates QN ~10x.
     if K == 1 and c_serv == 1:
         try:
             from ....constants import GlobalConstants
@@ -1010,7 +1173,7 @@ def _solve_fcfs_mmapph1_open(
         return QN, RN
 
     try:
-        # BuTools' CheckMMAPRepresentation rejects a well-formed ME/RAP arrival (legitimate negative D0 off-diagonal); suppressed only for ME/RAP calls, mirroring MATLAB's global BUT_CHECK_INPUT=false.
+        # BuTools CheckMMAPRepresentation rejects valid ME/RAP arrivals (negative D0 offdiag); suppressed for ME/RAP only, per MATLAB BUT_CHECK_INPUT=false.
         from ....lib.thirdparty import butools
         arrival_is_rational = _is_me_or_rap_arrival(sn, ist, K)
         saved_check_input = butools.checkInput
@@ -1101,10 +1264,8 @@ def _solve_fcfs_mmapph1_closed(
     if pie_list is None:
         return None, None
 
-    # multi-server FCFS solves the rate-scaled single-server equivalent plus a surrogate tandem delay S*(nservers-1)/nservers; exact for single-class, approximate for multiserver+multiclass.
+    # multi-server FCFS: rate-scaled 1-server + surrogate delay S*(nservers-1)/nservers, exact single-class; allow K>1 (solver_mam_basic.m:87) else M/M/c.
     if c_serv > 1:
-        if K > 1:
-            return None, None
         D0_list = [ml.matrix(np.asarray(D0) * c_serv) for D0 in D0_list]
 
     # Build MMAP arrival process
@@ -1118,7 +1279,7 @@ def _solve_fcfs_mmapph1_closed(
         finite_N = N[np.isfinite(N)]
         maxLevel = int(np.sum(finite_N)) + 1
 
-        # MMAPPH1FCFS 'ncDistr' returns one distribution PER CLASS; reusing class 1's distribution for all classes (a prior MATLAB bug, also fixed there) drove every chain to the same lambda. See _kb/06-solver-catalog.md MAM Exact closed-form fast paths section.
+        # MMAPPH1FCFS 'ncDistr' is per-class; don't reuse class 1's for all (forces one lambda). _kb/06-solver-catalog.md MAM Exact closed-form fast paths
         result = MMAPPH1FCFS(D_list, pie_list, D0_list, 'ncDistr', maxLevel)
 
         if result is not None:
@@ -1149,7 +1310,7 @@ def _solve_fcfs_mmapph1_closed(
                 num_levels = min(Nk + 1, len(pdistr_full))
                 pdistr_k = np.abs(pdistr_full[:num_levels].copy())
 
-                # truncated-tail complement taken over the TRUNCATED vector (not the full distribution), or the levels between P(Q>N[k]) and P(Q>=N[k]) are lost; mirrors solver_mam_basic.m.
+                # tail complement over TRUNCATED vector (not full distribution), else levels between P(Q>N[k]) and P(Q>=N[k]) are lost; mirrors solver_mam_basic.m.
                 if num_levels > 0:
                     pdistr_k[-1] = np.abs(1.0 - np.sum(pdistr_k[:-1]))
 
@@ -1308,7 +1469,7 @@ def solver_mam_basic(
 
     Strue = S.copy()  # service times as declared, used to report utilization below
 
-    # self-looping-class interference inflates OTHER classes' service time by (1+njobs_slc); see _kb/06-solver-catalog.md MAM Self-looping classes (SLC) section.
+    # self-looping-class interference inflates OTHER classes' service time by (1+njobs_slc). _kb/06-solver-catalog.md MAM Self-looping classes (SLC)
     isslc = np.zeros(K, dtype=bool)
     if getattr(sn, 'isslc', None) is not None:
         _isslc = np.asarray(sn.isslc).flatten()
@@ -1347,7 +1508,7 @@ def solver_mam_basic(
     # Initialize lambda (arrival rate per chain)
     lambdas = np.zeros(C)
 
-    # an all-SLC chain has no surrogate arrival stream and is excluded from the fixed point, pinned by the SLC clamp instead; see _kb/06-solver-catalog.md MAM Self-looping classes (SLC) section.
+    # all-SLC chain has no surrogate arrival, excluded from fixed point, pinned by SLC clamp. _kb/06-solver-catalog.md MAM Self-looping classes (SLC)
     isslcchain = np.zeros(C, dtype=bool)
     for c in range(C):
         if c not in inchain_map:
@@ -1415,9 +1576,9 @@ def solver_mam_basic(
         inchain_c = np.asarray(inchain_map[c]).flatten().astype(int)
         isopenchain[c] = bool(np.any(np.isinf(N[inchain_c])))
         isclosedchain[c] = (not isopenchain[c]) and (not isslcchain[c])
-    # mixed-network backoff cannot use the uniform 1/Umax rule (would also scale open chains' exogenous arrival rate); see _kb/06-solver-catalog.md MAM Mixed-network throughput fixed point section.
+    # backoff can't use uniform 1/Umax (would scale open chains' exogenous arrivals). _kb/06-solver-catalog.md MAM Mixed-network throughput fixed point
     ismixed = bool(np.any(isclosedchain) and np.any(isopenchain))
-    # closed chains in a mixed network are capped at the residual capacity open traffic leaves free, staying strictly inside the M/G/1-type stability region.
+    # closed chains in a mixed network are capped at the residual capacity open traffic leaves free, staying inside the M/G/1-type stability region.
     Ulim = 1 - GlobalConstants.CoarseTol
 
     # Main iteration loop
@@ -1428,7 +1589,7 @@ def solver_mam_basic(
         it += 1
         TN_prev = TN.copy()
 
-        # MATLAB's NaN-ignoring max freezes the closed-chain lambda update at TNlb when Umax is all-NaN, pinning LN class-switching host layers at the no-contention throughput.
+        # MATLAB's NaN-ignoring max freezes closed-chain lambda at TNlb when Umax is all-NaN, pinning LN class-switching layers at no-contention throughput.
         if np.any(sd):
             _urows = np.sum(UN[sd, :], axis=1)
             _ufinite = _urows[~np.isnan(_urows)]
@@ -1455,7 +1616,7 @@ def solver_mam_basic(
                         alpha = it / options.iter_max
                         lambdas[c] = lambdas[c] * alpha + (Nc / QNc) * lambdas[c] * (1 - alpha)
         if ismixed:
-            # closed chains alone are backed onto the busiest finite-server station's residual capacity, not scaled by 1/Umax (which would also suppress open-chain throughput below its own source rate).
+            # closed chains back onto busiest finite-server station's residual capacity, not 1/Umax (would suppress open-chain throughput below its source rate).
             Uchain = Lchain[sd, :] * lambdas
             Uopen = np.sum(Uchain[:, ~isclosedchain], axis=1)
             Uclosed = np.sum(Uchain[:, isclosedchain], axis=1)
@@ -1516,12 +1677,12 @@ def solver_mam_basic(
                         TN[ist, k] = lambdas[c] * V[ist, k]
                         # INF stations report U=QLen=TN*S (no /c, since nservers=Inf); mirrors solver_mam_basic.m and every other solver's convention.
                         UN[ist, k] = S[ist, k] * TN[ist, k]
-                        # QN=TN*S directly (TN already carries visits); a second V factor would undercount delay jobs on class-switching chains. Mirrors MATLAB solver_mam_basic.
+                        # QN=TN*S directly (TN already carries visits); a second V factor would undercount delay jobs on class-switching chains. Mirrors solver_mam_basic.
                         QN[ist, k] = TN[ist, k] * S[ist, k]
                         RN[ist, k] = QN[ist, k] / TN[ist, k] if TN[ist, k] > FINE_TOL else 0.0
 
             elif _is_ps_station(sn, ist):
-                # PS station: TN=lambda*V, UN=S*TN, QN=UN/(1-Usum), always the capped formula (no saturated special case); second-pass rescaling corrects queue lengths.
+                # PS station: TN=lambda*V, UN=S*TN, QN=UN/(1-Usum), always the capped formula (no saturated case); second-pass rescaling corrects queue lengths.
                 for c in range(C):
                     if c not in inchain_map:
                         continue
@@ -1554,11 +1715,11 @@ def solver_mam_basic(
                         continue
                     inchain = sn.inchain[c].flatten().astype(int)
                     for k in inchain:
-                        # a class with no service process here must leave UN=NaN (matching MATLAB's unguarded S*TN); the NaN is load-bearing (Umax gate, chain-sum void, response-time washout). See _kb/06-solver-catalog.md MAM NaN guards section.
+                        # class with no service leaves UN=NaN; NaN load-bearing (Umax gate, chain-sum void, response-time washout). _kb/06-solver-catalog.md MAM NaN guards
                         if not np.isfinite(S[ist, k]):
                             TN[ist, k] = lambdas[c] * V[ist, k]
-                            if _is_function_station(sn, ist):
-                                # at a setup-bearing function station the NaN-freeze must NOT hold (the closed-chain regula falsi must keep moving to include the cold-start queue); see _kb/06-solver-catalog.md MAM NaN guards section.
+                            if _is_setup_station(sn, ist):
+                                # setup-bearing function station: NaN-freeze must NOT hold (regula falsi advances to cold-start queue). _kb/06-solver-catalog.md MAM NaN guards
                                 UN[ist, k] = 0.0
                             else:
                                 UN[ist, k] = np.nan
@@ -1570,31 +1731,79 @@ def solver_mam_basic(
                         TN[ist, k] = lambdas[c] * V[ist, k]
                         UN[ist, k] = S[ist, k] * TN[ist, k] / nservers[ist]
 
-                # FunctionTask setup/delayoff aggregate utilization uses 'omitnan' so undefined-service classes cannot poison the stability gate; mirrors MATLAB solver_mam_basic.m.
+                # SetupTask setup/delayoff aggregate utilization uses 'omitnan' so undefined-service classes can't poison stability gate; mirrors solver_mam_basic.m.
                 aggr_util = np.nansum(UN[ist, :])
                 qbd_setupdelayoff_success = False
 
-                if _is_function_station(sn, ist) and not np.any(np.isinf(N)):
+                if (_is_setup_station(sn, ist) and not np.any(np.isinf(N))
+                        and qbd_setupdelayoff_closed is not None):
                     # Get setup and delayoff parameters
                     alpharate, alphascv, betarate, betascv = _get_function_params(sn, ist)
                     if alpharate is not None and betarate is not None:
-                        # per-instance cold-start race for closed function layers; see _kb/06-solver-catalog.md MAM Setup/delay-off (function) stations section.
-                        setup_mean = 1.0 / alpharate
+                        # THE CLOSED VACATION QUEUE, SOLVED. What stood here was
+                        # the per-instance cold-start race
+                        # R = p_cold*E[setup] + S: it raced the delay-off against
+                        # the per-instance idle time and carried NO queueing term,
+                        # so it described a serverless instance pool rather than a
+                        # single-server vacation queue and reported the SAME
+                        # response time across a tenfold change in the setup mean
+                        # (BUG-78). qbd_setupdelayoff_closed solves the finite
+                        # level-dependent chain the simulator actually walks.
                         inf_stations = np.isinf(nservers)
                         any_active = False
                         for c in range(C):
                             if c not in inchain_map:
                                 continue
                             inchain = np.asarray(inchain_map[c]).flatten().astype(int)
+                            Nc = float(np.nansum(N[inchain]))
+                            if not np.isfinite(Nc) or Nc <= 0:
+                                continue
                             # per-visit idle time = chain think demand / visits to this station per cycle (Lchain and V are per-chain-cycle quantities).
                             Vtot = float(np.sum(V[ist, inchain]))
                             ZT = float(np.nansum(Lchain[inf_stations, c])) / max(Vtot, FINE_TOL)
-                            nu = 1.0 / max(ZT, FINE_TOL)
-                            pcold = _delayoff_cold_probability(betarate, betascv, nu)
+                            # THE COMPLEMENTARY DELAY, not the think demand alone.
+                            # lambda(n) = (Nc - n)/Z is exact only when everything
+                            # away from this station is a pure delay; with other
+                            # queues in the network the think demand alone
+                            # OVERSTATES the arrival rate and saturates the
+                            # station. Z is therefore the mean time a customer
+                            # currently spends away, (Nc - QN_here)/lambda_here at
+                            # the present iterate, floored at ZT so it can never be
+                            # shorter than the think time it contains. At
+                            # convergence on a Delay+Queue the two coincide.
+                            lam_here = float(np.nansum(TN[ist, inchain]))
+                            qn_here = float(np.nansum(QN[ist, inchain]))
+                            Z = ZT
+                            if lam_here > FINE_TOL and Nc - qn_here > 0:
+                                Z = max(ZT, (Nc - qn_here) / lam_here)
+                            # The chain is solved on the AGGREGATE of the chain's
+                            # classes: one server serves them all, so the vacation
+                            # cycle is a property of the station and not of a class.
+                            tn_c = np.array([TN[ist, k] if np.isfinite(TN[ist, k]) else 0.0
+                                             for k in inchain])
+                            s_c = np.array([S[ist, k] if np.isfinite(S[ist, k]) else 0.0
+                                            for k in inchain])
+                            tn_tot = float(np.sum(tn_c))
+                            if tn_tot > FINE_TOL:
+                                Sbar = float(np.sum(tn_c * s_c)) / tn_tot
+                            else:
+                                pos = s_c[s_c > 0]
+                                Sbar = float(np.mean(pos)) if pos.size else 0.0
+                            if Sbar <= FINE_TOL:
+                                continue
+                            QNc, Xc = qbd_setupdelayoff_closed(
+                                Nc, Z, 1.0 / Sbar, alpharate, alphascv, betarate, betascv)
+                            if not np.isfinite(QNc) or Xc <= 0:
+                                continue
+                            # Per class by R_k = W + S_k, the same decomposition the
+                            # finite-capacity branch uses: the waiting time is a
+                            # property of the station and the service is the class's
+                            # own. It collapses to QNc/Xc when the chain has one class.
+                            Wq = max(0.0, QNc / Xc - Sbar)
                             for k in inchain:
                                 lam_k = TN[ist, k]
                                 if np.isfinite(S[ist, k]) and lam_k > 0:
-                                    RN[ist, k] = pcold * setup_mean + S[ist, k]
+                                    RN[ist, k] = Wq + S[ist, k]
                                     QN[ist, k] = lam_k * RN[ist, k]
                                     any_active = True
                                 else:
@@ -1604,8 +1813,8 @@ def solver_mam_basic(
                         if any_active:
                             qbd_setupdelayoff_success = True
 
-                elif _is_function_station(sn, ist) and qbd_setupdelayoff is not None:
-                    # open setup/delay-off races the delay-off against the aggregate Poisson interarrival; must precede the exact-shortcut chain (qsys_mmck/qsys_phmc/qsys_mapdc/MMAPPH1FCFS), which models the station setup-free. See _kb/06-solver-catalog.md MAM Setup/delay-off section.
+                elif _is_setup_station(sn, ist) and qbd_setupdelayoff is not None:
+                    # open setup/delay-off must precede shortcuts (qsys_mmck/qsys_phmc/qsys_mapdc/MMAPPH1FCFS), setup-free. _kb/06-solver-catalog.md MAM Setup/delay-off
                     alpharate, alphascv, betarate, betascv = _get_function_params(sn, ist)
                     if alpharate is not None and betarate is not None:
                         # mu_k is the reciprocal of the service mean, so
@@ -1634,11 +1843,16 @@ def solver_mam_basic(
                 # Try to use MMAPPH1FCFS for accurate MMAP/PH/1/FCFS analysis
                 mmapph1_success = False
 
-                # finite-capacity FCFS/HOL with Poisson arrivals and shared exponential rate dispatches to exact M/M/c/K, ahead of the aggr_util<1 gate (a finite buffer stays finite even at rho>=1). See _kb/06-solver-catalog.md MAM Exact closed-form fast paths section.
+                # FCFS/HOL, Poisson, shared exp -> exact M/M/c/K before aggr_util<1 (finite at rho>=1). _kb/06-solver-catalog.md MAM Exact closed-form fast paths
+                # The gate is a buffer that can BIND, not a finite sn.cap:
+                # refreshCapacity derives one from the chain population for
+                # every closed model and for the closed classes of a mixed one
+                from line_solver.api.me.solver_nc_mem import sn_get_buffer_size
                 _capK = None
                 if getattr(sn, 'cap', None) is not None:
                     _capvec = np.asarray(sn.cap).ravel()
-                    if ist < _capvec.size and np.isfinite(_capvec[ist]):
+                    if (ist < _capvec.size and np.isfinite(_capvec[ist])
+                            and np.isfinite(sn_get_buffer_size(sn, ist))):
                         _capK = int(_capvec[ist])
                 _sched_ist = _get_scheduling(sn, ist)
                 if (not qbd_setupdelayoff_success and _capK is not None
@@ -1680,10 +1894,44 @@ def solver_mam_basic(
                                     RN[ist, k] = 0.0
                                     QN[ist, k] = 0.0
                             mmapph1_success = True
+                    elif not mmapph1_success:
+                        # Not M/M/c/K. A single server takes the exact
+                        # MMAP[K]/G/1/K branch, whose phase-resolved boundary
+                        # law gives a per-class loss ratio; more servers fall
+                        # back to the MMAPPH1FCFS truncate-and-renormalize
+                        # approximation. Mirrors MATLAB solver_mam_basic.m.
+                        _fcQ, _fcLoss, _fcLossK = _mam_finite_cap_open(
+                            sn, ist, lambdas, V, S, K, C, _capK, _c_serv)
+                        if _fcQ is not None:
+                            offered = np.zeros(K)
+                            for k in range(K):
+                                if (np.isfinite(S[ist, k]) and S[ist, k] > FINE_TOL
+                                        and np.isfinite(TN[ist, k])):
+                                    offered[k] = TN[ist, k]
+                            if _fcLossK is not None:
+                                TN_eff = offered * (1.0 - np.asarray(_fcLossK)[:K])
+                            else:
+                                TN_eff = offered * (1.0 - _fcLoss)
+                            sumTN = float(np.sum(TN_eff))
+                            if sumTN > 0:
+                                Savg_eff = float(np.nansum(TN_eff * S[ist, :K])) / sumTN
+                                Wq = max(0.0, _fcQ / sumTN - Savg_eff)
+                            else:
+                                Wq = 0.0
+                            for k in range(K):
+                                TN[ist, k] = TN_eff[k]
+                                UN[ist, k] = TN_eff[k] * S[ist, k] / _c_serv
+                                if TN_eff[k] > 0:
+                                    RN[ist, k] = Wq + S[ist, k]
+                                    QN[ist, k] = TN_eff[k] * RN[ist, k]
+                                else:
+                                    RN[ist, k] = 0.0
+                                    QN[ist, k] = 0.0
+                            mmapph1_success = True
 
                 if not qbd_setupdelayoff_success and not mmapph1_success and aggr_util < 1.0 - FINE_TOL and np.any(np.isinf(N)):
                     mdc_skip_surrogate = False
-                    # single-class open Det service dispatches to the exact Crommelin M/D/c embedded-DTMC solver (bypasses the surrogate-delay correction, already exact); mirrors MATLAB solver_mam_basic.m qsys_mapdc branch.
+                    # single-class open Det -> exact Crommelin M/D/c embedded-DTMC solver (bypasses surrogate delay, exact); mirrors solver_mam_basic.m qsys_mapdc.
                     is_dmc = False
                     if (K == 1
                             and ProcessType is not None
@@ -1757,16 +2005,34 @@ def solver_mam_basic(
                             and sn.procid.shape[0] > ist
                             and sn.procid[ist, 0] == ProcessType.EXP
                             and np.isfinite(nservers[ist]) and int(nservers[ist]) >= 1):
+                        # The gate mirrors solver_mam_basic.m: a station qualifies as
+                        # the PH arrival stream only when its process is genuinely
+                        # non-exponential AND renewal (qsys_phmc reads (pie,D0), so a
+                        # correlated MAP/RAP/ME goes to MMAPPH1FCFS instead), or when it
+                        # is the Source of a TWO-station M/M/c, where the generic path's
+                        # single-fast-server surrogate is inexact. Any other station is
+                        # not an arrival stream at all: in a tandem the input of a
+                        # downstream queue is a DEPARTURE process, which only the
+                        # decomposition produces.
                         src_idx_phm1 = -1
                         for jst in range(sn.procid.shape[0]):
                             if jst == ist:
                                 continue
-                            src_idx_phm1 = jst
-                            if sn.procid[jst, 0] != ProcessType.EXP:
+                            src_proc = sn.procid[jst, 0]
+                            if src_proc not in (ProcessType.EXP, ProcessType.DET,
+                                                ProcessType.IMMEDIATE, ProcessType.DISABLED):
+                                if not _srcproc_is_renewal(sn, jst):
+                                    continue
+                                src_idx_phm1 = jst
                                 break
-                        # qsys_phmc requires a RENEWAL arrival (reads only the (pie,D0) marginal); correlated MAP/RAP/ME arrivals fall through to MMAPPH1FCFS instead. See _kb/06-solver-catalog.md MAM Exact closed-form fast paths section.
-                        arrival_is_renewal = (src_idx_phm1 >= 0
-                                              and _srcproc_is_renewal(sn, src_idx_phm1))
+                            if (src_proc == ProcessType.EXP and nservers[ist] > 1
+                                    and int(sn.nstations) == 2
+                                    and _is_source_station(sn, jst)):
+                                src_idx_phm1 = jst
+                                break
+                        # Renewal by construction: the non-exponential branch tests it and
+                        # the Source branch is Poisson.
+                        arrival_is_renewal = src_idx_phm1 >= 0
                         try:
                             from ...qsys import qsys_phmc
                             pie_p, D0p = (_extract_ph_for_phm1(sn, src_idx_phm1)
@@ -1783,13 +2049,112 @@ def solver_mam_basic(
                         except Exception as e:
                             warnings.warn(f"qsys_phmc failed, falling back: {e}")
 
+                    # MAP/M/c: the qsys_phmc gate above refused this station because its
+                    # aggregate arrival stream is NOT renewal. The surrogate correction
+                    # below ignores the arrival correlation; the Q-MAM level-dependent
+                    # QBD is exact. c=1 already goes to the exact MAP/MAP/1 path.
+                    if (not mmapph1_success
+                            and K == 1
+                            and ProcessType is not None
+                            and hasattr(sn, 'procid') and sn.procid is not None
+                            and sn.procid.shape[0] > ist
+                            and sn.procid[ist, 0] == ProcessType.EXP
+                            and np.isfinite(nservers[ist]) and int(nservers[ist]) > 1):
+                        try:
+                            from ...qsys import qsys_mapmc
+                            D_list, _, _ = _build_mmap_arrival(sn, ist, lambdas, V, K, C)
+                            if D_list is not None and len(D_list) >= 2:
+                                mu_q = float(1.0 / S[ist, 0]) if S[ist, 0] > 0 else float('inf')
+                                res = qsys_mapmc(np.asarray(D_list[0]), np.asarray(D_list[1]),
+                                                 mu_q, int(nservers[ist]))
+                                QN[ist, 0] = res.meanQueueLength
+                                if TN[ist, 0] > FINE_TOL:
+                                    RN[ist, 0] = QN[ist, 0] / TN[ist, 0]
+                                mmapph1_success = True
+                                mdc_skip_surrogate = True
+                        except Exception as e:
+                            warnings.warn(f"qsys_mapmc failed, falling back: {e}")
+
+                    # Exact MAP/PH/c. The paths above cover c > 1 only for EXPONENTIAL
+                    # service; with a phase-type service law the surrogate correction
+                    # below divides the service by the server count and adds a delay,
+                    # which is an approximation. The service must be RENEWAL, since the
+                    # configuration blocks restart each freed server at alpha. DET goes
+                    # to MAP/D/c and ME/RAP have no phase-type configuration space.
+                    if (not mmapph1_success
+                            and K == 1
+                            and _capK is None
+                            and ProcessType is not None
+                            and hasattr(sn, 'procid') and sn.procid is not None
+                            and sn.procid.shape[0] > ist
+                            and sn.procid[ist, 0] not in (ProcessType.EXP, ProcessType.DET)
+                            and not _is_me_or_rap_service(sn, ist, K)
+                            and np.isfinite(nservers[ist]) and int(nservers[ist]) > 1):
+                        try:
+                            from ...qsys import qsys_mapphc
+                            from ...mam.map_analysis import map_pie, map_scale
+                            svc = sn.proc[ist][0]
+                            # sn.proc carries the service ALREADY divided by nservers,
+                            # so restore its true mean before building the multiset QBD
+                            svc_true = map_scale(np.asarray(svc[0], dtype=float),
+                                                 np.asarray(svc[1], dtype=float),
+                                                 float(S[ist, 0]))
+                            D0s = np.asarray(svc_true[0], dtype=float)
+                            D1s = np.asarray(svc_true[1], dtype=float)
+                            if _is_renewal_map(D0s, D1s):
+                                D_list, _, _ = _build_mmap_arrival(sn, ist, lambdas, V, K, C)
+                                if D_list is not None and len(D_list) >= 2:
+                                    res = qsys_mapphc(np.asarray(D_list[0]), np.asarray(D_list[1]),
+                                                      np.asarray(map_pie(D0s, D1s)).ravel(), D0s,
+                                                      int(nservers[ist]), num_w_moms=1)
+                                    QN[ist, 0] = res.meanQueueLength
+                                    if TN[ist, 0] > FINE_TOL:
+                                        RN[ist, 0] = QN[ist, 0] / TN[ist, 0]
+                                    mmapph1_success = True
+                                    mdc_skip_surrogate = True
+                        except Exception as e:
+                            warnings.warn(f"qsys_mapphc failed, falling back: {e}")
+
+                    # MMAP[K]/G[K]/1 whenever a class carries a service law that is
+                    # NOT phase type. MMAPPH1FCFS would read its PH FIT out of sn.proc,
+                    # which matches the mean and, above SCV 1, nothing else; He's
+                    # transform analysis takes the original law, which sn.lst carries.
+                    # Single server only: the result is a /1.
+                    if not mmapph1_success and _mam_gk1_applicable(sn, ist, K, nservers):
+                        try:
+                            from ...qsys import qsys_mmapgk1
+                            D_list, _, _ = _build_mmap_arrival(sn, ist, lambdas, V, K, C)
+                            if D_list is not None and len(D_list) >= 1 + K:
+                                # _build_mmap_arrival returns the BuTools shape
+                                # [D0, D^(1)..D^(K)]; qsys_mmapgk1 takes the LINE
+                                # convention, which carries the aggregate D1 second.
+                                blocks = [np.asarray(D_list[1 + k], dtype=float) for k in range(K)]
+                                mmap_line = [np.asarray(D_list[0], dtype=float),
+                                             sum(blocks)] + blocks
+                                svc_laws = []
+                                for k in range(K):
+                                    m1 = float(S[ist, k])
+                                    svc_laws.append({
+                                        'lst': sn.lst[ist][k],
+                                        'moments': [m1, m1 * m1 * (1.0 + float(sn.scv[ist, k]))],
+                                    })
+                                gk = qsys_mmapgk1(mmap_line, svc_laws, num_w_moms=1)
+                                for k in range(K):
+                                    QN[ist, k] = gk.lambdas[k] * gk.meanSojournTime[k]
+                                    if TN[ist, k] > FINE_TOL:
+                                        RN[ist, k] = QN[ist, k] / TN[ist, k]
+                                mmapph1_success = True
+                                mdc_skip_surrogate = True
+                        except Exception as e:
+                            warnings.warn(f"qsys_mmapgk1 failed, falling back: {e}")
+
                     if not mmapph1_success:
                         # Try MMAPPH1FCFS with 'ncMoms' for open classes
                         QN_mmap, RN_mmap = _solve_fcfs_mmapph1(sn, ist, lambdas, V, S, K, C, me_warned)
                         if QN_mmap is not None:
                             QN[ist, :] = QN_mmap
                             RN[ist, :] = RN_mmap
-                            # multi-server surrogate delay correction QN += TN*S*(nservers-1)/nservers compensates the rate-scaled single-server MMAPPH1FCFS solve; mirrors MATLAB solver_mam_basic.m.
+                            # multi-server surrogate delay QN += TN*S*(nservers-1)/nservers compensates rate-scaled single-server MMAPPH1FCFS solve; mirrors solver_mam_basic.m.
                             if np.isfinite(nservers[ist]) and nservers[ist] > 1 and not mdc_skip_surrogate:
                                 for k in range(K):
                                     if np.isfinite(S[ist, k]) and TN[ist, k] > FINE_TOL:
@@ -1835,13 +2200,20 @@ def solver_mam_basic(
                             inchain = sn.inchain[c].flatten().astype(int)
                             for k in inchain:
                                 QN[ist, k] = N[k] if np.isfinite(N[k]) else UN[ist, k]
+                                # surrogate tandem delay is owed by EVERY non-exact FCFS arm, saturated included; reference adds it once after the arm (solver_mam_basic.m:764)
+                                if (np.isfinite(nservers[ist]) and nservers[ist] > 1
+                                        and np.isfinite(S[ist, k]) and TN[ist, k] > FINE_TOL):
+                                    QN[ist, k] += TN[ist, k] * S[ist, k] * (nservers[ist] - 1) / nservers[ist]
                                 RN[ist, k] = QN[ist, k] / TN[ist, k] if TN[ist, k] > FINE_TOL else 0.0
 
-                # FCFS path leaves Qret[k]=NaN for a class with no service process (triggers the post-loop population wash to RN=S); the function-station branch instead pins QN=0 to avoid voiding the chain sum. Mirrors MATLAB.
+                # FCFS path leaves Qret[k]=NaN for no-service class (post-loop wash to RN=S); function-station branch pins QN=0 to keep chain sum. Mirrors MATLAB.
                 if not qbd_setupdelayoff_success:
                     for k in range(K):
                         if not np.isfinite(S[ist, k]):
                             QN[ist, k] = np.nan
+
+        # Calibrate the fixed point on the REPORTED QN; see _kb/06-solver-catalog.md (MAM closed-chain population)
+        _apply_resptime_floor(sn, QN, RN, TN, S, V, M, range(K), FINE_TOL)
 
     totiter = it + 2
 
@@ -1849,7 +2221,7 @@ def solver_mam_basic(
     CN = np.sum(RN, axis=0).reshape(1, -1)
     QN = np.abs(QN)
 
-    # second-pass renormalization to match population; NaN must propagate through the scaling exactly as MATLAB/Java do (undefined-service cells stay NaN, not silently zeroed).
+    # second-pass renorm to match population; NaN must propagate through scaling like MATLAB/Java (undefined-service cells stay NaN, not zeroed).
     for _ in range(2):
         for c in range(C):
             if c not in inchain_map:
@@ -1875,29 +2247,7 @@ def solver_mam_basic(
                         QN[:, inchain] = QN[:, inchain] * ratio
 
             # Recompute response times
-            for ist in range(M):
-                # Skip source stations - they have no queue (Q=0, R=0)
-                if _is_source_station(sn, ist):
-                    continue
-                for k in inchain:
-                    if V[ist, k] > 0:
-                        if _is_delay_station(sn, ist):
-                            RN[ist, k] = S[ist, k]
-                        else:
-                            # undefined service treated as NaN here (not inf) so a no-service cell ends NaN as in MATLAB, instead of RN=inf, QN=inf*0; MATLAB's max ignores NaN.
-                            s_val = S[ist, k] if np.isfinite(S[ist, k]) else np.nan
-                            qn_tn = QN[ist, k] / TN[ist, k] if TN[ist, k] > FINE_TOL else np.nan
-                            if np.isnan(qn_tn) and np.isnan(s_val):
-                                RN[ist, k] = np.nan
-                            elif np.isnan(qn_tn):
-                                RN[ist, k] = s_val
-                            elif np.isnan(s_val):
-                                RN[ist, k] = qn_tn
-                            else:
-                                RN[ist, k] = max(s_val, qn_tn)
-                    else:
-                        RN[ist, k] = 0.0
-                    QN[ist, k] = RN[ist, k] * TN[ist, k]
+            _apply_resptime_floor(sn, QN, RN, TN, S, V, M, inchain, FINE_TOL)
 
             # Handle zero population chains
             if Nc == 0:
@@ -1913,11 +2263,11 @@ def solver_mam_basic(
         inchain = sn.inchain[c].flatten().astype(int)
         XN[0, inchain] = lambdas[c]
 
-    # SLC clamp applied last (after rescaling); U_slc=1-sum_j U_j from the TRUE uninflated service time. See _kb/06-solver-catalog.md MAM Self-looping classes (SLC) section.
+    # SLC clamp last (after rescaling); U_slc=1-sum_j U_j from TRUE uninflated service time. _kb/06-solver-catalog.md MAM Self-looping classes (SLC)
     if np.any(isslc):
         refstat = np.asarray(getattr(sn, 'refstat', np.zeros(K))).flatten().astype(int)
         rates = np.asarray(sn.rates)
-        # utilization follows the declared service time; the interference inflation applied above must not be reported as utilization or fed into the leftover-capacity identity.
+        # utilization follows declared service time; interference inflation above must not be reported as utilization or fed into leftover-capacity identity.
         for ist in range(M):
             if slcjobs[ist] > 0:
                 UN[ist, ~isslc] = Strue[ist, ~isslc] * TN[ist, ~isslc]
@@ -2077,34 +2427,39 @@ def _solver_mam_dec_mmap(
             lambdas_inchain = lambdas_inchain[np.isfinite(lambdas_inchain)]
             lambda_k[inchain] = np.sum(lambdas_inchain) if len(lambdas_inchain) > 0 else 0.0
 
-    # Change A: Validate scheduling strategies (FCFS, HOL, PS supported)
+    # THE TWO RESTRICTIONS OF THIS ANALYZER, RAISED RATHER THAN RETURNED. Both
+    # used to end in a warning and an EMPTY SolverMAMReturn: the caller in
+    # DecMMAPAlgorithm.solve then built a MAMResult with no metrics, and
+    # SolverMAM died with "MAMResult.__init__() missing 4 required positional
+    # arguments" on every closed model findSolver had offered dec.mmap for.
+    # SolverMAM.getMethodFeatureSet states the same two rules declaratively --
+    # 'dec.mmap' drops SchedStrategy_INF, ClosedClass and SelfLoopingClass --
+    # so the pair is no longer offered; this is what a caller who names the
+    # method by hand meets.
+    #
+    # FCFSPRPRIO is in the accepted set because MATLAB solver_mam.m accepts it
+    # (its station ladder reaches MMAPPH1PRPR); this port listed FCFS/HOL/PS
+    # only, which is a narrower analyzer under the same method name.
     for ist in range(M):
         sched = _get_scheduling(sn, ist)
         if sched == SchedStrategy.EXT:
             pass  # source, OK
-        elif sched in [SchedStrategy.FCFS, SchedStrategy.HOL, SchedStrategy.PS]:
+        elif sched in [SchedStrategy.FCFS, SchedStrategy.HOL,
+                       SchedStrategy.FCFSPRPRIO, SchedStrategy.PS]:
             pass  # supported
         else:
-            if options.verbose:
-                warnings.warn(
-                    f"The dec.mmap method does not support scheduling strategy "
-                    f"at station {ist}."
-                )
-            result = SolverMAMReturn()
-            result.runtime = time.time() - start_time
-            result.method = ""
-            result.it = 0
-            return result
+            raise ValueError(
+                "The dec.mmap method does not support the %s scheduling strategy at "
+                "station %d: the departure-process fixed point is built for EXT, FCFS, "
+                "HOL, FCFSPRPRIO and PS stations only. Use the dec.source method."
+                % (getattr(sched, 'name', str(sched)), ist + 1))
 
     if not all(np.isinf(N)):
-        # Only open models supported by dec.mmap currently
-        if options.verbose:
-            warnings.warn("dec.mmap currently only supports open models.")
-        result = SolverMAMReturn()
-        result.runtime = time.time() - start_time
-        result.method = ""
-        result.it = 0
-        return result
+        raise ValueError(
+            "The dec.mmap method supports open models only: the departure-process fixed "
+            "point iterates on arrival streams that a closed population does not have. "
+            "Use the dec.source method, or method 'default', which routes a closed model "
+            "to an analyzer that solves it.")
 
     S = _get_service_times(sn)
     nservers = _get_nservers(sn)
@@ -2119,6 +2474,18 @@ def _solver_mam_dec_mmap(
         if sched == SchedStrategy.EXT:
             TN[ist, :] = np.asarray(sn.rates)[ist, :] if sn.rates is not None else 0.0
             TN[ist, np.isnan(TN[ist, :])] = 0.0
+            # The SOURCE keeps its process too. `solver_mam.m` sets PH = sn.proc
+            # wholesale and only the queueing branch divides by the server
+            # count, so DEP{source} is the ARRIVAL process, scaled to the class
+            # rate. Skipping the station here left the source's departure a
+            # placeholder Exp(1): every downstream queue then saw lambda = 1
+            # instead of 0.5 on an Erlang(2,5) source, and U was inflated by the
+            # ratio of the two.
+            PH_map[ist] = {}
+            for k in range(K):
+                ph_k = _get_ph_as_map(sn, ist, k, S)
+                if ph_k is not None:
+                    PH_map[ist][k] = ph_k
             continue
         if sched in [SchedStrategy.FCFS, SchedStrategy.HOL, SchedStrategy.PS]:
             PH_map[ist] = {}
@@ -2127,27 +2494,33 @@ def _solver_mam_dec_mmap(
             for k in range(K):
                 ph_k = _get_ph_as_map(sn, ist, k, S)
                 if ph_k is not None:
-                    # Scale service time by number of servers
+                    # Divide the service time by the server count, with a
+                    # surrogate delay added back to QN below. map_scale takes the
+                    # NEW MEAN, as map_scale.m does -- passing the ratio 1/c
+                    # instead set the mean to 1/c outright.
                     mean_s = map_mean(ph_k[0], ph_k[1])
                     if nservers[ist] > 1 and np.isfinite(mean_s) and mean_s > 0:
-                        scale_factor = mean_s / nservers[ist]
                         ph_k[0], ph_k[1] = map_scale(ph_k[0], ph_k[1],
-                                                      scale_factor / mean_s if mean_s > 0 else 1.0)
+                                                     mean_s / nservers[ist])
                     PH_map[ist][k] = ph_k
-                    pie[ist][k] = map_pie(ph_k[0], ph_k[1])
+                    # butools CheckPHRepresentation requires a ROW vector: a
+                    # 1-D (n,) alpha is rejected, MMAPPH1FCFS then throws and
+                    # the caller silently degraded to an M/M/1 formula. map_pie
+                    # returns 1-D, so it is widened here once for every consumer.
+                    pie[ist][k] = np.atleast_2d(map_pie(ph_k[0], ph_k[1]))
                     D0_ph[ist, k] = ph_k[0]
                     if np.any(np.isnan(D0_ph[ist, k])):
                         # Immediate service fallback
                         imm_rate = 1e10
                         D0_ph[ist, k] = np.array([[-imm_rate]])
-                        pie[ist][k] = np.array([1.0])
+                        pie[ist][k] = np.array([[1.0]])
                         PH_map[ist][k] = [np.array([[-imm_rate]]),
                                           np.array([[imm_rate]])]
                 else:
                     # Exponential fallback
                     rate = 1.0 / S[ist, k] if S[ist, k] > 0 and np.isfinite(S[ist, k]) else 1.0
                     PH_map[ist][k] = [np.array([[-rate]]), np.array([[rate]])]
-                    pie[ist][k] = np.array([1.0])
+                    pie[ist][k] = np.array([[1.0]])
                     D0_ph[ist, k] = np.array([[-rate]])
 
     # ETAQA truncation level
@@ -2174,23 +2547,24 @@ def _solver_mam_dec_mmap(
 
     for it in range(1, it_max + 1):
         if it == 1:
-            # Initially form departure processes using scaled service
-            for ind in range(M):
-                DEP[ind] = {}
+            # Initially form departure processes using scaled service. DEP, PH
+            # and V are all STATION-indexed, as solver_mam.m has them; the
+            # arrival map returned below is NODE-indexed.
+            for ist in range(M):
+                DEP[ist] = {}
                 for r in range(K):
-                    ist = nodeToStation[ind] if ind < len(nodeToStation) else ind
                     if ist in PH_map and r in PH_map[ist]:
                         ph = PH_map[ist][r]
-                        scale = 1.0 / (lambda_k[r] * V[ind, r]) if (
-                            lambda_k[r] > FINE_TOL and V[ind, r] > FINE_TOL) else 1.0
+                        scale = 1.0 / (lambda_k[r] * V[ist, r]) if (
+                            lambda_k[r] > FINE_TOL and V[ist, r] > FINE_TOL) else 1.0
                         D0_s, D1_s = map_scale(ph[0], ph[1], scale)
-                        DEP[ind][r] = [D0_s, D1_s]
+                        DEP[ist][r] = [D0_s, D1_s]
                     else:
-                        DEP[ind][r] = [np.array([[-1.0]]), np.array([[1.0]])]
+                        DEP[ist][r] = [np.array([[-1.0]]), np.array([[1.0]])]
 
-        # Compute arrival processes via traffic equations
-        # Simplified: use superposition of departures weighted by routing
-        ARV = _compute_arrivals_simple(sn, DEP, V, lambda_k, M, K, PH_map, config)
+        # Arrival processes from the traffic equations: the departures are
+        # split over the destinations by the routing and merged at each node.
+        ARV = solver_mam_traffic(sn, DEP, config)
 
         QN_prev = QN.copy()
 
@@ -2210,7 +2584,7 @@ def _solver_mam_dec_mmap(
                     nodetype = int(nt_arr[ind])
 
             # Queue node processing
-            is_queue = (nodetype == NodeType.Queue if nodetype is not None
+            is_queue = (nodetype == NodeType.QUEUE if nodetype is not None
                        else sched in [SchedStrategy.FCFS, SchedStrategy.HOL,
                                       SchedStrategy.PS])
 
@@ -2241,7 +2615,7 @@ def _solver_mam_dec_mmap(
                                and K > 1 and np.any(classprio != classprio[0]))
                 if is_hol_prio and HAS_MMAPPH1NPPR and ind in ARV \
                         and ARV[ind] is not None and ist in pie and ist in PH_map:
-                    # HOL with non-identical priorities: MMAP[K]/PH[K]/1 (BUTools D1=lowest priority vs LINE's lower-value-is-higher convention); mirrors MATLAB solver_mam_basic.
+                    # HOL with non-identical priorities: MMAP[K]/PH[K]/1 (BUTools D1=lowest priority vs LINE's lower-value-is-higher); mirrors solver_mam_basic.
                     if len(np.unique(classprio)) != K:
                         raise RuntimeError(
                             'Solver MAM requires either identical priorities '
@@ -2249,10 +2623,11 @@ def _solver_mam_dec_mmap(
                     iK = np.argsort(-classprio)  # lowest priority first
                     arv_mmap = ARV[ind]
                     # MMAP layout: [D0, D1_total, class-marked matrices...]
-                    D_pr = [np.asarray(arv_mmap[0])] + \
-                        [np.asarray(arv_mmap[2 + int(k)]) for k in iK]
-                    pie_pr = [np.atleast_2d(np.asarray(pie[ist][int(k)])) for k in iK]
-                    S_pr = [np.atleast_2d(np.asarray(D0_ph[ist, int(k)])) for k in iK]
+                    D_pr = [ml.matrix(np.asarray(arv_mmap[0], dtype=float))] + \
+                        [ml.matrix(np.asarray(arv_mmap[2 + int(k)], dtype=float)) for k in iK]
+                    pie_pr = [ml.matrix(np.asarray(pie[ist][int(k)], dtype=float).reshape(1, -1))
+                              for k in iK]
+                    S_pr = [ml.matrix(np.asarray(D0_ph[ist, int(k)], dtype=float)) for k in iK]
                     Qret = MMAPPH1NPPR(D_pr, pie_pr, S_pr, 'ncMoms', 1)
                     if K == 1:
                         Qret = [Qret]
@@ -2275,8 +2650,19 @@ def _solver_mam_dec_mmap(
                             else:
                                 arv_for_fcfs = arv_mmap
 
-                            pie_list = [pie[ist][k] for k in range(K) if k in pie.get(ist, {})]
-                            D0_list = [D0_ph[ist, k] for k in range(K) if (ist, k) in D0_ph]
+                            # butools is written against numpy.matlib: it forms
+                            # S + sum(-S,1)*sigma, which is the intended rank-one
+                            # outer product ONLY for matrices. With plain ndarrays
+                            # that line broadcasts elementwise, the result is not a
+                            # generator, CTMCSolve refuses it and the caller
+                            # degraded to an M/M/1 formula. Every other working
+                            # call site here builds ml.matrix, so this one does too.
+                            pie_list = [ml.matrix(np.asarray(pie[ist][k], dtype=float).reshape(1, -1))
+                                        for k in range(K) if k in pie.get(ist, {})]
+                            D0_list = [ml.matrix(np.asarray(D0_ph[ist, k], dtype=float))
+                                       for k in range(K) if (ist, k) in D0_ph]
+                            arv_for_fcfs = [ml.matrix(np.asarray(x, dtype=float))
+                                            for x in arv_for_fcfs]
 
                             if len(pie_list) == K and len(D0_list) == K:
                                 Qret = MMAPPH1FCFS(arv_for_fcfs, pie_list, D0_list,
@@ -2358,20 +2744,20 @@ def _solver_mam_dec_mmap(
                 if ind < len(nt_arr):
                     nodetype = int(nt_arr[ind])
 
-            is_queue = (nodetype == NodeType.Queue if nodetype is not None
+            is_queue = (nodetype == NodeType.QUEUE if nodetype is not None
                        else sched in [SchedStrategy.FCFS, SchedStrategy.HOL,
                                       SchedStrategy.PS])
 
-            if is_queue and ind in DEP:
+            if is_queue and ist in DEP:
                 for r in range(K):
                     if not (ind in ARV and ARV[ind] is not None):
                         # No arrival process available, use scaled PH
                         if ist in PH_map and r in PH_map[ist]:
                             ph = PH_map[ist][r]
-                            scale = 1.0 / (lambda_k[r] * V[ind, r]) if (
-                                lambda_k[r] > FINE_TOL and V[ind, r] > FINE_TOL) else 1.0
+                            scale = 1.0 / (lambda_k[r] * V[ist, r]) if (
+                                lambda_k[r] > FINE_TOL and V[ist, r] > FINE_TOL) else 1.0
                             D0_s, D1_s = map_scale(ph[0], ph[1], scale)
-                            DEP[ind][r] = [D0_s, D1_s]
+                            DEP[ist][r] = [D0_s, D1_s]
                         continue
 
                     # Extract class-r arrival MAP by hiding all other classes
@@ -2419,30 +2805,30 @@ def _solver_mam_dec_mmap(
 
                                     dep_map[0], dep_map[1] = map_normalize(
                                         dep_map[0], dep_map[1])
-                                    DEP[ind][r] = dep_map
+                                    DEP[ist][r] = dep_map
                                 except Exception:
                                     # Fall back to scaled service on ETAQA failure
-                                    DEP[ind][r] = list(PH_map[ist][r])
+                                    DEP[ist][r] = list(PH_map[ist][r])
                             else:
-                                DEP[ind][r] = list(PH_map[ist][r])
+                                DEP[ist][r] = list(PH_map[ist][r])
 
                         except Exception:
                             if ist in PH_map and r in PH_map[ist]:
-                                DEP[ind][r] = list(PH_map[ist][r])
+                                DEP[ist][r] = list(PH_map[ist][r])
                             else:
-                                DEP[ind][r] = [np.array([[-1.0]]), np.array([[1.0]])]
+                                DEP[ist][r] = [np.array([[-1.0]]), np.array([[1.0]])]
                     else:
                         # No ETAQA available, use PH service
                         if ist in PH_map and r in PH_map[ist]:
-                            DEP[ind][r] = list(PH_map[ist][r])
+                            DEP[ist][r] = list(PH_map[ist][r])
                         else:
-                            DEP[ind][r] = [np.array([[-1.0]]), np.array([[1.0]])]
+                            DEP[ist][r] = [np.array([[-1.0]]), np.array([[1.0]])]
 
                     # Scale departure process to match departure rate
-                    scale = 1.0 / (lambda_k[r] * V[ind, r]) if (
-                        lambda_k[r] > FINE_TOL and V[ind, r] > FINE_TOL) else 1.0
-                    DEP[ind][r][0], DEP[ind][r][1] = map_scale(
-                        DEP[ind][r][0], DEP[ind][r][1], scale)
+                    scale = 1.0 / (lambda_k[r] * V[ist, r]) if (
+                        lambda_k[r] > FINE_TOL and V[ist, r] > FINE_TOL) else 1.0
+                    DEP[ist][r][0], DEP[ist][r][1] = map_scale(
+                        DEP[ist][r][0], DEP[ist][r][1], scale)
 
     totiter = it
 
@@ -2524,91 +2910,136 @@ def _get_ph_as_map(
     return None
 
 
-def _compute_arrivals_simple(
+def solver_mam_traffic(
     sn: NetworkStruct,
     DEP: Dict,
-    V: np.ndarray,
-    lambda_k: np.ndarray,
-    M: int,
-    K: int,
-    PH_map: Dict,
     config: Any
 ) -> Dict:
     """
-    Compute arrival MMAPs at each station from departure MAPs.
+    Arrival MMAP at every node, from the departure MAPs and the routing.
 
-    Simplified version of solver_mam_traffic: superimposes departure MAPs
-    weighted by routing probabilities.
+    Port of matlab/src/solvers/MAM/solver_mam_traffic.m. `DEP[ist][r]` is the
+    departure process of class r from station ist in (D0, D1) form; the return
+    maps a NODE index to the MMAP arriving there, or None for a node that takes
+    no arrival (the Source, and every ClassSwitch, which is folded away).
 
-    Args:
-        sn: Network structure
-        DEP: Departure MAPs indexed by [node][class]
-        V: Visit ratios (M x K)
-        lambda_k: Per-class arrival rates
-        M: Number of stations
-        K: Number of classes
-        PH_map: PH service distributions
-        config: Solver options
-
-    Returns:
-        Dictionary mapping node index to arrival MMAP [D0, D1_total, D1_c0, D1_c1, ...]
+    The routing is applied, not assumed. Class-switch nodes are eliminated by
+    stochastic complementation of `sn.rtnodes` over the non-ClassSwitch
+    (node, class) pairs, each station's per-class departures are superposed into
+    one MMAP, that MMAP is SPLIT over the destinations by the complemented
+    routing (`npfqn_traffic_split_cs`), and the pieces arriving at a node are
+    MERGED (`npfqn_traffic_merge`). The previous implementation did none of
+    this: it handed each station its own departure back as its arrival, so a
+    tandem was solved as a set of independent queues and dec.mmap reported
+    utilizations inflated by the visit ratio.
     """
+    from ...mam.mmap_ops import (mmap_compress, mmap_lambda, mmap_normalize,
+                                 mmap_super)
+    from ...mc.dtmc import dtmc_stochcomp
+    from ...npfqn.traffic import npfqn_traffic_merge, npfqn_traffic_split_cs
+
+    FINE_TOL = 1e-8
+    I = int(sn.nnodes)
+    R = int(sn.nclasses)
+    space_max = int(getattr(config, 'space_max', 128) or 128)
+
+    nodetype = np.asarray(sn.nodetype).flatten().astype(int)
+    nodeToStation = np.asarray(getattr(sn, 'nodeToStation',
+                                       np.arange(I))).flatten().astype(int)
+
+    # index over all non-ClassSwitch nodes
+    non_cs_classes = []
+    isNCS = np.zeros(I, dtype=bool)
+    nodeToNCS = np.full(I, -1, dtype=int)
+    for ind in range(I):
+        if nodetype[ind] != NodeType.CLASSSWITCH:
+            non_cs_classes.extend(range(ind * R, (ind + 1) * R))
+            isNCS[ind] = True
+            nodeToNCS[ind] = int(np.sum(isNCS)) - 1
+    Inc = int(np.sum(isNCS))
+
+    rtnodes = np.asarray(sn.rtnodes, dtype=float)
+    if Inc == I:
+        rtncs = rtnodes
+    else:
+        rtncs = dtmc_stochcomp(rtnodes, np.asarray(non_cs_classes, dtype=int))
+
+    def _as_mmap(pair):
+        """A (D0, D1) renewal process as a ONE-class MMAP [D0, D1, D1]."""
+        if pair is None:
+            return None
+        D0 = np.atleast_2d(np.asarray(pair[0], dtype=float))
+        D1 = np.atleast_2d(np.asarray(pair[1], dtype=float))
+        if D0.size == 0 or np.any(np.isnan(D0)):
+            z = np.zeros((1, 1))
+            return [z, z.copy(), z.copy()]
+        return [D0, D1, D1.copy()]
+
+    def _norm(m):
+        D0n, rest = mmap_normalize(m[0], list(m[1:]))
+        return [D0n] + list(rest)
+
+    def _compress(m):
+        D0c, rest = mmap_compress(m[0], list(m[1:]))
+        return [D0c] + list(rest)
+
+    # outgoing flows: superpose each station's per-class departures, then split
+    # them over the destinations by the complemented routing
+    LINKS = {}
+    for ind in range(I):
+        if not isNCS[ind]:
+            continue
+        if nodetype[ind] not in (NodeType.SOURCE, NodeType.DELAY, NodeType.QUEUE):
+            continue
+        inc = nodeToNCS[ind]
+        ist = nodeToStation[ind] if ind < len(nodeToStation) else ind
+        per_class = [_as_mmap(DEP.get(ist, {}).get(r)) for r in range(R)]
+        per_class = [m if m is not None else [np.zeros((1, 1))] * 3 for m in per_class]
+        dep = per_class[0]
+        for rr in range(1, R):
+            dep = mmap_super(dep, per_class[rr])
+            if np.asarray(dep[0]).shape[0] > space_max:
+                dep = _compress(dep)
+
+        Psplit = np.zeros((R, Inc * R))
+        for r in range(R):
+            for jnd in range(I):
+                if not isNCS[jnd]:
+                    continue
+                jnc = nodeToNCS[jnd]
+                for sclass in range(R):
+                    Psplit[r, jnc * R + sclass] = rtncs[inc * R + r, jnc * R + sclass]
+
+        Fsplit = npfqn_traffic_split_cs(dep, Psplit)
+        for jnc in range(Inc):
+            piece = Fsplit.get(jnc) if isinstance(Fsplit, dict) else Fsplit[jnc]
+            if piece is not None:
+                LINKS[(inc, jnc)] = _norm(list(piece))
+
+    # incoming flows: merge everything that lands on the node
     ARV = {}
-
-    try:
-        from ...npfqn.traffic import npfqn_traffic_split_cs, npfqn_traffic_merge
-    except ImportError:
-        pass
-
-    stationToNode = np.asarray(getattr(sn, 'stationToNode',
-                                       np.arange(M))).flatten().astype(int)
-
-    for ist in range(M):
-        ind = stationToNode[ist] if ist < len(stationToNode) else ist
-        sched = _get_scheduling(sn, ist)
-
-        if sched == SchedStrategy.EXT:
+    for ind in range(I):
+        if not isNCS[ind] or nodetype[ind] == NodeType.SOURCE:
             ARV[ind] = None
             continue
-
-        # Build MMAP arrival at this station
-        # For each class, build a MAP from departure process
-        mmap_list = []
-        for r in range(K):
-            if ind in DEP and r in DEP[ind]:
-                dep_r = DEP[ind][r]
-                D0_r = dep_r[0].copy()
-                D1_r = dep_r[1].copy()
-                # Convert MAP to MMAP with K classes
-                # Only class r has non-zero arrivals
-                mmap_r = [D0_r]
-                # D1_total = D1_r (only this class has arrivals)
-                mmap_r.append(D1_r.copy())
-                # Per-class arrival matrices
-                for s in range(K):
-                    if s == r:
-                        mmap_r.append(D1_r.copy())
-                    else:
-                        mmap_r.append(np.zeros_like(D1_r))
-                mmap_list.append(mmap_r)
-
-        if len(mmap_list) > 0:
-            # Superpose all class arrival MMAPs
-            if len(mmap_list) == 1:
-                ARV[ind] = mmap_list[0]
-            else:
-                # Superpose MMAPs using mmap_super
-                try:
-                    from ...mam import mmap_super
-                    # mmap_super accepts list of MMAPs in [D0, D1, ...] format
-                    ARV[ind] = mmap_super(mmap_list)
-                except Exception:
-                    # Fallback: just use the first one
-                    ARV[ind] = mmap_list[0]
+        inc = nodeToNCS[ind]
+        flows = []
+        for jnc in range(Inc):
+            link = LINKS.get((jnc, inc))
+            if link is None:
+                continue
+            if float(np.sum(mmap_lambda(link))) > FINE_TOL:
+                flows.append(link)
+        if len(flows) > 1:
+            ARV[ind] = npfqn_traffic_merge({i: f for i, f in enumerate(flows)})
+        elif len(flows) == 1:
+            ARV[ind] = flows[0]
         else:
-            ARV[ind] = None
-
+            # every link is zero: take one, as the reference does
+            any_link = next((v for (a, b), v in LINKS.items() if b == inc), None)
+            ARV[ind] = any_link
     return ARV
+
 
 
 __all__ = [

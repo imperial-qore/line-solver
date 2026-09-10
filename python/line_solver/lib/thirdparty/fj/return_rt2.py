@@ -249,8 +249,13 @@ def _return_wait(En1, pi0, T, phi, sum_Ajump):
     alfa = -np.linalg.solve(T.T, pi0.reshape(-1, 1)).reshape(1, -1)  # -pi0 / T
     ds = phi.shape[0]
     phi = phi.reshape(-1, 1)
-    rhos = (np.diag((phi @ alfa)).reshape(1, -1)) / float(alfa @ phi)
-    En0 = float(alfa @ sum_Ajump) / float(np.sum(pi0))
+    # numpy >= 2 refuses float() on ANY ndim >= 1 array, size 1 included, and a
+    # row-by-column product is (1,1): .item() is the coercion that survives it.
+    # Same numpy-2 break as the one fixed in the layered solver and the ERPS
+    # estimator; here it took every SolverMAM fork-join run with it, because
+    # solver_mam_fj computes percentiles on the mean path.
+    rhos = (np.diag((phi @ alfa)).reshape(1, -1)) / (alfa @ phi).item()
+    En0 = (alfa @ sum_Ajump).item() / float(np.sum(pi0))
     prob_wait = (En0 - 1.0) / (En0 - 1.0 + En1)
     wait_alpha = prob_wait * rhos
     wait_Smat = np.zeros((ds, ds))
@@ -274,7 +279,7 @@ def _return_per(vector, Mat, pers):
     ak = []
     vP = np.sum(P_res, axis=1).reshape(-1, 1)
     while abs(sum_a - M) >= 1e-10:
-        val = float(vector @ vP)
+        val = (vector @ vP).item()  # (1,1): see the .item() note in _return_wait
         ak.append(val)
         sum_a += val
         vP = P_res @ vP

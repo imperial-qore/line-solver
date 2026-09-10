@@ -1,7 +1,7 @@
 """Tests for the CME (Concentrated Matrix Exponential) distribution.
 
 Mirrors jar/src/test/java/jline/lang/processes/CMEDistributionTest.java and
-line-test.git/test_cme_distribution.m.
+line-test.git/test/testsAPI/test_cme_distribution.m.
 """
 
 import math
@@ -279,7 +279,7 @@ def test_fit_me_is_solvable_by_ctmc():
 # An ME with a negative entry in alpha whose density touches zero in the interior
 # (f(1.2) = -1.5e-14 against a peak of 2.79), so it admits NO phase-type
 # representation of any order. Spectrum {-1, -2 +- 2i}, mean 0.5329, SCV 2.6843.
-# Same instance as line-test.git/test_mam_me_warning.m.
+# Same instance as line-test.git/test/testsAPI/test_mam_me_warning.m.
 _NONPH_ALPHA = np.array([0.61058991931158258, -0.15547146730086722, 0.54488154798928464])
 _NONPH_A = np.array([[-1.0, 0.0, 0.0], [0.0, -2.0, 2.0], [0.0, -2.0, -2.0]])
 

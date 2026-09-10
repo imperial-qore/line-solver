@@ -12,9 +12,9 @@ import java.io.Serializable;
  *
  * <p>This utility class provides a simple way to group three related values together.
  * It implements {@link Serializable} for persistence. It is the three-element
- * counterpart of {@link Pair} and exposes the same Kotlin-style accessors
+ * counterpart of {@link Pair} and exposes the same property-style accessors
  * ({@link #getFirst()}, {@link #getSecond()}, {@link #getThird()}) so that code
- * previously written against {@code kotlin.Triple} works unchanged.</p>
+ * previously written against {@code Triple} works unchanged.</p>
  *
  * <p>Common use cases:
  * <ul>

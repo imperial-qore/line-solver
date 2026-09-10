@@ -114,12 +114,14 @@ def pfqn_mvald(
         stabilize: Force non-negative probabilities (default: True).
 
     Returns:
-        Tuple of (XN, QN, UN, CN, lGN, isNumStable, pi):
+        Tuple of (XN, QN, UN, CN, lGN, isNumStable, pi)::
+
             XN: Class throughputs (1 x R).
             QN: Mean queue lengths (M x R).
             UN: Utilizations (M,), per STATION, i.e. 1-P_j(0). Matches MATLAB
                 pfqn_mvald, which likewise reports utilization per station and
                 not per class.
+
             CN: Cycle times (1 x R).
             lGN: Log normalizing constant evolution.
             isNumStable: True if numerically stable.
@@ -291,7 +293,9 @@ def pfqn_mvams(
     General-purpose MVA for mixed networks with multiserver nodes.
 
     This function handles networks with open/closed classes and multi-server
-    stations, routing to the appropriate specialized algorithm.
+    stations, routing to the appropriate specialized algorithm. Standard arrival
+    theorem throughout; for the interlocked-flow correction of Franks (1999),
+    Ch. 4, Eq. (4.7) call pfqn_mvams_ilock instead.
 
     Args:
         lambda_arr: Arrival rate vector (R,). Use 0 for closed classes.
@@ -302,7 +306,8 @@ def pfqn_mvams(
         S: Number of servers per station (M,) (default: ones).
 
     Returns:
-        Tuple of (XN, QN, UN, CN, lG):
+        Tuple of (XN, QN, UN, CN, lG)::
+
             XN: Class throughputs (1 x R).
             QN: Mean queue lengths (M x R).
             UN: Utilizations. Per STATION-CLASS (M x R) on every branch except
@@ -311,10 +316,12 @@ def pfqn_mvams(
                 from MATLAB pfqn_mvams, which behaves identically; the only
                 caller (api/solvers/mva/handler.py) discards UN and recomputes
                 utilization analytically, as solver_mva.m does.
+
             CN: Residence times per STATION-CLASS (M x R), as in MATLAB
                 pfqn_mvams and pfqn_mva. Note this is NOT what pfqn_mva returns
                 as its own CN in Python (that is the (1 x R) cycle time); the
                 residence time is pfqn_mva's RN.
+
             lG: Log normalizing constant.
 
     References:
@@ -398,3 +405,56 @@ __all__ = [
     'pfqn_mvald',
     'pfqn_mvams',
 ]
+
+
+def pfqn_mvams_ilock(
+    lambda_arr: np.ndarray,
+    L: np.ndarray,
+    N: np.ndarray,
+    Z: np.ndarray,
+    mi: Optional[np.ndarray] = None,
+    S: Optional[np.ndarray] = None,
+    IL: Optional[np.ndarray] = None
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float]:
+    """
+    MVA entry point for models carrying the interlocked-flow correction.
+
+    The interlock of Franks (1999), Ch. 4, Eq. (4.7) is defined only for closed
+    single-server models, so that is the one shape accepted here; anything else is
+    refused rather than served without the correction. Models with no interlock go
+    to pfqn_mvams.
+
+    Args:
+        lambda_arr: Arrival rate vector (R,). Must be all zero (closed model).
+        L: Service demand matrix (M x R).
+        N: Population vector (R,). Must be finite (closed model).
+        Z: Think time vector (R,).
+        mi: Queue replication factors (M,) (default: ones).
+        S: Number of servers per station (M,) (default: ones). Must be all one.
+        IL: Interlock matrix (R x R), see pfqn_mva_ilock. Required.
+
+    Returns:
+        Tuple of (XN, QN, UN, CN, lG); lG is always NaN.
+    """
+    from .mva import pfqn_mva_ilock
+
+    if IL is None or np.size(IL) == 0:
+        raise ValueError("an interlock matrix is required; use pfqn_mvams for the "
+                         "standard arrival theorem")
+    L = np.asarray(L, dtype=np.float64)
+    N = np.asarray(N, dtype=np.float64)
+    M = L.shape[0]
+    if mi is None:
+        mi = np.ones(M)
+    if S is None:
+        S = np.ones(M)
+    S = np.asarray(S, dtype=np.float64)
+    S_finite = S[np.isfinite(S)]
+    max_S = int(np.max(S_finite)) if len(S_finite) > 0 else 1
+    if np.any(np.isinf(N)) or max_S > 1 or np.any(np.asarray(lambda_arr) != 0):
+        raise ValueError("the interlock correction is available in exact MVA for closed "
+                         "single-server models only; use an AMVA method for this model.")
+    N_int = N.astype(int)
+    XN, CN_out, QN, UN, RN, TN, AN = pfqn_mva_ilock(L, N_int, Z, mi, IL)
+    # see _kb/03-api-layer.md for rationale
+    return XN, QN, UN, RN, np.nan

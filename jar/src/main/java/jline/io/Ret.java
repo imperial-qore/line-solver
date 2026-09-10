@@ -53,14 +53,57 @@ public class Ret {
         public final Matrix outspace;
         public final Matrix outrate;
         public final Matrix outprob;
+        /**
+         * START annotation of each successor: outstart(i,r) counts the class-r
+         * jobs that begin, or resume, holding a server on successor row i.
+         * Instantaneous tag on an existing arc, never an event of its own, so
+         * nothing here changes a rate, a probability or a state.
+         */
+        public final Matrix outstart;
+        /**
+         * PREEMPT annotation of each successor: outpreempt(i,r) counts the
+         * class-r jobs pushed back into the buffer on successor row i.
+         */
+        public final Matrix outpreempt;
 
 
         public EventResult(Matrix outspace, Matrix outrate, Matrix outprob) {
+            // Untagged construction: a handler that starts and preempts nothing
+            // (or one not yet annotated) reports zero-row tags of the right
+            // height, so callers can index them exactly like outspace.
+            this(outspace, outrate, outprob, null, null);
+        }
+
+        public EventResult(Matrix outspace, Matrix outrate, Matrix outprob, Matrix outstart, Matrix outpreempt) {
             this.outspace = outspace;
             this.outrate = outrate;
             this.outprob = outprob;
+            this.outstart = outstart;
+            this.outpreempt = outpreempt;
         }
 
+        /**
+         * START count of one successor row and class, zero when the arc carries
+         * no annotation. Reading the matrices through this accessor keeps every
+         * caller safe against a handler that has not been annotated.
+         */
+        public double startOf(int row, int cls) {
+            return tagOf(this.outstart, row, cls);
+        }
+
+        /**
+         * PREEMPT count of one successor row and class.
+         */
+        public double preemptOf(int row, int cls) {
+            return tagOf(this.outpreempt, row, cls);
+        }
+
+        private static double tagOf(Matrix tag, int row, int cls) {
+            if (tag == null || row < 0 || cls < 0 || row >= tag.getNumRows() || cls >= tag.getNumCols()) {
+                return 0.0;
+            }
+            return tag.get(row, cls);
+        }
     }
 
     /**
@@ -948,6 +991,73 @@ public class Ret {
      * <p>This class stores both the normalizing constant G and its natural logarithm lG
      * to handle numerical issues with very large or small values.</p>
      */
+    /**
+     * Return type of the Birman-Kogan load concealment algorithm: mean values rather
+     * than a normalizing constant, plus the number of Gauss-Seidel sweeps.
+     */
+    /**
+     * Return of {@link jline.api.pfqn.nc.Pfqn_mcmc}: the Chen-O'Cinneide
+     * regularization estimates and their batch-means confidence intervals.
+     *
+     * <p>There is deliberately NO normalizing constant here. The estimator is a
+     * ratio of holding-time weighted averages that yields G(N-e_r)/G(N)
+     * directly; G itself never enters the algorithm.</p>
+     */
+    public static class pfqnMcmc {
+        /** (1 x R) throughput estimates G(N-e_r)/G(N). */
+        public Matrix X;
+        /** (M x R) mean queue lengths at the queueing stations. */
+        public Matrix Q;
+        /** (1 x R) batch-means standard error of X. */
+        public Matrix Xse;
+        /** (1 x R) lower end of the two-sigma interval for X. */
+        public Matrix Xlo;
+        /** (1 x R) upper end of the two-sigma interval for X. */
+        public Matrix Xhi;
+        /** (M x R) batch-means standard error of Q. */
+        public Matrix Qse;
+        /** (M x R) lower end of the two-sigma interval for Q. */
+        public Matrix Qlo;
+        /** (M x R) upper end of the two-sigma interval for Q. */
+        public Matrix Qhi;
+        /** batches the run was split into. */
+        public int batches;
+        /** service completions actually simulated after warm-up. */
+        public long samples;
+        /** completions discarded as warm-up. */
+        public long burnin;
+
+        public pfqnMcmc(Matrix X, Matrix Q, Matrix Xse, Matrix Xlo, Matrix Xhi,
+                        Matrix Qse, Matrix Qlo, Matrix Qhi,
+                        int batches, long samples, long burnin) {
+            this.X = X;
+            this.Q = Q;
+            this.Xse = Xse;
+            this.Xlo = Xlo;
+            this.Xhi = Xhi;
+            this.Qse = Qse;
+            this.Qlo = Qlo;
+            this.Qhi = Qhi;
+            this.batches = batches;
+            this.samples = samples;
+            this.burnin = burnin;
+        }
+    }
+
+    public static class pfqnBkLc {
+        public Matrix X;
+        public Matrix Q;
+        public Matrix U;
+        public int it;
+
+        public pfqnBkLc(Matrix X, Matrix Q, Matrix U, int it) {
+            this.X = X;
+            this.Q = Q;
+            this.U = U;
+            this.it = it;
+        }
+    }
+
     public static class pfqnNc {
         public Double G;
         public Double lG;
@@ -968,6 +1078,42 @@ public class Ret {
             this.lG = lG;
             this.G = G;
             this.method = method;
+        }
+    }
+
+    /**
+     * Result of the Manjunath-Sikdar transform for product-form queueing networks
+     * (Pfqn_manjunath): the exact normalizing constant over a state space cut by
+     * linear integer constraints, its logarithm, and the realised cost.
+     *
+     * <p>peakStates is the largest number of series coefficients held at once,
+     * which is prod_r (N_r+1) times the product of (b_j+1) over the constraint
+     * rows live at the same time. It is reported rather than inferred because the
+     * elimination order, not the row count, is what decides it.</p>
+     */
+    public static class pfqnManjunath {
+        public Double G;
+        public Double lG;
+        public long peakStates;
+
+        /**
+         * Per-class decomposition, null unless it was requested. All 1xR.
+         * <p>Q + think + blocked == N exactly: a refused admission is a DELETED
+         * transition, so a blocked job never leaves the delay, and because the
+         * think time is exponential a held job is indistinguishable from one
+         * still thinking. Little's law is what separates the two.</p>
+         */
+        public Matrix Q;        // mean class r jobs at the queueing station
+        public Matrix X;        // class r cycle throughput
+        public Matrix U;        // class r utilization of the queueing station
+        public Matrix think;    // class r jobs genuinely thinking, X_r * Z_r
+        public Matrix blocked;  // class r jobs held at the delay by the constraint
+        public Matrix delay;    // class r jobs at the delay, think + blocked
+
+        public pfqnManjunath(Double G, Double lG, long peakStates) {
+            this.G = G;
+            this.lG = lG;
+            this.peakStates = peakStates;
         }
     }
 
@@ -995,6 +1141,31 @@ public class Ret {
      * Data structure for storing complex results from a normalizing constant calculation.
      * Contains complex normalization constants (G, lG) and an optional method description.
      */
+    /**
+     * The SYMBOLIC normalizing constant: G as an exact rational function.
+     *
+     * <p>lG IS TEXT AND NOT A VALUE, and deliberately. The reference returns
+     * {@code lG = log(G)} as a symbolic expression, which MATLAB's sym, sympy
+     * and the C++ SymEngine backend can each represent; the Rings field this
+     * arm computes in is a field of RATIONAL FUNCTIONS and carries no
+     * transcendental function, so there is no object to put here. The formal
+     * expression is given as a string, which a caller can print or paste, and
+     * the value is taken after substitution. See _kb/07-cross-language-parity.md.
+     */
+    public static class pfqnNcSym {
+        /** The normalizing constant, exactly. */
+        public jline.util.symbolic.SymExpr G;
+        /** The FORMAL {@code log(G)}, as text; see the class note. */
+        public String lGexpr;
+        public String method;
+
+        public pfqnNcSym(jline.util.symbolic.SymExpr G) {
+            this.G = G;
+            this.lGexpr = G == null ? null : "log(" + G.toString() + ")";
+            this.method = null;
+        }
+    }
+
     public static class pfqnNcComplex {
         public Complex G;
         public Complex lG;
@@ -1017,12 +1188,20 @@ public class Ret {
         public Double lG;
         public Double lGopen;
         public String method;
+        public Matrix XN;
+        public Matrix QN;
 
         public pfqnNcldmx(Double G, Double lG, Double lGopen, String method) {
+            this(G, lG, lGopen, method, null, null);
+        }
+
+        public pfqnNcldmx(Double G, Double lG, Double lGopen, String method, Matrix XN, Matrix QN) {
             this.G = G;
             this.lG = lG;
             this.lGopen = lGopen;
             this.method = method;
+            this.XN = XN;
+            this.QN = QN;
         }
     }
 
@@ -1172,24 +1351,6 @@ public class Ret {
 
 
     /**
-     * Data structure for storing results from the Queue-Dependent (QD) approximate MVA method.
-     * Contains queue lengths (Q), throughput (X), utilization (U), and iteration count (iter).
-     */
-    public static class pfqnQd {
-        public Matrix Q;
-        public Matrix X;
-        public Matrix U;
-        public int iter;
-
-        public pfqnQd(Matrix Q, Matrix X, Matrix U, int iter) {
-            this.Q = Q;
-            this.X = X;
-            this.U = U;
-            this.iter = iter;
-        }
-    }
-
-    /**
      * Data structure for storing results from the ProCoMoM method.
      * Contains marginal probability matrix (Pr) and mean queue lengths (Q).
      */
@@ -1337,6 +1498,7 @@ public class Ret {
         public int u;        // Integer representing the number of users
         public int n;        // Integer representing the number of items
         public int h;        // Integer representing the number of levels
+        public int[] parent; // Parent list of each list, 0-based, -1 for lists rooted in the miss list
 
         /**
          * Constructor for initializing the cacheGammaLpReturn object.
@@ -1347,10 +1509,24 @@ public class Ret {
          * @param h     - Integer representing the number of levels.
          */
         public cacheGamma(Matrix gamma, int u, int n, int h) {
+            this(gamma, u, n, h, null);
+        }
+
+        /**
+         * Constructor including the tree structure of the cache lists.
+         *
+         * @param gamma  - Matrix representing the gamma values.
+         * @param u      - Integer representing the number of users.
+         * @param n      - Integer representing the number of items.
+         * @param h      - Integer representing the number of levels.
+         * @param parent - Parent list of each list, 0-based, -1 for lists rooted in the miss list.
+         */
+        public cacheGamma(Matrix gamma, int u, int n, int h, int[] parent) {
             this.gamma = gamma;
             this.u = u;
             this.n = n;
             this.h = h;
+            this.parent = parent;
         }
     }
 
@@ -1610,6 +1786,34 @@ public class Ret {
     }
 
     /**
+     * Return type for the exact Manjunath-Sikdar transform of a loss network
+     * (Lossn_manjunath), holding the carried load, the class blocking probabilities,
+     * the log of the EXACT normalization constant, and the realised cost.
+     */
+    public static class lossnManjunath {
+        public Matrix qLen;         // mean carried load E[n_r] per class (1xR)
+        public Matrix lossProb;     // blocking probability per class (1xR)
+        public double lG;           // log of the exact normalization constant g(C)
+        public int niter;           // always 1: the transform is direct
+        public long peakStates;     // peak live series coefficients, the realised cost
+
+        /*
+         * @param q  The mean carried load for each class.
+         * @param l  The blocking probability for each class.
+         * @param lg The log of the exact normalization constant g(C).
+         * @param n  The iteration count, always 1.
+         * @param pk The peak number of live series coefficients.
+         */
+        public lossnManjunath(Matrix q, Matrix l, double lg, int n, long pk) {
+            qLen = q;
+            lossProb = l;
+            lG = lg;
+            niter = n;
+            peakStates = pk;
+        }
+    }
+
+    /**
      * Class representing the return type for the fitting of a 2-phase APH (Acyclic Phase-Type) distribution.
      */
     public static class mamAPH2Fit {
@@ -1852,6 +2056,20 @@ public class Ret {
         public mamMAPFitReturn() {
             MAP = new MatrixCell();
             error = 0;
+        }
+    }
+
+    /**
+     * A class to represent the return type of the map2_fit_idc function, holding the
+     * fitted MAP and the fallback taken when the four descriptors are not all matched.
+     */
+    public static class mamMAPFitIdcReturn {
+        public MatrixCell MAP;
+        public int status;
+
+        public mamMAPFitIdcReturn() {
+            MAP = new MatrixCell();
+            status = 0;
         }
     }
 
@@ -2356,25 +2574,75 @@ public class Ret {
             return this.event != null ? this.event.getNumCols() : 0;
         }
 
+        /**
+         * The event codes the event matrix stores in its third column.
+         *
+         * <p>THE TABLE IS TOTAL, and that is the point. ARV, DEP and PHASE keep the
+         * codes 1, 2 and 3 they have always had, because a stored trajectory is
+         * read back by code; every OTHER member of {@link jline.lang.constant.EventType}
+         * used to be written as -1 and read back as {@code null}, so
+         * {@link #filterEvents} on, say, {@code FIRE} answered "no such events"
+         * for a run full of them -- an empty answer where a missing encoding was
+         * the real cause. A member added to the enum without a code here now
+         * fails loudly in {@link #codeOf} instead.
+         */
+        private static final jline.lang.constant.EventType[] EVENT_CODES = {
+            null,                                       // 0 is unused
+            jline.lang.constant.EventType.ARV,          // 1
+            jline.lang.constant.EventType.DEP,          // 2
+            jline.lang.constant.EventType.PHASE,        // 3
+            jline.lang.constant.EventType.INIT,         // 4
+            jline.lang.constant.EventType.LOCAL,        // 5
+            jline.lang.constant.EventType.READ,         // 6
+            jline.lang.constant.EventType.STAGE,        // 7
+            jline.lang.constant.EventType.ENABLE,       // 8
+            jline.lang.constant.EventType.FIRE,         // 9
+            jline.lang.constant.EventType.PRE,          // 10
+            jline.lang.constant.EventType.POST,         // 11
+            jline.lang.constant.EventType.RENEGE,       // 12
+            jline.lang.constant.EventType.RETRY,        // 13
+            jline.lang.constant.EventType.SWITCH,       // 14
+            jline.lang.constant.EventType.FAILURE,      // 15
+            jline.lang.constant.EventType.REPAIR,       // 16
+            jline.lang.constant.EventType.START,        // 17
+        };
+
         /** Maps the integer event code in the event matrix to an EventType. */
         private static jline.lang.constant.EventType eventTypeFromCode(int code) {
-            switch (code) {
-                case 1: return jline.lang.constant.EventType.ARV;
-                case 2: return jline.lang.constant.EventType.DEP;
-                case 3: return jline.lang.constant.EventType.PHASE;
-                default: return null;
+            return code > 0 && code < EVENT_CODES.length ? EVENT_CODES[code] : null;
+        }
+
+        /**
+         * The code the event matrix stores for this event type.
+         *
+         * @param type the event type to encode
+         * @return its code, for the third column of the event matrix
+         * @throws IllegalArgumentException when the type has no code, which is a
+         *         missing entry in {@link #EVENT_CODES} and not a property of the run
+         */
+        public static int codeOf(jline.lang.constant.EventType type) {
+            for (int code = 1; code < EVENT_CODES.length; code++) {
+                if (EVENT_CODES[code] == type) {
+                    return code;
+                }
             }
+            throw new IllegalArgumentException(
+                "no event-matrix code for EventType." + type + "; add one to Ret.SampleResult");
         }
 
         /**
          * Returns the i-th sampled event (0-based) as an {@link jline.lang.Event}.
-         * The event matrix stores one row per event with columns
-         * {@code [time, node, eventType]}.
+         *
+         * <p>The event matrix stores one row per event with columns
+         * {@code [time, node, eventType]}, and a fourth {@code jobclass} column
+         * where the producer knows it. A three-column matrix reports class 0,
+         * which is what every reader saw before the column existed.
          */
         public jline.lang.Event getEvent(int i) {
             int node = (int) this.event.get(i, 1);
             jline.lang.constant.EventType type = eventTypeFromCode((int) this.event.get(i, 2));
-            jline.lang.Event ev = new jline.lang.Event(type, node, 0);
+            int jobclass = this.event.getNumCols() > 3 ? (int) this.event.get(i, 3) : 0;
+            jline.lang.Event ev = new jline.lang.Event(type, node, jobclass);
             ev.setT(this.event.get(i, 0));
             return ev;
         }
@@ -2499,38 +2767,6 @@ public class Ret {
          */
         public boolean hasValidSamples() {
             return t != null && !t.isEmpty() && state != null && numEvents > 0;
-        }
-    }
-
-    /**
-     * Result type for the Method of Moments (MoM) exact algorithm.
-     * 
-     * <p>The Method of Moments is an exact algorithm for computing the normalizing
-     * constant and performance measures in product-form queueing networks. Unlike
-     * floating-point algorithms, MoM uses exact rational arithmetic (BigFraction)
-     * to avoid numerical errors, making it suitable for networks with extreme
-     * parameter values or when exact results are required.</p>
-     * 
-     * <p>The algorithm computes normalizing constants recursively and derives
-     * performance measures (throughputs and queue lengths) from these constants.</p>
-     */
-    public static class pfqnMom {
-        public Matrix X;   // Throughputs
-        public Matrix Q;   // Queue lengths
-        public org.apache.commons.math3.fraction.BigFraction G;  // Exact normalizing constant
-        public double lG;  // Natural logarithm of G
-        public org.apache.commons.math3.fraction.BigFraction[] g;   // Final normalizing constants
-        public org.apache.commons.math3.fraction.BigFraction[] g_1; // Pre-final normalizing constants
-
-        public pfqnMom(Matrix X, Matrix Q, org.apache.commons.math3.fraction.BigFraction G, double lG,
-                      org.apache.commons.math3.fraction.BigFraction[] g,
-                      org.apache.commons.math3.fraction.BigFraction[] g_1) {
-            this.X = X;
-            this.Q = Q;
-            this.G = G;
-            this.lG = lG;
-            this.g = g;
-            this.g_1 = g_1;
         }
     }
 

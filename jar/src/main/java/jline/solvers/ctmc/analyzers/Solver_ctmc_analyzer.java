@@ -3,6 +3,7 @@ package jline.solvers.ctmc.analyzers;
 import jline.api.mam.*;
 import jline.api.mc.Ctmc_makeinfgen;
 import jline.api.mc.Ctmc_solve;
+import jline.api.mc.Ctmc_solve_reducible_blkdecomp;
 import jline.api.pfqn.ld.CdPeakScaling;
 import jline.api.sn.SnNonmarkovToPh;
 import jline.io.InputOutput;
@@ -19,6 +20,7 @@ import jline.solvers.ctmc.SolverCTMC;
 import jline.solvers.ctmc.handlers.Solver_ctmc;
 import jline.util.Maths;
 import jline.util.MatFileUtils;
+import jline.util.graph.DirectedGraph;
 import jline.util.matrix.Matrix;
 import jline.util.matrix.MatrixCell;
 
@@ -102,154 +104,12 @@ public class Solver_ctmc_analyzer {
         // see _kb/06-solver-catalog.md for rationale
         Matrix InfGenWork = InfGen;
 
-        // Detect connected components via symmetrized adjacency
-        Matrix Bsym = InfGen.add(1.0, InfGen.transpose());
-        Bsym.absEq();
-        for (int i = 0; i < Bsym.getNumRows(); i++) {
-            for (int j = 0; j < Bsym.getNumCols(); j++) {
-                if (Bsym.get(i, j) > 0) Bsym.set(i, j, 1.0);
-            }
-        }
-        java.util.Set<java.util.Set<Integer>> componentSets = Matrix.weaklyConnect(Bsym, null);
-        List<List<Integer>> components = new java.util.ArrayList<List<Integer>>();
-        for (java.util.Set<Integer> comp : componentSets) {
-            components.add(new java.util.ArrayList<Integer>(comp));
-        }
-        int nConnComp = components.size();
-
-        // see _kb/06-solver-catalog.md for rationale
-        boolean pasModel = sn.sched != null && (sn.sched.containsValue(SchedStrategy.PAS) || sn.sched.containsValue(SchedStrategy.OI));
-        if (pasModel) {
-            List<Double> s0p = new ArrayList<Double>();
-            boolean s0ok = true;
-            for (int isf = 0; isf < sn.nstateful; isf++) {
-                Matrix sm = sn.state.get(sn.stateful.get(isf));
-                if (sm == null) { s0ok = false; break; }
-                for (int ri = 0; ri < sm.getNumRows(); ri++) {
-                    for (int ci = 0; ci < sm.getNumCols(); ci++) {
-                        s0p.add(sm.get(ri, ci));
-                    }
-                }
-            }
-            int initPas = -1;
-            if (s0ok) {
-                Matrix s0m = new Matrix(1, s0p.size());
-                for (int i = 0; i < s0p.size(); i++) s0m.set(0, i, s0p.get(i));
-                initPas = Matrix.matchrow(StateSpace, s0m);
-            }
-            if (initPas >= 0) {
-                List<Integer> reach = forwardReachable(InfGen, initPas);
-                if (reach.size() < InfGen.length()) {
-                    java.util.Set<Integer> reachSet = new java.util.HashSet<Integer>(reach);
-                    List<List<Integer>> twoComp = new java.util.ArrayList<List<Integer>>();
-                    twoComp.add(new java.util.ArrayList<Integer>(reach));
-                    List<Integer> rest = new java.util.ArrayList<Integer>();
-                    for (int i = 0; i < InfGen.length(); i++) {
-                        if (!reachSet.contains(i)) rest.add(i);
-                    }
-                    if (!rest.isEmpty()) twoComp.add(rest);
-                    components = twoComp;
-                    nConnComp = components.size();
-                }
-            }
-        }
-
-        if (nConnComp > 1) {
-            InputOutput.line_debug(options.verbose, String.format("CTMC is reducible: %d connected components", nConnComp));
-
-            List<Double> s0parts = new ArrayList<Double>();
-            for (int isf = 0; isf < sn.nstateful; isf++) {
-                Matrix stateMatrix = sn.state.get(sn.stateful.get(isf));
-                if (stateMatrix != null) {
-                    for (int ri = 0; ri < stateMatrix.getNumRows(); ri++) {
-                        for (int ci = 0; ci < stateMatrix.getNumCols(); ci++) {
-                            s0parts.add(stateMatrix.get(ri, ci));
-                        }
-                    }
-                }
-            }
-            Matrix s0 = new Matrix(1, s0parts.size());
-            for (int i = 0; i < s0parts.size(); i++) {
-                s0.set(0, i, s0parts.get(i));
-            }
-            int initStateIdx = Matrix.matchrow(StateSpace, s0);
-
-            int[] connComp = new int[InfGen.length()];
-            int compId = 0;
-            for (List<Integer> comp : components) {
-                for (int idx : comp) {
-                    connComp[idx] = compId;
-                }
-                compId++;
-            }
-
-            List<Integer> wsetList;
-            if (initStateIdx < 0) {
-                int[] compSizes = new int[nConnComp];
-                for (int idx = 0; idx < connComp.length; idx++) {
-                    compSizes[connComp[idx]]++;
-                }
-                int largestComp = 0;
-                int largestSize = 0;
-                for (int ci = 0; ci < compSizes.length; ci++) {
-                    if (compSizes[ci] > largestSize) {
-                        largestSize = compSizes[ci];
-                        largestComp = ci;
-                    }
-                }
-                wsetList = new ArrayList<Integer>();
-                for (int idx = 0; idx < connComp.length; idx++) {
-                    if (connComp[idx] == largestComp) wsetList.add(idx);
-                }
-                InputOutput.line_debug(options.verbose, String.format("Using largest component with %d states (initial state removed by stochcomp)", wsetList.size()));
-            } else {
-                int targetComp = connComp[initStateIdx];
-                wsetList = new ArrayList<Integer>();
-                for (int idx = 0; idx < connComp.length; idx++) {
-                    if (connComp[idx] == targetComp) wsetList.add(idx);
-                }
-                InputOutput.line_debug(options.verbose, String.format("Using component %d with %d states (from initial state)", targetComp, wsetList.size()));
-            }
-
-            int nw = wsetList.size();
-            Matrix InfGenSub = new Matrix(nw, nw);
-            for (int i = 0; i < nw; i++) {
-                for (int j = 0; j < nw; j++) {
-                    InfGenSub.set(i, j, InfGen.get(wsetList.get(i), wsetList.get(j)));
-                }
-            }
-            probSysState = Ctmc_solve.ctmc_solve(InfGenSub);
-            InfGenWork = InfGenSub;
-
-            Matrix StateSpaceSub = new Matrix(nw, StateSpace.getNumCols());
-            for (int i = 0; i < nw; i++) {
-                for (int j = 0; j < StateSpace.getNumCols(); j++) {
-                    StateSpaceSub.set(i, j, StateSpace.get(wsetList.get(i), j));
-                }
-            }
-            StateSpaceWork = StateSpaceSub;
-
-            Matrix StateSpaceAggrSub = new Matrix(nw, StateSpaceAggr.getNumCols());
-            for (int i = 0; i < nw; i++) {
-                for (int j = 0; j < StateSpaceAggr.getNumCols(); j++) {
-                    StateSpaceAggrSub.set(i, j, StateSpaceAggr.get(wsetList.get(i), j));
-                }
-            }
-            StateSpaceAggrWork = StateSpaceAggrSub;
-
-            wsetMap = new int[nw];
-            for (int i = 0; i < nw; i++) {
-                wsetMap[i] = wsetList.get(i);
-            }
-
-            wset = new Matrix(1, nw);
-            for (int i = 0; i < nw; i++) {
-                wset.set(0, i, i);
-            }
-        } else {
-            InputOutput.line_debug(options.verbose, "CTMC is irreducible, using full state space");
-            probSysState = Ctmc_solve.ctmc_solve(InfGen);
-        }
+        jline.io.LineConsole.step("infinitesimal generator built: %d states, %d transitions",
+                InfGen.getNumRows(), InfGen.getNonZeroLength() - InfGen.getNumRows());
+        jline.io.LineConsole.step("solving for the stationary distribution");
+        // every CTMC solve uses block decomposition; the irreducible case is the degenerate BSCC / no-transient one -- see jline.solvers.ctmc.CtmcStationary
+        probSysState = jline.solvers.ctmc.CtmcStationary.solve(InfGen, StateSpace, sn, options);
+        jline.io.LineConsole.step("stationary distribution obtained, computing the mean metrics");
 
         if (probSysState.hasNaN() || probSysState.isEmpty()) {
             throw new RuntimeException("CTMC solver failed to compute steady-state probabilities for this cache model. " +
@@ -303,16 +163,27 @@ public class Solver_ctmc_analyzer {
         Matrix CN = new Matrix(1, K);
         CN.zero();
 
+        // Column span of each STATION inside a state-space row. A row is the
+        // concatenation of the per-node local states in STATEFUL index order, and
+        // sn.space is keyed the same way. A stateful node need not be a station --
+        // a Cache is stateful and is not -- so the running offset must walk every
+        // stateful node and be read back through sn.stationToStateful. Walking it
+        // with the station index instead both skipped the non-station widths and
+        // took the wrong node's width, handing ToMarginal another node's columns.
+        Matrix sfSpaceShift = new Matrix(1, sn.nstateful);
+        sfSpaceShift.zero();
+        for (int isf = 1; isf < sn.nstateful; isf++) {
+            sfSpaceShift.set(0, isf,
+                    sfSpaceShift.get(0, isf - 1) + sn.space.get(sn.stateful.get(isf - 1)).getNumCols());
+        }
         Matrix istSpaceShift = new Matrix(1, M);
         istSpaceShift.zero();
-
+        Matrix istSpaceWidth = new Matrix(1, M);
+        istSpaceWidth.zero();
         for (int i = 0; i < M; i++) {
-            if (i == 0) {
-                istSpaceShift.set(0, i, 0);
-            } else {
-                double temp = istSpaceShift.get(0, i - 1) + sn.space.get(sn.stateful.get(i - 1)).getNumCols();
-                istSpaceShift.set(0, i, temp);
-            }
+            int isf = (int) sn.stationToStateful.get(i);
+            istSpaceShift.set(0, i, sfSpaceShift.get(0, isf));
+            istSpaceWidth.set(0, i, sn.space.get(sn.stateful.get(isf)).getNumCols());
         }
 
         double refsf;
@@ -440,7 +311,7 @@ public class Solver_ctmc_analyzer {
                         while (index < wset.getNumCols()) {
                             int st = (int) wset.get(index);
                             int StateSpaceColStart = (int) istSpaceShift.get(i);
-                            int StateSpaceColEnd = (int) istSpaceShift.get(i) + sn.space.get(sn.stateful.get(i)).getNumCols();
+                            int StateSpaceColEnd = (int) istSpaceShift.get(i) + (int) istSpaceWidth.get(0, i);
                             jline.lang.state.State.StateMarginalStatistics toMarginalResult = ToMarginal.toMarginal(sn,
                                     ind,
                                     Matrix.extract(StateSpaceWork, st, st + 1, StateSpaceColStart, StateSpaceColEnd),
@@ -491,7 +362,7 @@ public class Solver_ctmc_analyzer {
                     while (index < wset.length()) {
                         int st = (int) wset.get(index);
                         int StateSpaceColStart = (int) istSpaceShift.get(i);
-                        int StateSpaceColEnd = (int) istSpaceShift.get(i) + sn.space.get(sn.stateful.get(i)).getNumCols();
+                        int StateSpaceColEnd = (int) istSpaceShift.get(i) + (int) istSpaceWidth.get(0, i);
                         jline.lang.state.State.StateMarginalStatistics toMarginalResult = ToMarginal.toMarginal(sn,
                                 ind,
                                 Matrix.extract(StateSpaceWork, st, st + 1, StateSpaceColStart, StateSpaceColEnd),
@@ -537,7 +408,7 @@ public class Solver_ctmc_analyzer {
                         while (index < wset.length()) {
                             int st = (int) wset.get(index);
                             int StateSpaceColStart = (int) istSpaceShift.get(i);
-                            int StateSpaceColEnd = (int) istSpaceShift.get(i) + sn.space.get(sn.stateful.get(i)).getNumCols();
+                            int StateSpaceColEnd = (int) istSpaceShift.get(i) + (int) istSpaceWidth.get(0, i);
                             jline.lang.state.State.StateMarginalStatistics toMarginalResult = ToMarginal.toMarginal(sn,
                                     ind,
                                     Matrix.extract(StateSpaceWork, st, st + 1, StateSpaceColStart, StateSpaceColEnd),
@@ -615,7 +486,7 @@ public class Solver_ctmc_analyzer {
                 }
                 jline.lang.state.ReplyBlock.Info rinfoU = jline.lang.state.ReplyBlock.info(sn, indR);
                 int bcol0 = (int) istSpaceShift.get(0, i)
-                        + sn.space.get(sn.stateful.get(i)).getNumCols() - rinfoU.width;
+                        + (int) istSpaceWidth.get(0, i) - rinfoU.width;
                 for (int pos = 0; pos < rinfoU.classes.size(); pos++) {
                     int r = rinfoU.classes.get(pos).intValue();
                     double bmean = 0;
@@ -630,8 +501,13 @@ public class Solver_ctmc_analyzer {
             }
         }
 
+        // class-, joint- and global-dependence utilization normalization (U = T*S/peak
+        // using the declared sn.cdscalingpeak, sn.jdscalingpeak and sn.gdscalingpeak);
         // see _kb/06-solver-catalog.md for rationale
-        if (sn.cdscaling != null && !sn.cdscaling.isEmpty()) {
+        boolean anyCd = sn.cdscaling != null && !sn.cdscaling.isEmpty();
+        boolean anyJd = sn.jdscaling != null && !sn.jdscaling.isEmpty();
+        boolean anyGd = sn.gdscaling != null && sn.gdscalingpeak != null;
+        if (anyCd || anyJd || anyGd) {
             boolean allFinite = true;
             for (int k = 0; k < K; k++) {
                 if (Double.isInfinite(sn.njobs.get(k))) { allFinite = false; break; }
@@ -639,38 +515,22 @@ public class Solver_ctmc_analyzer {
             if (allFinite) {
                 for (int ist = 0; ist < M; ist++) {
                     jline.lang.nodes.Station stat = sn.stations.get(ist);
-                    jline.util.SerializableFunction<Matrix, Matrix> beta = sn.cdscaling.get(stat);
-                    if (beta == null) continue;
-                    Matrix peakVec = sn.cdscalingpeak != null ? sn.cdscalingpeak.get(stat) : null;
+                    jline.util.SerializableFunction<Matrix, Matrix> beta =
+                            anyCd ? sn.cdscaling.get(stat) : null;
+                    jline.util.SerializableFunction<Matrix, Matrix> eta =
+                            anyJd ? sn.jdscaling.get(stat) : null;
+                    if (beta == null && eta == null && !anyGd) continue;
+                    Matrix cdPeak = (beta != null && sn.cdscalingpeak != null)
+                            ? sn.cdscalingpeak.get(stat) : null;
+                    Matrix jdPeak = (eta != null && sn.jdscalingpeak != null)
+                            ? sn.jdscalingpeak.get(stat) : null;
                     for (int k = 0; k < K; k++) {
                         double rate = sn.rates.get(ist, k);
-                        double bmax = (peakVec != null) ? peakVec.get(0, k) : 1.0;
-                        if (Double.isFinite(rate) && rate > 0 && bmax > 0) {
-                            UN.set(ist, k, TN.get(ist, k) / rate / bmax);
-                        } else {
-                            UN.set(ist, k, 0.0);
-                        }
-                    }
-                }
-            }
-        }
-
-        // joint-dependence utilization normalization (U = T*S/peak using the
-        // declared sn.jdscalingpeak), mirroring the class-dependence block.
-        if (sn.jdscaling != null && !sn.jdscaling.isEmpty()) {
-            boolean allFinite = true;
-            for (int k = 0; k < K; k++) {
-                if (Double.isInfinite(sn.njobs.get(k))) { allFinite = false; break; }
-            }
-            if (allFinite) {
-                for (int ist = 0; ist < M; ist++) {
-                    jline.lang.nodes.Station stat = sn.stations.get(ist);
-                    jline.util.SerializableFunction<Matrix, Matrix> eta = sn.jdscaling.get(stat);
-                    if (eta == null) continue;
-                    Matrix peakVec = sn.jdscalingpeak != null ? sn.jdscalingpeak.get(stat) : null;
-                    for (int k = 0; k < K; k++) {
-                        double rate = sn.rates.get(ist, k);
-                        double bmax = (peakVec != null) ? peakVec.get(0, k) : 1.0;
+                        // beta_r(n), eta_i(n) and phi(n) scale the SAME rate, so the peaks multiply
+                        double bmax = 1.0;
+                        if (cdPeak != null) bmax *= cdPeak.get(0, k);
+                        if (jdPeak != null) bmax *= jdPeak.get(0, k);
+                        if (anyGd) bmax *= sn.gdscalingpeak.get(ist, k);
                         if (Double.isFinite(rate) && rate > 0 && bmax > 0) {
                             UN.set(ist, k, TN.get(ist, k) / rate / bmax);
                         } else {
@@ -709,7 +569,7 @@ public class Solver_ctmc_analyzer {
                     continue;
                 }
                 int bcol = (int) istSpaceShift.get(0, i)
-                        + sn.space.get(sn.stateful.get(i)).getNumCols() - 1;
+                        + (int) istSpaceWidth.get(0, i) - 1;
                 for (int k = 0; k < K; k++) {
                     double shift = 0.0;
                     for (int index = 0; index < wset.getNumCols(); index++) {
@@ -825,10 +685,48 @@ public class Solver_ctmc_analyzer {
                 }
             }
         }
-        return new SolverCTMC.AnalyzerResult(QN, UN, RN, TN, CN, XN,
+        SolverCTMC.AnalyzerResult analyzerResult = new SolverCTMC.AnalyzerResult(QN, UN, RN, TN, CN, XN,
                 InfGen, StateSpace, StateSpaceAggr, EventFiltration,
                 runtime, fname, sncopy,
                 probSysState, StateSpaceWork, StateSpaceAggrWork, InfGenWork);
+        // Derived service-start and preemption rates: pi*F*e over the same state
+        // set the metrics above use. They read the aux filtrations only, so no
+        // rate, probability or state above depends on them.
+        Matrix[][] startFilt = solverCTMCResult.getStartFilt();
+        Matrix[][] preemptFilt = solverCTMCResult.getPreemptFilt();
+        Matrix StartN = new Matrix(M, K);
+        Matrix PreemptN = new Matrix(M, K);
+        if (startFilt != null) {
+            for (int i = 0; i < M && i < startFilt.length; i++) {
+                for (int r = 0; r < K && r < startFilt[i].length; r++) {
+                    StartN.set(i, r, auxRate(startFilt[i][r], probSysState));
+                    PreemptN.set(i, r, auxRate(preemptFilt[i][r], probSysState));
+                }
+            }
+        }
+        analyzerResult.StartN = StartN;
+        analyzerResult.PreemptN = PreemptN;
+        analyzerResult.startFilt = startFilt;
+        analyzerResult.preemptFilt = preemptFilt;
+        return analyzerResult;
+    }
+
+    /**
+     * pi * F * e, the long-run rate of the tagged events a derived filtration
+     * carries. The same reduction the departure rates use, so the two are
+     * directly comparable.
+     */
+    private static double auxRate(Matrix F, Matrix pi) {
+        if (F == null || pi == null || F.isEmpty()) {
+            return 0.0;
+        }
+        Matrix rowSums = F.sumRows();
+        double acc = 0.0;
+        int n = Math.min(rowSums.length(), pi.length());
+        for (int s = 0; s < n; s++) {
+            acc += pi.get(s) * rowSums.get(s);
+        }
+        return acc;
     }
 
     /**
@@ -846,7 +744,7 @@ public class Solver_ctmc_analyzer {
         while (!queue.isEmpty()) {
             int u = queue.poll();
             for (int v = 0; v < n; v++) {
-                if (v != u && !visited[v] && Math.abs(Q.get(u, v)) > 1e-12) {
+                if (v != u && !visited[v] && Math.abs(Q.get(u, v)) > jline.GlobalConstants.ArcTol) {
                     visited[v] = true;
                     queue.add(v);
                 }

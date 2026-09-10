@@ -11,7 +11,7 @@ import jline.solvers.NetworkSolver;
 import jline.solvers.SolverOptions;
 import jline.solvers.SolverResult;
 import jline.solvers.env.SolverENV;
-import jline.solvers.fluid.SolverFluid;
+import jline.solvers.fluid.SolverFLD;
 
 /**
  * Test for Environment with contrasting utilizations using Fluid solver.
@@ -68,7 +68,7 @@ public class TestEnvSamplePath {
             fluidOptions.verbose = VerboseLevel.SILENT;
             fluidOptions.method = "closing";
 
-            SolverFluid solver = new SolverFluid(stageModel);
+            SolverFLD solver = new SolverFLD(stageModel);
             solver.options = fluidOptions;
             solver.runAnalyzer();
             SolverResult result = solver.result;

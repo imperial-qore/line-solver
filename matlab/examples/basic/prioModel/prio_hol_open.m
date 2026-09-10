@@ -67,9 +67,15 @@ options.samples=1e4;
 ctmcoptions = options;
 ctmcoptions.cutoff=1;
 solver={};
-solver{end+1} = CTMC(model,ctmcoptions); % CTMC is infinite on this model
+solver{end+1} = CTMC(model, 'exact',ctmcoptions); % CTMC is infinite on this model
 %solver{end+1} = FLD(model,options);
-solver{end+1} = MVA(model,options);
+% lineDefaults carries the GENERIC iter_tol (1e-4), which overrides SolverMVA's
+% own default (1e-6) and stops the AMVA fixed point early: on this HOL model it
+% costs 2.9e-5 of relative accuracy on Storage3 and makes this row disagree with
+% the engines that solve at the solver's own tolerance.
+mvaOptions = options;
+mvaOptions.iter_tol = SolverMVA.defaultOptions.iter_tol;
+solver{end+1} = MVA(model,mvaOptions);
 %solver{end+1} = MAM(model,options);
 solver{end+1} = JMT(model,options);
 solver{end+1} = SSA(model,options);

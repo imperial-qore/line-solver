@@ -209,11 +209,35 @@ public final class Solver_ssa {
 
         Map<Integer, Matrix> arvRatesSamples = new HashMap<Integer, Matrix>();
         Map<Integer, Matrix> depRatesSamples = new HashMap<Integer, Matrix>();
+        Map<Integer, Matrix> dlyRatesSamples = new HashMap<Integer, Matrix>();
+        // Derived START/PREEMPT rates, sampled exactly like the three above: the
+        // rate at which the transitions enabled in the current state start a
+        // class-r service, or push a class-r job in service back into the buffer.
+        Map<Integer, Matrix> startRatesSamples = new HashMap<Integer, Matrix>();
+        Map<Integer, Matrix> preemptRatesSamples = new HashMap<Integer, Matrix>();
         for (int r = 0; r < options.samples; r++) {
             Matrix m = new Matrix(R, nstateful);
             m.zero();
             arvRatesSamples.put(r, m);
             depRatesSamples.put(r, m.copy());
+            dlyRatesSamples.put(r, m.copy());
+            startRatesSamples.put(r, m.copy());
+            preemptRatesSamples.put(r, m.copy());
+        }
+        // tags of the transition that fires at each step, as [statefulIndex, class, kind]
+        // triples with kind 0 = START and 1 = PREEMPT
+        Map<Integer, int[][]> tranTags = new HashMap<Integer, int[][]>();
+        // see _kb/09-ldes-and-cache.md (SSA: delayed-hit rate from the merge
+        // transition). Cache row layout is [srv(R) | var(V)], so the srv block ends
+        // V columns from the right; keep V per stateful index, -1 for non-caches.
+        int[] cacheVarW = new int[nstateful];
+        java.util.Arrays.fill(cacheVarW, -1);
+        for (int ind = 0; ind < sn.nnodes; ind++) {
+            if (sn.nodetype.get(ind) == NodeType.Cache && sn.isstateful.get(ind) == 1.0) {
+                int vsum = 0;
+                for (int c = 0; c < sn.nvars.getNumCols(); c++) { vsum += (int) sn.nvars.get(ind, c); }
+                cacheVarW[(int) sn.nodeToStateful.get(ind)] = vsum;
+            }
         }
         int A = sync.size();
         int samples_collected = 1;
@@ -331,6 +355,8 @@ public final class Solver_ssa {
         Map<Integer, Double> enabled_rates = new LinkedHashMap<Integer, Double>();
         Map<Integer, Integer> enabled_sync = new LinkedHashMap<Integer, Integer>();
         Map<Integer, int[]> enabled_fcr = new LinkedHashMap<Integer, int[]>();
+        // derived tags of each enabled transition, as [statefulIndex, class, kind] rows
+        Map<Integer, int[][]> enabled_tags = new LinkedHashMap<Integer, int[][]>();
         // FCR WAITQ: per-region FIFO of parked (class, destination) tokens plus
         // the caps used by the release cascade (JMT waiting-queue semantics)
         FcrData[] fcrData = (sn.nregions > 0) ? fcrPrep(sn) : null;
@@ -352,6 +378,7 @@ public final class Solver_ssa {
             enabled_rates.clear();
             enabled_sync.clear();
             enabled_fcr.clear();
+            enabled_tags.clear();
 
             Solver_ssa_findenabled.solver_ssa_findenabled(sn,
                     eventCache,
@@ -372,9 +399,14 @@ public final class Solver_ssa {
                     sync,
                     node_a_sf,
                     node_p_sf,
+                    startRatesSamples,
+                    preemptRatesSamples,
+                    enabled_tags,
                     depRatesSamples,
                     samples_collected,
                     arvRatesSamples,
+                    dlyRatesSamples,
+                    cacheVarW,
                     csmask,
                     enabled_rates,
                     enabled_sync,
@@ -674,9 +706,15 @@ public final class Solver_ssa {
         // arvRates and depRates
         DMatrixRMaj[] arvRatesD = new DMatrixRMaj[R];
         DMatrixRMaj[] depRatesD = new DMatrixRMaj[R];
+        DMatrixRMaj[] dlyRatesD = new DMatrixRMaj[R];
+        DMatrixRMaj[] startRatesD = new DMatrixRMaj[R];
+        DMatrixRMaj[] preemptRatesD = new DMatrixRMaj[R];
         for (int r = 0; r < R; r++) {
             arvRatesD[r] = new DMatrixRMaj(numUniqueStates, sn.nstateful);
             depRatesD[r] = new DMatrixRMaj(numUniqueStates, sn.nstateful);
+            dlyRatesD[r] = new DMatrixRMaj(numUniqueStates, sn.nstateful);
+            startRatesD[r] = new DMatrixRMaj(numUniqueStates, sn.nstateful);
+            preemptRatesD[r] = new DMatrixRMaj(numUniqueStates, sn.nstateful);
         }
 
         DMatrixRMaj piD = new DMatrixRMaj(1, numUniqueStates);
@@ -703,9 +741,25 @@ public final class Solver_ssa {
                 int isf = (int) sn.nodeToStateful.get(ind);
                 for (int s = 0; s < numUniqueStates; s++) {
                     int uis = ui[s];
+                    List<Integer> visits = uj[s];
                     for (int r = 0; r < R; r++) {
                         arvRatesD[r].set(s, isf, arvRatesSamples.get(uis).get(r, isf));
                         depRatesD[r].set(s, isf, depRatesSamples.get(uis).get(r, isf));
+                        // the tag rates are a deterministic function of the state
+                        // too, so one visit gives them exactly, as for the two above
+                        startRatesD[r].set(s, isf, startRatesSamples.get(uis).get(r, isf));
+                        preemptRatesD[r].set(s, isf, preemptRatesSamples.get(uis).get(r, isf));
+                        // see _kb/09-ldes-and-cache.md (SSA: the merge rate needs
+                        // EVERY visit). Unlike a DEP rate, the merge rate is random
+                        // given the state, so one visit is a single Bernoulli draw
+                        // whose variance does not shrink with the sample count.
+                        if (cacheVarW[isf] >= 0) {
+                            double dlySum = 0.0;
+                            for (int vi = 0; vi < visits.size(); vi++) {
+                                dlySum += dlyRatesSamples.get(visits.get(vi)).get(r, isf);
+                            }
+                            dlyRatesD[r].set(s, isf, dlySum / visits.size());
+                        }
                     }
                 }
             }
@@ -713,9 +767,15 @@ public final class Solver_ssa {
 
         Map<Integer, Matrix> arvRates = new HashMap<Integer, Matrix>();
         Map<Integer, Matrix> depRates = new HashMap<Integer, Matrix>();
+        Map<Integer, Matrix> dlyRates = new HashMap<Integer, Matrix>();
+        Map<Integer, Matrix> startRates = new HashMap<Integer, Matrix>();
+        Map<Integer, Matrix> preemptRates = new HashMap<Integer, Matrix>();
         for (int i = 0; i < R; i++) {
             arvRates.put(i, denseToSparseMatrix(arvRatesD[i]));
             depRates.put(i, denseToSparseMatrix(depRatesD[i]));
+            dlyRates.put(i, denseToSparseMatrix(dlyRatesD[i]));
+            startRates.put(i, denseToSparseMatrix(startRatesD[i]));
+            preemptRates.put(i, denseToSparseMatrix(preemptRatesD[i]));
         }
 
         // Normalize pi
@@ -732,7 +792,9 @@ public final class Solver_ssa {
         }
         Matrix tranSync = denseToSparseMatrix(tranSyncRMaj);
 
-        return new SSAValues(pi, SSq, arvRates, depRates, tranSysState, tranSync, sn);
+        SSAValues ssaValues = new SSAValues(pi, SSq, arvRates, depRates, dlyRates, tranSysState, tranSync, sn);
+        ssaValues.setTagRates(startRates, preemptRates);
+        return ssaValues;
     }
 
     public static void save_log_dense(double dt,
@@ -992,26 +1054,41 @@ public final class Solver_ssa {
         for (int ind = 0; ind < sn.nnodes; ind++) {
             if (sn.isstation.get(ind) == 1.0) {
                 int isf = (int) sn.nodeToStateful.get(ind);
-                boolean deltalen = (stateCell.get(isf).getNumElements() > statelen.get(isf));
-                if (deltalen) {
-                    statelen.set(isf, (double) stateCell.get(isf).getNumElements());
+                // HOW MANY columns the block gained, not merely THAT it gained
+                // some. This inserted exactly one row however far the block had
+                // widened; at a gain of one the two agree, which is why every
+                // per-class-count buffer was unaffected, but the preemptive
+                // families store (class,phase) PAIRS and widen by two, so their
+                // recorded history was re-encoded and states that differ only in
+                // which class holds the server were then conflated. On
+                // Source -> FCFSPRPRIO -> Sink at lambda = 0.08 per class MATLAB's
+                // twin of this loop reported TN = [0.018 0.142] for an exact
+                // [0.08 0.08]: the total right and the split wrong.
+                int newLen = stateCell.get(isf).getNumElements();
+                int delta = newLen - (int) statelen.get(isf);
+                if (delta > 0) {
+                    statelen.set(isf, (double) newLen);
+                    // Rows before this node's block; row 0 of tranState is dt, so
+                    // the block starts at shift+1. Keyed on the STATEFUL index,
+                    // never on the node index: a station whose node is first need
+                    // not be the first stateful node.
                     int shift = 0;
-                    if (ind > 0) {
-                        for (int col = 0; col < isf; col++) {
-                            shift += (int) statelen.get(col);
-                        }
+                    for (int col = 0; col < isf; col++) {
+                        shift += (int) statelen.get(col);
                     }
                     int oldRows = result.getNumRows();
                     int nCols = result.getNumCols();
-                    DMatrixRMaj newResult = new DMatrixRMaj(oldRows + 1, nCols);
+                    DMatrixRMaj newResult = new DMatrixRMaj(oldRows + delta, nCols);
                     for (int r = 0; r <= shift; r++) {
                         for (int c = 0; c < nCols; c++) {
                             newResult.set(r, c, result.get(r, c));
                         }
                     }
+                    // the fresh slots are the LEFTMOST ones, the buffer being
+                    // right-aligned, so the tail moves down by exactly delta
                     for (int r = shift + 1; r < oldRows; r++) {
                         for (int c = 0; c < nCols; c++) {
-                            newResult.set(r + 1, c, result.get(r, c));
+                            newResult.set(r + delta, c, result.get(r, c));
                         }
                     }
                     result = newResult;

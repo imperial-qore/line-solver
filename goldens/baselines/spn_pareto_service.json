@@ -1,0 +1,30 @@
+{
+  "class": {
+    "JMT": "stochastic"
+  },
+  "example": "spn_pareto_service",
+  "solvers": {
+    "JMT": [
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class1",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.51382,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.51382,
+        "JobClass": "Class1",
+        "QLen": 2.7513,
+        "ResidT": 5.007,
+        "RespT": 5.007,
+        "Station": "P1",
+        "Tput": 0.51422,
+        "Util": 0.0
+      }
+    ]
+  }
+}

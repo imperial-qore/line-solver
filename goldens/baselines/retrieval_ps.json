@@ -1,0 +1,43 @@
+{
+  "class": {
+    "LDES": "stochastic",
+    "MVA": "deterministic",
+    "NC": "deterministic",
+    "SSA": "stochastic"
+  },
+  "example": "retrieval_ps",
+  "solvers": {
+    "LDES": [
+      {
+        "ArvR": 0.017016,
+        "JobClass": "InitClass",
+        "ResidT": 0.99256,
+        "Station": "Cache"
+      }
+    ],
+    "MVA": [
+      {
+        "ArvR": 0.024273,
+        "JobClass": "InitClass",
+        "ResidT": 1.0155,
+        "Station": "Cache"
+      }
+    ],
+    "NC": [
+      {
+        "ArvR": 0.017278,
+        "JobClass": "InitClass",
+        "ResidT": "NaN",
+        "Station": "Cache"
+      }
+    ],
+    "SSA": [
+      {
+        "ArvR": 0.014394,
+        "JobClass": "InitClass",
+        "ResidT": "NaN",
+        "Station": "Cache"
+      }
+    ]
+  }
+}

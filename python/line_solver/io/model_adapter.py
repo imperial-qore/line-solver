@@ -1,11 +1,22 @@
 """
 Model Adapter for transforming and adapting queueing network models.
 
-This module provides functionality for:
-- Fork-join network transformations (MMT, Heidelberger-Trivedi)
-- Model preprocessing and adaptation operations
+Single home for every model-transformation primitive, mirroring MATLAB's
+@ModelAdapter class directory:
+- Fork-join transformations: fjtag, mmt, Heidelberger-Trivedi ht, sort_forks,
+  the path enumerators (paths, paths_cs, find_paths, find_paths_cs)
+- Class-level transformations: tag_chain, aggregate_chains, remove_class
+- Flow-equivalent server aggregation: aggregate_fes
 
-Based on MATLAB's @ModelAdapter class.
+Port from:
+    - matlab/src/io/@ModelAdapter/ModelAdapter.m
+    - matlab/src/io/@ModelAdapter/{fjtag,mmt,ht,sortForks}.m
+    - matlab/src/io/@ModelAdapter/{paths,pathsCS,findPaths,findPathsCS}.m
+    - matlab/src/io/@ModelAdapter/{tagChain,aggregateChains,removeClass}.m
+    - matlab/src/io/@ModelAdapter/aggregateFES.m
+
+line_solver.api.io.model_adapter re-exports this module; it must not carry a
+second copy of any of these primitives.
 
 Copyright (c) 2012-2026, Imperial College London
 All rights reserved.
@@ -17,6 +28,7 @@ from typing import Dict, List, Optional, Tuple, Any
 from itertools import combinations
 from dataclasses import dataclass
 
+from ..api.io.logging import line_warning
 from ..api.sn.network_struct import NodeType
 from ..api.sn.transforms import get_chain_for_class
 
@@ -47,6 +59,49 @@ class HTResult:
     fjclassmap: np.ndarray  # fjclassmap[r] = original class index for auxiliary class r
     fjforkmap: np.ndarray  # fjforkmap[r] = fork node index for auxiliary class r
     fj_auxiliary_delays: Dict[int, int]  # fj_auxiliary_delays[j] = auxiliary delay node index for join j
+
+
+@dataclass
+class DeaggregationInfo:
+    """Information needed to deaggregate chain-level results back to class-level."""
+    alpha: np.ndarray  # Aggregation factors matrix (M x K)
+    inchain: List[List[int]]  # Classes in each chain
+    original_sn: Any  # Original NetworkStruct
+    is_aggregated: bool
+    V_chain: Optional[np.ndarray] = None  # Visit ratios per chain
+    ST_chain: Optional[np.ndarray] = None  # Service times per chain
+    L_chain: Optional[np.ndarray] = None  # Demands per chain
+    SCV_chain: Optional[np.ndarray] = None  # SCVs per chain
+    N_chain: Optional[np.ndarray] = None  # Population per chain
+    lambda_chain: Optional[np.ndarray] = None  # Arrival rates per chain
+    is_open_chain: Optional[np.ndarray] = None  # Open chain flags
+    refstat: Optional[np.ndarray] = None  # Reference stations
+    refstat_chain: Optional[np.ndarray] = None  # Reference stations per chain
+    nclasses: int = 0
+    nchains: int = 0
+
+
+@dataclass
+class TaggedModelResult:
+    """Result of tagging a chain for response time analysis."""
+    model: Any  # Tagged model
+    tagged_job: Any  # Tagged job class
+
+
+@dataclass
+class FESAggregationInfo:
+    """Information for Flow-Equivalent Server aggregation."""
+    original_model: Any
+    station_subset: List[Any]
+    subset_indices: np.ndarray
+    complement_indices: np.ndarray
+    throughput_table: List[np.ndarray]
+    cutoffs: np.ndarray
+    stoch_comp_subset: np.ndarray
+    stoch_comp_complement: np.ndarray
+    isolated_model: Any
+    fes_node_idx: int
+
 
 
 class ModelAdapter:
@@ -1114,8 +1169,12 @@ class ModelAdapter:
                         fjclassmap, fjforkmap, nonfjmodel
                     )
 
-                    # Compute synchronization delay using HT formula
-                    d0 = ModelAdapter._compute_sync_delay(paths)
+                    # The inner join fires on the k-th branch completion, k = the
+                    # branch count on a standard join and the declared quorum on a
+                    # PARTIAL one.
+                    from ..api.fjnative import sn_join_quorum
+                    d0 = ModelAdapter._compute_sync_delay(
+                        paths, sn_join_quorum(sn, int(join_idx), r, len(paths)))
 
                     # Set service at join for merged classes
                     from ..distributions.continuous import Exp
@@ -1150,7 +1209,7 @@ class ModelAdapter:
                       cur_class: int, to_merge: List[int], QN: np.ndarray,
                       TN: np.ndarray, current_time: float,
                       fjclassmap: np.ndarray, fjforkmap: np.ndarray,
-                      nonfjmodel) -> np.ndarray:
+                      nonfjmodel, on_path=None) -> np.ndarray:
         """
         Find response times along paths with class switches.
 
@@ -1171,6 +1230,7 @@ class ModelAdapter:
             fjclassmap: fjclassmap[aux_idx] = original class index
             fjforkmap: fjforkmap[aux_idx] = fork node index
             nonfjmodel: Transformed model
+            on_path: (class, node) states already held by the current path
 
         Returns:
             Array of response times, one per parallel path
@@ -1206,6 +1266,14 @@ class ModelAdapter:
         row_idx = cur_class * orig_nodes + cur_node
         if row_idx < 0 or row_idx >= P.shape[0]:
             return np.array([current_time])
+
+        # enumerate SIMPLE paths only: a call mean above one adds a geometric
+        # loop through the .Aux class, so the fork-to-join graph is cyclic
+        if on_path is None:
+            on_path = frozenset()
+        if row_idx in on_path:
+            return np.array([])
+        on_path = on_path | {row_idx}
 
         # Find all transitions from current (class, node)
         for transition in np.where(P[row_idx, :] > 0)[0]:
@@ -1246,7 +1314,7 @@ class ModelAdapter:
                     paths = ModelAdapter.find_paths_cs(
                         sn, P, next_node, join_idx, next_class,
                         cur_merge + [s], QN, TN, 0,
-                        fjclassmap, fjforkmap, nonfjmodel
+                        fjclassmap, fjforkmap, nonfjmodel, on_path
                     )
 
                     # Compute E[max] for synchronization
@@ -1266,7 +1334,7 @@ class ModelAdapter:
                     nested_ri = ModelAdapter.find_paths_cs(
                         sn, P, join_idx, end_node, next_class,
                         cur_merge, QN, TN, current_time + d0,
-                        fjclassmap, fjforkmap, nonfjmodel
+                        fjclassmap, fjforkmap, nonfjmodel, on_path
                     )
                     ri.extend(nested_ri)
             else:
@@ -1274,7 +1342,7 @@ class ModelAdapter:
                 nested_ri = ModelAdapter.find_paths_cs(
                     sn, P, next_node, end_node, next_class,
                     cur_merge, QN, TN, current_time + q_len / tput,
-                    fjclassmap, fjforkmap, nonfjmodel
+                    fjclassmap, fjforkmap, nonfjmodel, on_path
                 )
                 ri.extend(nested_ri)
 
@@ -1324,7 +1392,9 @@ class ModelAdapter:
                         ri1, stat1, RN = ModelAdapter.paths(
                             sn, P, next_node, join_idx, r, RN, 0, []
                         )
-                        d0 = ModelAdapter._compute_sync_delay(ri1)
+                        from ..api.fjnative import sn_join_quorum
+                        d0 = ModelAdapter._compute_sync_delay(
+                            ri1, sn_join_quorum(sn, int(join_idx), r, len(ri1)))
                         RN[join_station, r] = d0
                         for st in stat1:
                             RN[st, r] = 0
@@ -1424,42 +1494,32 @@ class ModelAdapter:
         return np.array(ri), stat, RN
 
     @staticmethod
-    def _compute_sync_delay(path_times: np.ndarray) -> float:
+    def _compute_sync_delay(path_times: np.ndarray, k: Optional[int] = None) -> float:
         """
-        Compute synchronization delay using Heidelberger-Trivedi formula.
+        Compute the instant the join fires, by the Heidelberger-Trivedi formula.
 
-        For K parallel branches with response times r_1, ..., r_K,
-        the expected maximum E[max(r_1, ..., r_K)] is computed using
-        inclusion-exclusion with exponential approximation.
+        For K parallel branches with response times r_1, ..., r_K, the join fires at the
+        k-th of them: the expected maximum E[max(r_1, ..., r_K)] on a standard join, and
+        the k-th order statistic under a quorum. Both come from fj_ordstat_exp, whose
+        inclusion-exclusion sum reduces to the classical one at k = K.
 
         Args:
             path_times: Array of response times for parallel paths
+            k: quorum; None or K is the standard join
 
         Returns:
-            Expected maximum (synchronization point) time
+            Expected synchronization point time
         """
         if len(path_times) == 0:
             return 0.0
         if len(path_times) == 1:
             return path_times[0]
 
-        # Convert to rates (1/response_time)
         path_times = np.asarray(path_times)
         # Avoid division by zero
         path_times = np.maximum(path_times, 1e-10)
-        lambdai = 1.0 / path_times
-
-        d0 = 0.0
-        parallel_branches = len(lambdai)
-
-        for pow_val in range(parallel_branches):
-            # Get all combinations of (pow_val + 1) elements
-            for combo in combinations(range(parallel_branches), pow_val + 1):
-                combo_sum = np.sum(lambdai[list(combo)])
-                if combo_sum > 0:
-                    d0 += ((-1) ** pow_val) * (1.0 / combo_sum)
-
-        return d0
+        from ..api.fjnative import fj_ordstat_exp
+        return fj_ordstat_exp(path_times, len(path_times) if k is None else k)
 
     @staticmethod
     def _compute_node_visits(sn) -> np.ndarray:
@@ -1600,5 +1660,472 @@ class ModelAdapter:
         else:
             return fes_aggregate(model, station_subset)
 
+
+    @staticmethod
+    def tag_chain(model: Any, chain: Any, jobclass: Any = None,
+                  suffix: str = '.tagged') -> TaggedModelResult:
+        """
+        Create a tagged job model for response time analysis.
+
+        One job of `jobclass` is MOVED out of its own class into a new class of
+        population 1, so a solver can follow that single job through the network.
+
+        THIS REPLACED A STUB. The previous body edited a NetworkStruct in place
+        (nclasses, njobs, rt) on a deep-copied model and returned `tagged_job` as
+        a plain dict. It created no JobClass object, so the native state-space
+        generator -- which walks the model's class and node OBJECTS -- had
+        nothing to walk; the struct said nclasses=2 while the model still held
+        one class; and the population was never moved (njobs stayed [3,0] where
+        it should read [2,1]). The result could not be solved at all, which is
+        why SolverCTMC.getCdfRespT fell back to fitting an exponential.
+
+        The three things that make a tagged class real: a service process at
+        EVERY station cloned from the source class, the source class's routing
+        replicated for the new class over the linked routing matrix, and one job
+        actually MOVED rather than added.
+
+        Args:
+            model: Network model
+            chain: Chain containing the class to tag
+            jobclass: Specific class to tag (default: first class in chain)
+            suffix: Suffix for tagged class names (default: '.tagged')
+
+        Returns:
+            TaggedModelResult with the tagged model and the tagged JobClass
+
+        References:
+            MATLAB: matlab/src/io/@ModelAdapter/tagChain.m
+        """
+        from ..lang.classes import ClosedClass
+
+        chain_classes = list(getattr(chain, 'classes', []) or [])
+        if jobclass is None and chain_classes:
+            jobclass = chain_classes[0]
+        if jobclass is None:
+            raise ValueError("tag_chain: the chain carries no class to tag")
+        if not chain_classes:
+            chain_classes = [jobclass]
+
+        tagged_model = model.copy()
+
+        # Resolve the chain's classes inside the COPY: the chain object holds
+        # references into the original model, which the copy does not share.
+        by_name = {c.getName(): c for c in tagged_model.get_classes()}
+        chain_in_tagged = [by_name[c.getName()] for c in chain_classes
+                           if c.getName() in by_name]
+        source = by_name.get(jobclass.getName())
+        if source is None or not chain_in_tagged:
+            raise ValueError("tag_chain: the class to tag is not present in the model copy")
+
+        # The linked routing matrix must be read BEFORE the new classes exist,
+        # so that it is the original class-pair map and not a half-extended one.
+        P = tagged_model.get_linked_routing_matrix()
+        if P is None:
+            raise ValueError("tag_chain: the model has no linked routing matrix; "
+                             "link() it before asking for a tagged copy")
+        P = [[np.array(P[r][s], dtype=float, copy=True) for s in range(len(P[r]))]
+             for r in range(len(P))]
+
+        nnodes = len(tagged_model.get_nodes())
+        stations = tagged_model.get_stations()
+        old_index = {c.getName(): i for i, c in enumerate(tagged_model.get_classes())}
+
+        tagged_classes = []
+        for src in chain_in_tagged:
+            pop = 1 if src is source else 0
+            refstat = getattr(src, '_refstat', None)
+            if refstat is None and stations:
+                refstat = stations[0]
+            new_cls = ClosedClass(tagged_model, src.getName() + suffix, pop, refstat,
+                                  getattr(src, '_prio', 0))
+            # A class with no service process is served nowhere, and the
+            # state-space generator then has no transition to build.
+            for st in stations:
+                if not hasattr(st, 'get_service'):
+                    continue
+                dist = st.get_service(src)
+                if dist is not None:
+                    st.set_service(new_cls, copy.deepcopy(dist))
+            tagged_classes.append(new_cls)
+
+        # MOVE the job: the tagged class gained one, so the source loses one.
+        if hasattr(source, 'setNumberOfJobs'):
+            source.setNumberOfJobs(source.getNumberOfJobs() - 1)
+
+        # Replicate the chain's routing for the tagged classes, pair by pair.
+        R = len(tagged_model.get_classes())
+        Pnew = [[np.zeros((nnodes, nnodes)) for _ in range(R)] for _ in range(R)]
+        for r in range(min(len(P), R)):
+            for s_ in range(min(len(P[r]), R)):
+                Pnew[r][s_] = np.array(P[r][s_], dtype=float, copy=True)
+        for ir, src_r in enumerate(chain_in_tagged):
+            nr = tagged_classes[ir]._index if hasattr(tagged_classes[ir], '_index') \
+                else R - len(tagged_classes) + ir
+            orr = old_index[src_r.getName()]
+            for is_, src_s in enumerate(chain_in_tagged):
+                ns = tagged_classes[is_]._index if hasattr(tagged_classes[is_], '_index') \
+                    else R - len(tagged_classes) + is_
+                oss = old_index[src_s.getName()]
+                if orr < len(P) and oss < len(P[orr]):
+                    Pnew[nr][ns] = np.array(P[orr][oss], dtype=float, copy=True)
+
+        tagged_model.reset_network(False)
+        tagged_model.link(Pnew)
+        tagged_model.refresh_struct()
+
+        return TaggedModelResult(model=tagged_model,
+                                 tagged_job=tagged_classes[-1] if tagged_classes else jobclass)
+
+    @staticmethod
+    def aggregate_chains(model: Any, suffix: str = '') -> Tuple[Any, np.ndarray, DeaggregationInfo]:
+        """
+        Transform a multi-class model into an equivalent chain-aggregated model.
+
+        Classes belonging to the same chain (i.e. classes that can switch into
+        each other) are merged into one aggregate class, so the returned model
+        has one class per chain and no class switching. The aggregate preserves
+        the total chain population (closed chains), the total arrival rate (open
+        chains), the chain service demands and the chain-level routing.
+
+        Args:
+            model: Source Network model with potentially multiple classes per chain
+            suffix: Optional suffix for chain class names (default: '')
+
+        Returns:
+            Tuple of (chain_model, alpha, deagg_info), where alpha is the
+            (M, K) matrix of aggregation factors and deagg_info carries the
+            data needed by sn_deaggregate_chain_results to map chain-level
+            metrics back to class-level metrics.
+
+        References:
+            MATLAB: matlab/src/io/@ModelAdapter/aggregateChains.m
+            JAR: jline.lang.ModelAdapter.aggregateChains
+        """
+        from ..lang.network import Network
+        from ..lang.base import NodeType
+        from ..lang.nodes import Source, Sink, Queue, Delay, Router, ClassSwitch
+        from ..lang.classes import OpenClass, ClosedClass
+        from ..distributions import Exp, Det, Erlang, HyperExp, Disabled
+        from ..api.sn.demands import sn_get_demands_chain
+        from ..constants import GlobalConstants
+
+        if not hasattr(model, 'get_struct') and not hasattr(model, 'getStruct'):
+            raise TypeError(
+                "ModelAdapter.aggregate_chains requires a Network model, not a bare NetworkStruct.")
+        sn = model.getStruct() if hasattr(model, 'getStruct') else model.get_struct()
+
+        M = int(sn.nstations)
+        K = int(sn.nclasses)
+        C = int(sn.nchains)
+
+        inchain = [np.asarray(sn.inchain[c], dtype=int).ravel() for c in range(C)]
+
+        # If each class is its own chain there is nothing to merge
+        if C == K:
+            chain_model = model.copy()
+            alpha = np.eye(M, K)
+            deagg_info = DeaggregationInfo(
+                alpha=alpha,
+                inchain=[list(inchain[c]) for c in range(C)],
+                original_sn=sn,
+                is_aggregated=False,
+                nclasses=K,
+                nchains=C,
+            )
+            return chain_model, alpha, deagg_info
+
+        demands = sn_get_demands_chain(sn)
+        Lchain = np.asarray(demands.Lchain, dtype=float)
+        STchain = np.asarray(demands.STchain, dtype=float)
+        Vchain = np.asarray(demands.Vchain, dtype=float)
+        alpha = np.asarray(demands.alpha, dtype=float)
+        Nchain = np.asarray(demands.Nchain, dtype=float).ravel()
+        SCVchain = np.asarray(demands.SCVchain, dtype=float)
+        refstatchain = np.asarray(demands.refstatchain, dtype=int).ravel()
+
+        # Open versus closed chains, and the aggregate arrival rate of each
+        # open chain
+        njobs = np.asarray(sn.njobs, dtype=float).ravel()
+        is_open_chain = np.zeros(C, dtype=bool)
+        lambda_chain = np.zeros(C)
+        source_station = None
+        for i in range(int(sn.nnodes)):
+            if int(sn.nodetype[i]) == int(NodeType.SOURCE):
+                source_station = int(sn.nodeToStation[i])
+                break
+        for c in range(C):
+            is_open_chain[c] = bool(np.any(np.isinf(njobs[inchain[c]])))
+            if is_open_chain[c] and source_station is not None and source_station >= 0:
+                rates = np.asarray(sn.rates, dtype=float)
+                lambda_chain[c] = float(np.nansum(rates[source_station, inchain[c]]))
+
+        # Rebuild the model with one class per chain
+        chain_model = Network(f"{model.getName() if hasattr(model, 'getName') else model.name}_aggregated")
+
+        node_map = {}
+        station_map = {}
+        for i, node in enumerate(model.getNodes()):
+            # auto-added class switch nodes disappear with class switching, and
+            # user-defined ones have nothing left to switch
+            if isinstance(node, ClassSwitch):
+                continue
+            if isinstance(node, Source):
+                node_map[i] = Source(chain_model, node.name)
+            elif isinstance(node, Sink):
+                node_map[i] = Sink(chain_model, node.name)
+            elif isinstance(node, Delay):
+                node_map[i] = Delay(chain_model, node.name)
+            elif isinstance(node, Queue):
+                new_node = Queue(chain_model, node.name, node.get_sched_strategy())
+                nservers = node.get_number_of_servers()
+                if np.isfinite(nservers):
+                    new_node.setNumberOfServers(int(nservers))
+                cap = node.get_capacity()
+                if cap is not None and np.isfinite(cap):
+                    new_node.setCapacity(int(cap))
+                node_map[i] = new_node
+            elif isinstance(node, Router):
+                node_map[i] = Router(chain_model, node.name)
+            else:
+                line_warning('aggregate_chains',
+                             f"Node type {type(node).__name__} not fully supported in chain aggregation.")
+                continue
+            ist = int(sn.nodeToStation[i]) if sn.nodeToStation is not None else -1
+            if ist >= 0:
+                station_map[ist] = node_map[i]
+
+        # One aggregate class per chain
+        chain_class = []
+        for c in range(C):
+            names = [str(sn.classnames[k]) for k in inchain[c]]
+            name = names[0] if len(names) == 1 else f"Chain{c + 1}"
+            if suffix:
+                name = name + suffix
+            if is_open_chain[c]:
+                chain_class.append(OpenClass(chain_model, name))
+            else:
+                refstat = station_map.get(int(refstatchain[c]))
+                if refstat is None:
+                    raise RuntimeError(
+                        f"Reference station {int(refstatchain[c])} for chain {c} not found in aggregated model.")
+                chain_class.append(ClosedClass(chain_model, name, float(Nchain[c]), refstat))
+
+        if np.any(is_open_chain):
+            chain_source = chain_model.getSource()
+            for c in range(C):
+                if is_open_chain[c] and lambda_chain[c] > 0:
+                    chain_source.setArrival(chain_class[c], Exp(lambda_chain[c]))
+
+        # Aggregate service processes, matched on the chain mean and SCV
+        for ist in range(M):
+            station = station_map.get(ist)
+            if station is None or isinstance(station, (Source, Sink)):
+                continue
+            for c in range(C):
+                st = STchain[ist, c]
+                if st > 0 and np.isfinite(st):
+                    scv = SCVchain[ist, c]
+                    if not np.isfinite(scv) or scv <= 0:
+                        scv = 1.0
+                    if abs(scv - 1.0) < GlobalConstants.FineTol:
+                        dist = Exp(1.0 / st)
+                    elif scv < 1.0:
+                        if scv < GlobalConstants.FineTol:
+                            dist = Det(st)
+                        else:
+                            dist = Erlang.fitMeanAndOrder(st, max(1, int(round(1.0 / scv))))
+                    else:
+                        dist = HyperExp.fitMeanAndSCV(st, scv)
+                    station.setService(chain_class[c], dist)
+                else:
+                    station.setService(chain_class[c], Disabled())
+
+        # Chain-level routing: aggregate the class-level routing probabilities
+        # with the alpha weights, then renormalise
+        P = chain_model.initRoutingMatrix()
+        rt = np.asarray(sn.rt, dtype=float)
+        station_to_stateful = sn.stationToStateful if getattr(sn, 'stationToStateful', None) is not None else None
+        for c in range(C):
+            rows = {}
+            for ist in range(M):
+                src = station_map.get(ist)
+                if src is None:
+                    continue
+                if not is_open_chain[c] and isinstance(src, (Source, Sink)):
+                    continue
+                isf_i = int(station_to_stateful[ist]) if station_to_stateful is not None else ist
+                for jst in range(M):
+                    dst = station_map.get(jst)
+                    if dst is None:
+                        continue
+                    isf_j = int(station_to_stateful[jst]) if station_to_stateful is not None else jst
+                    pij = 0.0
+                    for k in inchain[c]:
+                        for s in inchain[c]:
+                            from_idx = isf_i * K + int(k)
+                            to_idx = isf_j * K + int(s)
+                            if from_idx < rt.shape[0] and to_idx < rt.shape[1]:
+                                p_ks = rt[from_idx, to_idx]
+                                if alpha[ist, int(k)] > 0 and p_ks > 0:
+                                    pij += alpha[ist, int(k)] * p_ks
+                    if pij > GlobalConstants.FineTol:
+                        rows.setdefault(src, []).append((dst, pij))
+            for src, entries in rows.items():
+                total = sum(p for _, p in entries)
+                if total > GlobalConstants.FineTol:
+                    if abs(total - 1.0) > 0.01:
+                        line_warning('aggregate_chains',
+                                     f"Large normalization correction at node {src.name} for chain {c}: rowSum={total:.4f}")
+                    for dst, p in entries:
+                        P.set(chain_class[c], chain_class[c], src, dst, p / total)
+
+        chain_model.link(P)
+
+        deagg_info = DeaggregationInfo(
+            alpha=alpha,
+            inchain=[list(inchain[c]) for c in range(C)],
+            original_sn=sn,
+            is_aggregated=True,
+            V_chain=Vchain,
+            ST_chain=STchain,
+            L_chain=Lchain,
+            SCV_chain=SCVchain,
+            N_chain=Nchain,
+            lambda_chain=lambda_chain,
+            is_open_chain=is_open_chain,
+            refstat=np.asarray(sn.refstat).ravel() if getattr(sn, 'refstat', None) is not None else None,
+            refstat_chain=refstatchain,
+            nclasses=K,
+            nchains=C,
+        )
+
+        return chain_model, alpha, deagg_info
+
+    @staticmethod
+    def remove_class(model: Any, jobclass: Any) -> Any:
+        """
+        Return a copy of the model with a job class removed.
+
+        The original model is left untouched, so it stays solvable; use this for
+        ablation studies or a per-class decomposition. The removal logic itself
+        lives in Network.remove_class and is delegated to here rather than
+        duplicated, so that the two entry points cannot drift. Mirrors
+        ModelAdapter.removeClass in MATLAB and the JAR.
+
+        Args:
+            model: Network model
+            jobclass: Job class to remove (class object or 0-based index)
+
+        Returns:
+            A copy of the model without the specified class
+
+        References:
+            MATLAB: matlab/src/io/@ModelAdapter/removeClass.m
+            JAR: jline.lang.ModelAdapter.removeClass
+        """
+        if not hasattr(model, 'remove_class'):
+            raise TypeError(
+                "ModelAdapter.remove_class requires a Network model, not a bare NetworkStruct.")
+        new_model = model.copy() if hasattr(model, 'copy') else copy.deepcopy(model)
+        new_model.remove_class(jobclass)
+        return new_model
+
     # Alias for Java camelCase compatibility
     aggregateFES = aggregate_fes
+
+
+# Convenience function aliases
+def tag_chain(model: Any, chain: Any, jobclass: Any = None,
+              suffix: str = '.tagged') -> TaggedModelResult:
+    """Create a tagged job model. See ModelAdapter.tag_chain."""
+    return ModelAdapter.tag_chain(model, chain, jobclass, suffix)
+
+
+def aggregate_chains(model: Any, suffix: str = '') -> Tuple[Any, np.ndarray, DeaggregationInfo]:
+    """Aggregate chains in a model. See ModelAdapter.aggregate_chains."""
+    return ModelAdapter.aggregate_chains(model, suffix)
+
+
+def remove_class(model: Any, jobclass: Any) -> Any:
+    """Remove a class from model. See ModelAdapter.remove_class."""
+    return ModelAdapter.remove_class(model, jobclass)
+
+
+def sort_forks(sn: Any, fjforkmap: np.ndarray, fjclassmap: np.ndarray,
+               nonfjmodel: Any) -> Tuple[np.ndarray, np.ndarray]:
+    """Sort forks in fork-join network. See ModelAdapter.sort_forks."""
+    return ModelAdapter.sort_forks(sn, fjforkmap, fjclassmap, nonfjmodel)
+
+
+def mmt(model: Any, fork_lambda: Optional[np.ndarray] = None) -> MMTResult:
+    """MMT transform for fork-join networks. See ModelAdapter.mmt."""
+    return ModelAdapter.mmt(model, fork_lambda)
+
+
+def ht(model: Any) -> HTResult:
+    """HT transform for fork-join networks. See ModelAdapter.ht."""
+    return ModelAdapter.ht(model)
+
+
+def paths(sn: Any, P: np.ndarray, cur_node: int, end_node: int,
+          r: int, RN: np.ndarray, current_time: float,
+          stats: List[int]) -> Tuple[List[float], List[int], np.ndarray]:
+    """Find paths in network. See ModelAdapter.paths."""
+    return ModelAdapter.paths(sn, P, cur_node, end_node, r, RN, current_time, stats)
+
+
+def paths_cs(sn: Any, orignodes: int, P: np.ndarray, cur_node: int,
+             end_node: int, cur_class: int, RN: np.ndarray,
+             current_time: float, stats: List[int]) -> Tuple[List[float], List[int], np.ndarray]:
+    """Find paths with class switching. See ModelAdapter.paths_cs."""
+    return ModelAdapter.paths_cs(sn, orignodes, P, cur_node, end_node, cur_class, RN, current_time, stats)
+
+
+def find_paths(sn: Any, P: np.ndarray, start: int, end_node: int,
+               r: int, to_merge: List[int], QN: np.ndarray, TN: np.ndarray,
+               current_time: float, fjclassmap: np.ndarray,
+               fjforkmap: np.ndarray, nonfjmodel: Any) -> List[float]:
+    """Find paths for fork-join analysis. See ModelAdapter.find_paths."""
+    return ModelAdapter.find_paths(sn, P, start, end_node, r, to_merge, QN, TN,
+                                   current_time, fjclassmap, fjforkmap, nonfjmodel)
+
+
+def find_paths_cs(sn: Any, P: np.ndarray, cur_node: int, end_node: int,
+                  cur_class: int, to_merge: List[int], QN: np.ndarray,
+                  TN: np.ndarray, current_time: float, fjclassmap: np.ndarray,
+                  fjforkmap: np.ndarray, nonfjmodel: Any) -> List[float]:
+    """Find paths with class switching for fork-join. See ModelAdapter.find_paths_cs."""
+    return ModelAdapter.find_paths_cs(sn, P, cur_node, end_node, cur_class, to_merge,
+                                       QN, TN, current_time, fjclassmap, fjforkmap, nonfjmodel)
+
+
+def fjtag(model):
+    """Fork-join state-space tagging. See ModelAdapter.fjtag."""
+    return ModelAdapter.fjtag(model)
+
+
+def aggregate_fes(model, station_subset, options=None):
+    """Flow-equivalent server aggregation. See ModelAdapter.aggregate_fes."""
+    return ModelAdapter.aggregate_fes(model, station_subset, options)
+
+
+__all__ = [
+    'ModelAdapter',
+    'DeaggregationInfo',
+    'TaggedModelResult',
+    'FESAggregationInfo',
+    'MMTResult',
+    'HTResult',
+    'tag_chain',
+    'aggregate_chains',
+    'remove_class',
+    'sort_forks',
+    'mmt',
+    'ht',
+    'paths',
+    'paths_cs',
+    'find_paths',
+    'find_paths_cs',
+    'fjtag',
+    'aggregate_fes',
+]

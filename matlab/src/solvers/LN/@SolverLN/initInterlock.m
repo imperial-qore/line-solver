@@ -1,20 +1,36 @@
 function initInterlock(self)
-% INITINTERLOCK Build interlock table and find common entries/sources
+% INITINTERLOCK Build the interlock path table and locate common parents
 %
-% Implements the LQNS V5 static interlock analysis:
-%   Phase A: Build interlock reachability table (entry-to-entry)
-%   Phase B: Find common parent entries (branch points) per server
-%   Phase C: Find source tasks per server (for interlock flow computation)
+% Interlocking arises when requests issued by one client reach a common
+% lower-level server along two or more independent paths, so that arrivals
+% a layer decomposition treats as independent are in fact correlated. The
+% static half of the correction is built here, once per solve:
 %
-% The interlock table is built once at solver initialization and reused
-% across iterations. Only the interlock flow computation (in updatePopulations)
-% uses iteration-dependent throughput values.
+%   Phase A: the path table path(a,b) of Franks (1999), Sec. 4.2, holding
+%            the calls to entry b caused by one invocation of entry a, with
+%            a unit diagonal. LINE keeps a second table restricted to the
+%            phase-1 flow, so that deferred (phase-2) work can be scored
+%            separately when the correction is applied
+%   Phase B: the common-parent finder of Fig. 4.2, retaining only the
+%            entries at which the flow genuinely splits
+%   Phase C: the source tasks and the source count n_s of Eq. (4.7)
+%
+% Only the flow computation in UPDATEPOPULATIONS depends on the iterate,
+% so the tables built here are reused across the fixed-point iteration.
+%
+% The phase-aware tables, the branch-point test and the source count are
+% refinements beyond the published algorithm, which assumes one path table
+% and counts source tasks directly.
+%
+% Reference: G. Franks, "Performance Analysis of Distributed Server
+% Systems", PhD thesis, Carleton University, 1999, Ch. 4; published as
+% G. Franks, "Traffic dependencies in client-server systems and their
+% effect on performance prediction", IEEE IPDS, 1995, pp. 24-33.
 
 lqn = self.lqn;
 
-% Phase A: Build interlock reachability table
-% il_all(src_e, dst_e) = total reachability probability (all phases)
-% il_ph1(src_e, dst_e) = phase-1 only reachability probability
+% Phase A: path table of Sec. 4.2, il_all(a,b) = calls to entry b per
+% invocation of entry a; il_ph1 restricts the same count to phase-1 flow
 nentries = lqn.nentries;
 il_all = zeros(nentries, nentries);
 il_ph1 = zeros(nentries, nentries);
@@ -28,7 +44,7 @@ end
 self.il_table_all = il_all;
 self.il_table_ph1 = il_ph1;
 
-% Phase B+C: Find common entries and sources per server entity
+% Phase B+C: common parents of Fig. 4.2 and the source count n_s
 nslots = lqn.nhosts + lqn.ntasks;
 self.il_common_entries = cell(lqn.tshift + lqn.ntasks, 1);
 self.il_source_tasks_all = cell(lqn.tshift + lqn.ntasks, 1);
@@ -63,7 +79,7 @@ end
 
 end
 
-%% Phase A: Recursive path tracing (returns modified tables)
+%% Phase A: depth-first path tracing that fills the path table
 function [il_all, il_ph1] = traceInterlockPaths(lqn, eidx, root_e, prob_all, prob_ph1, visited, il_all, il_ph1, depth)
 e = eidx - lqn.eshift;
 if e < 1 || e > lqn.nentries
@@ -74,8 +90,7 @@ if visited(e)
 end
 visited(e) = true;
 
-% Record reachability from root to this entry
-% At depth 0 (root entry), record self-reachability (matches LQNS)
+% Accumulate path(root,e); the diagonal is unity by definition
 il_all(root_e, e) = il_all(root_e, e) + prob_all;
 il_ph1(root_e, e) = il_ph1(root_e, e) + prob_ph1;
 
@@ -87,7 +102,7 @@ for aidx = acts(:)'
     end
     a = aidx - lqn.ashift;
 
-    % Pruning: at non-root entries (depth > 0), skip phase-2+ activities
+    % Deferred work is only traced at the root, so a nested phase 2 ends the path
     if depth > 0 && isfield(lqn, 'actphase') && lqn.actphase(a) > 1
         continue;
     end
@@ -134,7 +149,7 @@ end
 visited(e) = false;
 end
 
-%% Phase B+C: Find interlock for a single server
+%% Phase B+C: common parents and sources for one server
 function [commonEntries, srcAll, srcPh2, numSources] = findInterlockForServer(lqn, serverIdx, il_all, il_ph1)
 commonEntries = [];
 srcAll = [];
@@ -174,7 +189,7 @@ if size(clientEntryPairs, 1) < 2
     return;
 end
 
-% Find common parent entries (branch points)
+% Common-parent finder of Fig. 4.2, kept only where the flow splits
 commonEntriesSet = [];
 nPairs = size(clientEntryPairs, 1);
 for i = 1:nPairs
@@ -212,14 +227,13 @@ if isempty(commonEntriesSet)
     return;
 end
 
-% Prune: remove entries whose owner is itself an interlocked server
-% (matching LQNS pruneInterlock: if the owner entity's common entries
-% include this entry, remove it)
-% Simplified: for now skip this step since it requires multi-pass
+% A second pruning pass, dropping a common entry whose own owner already
+% lists it as a common entry, needs the tables of every server at once
+% and is not applied here
 
 commonEntries = commonEntriesSet;
 
-% Phase C: Find source tasks
+% Phase C: source tasks feeding the interlocked paths
 interlockedTasks = [];
 for ce_eidx = commonEntries(:)'
     itasks = findInterlockedTasks(lqn, ce_eidx, serverIdx, il_all);
@@ -276,15 +290,14 @@ for it = interlockedTasks(:)'
 end
 allSrcTasks = unique(allSrcTasks);
 
-% Count total source multiplicity
+% n_s of Eq. (4.7), counting task copies rather than tasks
 nsrc = 0;
 for st = allSrcTasks(:)'
     nsrc = nsrc + lqn.mult(st);
 end
 
-% Note: Phase-2 source copies from interlocked tasks are NOT counted
-% because LINE's LN decomposition does not model phase-2 concurrency.
-% When LN phase-2 support is added, enable this block.
+% Deferred flow from an interlocked task would add one further source per
+% task, but SolverLN does not model phase-2 concurrency, so it is not counted
 dstEntryNums = serverEntryNums;
 if false %#ok<BDLOG> % disabled until LN supports phase-2
 for it = interlockedTasks(:)'
@@ -344,7 +357,7 @@ else
 end
 end
 
-%% Branch point check
+%% Branch-point test: do the two paths diverge before the common server
 function result = isBranchPointCheck(lqn, srcX_eidx, entryA_eidx, srcY_eidx, entryB_eidx, il_all)
 entryA_num = entryA_eidx - lqn.eshift;
 entryB_num = entryB_eidx - lqn.eshift;

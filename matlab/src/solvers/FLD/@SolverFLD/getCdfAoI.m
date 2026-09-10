@@ -7,7 +7,7 @@ function [AoI_cdf, PAoI_cdf] = getCdfAoI(self, t_values)
 % and Peak AoI computed using matrix exponential representations.
 %
 % The CDF is computed using the formula:
-%   F(t) = 1 - g * expm(A*t) * h
+%   F(t) = 1 + g * expm(A*t) * inv(A) * h
 %
 % where g, A, h are the matrix exponential parameters from the aoi-fluid solver.
 %
@@ -48,7 +48,14 @@ function [AoI_cdf, PAoI_cdf] = getCdfAoI(self, t_values)
 % All rights reserved.
 
 % Ensure solver has been run
-if isempty(self.result)
+
+% lang='cpp' fills aoiResults from line-cli (-s fluid -a aoi) and falls THROUGH
+% to the body below. The payload carries the (g,A,h) triples, not just a curve,
+% precisely so a caller-supplied t_values is still honoured here.
+if isfield(self.options,'lang') && strcmp(self.options.lang,'cpp')
+    self.result.solverSpecific.aoiResults = ...
+        CPPLINE.aoiResults(self.name, self.model, self.options);
+elseif isempty(self.result)
     self.getAvg();
 end
 
@@ -92,7 +99,11 @@ AoI_g = aoiResults.AoI_g;
 AoI_A = aoiResults.AoI_A;
 AoI_h = aoiResults.AoI_h;
 
-% Compute AoI CDF: F(t) = 1 - g * expm(A*t) * h
+% Compute AoI CDF: F(t) = 1 - S(t), S(t) = -g * expm(A*t) * inv(A) * h.
+% (g,A,h) is a DENSITY triple: solve_mfq_aoi normalizes g by -g*inv(A)*h so
+% that g*expm(A*t)*h is the density and g*inv(A)^2*h the mean. Subtracting the
+% density from 1 is not a CDF (it falls before it rises); the survival function
+% carries the extra inv(A), and F(0) = 1 + g*inv(A)*h = 0 as it must.
 AoI_F = zeros(n, 1);
 for i = 1:n
     t = t_values(i);
@@ -101,8 +112,7 @@ for i = 1:n
     else
         % Compute matrix exponential
         expAt = expm(AoI_A * t);
-        ccdf = AoI_g * expAt * AoI_h;
-        AoI_F(i) = max(0, min(1, 1 - ccdf));
+        AoI_F(i) = max(0, min(1, 1 + (AoI_g * expAt) / AoI_A * AoI_h));
     end
 end
 
@@ -113,7 +123,7 @@ PAoI_g = aoiResults.PAoI_g;
 PAoI_A = aoiResults.PAoI_A;
 PAoI_h = aoiResults.PAoI_h;
 
-% Compute Peak AoI CDF: F(t) = 1 - g * expm(A*t) * h
+% Compute Peak AoI CDF: F(t) = 1 - S(t), the same survival form as above
 PAoI_F = zeros(n, 1);
 for i = 1:n
     t = t_values(i);
@@ -122,8 +132,7 @@ for i = 1:n
     else
         % Compute matrix exponential
         expAt = expm(PAoI_A * t);
-        ccdf = PAoI_g * expAt * PAoI_h;
-        PAoI_F(i) = max(0, min(1, 1 - ccdf));
+        PAoI_F(i) = max(0, min(1, 1 + (PAoI_g * expAt) / PAoI_A * PAoI_h));
     end
 end
 

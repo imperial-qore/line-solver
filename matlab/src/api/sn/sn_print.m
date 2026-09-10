@@ -434,7 +434,7 @@ for i = 1:length(fields)
     end
     first = false;
     
-    % Print key - handle different key types like the Kotlin version
+    % Print key - handle different key types like the JAR version
     key = fields{i};
     % Check if key is numeric (like x0, x1, etc.)
     if regexp(key, '^x\d+$')

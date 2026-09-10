@@ -550,6 +550,18 @@ public final class Solver_ssa_nrm_space {
     }
 
     private static void printProgress(SolverOptions options, int samples_collected) {
+        // The solver console owns the line while it narrates: the in-place
+        // backspace counter below cannot be rewritten in a paged log, so the
+        // progress is reported as decimated rows instead.
+        if (jline.io.LineConsole.ownsLog()) {
+            final long every = Math.max(1L, options.samples / 20L);
+            if (samples_collected % every == 0) {
+                jline.io.LineConsole.iter(samples_collected / every,
+                        "simulated %d of %d samples (%.0f%%)", samples_collected,
+                        options.samples, 100.0 * samples_collected / options.samples);
+            }
+            return;
+        }
         if (System.console() != null && !"parallel".equals(options.method)
                 && (options.verbose == VerboseLevel.STD || options.verbose == VerboseLevel.DEBUG)) {
             if (samples_collected == 2) {

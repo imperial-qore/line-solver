@@ -8,12 +8,14 @@ Key functions:
     pfqn_ncld: Main dispatcher for load-dependent NC computation
     pfqn_gld: Generic load-dependent NC
     pfqn_gldsingle: Single-class load-dependent NC
+    pfqn_lldsingle: Single-class LIMITED load-dependent NC, linear in the population
     pfqn_comomrm_ld: COMOM method for load-dependent repairman models
 
 References:
     Casale, G., et al. "LINE: A unified library for queueing network modeling."
 """
 
+import math
 import numpy as np
 from math import log, exp, log1p, factorial, lgamma
 from typing import Tuple, Dict, Optional, Any
@@ -83,11 +85,15 @@ def pfqn_mushift(mu: np.ndarray, k: int) -> np.ndarray:
     Returns:
         Shifted mu matrix (M x N-1)
     """
-    mu = np.atleast_2d(np.asarray(mu, dtype=float))
+    # the dtype is taken FROM the input: this helper sits on pfqn_gld's
+    # recursion path, so forcing float here would reject a symbolic rate matrix
+    # that the routine itself accepts
+    mu_arr = np.asarray(mu)
+    mu = np.atleast_2d(np.asarray(mu, dtype=object if mu_arr.dtype == object else float))
     M, N = mu.shape
 
     if N <= 1:
-        return np.zeros((M, 0))
+        return np.zeros((M, 0), dtype=mu.dtype)
 
     mushift = mu[:, :-1].copy()
     mushift[k, :] = mu[k, 1:]
@@ -102,6 +108,229 @@ def pfqn_gldsingle(L: np.ndarray, N: np.ndarray, mu: np.ndarray,
 
     Auxiliary function used by pfqn_gld to compute the normalizing constant
     in a single-class load-dependent model using dynamic programming.
+
+    The recursion is
+
+        g(m,n,t) = g(m-1,n,1) + L_m/mu(m,t) * g(m,n-1,t+1)
+
+    whose right-hand side, at a fixed t, lives entirely at t+1. Sweeping t
+    downward therefore advances every population at once through one shifted
+    logaddexp, which is why the population axis is a vector here rather than
+    the innermost loop of a scalar triple loop. Only the t=1 slice is carried
+    from one station to the next. The work is still O(M*Ntot^2), but it is
+    O(M*Ntot) array operations instead of O(M*Ntot^2) interpreted ones, and
+    the values are bit-identical to the scalar order of accumulation.
+
+    Args:
+        L: Service demands at all stations (M x 1)
+        N: Number of jobs (scalar or 1x1 array)
+        mu: Load-dependent scaling factors (M x Ntot)
+        options: Solver options (unused, for API compatibility)
+
+    Returns:
+        PfqnNcResult with G (normalizing constant) and lG (log)
+
+    Raises:
+        RuntimeError: If multiclass model is detected
+    """
+    L_arr = np.asarray(L)
+    mu_arr = np.asarray(mu) if mu is not None else None
+    # SYMBOLIC INPUT is carried as an object array: a sympy expression cannot be
+    # cast to float, so the dtype is taken FROM the input rather than forced.
+    # Object arrays carry sympy through +, * and / unchanged, which is all the
+    # linear recursion needs. This routine is the one that can take a symbolic
+    # rate because it never COMPARES a rate, only divides by it; pfqn_lldsingle
+    # has to locate the threshold past which the row is constant, and that
+    # comparison has no truth value on a symbol.
+    is_sym = _is_object_array(L_arr) or _is_object_array(mu_arr)
+    L_dtype = object if is_sym else (complex if np.iscomplexobj(L_arr) else float)
+    L = np.atleast_2d(np.asarray(L, dtype=L_dtype))
+    N = np.asarray(N, dtype=float).flatten()
+    mu = np.atleast_2d(np.asarray(mu, dtype=object if is_sym else float))
+
+    M = L.shape[0]
+    R = L.shape[1]
+
+    if R > 1:
+        raise RuntimeError("pfqn_gldsingle: multiclass model detected. "
+                          "pfqn_gldsingle is for single class models.")
+
+    N_val = int(np.ceil(N[0]))
+
+    if N_val <= 0:
+        return PfqnNcResult(G=1.0, lG=0.0)
+
+    # see _kb/03-api-layer.md for rationale
+    # is_sym leads the conjunction so that np.all(...>=0), which yields a sympy
+    # relational with no truth value, is never reached on symbolic input.
+    use_log = (not is_sym
+               and not np.iscomplexobj(L) and not np.iscomplexobj(mu)
+               and bool(np.all(np.real(L) >= 0)) and bool(np.all(mu > 0)))
+
+    # rates past the last column of mu are 1, as in the scalar recursion
+    ncol = min(mu.shape[1], N_val)
+
+    if use_log:
+        # see _kb/03-api-layer.md for rationale
+        with np.errstate(divide='ignore'):
+            lL_all = np.log(np.real(L[:, 0]))   # -inf where the demand is zero
+            lmu_all = np.zeros((M, N_val))      # log(1) past the last column
+            if ncol > 0:
+                lmu_all[:, :ncol] = np.log(mu[:, :ncol])  # +inf where infinite
+
+        lgprev = np.full(N_val + 1, NEG_INF)
+        lgprev[0] = 0.0                         # g(0,n,1) = delta_{n,0}
+        shifted = np.empty(N_val + 1)
+        for m in range(M):
+            lgt1 = np.full(N_val + 1, NEG_INF)
+            lgt1[0] = 0.0                       # g(m,0,t) = 1 at every t
+            lL = lL_all[m]
+            for t in range(N_val, 0, -1):
+                shifted[0] = NEG_INF
+                shifted[1:] = lgt1[:-1]         # g(m,n-1,t+1)
+                # associate as the scalar recursion does, (lL + g) - lmu, or
+                # the two orders differ in the last bit; mu > 0 keeps lmu out
+                # of -inf, so no inf-inf can arise here
+                lgt = np.logaddexp(lgprev, (lL + shifted) - lmu_all[m, t - 1])
+                lgt[0] = 0.0
+                lgt1 = lgt
+            lgprev = lgt1
+
+        lG = float(lgprev[N_val])
+        return PfqnNcResult(G=float(np.exp(lG)), lG=lG)
+
+    # Complex or non-positive demands or rates: same sweep outside the log
+    # domain. A zero rate drops the second term, as the scalar version does.
+    gprev = np.zeros(N_val + 1, dtype=L_dtype)
+    gprev[0] = 1.0                              # g(0,n,1) = delta_{n,0}
+    murow = np.empty(N_val, dtype=object if is_sym else float)
+    for m in range(M):
+        murow[:] = 1.0
+        if ncol > 0:
+            murow[:ncol] = mu[m, :ncol]
+        gt1 = np.zeros(N_val + 1, dtype=L_dtype)
+        gt1[0] = 1.0                            # g(m,0,t) = 1 at every t
+        Lm = L[m, 0]
+        for t in range(N_val, 0, -1):
+            mu_val = murow[t - 1]
+            gt = gprev.copy()
+            if mu_val != 0:
+                src = gt1[:-1]
+                if L_dtype is complex:
+                    # numpy's complex ARRAY product is not bit-for-bit its
+                    # complex SCALAR product, so spell out (ac-bd)+(ad+bc)i,
+                    # which is what the scalar recursion evaluated
+                    prod = np.empty(N_val, dtype=complex)
+                    prod.real = Lm.real * src.real - Lm.imag * src.imag
+                    prod.imag = Lm.real * src.imag + Lm.imag * src.real
+                else:
+                    prod = Lm * src
+                # MATLAB divides by mu even when negative, so we should too,
+                # and (L*g)/mu is the scalar order of operations
+                gt[1:] += prod / mu_val
+            gt[0] = 1.0
+            gt1 = gt
+        gprev = gt1
+
+    G = gprev[N_val]
+    if is_sym:
+        # abs(G) > 0 is a sympy relational with no truth value, and cmath.log
+        # cannot take an expression: the symbolic log is the right one here
+        import sympy as _sp
+        return PfqnNcResult(G=G, lG=_sp.log(G))
+    if abs(G) > 0:
+        # Use complex log to handle negative G values (MATLAB's log does this)
+        # The caller should use np.real() if they need only the real part
+        import cmath
+        lG = cmath.log(G)
+    else:
+        lG = NEG_INF
+
+    return PfqnNcResult(G=G, lG=lG)
+
+
+def _is_object_array(a) -> bool:
+    """
+    True when an input carries symbolic entries rather than numbers.
+
+    numpy stores sympy expressions in an object array, so an object dtype is
+    the signal that the float cast of the numeric paths, and the value
+    comparisons that follow it, cannot be applied.
+    """
+    return a is not None and np.asarray(a).dtype == object
+
+
+def _lld_thresholds(mu_eff: np.ndarray) -> np.ndarray:
+    """
+    Per-station limited-load-dependence threshold s_k.
+
+    s_k is the smallest index past which the rate row is constant, i.e.
+    alpha_k(n) = alpha_k(s_k) for every n >= s_k. Equality is tested first so
+    that an infinite rate, which the recursion admits and zeroes through
+    log(mu) = +inf, ties with itself instead of producing inf-inf. The
+    tolerance is then confined to FINITE pairs: at tail = inf the bound
+    eps*max(abs(tail), 1) is itself inf and abs(prev - inf) <= inf would tie
+    every finite rate to it, collapsing the row on a false tie. A MISSED tie
+    only costs time; a FALSE tie would be a wrong answer, hence the strict
+    tolerance, which follows pfqn_explicit_ld's scan.
+
+    Args:
+        mu_eff: effective rate matrix (M x Nval), already padded to the population
+
+    Returns:
+        Thresholds (M,) of dtype int, each in 1..Nval
+    """
+    M, Nval = mu_eff.shape
+    s = np.full(M, Nval, dtype=int)
+    for m in range(M):
+        tail = mu_eff[m, Nval - 1]
+        for n in range(Nval - 1, 0, -1):
+            prev = mu_eff[m, n - 1]
+            if prev == tail or (np.isfinite(tail) and np.isfinite(prev)
+                                and abs(prev - tail)
+                                <= np.finfo(float).eps * max(abs(tail), 1.0)):
+                s[m] = n
+            else:
+                break
+    return np.maximum(s, 1)
+
+
+def pfqn_lldsingle(L: np.ndarray, N: np.ndarray, mu: np.ndarray,
+                   options: Optional[Dict[str, Any]] = None) -> PfqnNcResult:
+    """
+    Compute normalizing constant for single-class LIMITED load-dependent model.
+
+    Same recursion, same arithmetic and bit-identical results to
+    pfqn_gldsingle, but with the rate-offset axis truncated at the limited
+    load-dependence threshold instead of at the population. Unrolling
+
+        g(m,n,t) = g(m-1,n,1) + L_m/mu(m,t) * g(m,n-1,t+1)
+
+    gives
+
+        g(m,n,t) = sum_{j=0..n} prod_{i=0..j-1} L_m/alpha_m(t+i) * g(m-1,n-j,1)
+
+    so once t >= s_m, where s_m is the population past which alpha_m stays
+    constant, every factor is alpha_m(s_m), the product collapses to
+    (L_m/alpha_m(s_m))^j and
+
+        g(m,n,t) = g(m,n,s_m)   for all t >= s_m
+
+    The N-s_m upper slices are therefore duplicates of one another. Sweeping t
+    from s_m down instead of from N down keeps every value the answer reads.
+
+    The t = s_m slice is the only one that cannot be a shifted logaddexp of the
+    slice above it, since it reads ITSELF at n-1; it is accumulated in a scalar
+    loop, which is O(Nval) rather than the O(Nval) vector operations the
+    original spends on the collapsed slices. Cost drops from O(M*Nval^2) to
+    O(Nval*sum_k s_k), linear in the population on a multiserver model, and the
+    log-domain branch remains a sum of nonnegative terms so no digits are lost
+    to cancellation.
+
+    A station whose rates never settle, an infinite server alpha(n)=n being the
+    usual case, gets s_k = Nval and costs what it costs in pfqn_gldsingle; the
+    saving is over the other stations. An arbitrary rate matrix is accepted and
+    simply yields s_k = Nval throughout, at which point this is pfqn_gldsingle.
 
     Args:
         L: Service demands at all stations (M x 1)
@@ -125,13 +354,20 @@ def pfqn_gldsingle(L: np.ndarray, N: np.ndarray, mu: np.ndarray,
     R = L.shape[1]
 
     if R > 1:
-        raise RuntimeError("pfqn_gldsingle: multiclass model detected. "
-                          "pfqn_gldsingle is for single class models.")
+        raise RuntimeError("pfqn_lldsingle: multiclass model detected. "
+                          "pfqn_lldsingle is for single class models.")
 
     N_val = int(np.ceil(N[0]))
 
     if N_val <= 0:
         return PfqnNcResult(G=1.0, lG=0.0)
+
+    # rates past the last column of mu are 1, as in the scalar recursion
+    ncol = min(mu.shape[1], N_val)
+    mu_eff = np.ones((M, N_val))
+    if ncol > 0:
+        mu_eff[:, :ncol] = mu[:, :ncol]
+    s = _lld_thresholds(mu_eff)
 
     # see _kb/03-api-layer.md for rationale
     use_log = (not np.iscomplexobj(L) and not np.iscomplexobj(mu)
@@ -139,68 +375,71 @@ def pfqn_gldsingle(L: np.ndarray, N: np.ndarray, mu: np.ndarray,
 
     if use_log:
         # see _kb/03-api-layer.md for rationale
-        lg = {}
-        # lg[(0, n, 1)] stays -inf for n>=1: no station can hold n>=1 jobs.
-        for n in range(1, N_val + 1):
-            lg[(0, n, 1)] = NEG_INF
-
         with np.errstate(divide='ignore'):
             lL_all = np.log(np.real(L[:, 0]))   # -inf where the demand is zero
-            lmu_all = np.log(mu)               # +inf where the rate is infinite
+            lmu_all = np.log(mu_eff)            # +inf where infinite
 
-        for m in range(1, M + 1):
-            for tm in range(1, N_val + 2):
-                lg[(m, 0, tm)] = 0.0           # log(1): zero jobs
-
-            lL = float(lL_all[m - 1])
+        lgprev = np.full(N_val + 1, NEG_INF)
+        lgprev[0] = 0.0                         # g(0,n,1) = delta_{n,0}
+        shifted = np.empty(N_val + 1)
+        for m in range(M):
+            sm = int(s[m])
+            lL = lL_all[m]
+            # t = s_m: reads its own n-1, so it is accumulated in sequence.
+            # Same association as the vector step below, (lL + g) - lmu, or the
+            # two orders differ in the last bit.
+            lgt1 = np.full(N_val + 1, NEG_INF)
+            lgt1[0] = 0.0                       # g(m,0,t) = 1 at every t
+            lmu_sm = lmu_all[m, sm - 1]
             for n in range(1, N_val + 1):
-                for tm in range(1, N_val - n + 2):
-                    a = lg.get((m - 1, n, 1), NEG_INF)
-                    lg_curr = lg.get((m, n - 1, tm + 1), NEG_INF)
+                lgt1[n] = np.logaddexp(lgprev[n], (lL + lgt1[n - 1]) - lmu_sm)
+            for t in range(sm - 1, 0, -1):
+                shifted[0] = NEG_INF
+                shifted[1:] = lgt1[:-1]         # g(m,n-1,t+1)
+                lgt = np.logaddexp(lgprev, (lL + shifted) - lmu_all[m, t - 1])
+                lgt[0] = 0.0
+                lgt1 = lgt
+            lgprev = lgt1
 
-                    mu_idx = tm - 1  # 0-indexed
-                    if mu_idx < mu.shape[1]:
-                        lmu_val = float(lmu_all[m - 1, mu_idx])
-                    else:
-                        lmu_val = 0.0          # mu = 1
-                    b = lL + lg_curr - lmu_val
-                    lg[(m, n, tm)] = _logsumexp2(a, b)
-
-        lG = lg.get((M, N_val, 1), NEG_INF)
+        lG = float(lgprev[N_val])
         return PfqnNcResult(G=float(np.exp(lG)), lG=lG)
 
-    # Use dictionary for sparse storage with tuple keys
-    # g[(m, n, tm)] maps to the value (complex if L is complex)
-    g = {}
-
-    # Initialize boundary conditions: g(0, n, 1) = 0 for n=1:N
-    for n in range(1, N_val + 1):
-        g[(0, n, 1)] = 0.0
-
-    for m in range(1, M + 1):
-        # Initialize boundary conditions: g(m, 0, tm) = 1 for tm=1:(N+1)
-        for tm in range(1, N_val + 2):
-            g[(m, 0, tm)] = 1.0
-
+    # Complex or non-positive demands or rates: same sweep outside the log
+    # domain. A zero rate drops the second term, as the scalar version does.
+    gprev = np.zeros(N_val + 1, dtype=L_dtype)
+    gprev[0] = 1.0                              # g(0,n,1) = delta_{n,0}
+    for m in range(M):
+        sm = int(s[m])
+        Lm = L[m, 0]
+        mu_sm = mu_eff[m, sm - 1]
+        gt1 = np.zeros(N_val + 1, dtype=L_dtype)
+        gt1[0] = 1.0                            # g(m,0,t) = 1 at every t
         for n in range(1, N_val + 1):
-            for tm in range(1, N_val - n + 2):
-                g_prev = g.get((m - 1, n, 1), 0.0)
-                g_curr = g.get((m, n - 1, tm + 1), 0.0)
-
-                # Get mu value safely
-                mu_idx = tm - 1  # 0-indexed
-                if mu_idx < mu.shape[1]:
-                    mu_val = mu[m - 1, mu_idx]
+            gt1[n] = gprev[n]
+            if mu_sm != 0:
+                gt1[n] = gt1[n] + Lm * gt1[n - 1] / mu_sm
+        for t in range(sm - 1, 0, -1):
+            mu_val = mu_eff[m, t - 1]
+            gt = gprev.copy()
+            if mu_val != 0:
+                src = gt1[:-1]
+                if L_dtype is complex:
+                    # numpy's complex ARRAY product is not bit-for-bit its
+                    # complex SCALAR product, so spell out (ac-bd)+(ad+bc)i,
+                    # which is what the scalar recursion evaluated
+                    prod = np.empty(N_val, dtype=complex)
+                    prod.real = Lm.real * src.real - Lm.imag * src.imag
+                    prod.imag = Lm.real * src.imag + Lm.imag * src.real
                 else:
-                    mu_val = 1.0
+                    prod = Lm * src
+                # MATLAB divides by mu even when negative, so we should too,
+                # and (L*g)/mu is the scalar order of operations
+                gt[1:] += prod / mu_val
+            gt[0] = 1.0
+            gt1 = gt
+        gprev = gt1
 
-                # MATLAB divides by mu even when negative, so we should too
-                if mu_val != 0:
-                    g[(m, n, tm)] = g_prev + L[m - 1, 0] * g_curr / mu_val
-                else:
-                    g[(m, n, tm)] = g_prev
-
-    G = g.get((M, N_val, 1), 0.0)
+    G = gprev[N_val]
     if abs(G) > 0:
         # Use complex log to handle negative G values (MATLAB's log does this)
         # The caller should use np.real() if they need only the real part
@@ -232,10 +471,20 @@ def pfqn_gld(L: np.ndarray, N: np.ndarray, mu: np.ndarray,
     from .nc import pfqn_nc
 
     L_arr = np.asarray(L)
-    L_dtype = complex if np.iscomplexobj(L_arr) else float
+    mu_arr = np.asarray(mu) if mu is not None else None
+    # SYMBOLIC INPUT. Every branch below that inspects the VALUES of L or mu,
+    # the zero-demand guard, the L > 0 mask and the load-independence scan, is a
+    # comparison with no truth value on a sympy expression. Each is replaced by
+    # a numeric test on N, which is always concrete, or skipped in favour of the
+    # recursion, which is +, * and / throughout. The single-class kernel routes
+    # to pfqn_gldsingle rather than pfqn_lldsingle for the same reason: the LLD
+    # threshold is found by COMPARING rates, undecidable on a symbol.
+    is_sym = _is_object_array(L_arr) or _is_object_array(mu_arr)
+    L_dtype = object if is_sym else (complex if np.iscomplexobj(L_arr) else float)
     L = np.atleast_2d(np.asarray(L, dtype=L_dtype))
     N = np.asarray(N, dtype=float).flatten()
-    mu = np.atleast_2d(np.asarray(mu, dtype=float)) if mu is not None else None
+    mu = (np.atleast_2d(np.asarray(mu, dtype=object if is_sym else float))
+          if mu is not None else None)
 
     if options is None:
         options = {'tol': 1e-6, 'method': 'default'}
@@ -243,6 +492,13 @@ def pfqn_gld(L: np.ndarray, N: np.ndarray, mu: np.ndarray,
     M = L.shape[0]
     R = L.shape[1]
     Ntot = int(np.ceil(np.sum(N)))
+
+    # The mu default has to precede the R == 1 branch below, which PASSES mu on:
+    # np.asarray(None, dtype=float) is nan there, so a call that left the rates
+    # out returned G = nan instead of the load-independent model the default
+    # describes. The M == 1 branch guards mu is None itself and is unaffected.
+    if mu is None:
+        mu = np.ones((M, Ntot))
 
     # Validate dimensions
     if len(N) != R:
@@ -253,14 +509,43 @@ def pfqn_gld(L: np.ndarray, N: np.ndarray, mu: np.ndarray,
 
     # Handle single station case
     if M == 1:
+        # A CLASS WITH JOBS AND NO DEMAND AT THE ONLY STATION MAKES THE CONSTANT
+        # ZERO. Its factor is L^N_r = 0, so the whole product vanishes; dropping
+        # the class from the sum instead answers with the constant of a
+        # DIFFERENT model, the one without it. The recursion below reaches this
+        # base case with the full population every time it peels a station, so
+        # the error surfaces on any load-dependent model carrying a zero demand.
+        if not is_sym and np.any((np.asarray(N) > 0) & (np.abs(L[0, :]) == 0)):
+            return PfqnNcResult(G=0.0, lG=NEG_INF)
+        if is_sym:
+            # np.log and the float _factln cannot take a sympy expression, so
+            # the closed form is built directly. The multinomial is formed
+            # EXACTLY as a ratio of factorials rather than through
+            # exp(factln(...)): _factln returns a float, which sympy would
+            # carry as a rational approximation of that float and leave
+            # exp(6243314768165359/4503599627370496) where the integer 4
+            # belongs, making the expression unusable.
+            import sympy as _sp
+            Ntot_i = int(round(float(np.sum(N))))
+            G = _sp.factorial(Ntot_i)
+            for r in range(R):
+                nr = int(round(float(N[r])))
+                G = G / _sp.factorial(nr) * L[0, r] ** nr
+            if mu is not None:
+                for j in range(min(mu.shape[1], Ntot_i)):
+                    G = G / mu[0, j]
+            return PfqnNcResult(G=G, lG=_sp.log(G))
         N_tmp = []
         L_tmp = []
         for i in range(R):
-            if abs(L[0, i]) > FINE_TOL:
+            # exact zeros only: a small demand is still a demand, and log of it
+            # is finite, so thresholding here would drop a legitimate factor
+            if is_sym or abs(L[0, i]) > 0:
                 N_tmp.append(N[i])
                 L_tmp.append(np.log(L[0, i]))
 
         if len(N_tmp) == 0:
+            # every demand is zero, and the guard above proved every class empty
             return PfqnNcResult(G=1.0, lG=0.0)
 
         N_tmp = np.array(N_tmp)
@@ -288,7 +573,9 @@ def pfqn_gld(L: np.ndarray, N: np.ndarray, mu: np.ndarray,
 
     # Handle single-class case
     if R == 1:
-        return pfqn_gldsingle(L, N, mu, options)
+        if is_sym:
+            return pfqn_gldsingle(L, N, mu, options)
+        return pfqn_lldsingle(L, N, mu, options)
 
     # Handle empty L
     if L.size == 0 or np.sum(L) < FINE_TOL:
@@ -302,7 +589,13 @@ def pfqn_gld(L: np.ndarray, N: np.ndarray, mu: np.ndarray,
     is_load_dep = False
     is_inf_server = np.zeros(M, dtype=bool)
 
-    for i in range(M):
+    if is_sym:
+        # np.allclose against 1 and against the delay lattice has no truth value
+        # on a symbolic row, so the load-independent shortcut is skipped: the
+        # recursion below compares nothing and handles the model as given.
+        is_load_dep = True
+
+    for i in range(M if not is_sym else 0):
         mu_row = mu[i, :Ntot] if Ntot <= mu.shape[1] else np.concatenate([mu[i, :], np.ones(Ntot - mu.shape[1])])
 
         # Check if delay station (mu = [1, 2, 3, ...])
@@ -341,11 +634,6 @@ def pfqn_gld(L: np.ndarray, N: np.ndarray, mu: np.ndarray,
     if Ntot == 0 or (np.abs(np.max(N)) < FINE_TOL and np.abs(np.min(N)) < FINE_TOL):
         return PfqnNcResult(G=1.0, lG=0.0)
 
-    # Single-class case
-    if R == 1:
-        result = pfqn_gldsingle(L, N, mu, options)
-        return result
-
     # Recursive case: G_M(N) = G_{M-1}(N) + sum_r L[M-1,r]/mu[M-1,0] * G_M(N-e_r)
     G = pfqn_gld(L[:-1, :], N, mu[:-1, :], options).G
 
@@ -356,15 +644,150 @@ def pfqn_gld(L: np.ndarray, N: np.ndarray, mu: np.ndarray,
 
             mu_shifted = pfqn_mushift(mu, M - 1)
 
-            if mu[M - 1, 0] > 0:
+            if is_sym or mu[M - 1, 0] > 0:
                 G += (L[M - 1, r] / mu[M - 1, 0]) * pfqn_gld(L, N_1, mu_shifted, options).G
 
+    if is_sym:
+        # float(expr) raises, and mu[M-1,0] > 0 has no truth value above, so the
+        # symbolic constant is returned as the expression it is
+        import sympy as _sp
+        return PfqnNcResult(G=G, lG=_sp.log(G))
     if np.iscomplex(G):
         lG = np.log(G) if abs(G) > 0 else NEG_INF
     else:
         G = float(np.real(G))
         lG = log(G) if G > 0 else NEG_INF
 
+    return PfqnNcResult(G=G, lG=lG)
+
+
+def pfqn_lld(L: np.ndarray, N: np.ndarray, mu: np.ndarray,
+             options: Optional[Dict[str, Any]] = None) -> PfqnNcResult:
+    """
+    Normalizing constant of a multiclass LIMITED load-dependent closed model.
+
+    Same recursion, same arithmetic and the same result as pfqn_gld, but with
+    the rate shift saturated at the limited load-dependence threshold, which
+    makes the recursion's state space finite and lets it be memoised. This is
+    what pfqn_lldsingle does to pfqn_gldsingle, one level up: there the rate
+    offset is an index into a table, here it is the shift pfqn_mushift applies.
+
+    pfqn_gld peels the last station and advances its rate lattice one job at a
+    time,
+
+        g(m,n,j) = g(m-1,n,0) + sum_r L[m,r]/alpha_m(j+1) * g(m,n-e_r,j+1)
+
+    with j the number of shifts row m has taken, so that pfqn_mushift's leading
+    element is alpha_m(j+1). Once j >= s_m-1, where s_m is the population past
+    which alpha_m stays constant, every remaining entry of the row is
+    alpha_m(s_m) and a further shift LEAVES THE ROW UNCHANGED over the columns
+    the recursion can still read. Saturating j at s_m-1 therefore returns the
+    same value and makes the state (m, n, j) repeat, at which point one memo
+    answers what pfqn_gld recomputes down an exponential tree.
+
+    COST. The state space is M * prod_r(N_r+1) * max_k s_k, against pfqn_gld's
+    unmemoised recursion, which revisits the same states exponentially often.
+    Without the saturation a memo would still be bounded, but by
+    M * prod_r(N_r+1) * (Ntot+1): the threshold is what replaces the population
+    by the server count, exactly as in pfqn_lldsingle.
+
+    Every terminal case of pfqn_gld is delegated back to it on the materialised
+    block, so the two agree to the last bit rather than to a tolerance. A
+    SYMBOLIC rate matrix is passed straight through to pfqn_gld: locating the
+    threshold means comparing rates, which has no truth value on a symbol.
+
+    Args:
+        L: Service demands at all stations (M x R)
+        N: Number of jobs for each class (1 x R)
+        mu: Load-dependent scalings (M x Ntot)
+        options: Solver options
+
+    Returns:
+        PfqnNcResult with G (normalizing constant) and lG (log)
+    """
+    L_arr = np.asarray(L)
+    mu_arr = np.asarray(mu) if mu is not None else None
+    if _is_object_array(L_arr) or _is_object_array(mu_arr):
+        # no threshold can be established on a symbolic rate, so this is
+        # pfqn_gld's case rather than pfqn_lld's
+        return pfqn_gld(L, N, mu, options)
+
+    L = np.atleast_2d(np.asarray(L, dtype=float))
+    N = np.asarray(N, dtype=float).flatten()
+    M, R = L.shape
+    Ntot0 = int(round(float(np.sum(N))))
+    if mu is None:
+        mu = np.ones((M, Ntot0))
+    mu = np.atleast_2d(np.asarray(mu, dtype=float))
+    ncols = mu.shape[1]
+
+    if M == 0 or Ntot0 <= 0 or R == 1 or M == 1:
+        # nothing to memoise: pfqn_gld returns from a shortcut without recursing
+        return pfqn_gld(L, N, mu, options)
+
+    mu_eff_full = np.ones((M, max(ncols, 1)))
+    mu_eff_full[:, :ncols] = mu
+    s = _lld_thresholds(mu_eff_full)
+
+    memo: Dict[Any, float] = {}
+
+    def materialize(m, n):
+        """rows 0..m-2 unshifted, row m-1 shifted, all truncated by the jobs
+        already placed, exactly as pfqn_mushift leaves them"""
+        return ncols - (Ntot0 - int(round(float(np.sum(n)))))
+
+    def node(m, n, j):
+        key = (m, tuple(n.tolist()), j)
+        hit = memo.get(key)
+        if hit is not None:
+            return hit
+        cols = materialize(m, n)
+        L_sub = L[:m, :]
+        mu_sub = np.ones((m, max(cols, 0)))
+        if cols > 0:
+            # j + cols <= ncols holds for an INTEGER population, since j never
+            # exceeds the jobs already placed; the clamp only bites if a caller
+            # passes a fractional one, where it keeps the read in range instead
+            # of silently reading a short slice
+            jsrc = min(j, max(ncols - cols, 0))
+            if m > 1:
+                mu_sub[:m - 1, :] = mu[:m - 1, :cols]
+            mu_sub[m - 1, :] = mu[m - 1, jsrc:jsrc + cols]
+
+        nsum = int(round(float(np.sum(n))))
+        # pfqn_gld's own cascade. Every arm below returns from a shortcut of
+        # pfqn_gld without recursing, so delegating keeps the last bit.
+        if m <= 1 or R == 1 or L_sub.size == 0 or np.sum(L_sub) < FINE_TOL:
+            val = pfqn_gld(L_sub, n, mu_sub, options).G
+            memo[key] = val
+            return val
+        is_load_dep = False
+        for i in range(m):
+            row = mu_sub[i, :nsum] if nsum <= mu_sub.shape[1] else np.concatenate(
+                [mu_sub[i, :], np.ones(nsum - mu_sub.shape[1])])
+            is_delay = (len(row) >= nsum
+                        and np.allclose(row[:nsum], np.arange(1, nsum + 1, dtype=float), atol=FINE_TOL))
+            if not (np.allclose(row, 1.0, atol=FINE_TOL) or is_delay):
+                is_load_dep = True
+        if not is_load_dep or nsum == 0:
+            val = pfqn_gld(L_sub, n, mu_sub, options).G
+            memo[key] = val
+            return val
+
+        # the recursion, memoised. The shift saturates at s[m-1]-1, past which
+        # the row the child would see is the one it sees now.
+        val = node(m - 1, n, 0)
+        for r in range(R):
+            if n[r] > FINE_TOL:
+                n1 = n.copy()
+                n1[r] -= 1
+                if mu_sub[m - 1, 0] > 0:
+                    val += (L[m - 1, r] / mu_sub[m - 1, 0]) * node(m, n1, min(j + 1, int(s[m - 1]) - 1))
+        memo[key] = val
+        return val
+
+    G = node(M, N, 0)
+    lG = log(G) if G > 0 else NEG_INF
     return PfqnNcResult(G=G, lG=lG)
 
 
@@ -806,7 +1229,7 @@ def _compute_norm_const_ld(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
             muz = np.vstack([mu, delay_mu])
 
         if R == 1:
-            result = pfqn_gldsingle(Lz, N, muz, options)
+            result = pfqn_lldsingle(Lz, N, muz, options)
             lG = result.lG
             method = "exact/gld"
         elif M == 1 and np.max(Z) > 0:
@@ -836,18 +1259,18 @@ def _compute_norm_const_ld(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
         _, lG = pfqn_clw_lld(L, N, Z_row, mu)
         method = "clw"
 
-    elif method in ('panacea', 'panaceald'):
+    elif method in ('pana', 'panald'):
         # Mitra-McKenna load-dependent PANACEA asymptotic expansion. Delay terms
         # may arrive either in Z or as mu(i,n)=n rows of L, both are recognized
         # by pfqn_panaceald.
         Z_row = np.sum(Z, axis=0) if np.ndim(Z) > 1 else Z
         _, lG = pfqn_panaceald(L, N, Z_row, mu)
-        method = "panaceald"
+        method = "panald"
         if np.isnan(lG):
             # normal usage (1 - lambda_i/mu_i(Ntot) > 0 at every queueing
             # center) is the domain of the expansion, not a numerical failure
             raise ValueError(
-                "The model is not in normal usage, so the 'panaceald' "
+                "The model is not in normal usage, so the 'panald' "
                 "asymptotic expansion does not apply. Use 'exact', 'clw' or an "
                 "approximate load-dependent method instead.")
 
@@ -881,11 +1304,32 @@ def _compute_norm_const_ld(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
         lG = pfqn_nrp(L, N, Z, alpha=mu)
         method = "nrp"
 
+    elif method == 'nre':
+        from .nre import pfqn_nre
+        lG = pfqn_nre(L, N, Z, alpha=mu, options=options)
+        method = "nre"
+
     elif method == 'rd':
         from .rd import pfqn_rd
         result = pfqn_rd(L, N, Z, mu=mu)
         lG = result[0] if isinstance(result, tuple) else result.lGN
         method = "rd"
+
+    elif method == 'divdiff':
+        # Divided-difference closed form with the limited load-dependent kernel
+        # of Casale-Harrison-Ong (Perform. Eval. 2021), Theorem 1. A think time
+        # would have to enter g_sigma, whose closed form covers queues only, so
+        # it is refused here as pfqn_nc refuses it in the fixed-rate case.
+        # Unlike the default route this one keeps pfqn_explicit_ld's warnings,
+        # since a caller that named the method has no fallback.
+        from .explicit_ld import pfqn_explicit_ld
+        if np.sum(Z) > 0:
+            raise ValueError(
+                "The 'divdiff' method requires a model without think time, "
+                "which needs the integral form of Corollary 3.4. Use 'exact' "
+                "or 'default'.")
+        lG, _, expr, _ = pfqn_explicit_ld(L, N, mu)
+        method = 'divdiff.ld/' + expr
 
     else:
         # Default to exact/gld
@@ -1050,7 +1494,7 @@ def pfqn_ld_is(L, N, Z=None, mu=None, options=None) -> PfqnNcResult:
         F_i(n) = |n|!/prod_r(n_r!) * prod_r L(i,r)^{n_r} / prod_{k=1}^{|n|} mu_i(k)
                = sum_{q: |q|=n} prod_{p=1}^{|n|} L(i,q_p) / mu_i(p)
 
-    since the multiset has |n|!/prod_r(n_r!) orderings, each contributing the same
+    since the multiset has ``|n|!/prod_r(n_r!)`` orderings, each contributing the same
     ordered product. The delay (infinite-server) node is the special case
     mu_Z(k)=k, giving F_Z(n)=prod_r Z_r^{n_r}/n_r!; a single-server queue is
     mu_i(k)=1; a c-server queue is mu_i(k)=min(k,c).
@@ -1197,7 +1641,7 @@ def pfqn_panaceald(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
     Mitra-McKenna (JACM 33(3):568-592, 1986) load-dependent PANACEA: the
     expansion coefficients A_n are linear combinations of partition functions
     of a pseudonetwork whose load dependence is the phi(n) transform of the
-    original {f(n)}. See _kb/03-api-layer.md (pfqn/ family, panaceald).
+    original {f(n)}. See _kb/03-api-layer.md (pfqn/ family, pfqn_panaceald).
 
     Args:
         L: Service demand matrix (M x R)
@@ -1414,6 +1858,8 @@ __all__ = [
     'pfqn_panaceald',
     'pfqn_gld',
     'pfqn_gldsingle',
+    'pfqn_lldsingle',
+    'pfqn_lld',
     'pfqn_mushift',
     'pfqn_comomrm_ld',
     'pfqn_fnc',
@@ -1422,3 +1868,88 @@ __all__ = [
     'PfqnComomrmLdResult',
     'PfqnFncResult',
 ]
+
+
+def _xia_F(u: float, k: float) -> float:
+    """F(u,k) = sum_{j<k} u^j/j! + (u^k/k!)/(1 - u/k)."""
+    # u^j/j! without forming either half: the quotient is bounded by exp(u) but
+    # both u^j and j! leave the double range for j >~ 171.
+    def _pof(uu, jj):
+        if jj == 0:
+            return 1.0
+        if uu == 0:
+            return 0.0
+        return math.exp(jj * math.log(uu) - math.lgamma(jj + 1.0))
+
+    ret = 0.0
+    j = 0
+    while j < k:
+        ret += _pof(u, j)
+        j += 1
+    return ret + _pof(u, k) / (1.0 - u / k)
+
+
+def pfqn_xia(L: np.ndarray, N: int, s: np.ndarray) -> float:
+    """
+    Xia's asymptotic approximation of the load-dependent normalizing constant.
+
+    The demands are first rescaled so that the largest per-server utilization
+    rho_i = L_i/s_i is one. The stations that attain it are the bottleneck set
+    B; they saturate and contribute the M/M/s saturated term, while every other
+    station contributes its finite-capacity Erlang-like partial sum
+    F(u,k) = sum_{j<k} u^j/j! + (u^k/k!)/(1 - u/k), the closed form of the
+    geometric tail beyond the k-th server. The result is
+
+        log G ~ -log((|B|-1)!) - N log(c) + sum_{b in B} [s_b log L_b - log(s_b!)]
+                                          + sum_{k not in B} log F(L_k, s_k),
+
+    with c the rescaling factor. The leading behaviour in N enters ONLY through
+    -N log(c): this is the large-population limit, so the approximation does not
+    resolve the O(1) corrections a finite population carries.
+
+    A non-bottleneck station with u > k gives a NEGATIVE F, whose logarithm is
+    not real. Only an infinite F (u == k exactly) is dropped, matching the
+    reference: suppressing a negative term would quietly return a plausible
+    number for a model the expansion does not cover. The condition cannot arise
+    when every station has one server.
+
+    Args:
+        L: Service demand vector (M,).
+        N: Closed population (scalar).
+        s: Server counts (M,).
+
+    Returns:
+        Logarithm of the approximate normalizing constant.
+    """
+    L = np.asarray(L, dtype=float).ravel()
+    s = np.asarray(s, dtype=float).ravel()
+    M = L.size
+    if M == 0:
+        raise ValueError('pfqn_xia requires at least one station.')
+    if s.size != M:
+        raise ValueError('pfqn_xia: L and s disagree on the station count.')
+    if np.any(L <= 0):
+        raise ValueError('pfqn_xia requires positive demands.')
+    if np.any(s <= 0):
+        raise ValueError('pfqn_xia requires positive server counts.')
+
+    rho = L / s
+    scalefactor = 1.0 / np.max(rho)
+    Ls = L * scalefactor
+    rs = rho * scalefactor
+
+    bnkset = np.where(rs == np.max(rs))[0]
+    nbnkset = np.setdiff1d(np.arange(M), bnkset)
+    B = bnkset.size
+
+    lGasy = -_factln(B - 1) - N * log(scalefactor)
+    for b in bnkset:
+        lGasy += s[b] * log(Ls[b]) - _factln(s[b])
+    for k in nbnkset:
+        f = _xia_F(Ls[k], s[k])
+        if not np.isfinite(f):
+            continue
+        if f < 0:
+            return float('nan')   # log of a negative F poisons the whole constant
+        lGasy += log(f)
+    return float(lGasy)

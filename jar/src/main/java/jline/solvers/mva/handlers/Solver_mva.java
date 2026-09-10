@@ -6,15 +6,18 @@ import java.util.List;
 import jline.GlobalConstants;
 import jline.api.pfqn.mva.Pfqn_mvac;
 import jline.api.pfqn.mva.Pfqn_mvams;
+import jline.api.pfqn.mva.Pfqn_mvams_ilock;
 import jline.api.sn.SnDeaggregateChainResults;
 import jline.api.sn.SnGetDemandsChain;
 import jline.api.sn.SnHasProductForm;
+import jline.api.sn.SnInterlockChain;
 import jline.io.Ret;
 import jline.lang.NetworkStruct;
 import jline.lang.constant.NodeType;
 import jline.lang.constant.SchedStrategy;
 import jline.solvers.SolverOptions;
 import jline.solvers.mva.MVAResult;
+import jline.solvers.mva.SolverMVA;
 import jline.util.Maths;
 import jline.util.Utils;
 import jline.util.matrix.Matrix;
@@ -70,7 +73,12 @@ public final class Solver_mva {
 
         List<Integer> infSET = new ArrayList<Integer>();
         List<Integer> qSET = new ArrayList<Integer>();
-        if (!SnHasProductForm.snHasProductForm(sn)) {
+        // METHOD 'mva' IS THE DELIBERATE APPROXIMATION: MVARunner already warns
+        // that the exact recursion is being run outside its hypotheses and
+        // promises an answer, so throwing here would contradict its own message.
+        // Only an implicit or 'exact' request is refused.
+        if (!SnHasProductForm.snHasProductForm(sn)
+                && !(options != null && "mva".equals(options.method))) {
             throw new RuntimeException("Unsupported exact MVA analysis, the model does not have a product form");
         }
         for (int i = 0; i < M; i++) {
@@ -119,7 +127,18 @@ public final class Solver_mva {
         }
         Matrix nserversp = new Matrix(qSET.size(), 1);
         for (int i = 0; i < qSET.size(); i++) nserversp.set(i, nservers.get(qSET.get(i)));
-        Ret.pfqnMVA ret1 = Pfqn_mvams.pfqn_mvams(lambda, Lp, Nchain, Zp, Matrix.ones(qSET.size(), 1), nserversp);
+        // Interlocked flow (Franks 1999, Eq. 4.7): a request cannot queue behind work that its
+        // own submission caused, so the arrival-instant queue drops the interlocked share of the
+        // other chains. SolverLN supplies the matrix, class-indexed.
+        Matrix IL = SnInterlockChain.snInterlockChain(sn, options.config.interlock);
+        // the interlocked recursion is a separate entry point: Pfqn_mvams and the Pfqn_mva
+        // family it dispatches to carry the standard arrival theorem only
+        Ret.pfqnMVA ret1;
+        if (IL == null || IL.isEmpty()) {
+            ret1 = Pfqn_mvams.pfqn_mvams(lambda, Lp, Nchain, Zp, Matrix.ones(qSET.size(), 1), nserversp);
+        } else {
+            ret1 = Pfqn_mvams_ilock.pfqn_mvams_ilock(lambda, Lp, Nchain, Zp, Matrix.ones(qSET.size(), 1), nserversp, IL);
+        }
         Matrix Xchain = ret1.X;
         Matrix Qpf = ret1.Q;
         double lG = ret1.lGN;
@@ -282,8 +301,12 @@ public final class Solver_mva {
         int M = sn.nstations;
         int K = sn.nchains;
 
-        if (!SnHasProductForm.snHasProductForm(sn)) {
-            throw new RuntimeException("MVAC requires a product-form model.");
+        // One predicate for the gate and the run: SolverMVA.supportsModelMethod asks
+        // mvacReason before the report offers "mvac", so a listed row is a row that
+        // runs and the refusal reads the same either way.
+        String mvacReason = SolverMVA.mvacReason(sn, "mvac");
+        if (!mvacReason.isEmpty()) {
+            throw new RuntimeException(mvacReason);
         }
         for (int i = 0; i < Nchain.getNumCols(); i++) {
             if (Utils.isInf(Nchain.get(i))) {
@@ -304,11 +327,6 @@ public final class Solver_mva {
                 qSET.add(i);
             } else {
                 throw new RuntimeException("MVAC does not support " + SchedStrategy.toText(s) + " scheduling");
-            }
-        }
-        for (int k : qSET) {
-            if (nservers.get(k) != 1.0) {
-                throw new RuntimeException("MVAC supports single-server (SSFR) queues only; use method 'exact' for multiserver stations.");
             }
         }
 

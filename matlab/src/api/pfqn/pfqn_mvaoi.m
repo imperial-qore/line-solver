@@ -81,8 +81,16 @@ K = numel(mu);
 % case theta_{i,r}(N_r=1)=v_{i,r}/mu_i(...) (eq mvaoi-D); the N_r>=2 ratio case
 % cancels visits. Default unit visits. ms-promoted OI stations pass ones here,
 % their visits already folded into the rate handle by the analyzer.
+% A (K x R) matrix is accepted as well as the cell, as PFQN_NCOI does; the two
+% forms disagreed until 2026-07-29 and a matrix reached visits{i}(r) as an error.
 if nargin < 5 || isempty(visits)
     visits = repmat({ones(1, numel(N))}, 1, K);
+elseif ~iscell(visits)
+    vmat = visits;
+    visits = cell(1, K);
+    for i = 1:K
+        visits{i} = vmat(i, :);
+    end
 end
 for i = 1:K
     if ~isa(mu{i}, 'function_handle')

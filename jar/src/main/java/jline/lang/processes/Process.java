@@ -82,24 +82,24 @@ public abstract class Process implements Serializable {
         return params.get(id - 1);
     }
 
-    // =================== KOTLIN-STYLE PROPERTY ALIASES ===================
+    // =================== PROPERTY ALIASES ===================
     
     /**
-     * Kotlin-style property alias for getName()
+     * Property alias for getName
      */
     public String name() {
         return getName();
     }
     
     /**
-     * Kotlin-style property alias for getNumParams()
+     * Property alias for getNumParams
      */
     public int numParams() {
         return getNumParams();
     }
     
     /**
-     * Kotlin-style property alias for getParam(int id)
+     * Property alias for getParam(int id)
      */
     public NamedParam param(int id) {
         return getParam(id);

@@ -17,8 +17,8 @@ def gallery_erlerl1_reentrant():
     oclass2 = OpenClass(model, 'Class2')
     source.setArrival(oclass1, Erlang.fit_mean_and_order(1, n))
     source.setArrival(oclass2, Disabled())
-    queue.setService(oclass1, Erlang.fit_mean_and_order(0.5, n))
-    queue.setService(oclass2, Exp(3))
+    queue.setService(oclass1, Erlang.fit_mean_and_order(0.1, n))
+    queue.setService(oclass2, Exp(10))
 
     # Block 3: topology
     P = model.init_routing_matrix()

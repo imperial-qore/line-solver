@@ -16,8 +16,12 @@ function [Q,U,R,T,C,X,lG,totiter] = solver_rqna(sn, options)
 % Copyright (c) 2012-2026, Imperial College London
 % All rights reserved.
 
-if sn.nclasses > 1
-    line_error(mfilename, 'RQNA supports single-class open networks only. Use the ''qna'' method for multiclass models.');
+% One predicate for the gate and the run: SolverMVA.supportsModelMethod asks
+% the same question before the report offers 'rqna', so the sentence a caller
+% reads here is the sentence that kept the row off the report.
+[rqnaOk, rqnaReason] = SolverMVA.supportsSingleClassOpen(sn, 'rqna');
+if ~rqnaOk
+    line_error(mfilename, rqnaReason);
 end
 if any(isfinite(sn.njobs))
     line_error(mfilename, 'RQNA supports open networks only (no closed classes).');
@@ -143,13 +147,12 @@ function phat = local_phat(P, rho, a)
 % Near-immediate feedback probability at station a: the probability that a
 % customer departing a returns to a before visiting any station with strictly
 % higher traffic intensity (Whitt-You [52] eq. 3.8/3.9, H={a}).
-Hc = setdiff(find(rho <= rho(a) + 1e-9), a);   % equal/lower-rho cloud
-if isempty(Hc)
-    phat = P(a,a);
-    return;
-end
-F = inv(eye(numel(Hc)) - P(Hc,Hc));
-phat = P(a,a) + P(a,Hc) * F * P(Hc,a);
+%
+% Delegated to npfqn_feedback_elim so that the solver and the API function
+% cannot drift apart: they answer the same question, and a private copy of the
+% rule here is how the two came to differ on ties in the first place.
+res = npfqn_feedback_elim(P, rho);
+phat = res.feedbackProb(a);
 end
 
 function Ra = local_elim_response(a, P, rho, lambda, mu, cs2, svcMAP, ...

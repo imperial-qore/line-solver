@@ -114,7 +114,7 @@ for ind=1:I
                                 end
                             end
                         end
-                    case {RoutingStrategy.RAND, RoutingStrategy.RROBIN, RoutingStrategy.JSQ, RoutingStrategy.SQ}
+                    case {RoutingStrategy.RAND, RoutingStrategy.RROBIN, RoutingStrategy.JSQ, RoutingStrategy.SQ, RoutingStrategy.SDR}
                         if isinf(NK(k)) % open class
                             for jnd=1:I
                                 if conn(ind,jnd)>0

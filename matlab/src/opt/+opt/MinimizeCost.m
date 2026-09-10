@@ -4,7 +4,7 @@ classdef MinimizeCost < opt.Objective
     % containing the station name and 'rate') + replica costs
     % ('name_replicas'). Mirrors native-Python MinimizeCost.
     %
-    % serverCost/rateCost/replicaCost are containers.Map keyed by station name
+    % serverCost/rateCost/replicaCost are dictionaries keyed by station name
     % (char) -> cost, or []. subjectTo is a cell array of opt.Constraint.
 
     properties
@@ -30,10 +30,10 @@ classdef MinimizeCost < opt.Objective
             % server costs
             ks = keys(obj.serverCost);
             for i = 1:numel(ks)
-                if isKey(variableValues, ks{i})
-                    val = variableValues(ks{i});
+                if isKey(variableValues, ks(i))
+                    val = variableValues{ks(i)};
                     if opt.Objective.isScalarNumeric(val)
-                        total = total + obj.serverCost(ks{i}) * val;
+                        total = total + obj.serverCost(ks(i)) * val;
                     end
                 end
             end
@@ -41,11 +41,11 @@ classdef MinimizeCost < opt.Objective
             rks = keys(obj.rateCost);
             vks = keys(variableValues);
             for i = 1:numel(rks)
-                pattern = rks{i};
+                pattern = char(rks(i));
                 for j = 1:numel(vks)
-                    vname = vks{j};
+                    vname = char(vks(j));
                     if ~isempty(strfind(vname, pattern)) && ~isempty(strfind(lower(vname), 'rate')) %#ok<STREMP>
-                        val = variableValues(vname);
+                        val = variableValues{vname};
                         if opt.Objective.isScalarNumeric(val)
                             total = total + obj.rateCost(pattern) * val;
                         end
@@ -55,10 +55,10 @@ classdef MinimizeCost < opt.Objective
             % replica costs
             pks = keys(obj.replicaCost);
             for i = 1:numel(pks)
-                if isKey(variableValues, pks{i})
-                    val = variableValues(pks{i});
+                if isKey(variableValues, pks(i))
+                    val = variableValues{pks(i)};
                     if opt.Objective.isScalarNumeric(val)
-                        total = total + obj.replicaCost(pks{i}) * val;
+                        total = total + obj.replicaCost(pks(i)) * val;
                     end
                 end
             end
@@ -67,13 +67,13 @@ classdef MinimizeCost < opt.Objective
 
     methods (Static)
         function out = suffixMap(inMap, suffix)
-            out = containers.Map('KeyType', 'char', 'ValueType', 'double');
+            out = configureDictionary('string', 'double');
             if nargin < 1 || isempty(inMap)
                 return;
             end
             ks = keys(inMap);
             for i = 1:numel(ks)
-                out([ks{i} suffix]) = inMap(ks{i});
+                out([char(ks(i)) suffix]) = inMap(ks(i));
             end
         end
     end

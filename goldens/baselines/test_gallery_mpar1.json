@@ -1,0 +1,30 @@
+{
+  "class": {
+    "MVA": "deterministic"
+  },
+  "example": "test_gallery_mpar1",
+  "solvers": {
+    "MVA": [
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class1",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 1.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 1.0,
+        "JobClass": "Class1",
+        "QLen": 16.75,
+        "ResidT": 16.75,
+        "RespT": 16.75,
+        "Station": "Queue",
+        "Tput": 1.0,
+        "Util": 0.5
+      }
+    ]
+  }
+}

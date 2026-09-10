@@ -13,7 +13,7 @@ carries its correlation. A renewal arrival, phase-type or matrix-exponential,
 still takes the fast path.
 
 Mirrors jar/src/test/java/jline/solvers/mam/MamRapArrivalTest.java and
-line-test.git/test_mam_rap_arrival.m.
+line-test.git/test/testsAPI/test_mam_rap_arrival.m.
 """
 
 import numpy as np
@@ -116,4 +116,9 @@ def test_me_service_anchors_unchanged():
 
 def test_ph_service_anchors_unchanged():
     assert abs(_queue_length(Exp(0.5), Erlang.fitMeanAndOrder(0.5, 2)) - 0.3125000000) < 1e-9
-    assert abs(_queue_length(Exp(1.2), Erlang.fitMeanAndOrder(0.5, 2), 2) - 0.6964285714) < 1e-9
+    # M/E2/2. Was 0.6964285714, the single-fast-server surrogate; the exact
+    # MAP/PH/c multiset QBD (2026-08-16) answers it at 0.6462542940, and a
+    # truncated CTMC written out state by state, sharing no code with that QBD,
+    # gives 0.6462542936 at N=300 with 2.9e-16 of mass left in the tail. The old
+    # value was 7.8% high.
+    assert abs(_queue_length(Exp(1.2), Erlang.fitMeanAndOrder(0.5, 2), 2) - 0.6462542940) < 1e-9

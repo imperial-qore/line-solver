@@ -13,8 +13,11 @@ import jline.solvers.mva.SolverMVA;
 import jline.solvers.nc.SolverNC;
 import jline.solvers.ssa.SolverSSA;
 
+import static jline.io.InputOutput.line_error;
+import static jline.io.InputOutput.mfilename;
+
 /**
- * LINE solver - Java/Kotlin implementation equivalent to MATLAB LINE.m
+ * LINE solver - Java implementation equivalent to MATLAB LINE.m
  * <p>
  * This class serves as an alias for SolverAUTO and provides a static factory method
  * for creating solver instances based on the chosen method, matching the MATLAB interface.
@@ -128,14 +131,14 @@ public class LINE extends SolverAUTO {
             case "gig1.kobayashi":
             case "gig1.klb":
             case "gig1.marchal":
-                // see _kb/06-solver-catalog.md (JAR-only implementation notes: LINE.java MVA-token dispatch chain termination)
+                // see _kb/06-solver-catalog.md (JAR-only implementation notes: LINE.java MVA-method name dispatch chain termination)
                 if ("mva".equals(options.method)) {
                     options.method = "default";
                 }
                 options.method = options.method.replace("mva.", "");
                 return new SolverMVA(model, options);
 
-            // see _kb/06-solver-catalog.md (JAR-only implementation notes: LINE.java MVA-token dispatch chain termination)
+            // see _kb/06-solver-catalog.md (JAR-only implementation notes: LINE.java MVA-method name dispatch chain termination)
             case "ba":
             case "aba.upper":
             case "aba.lower":
@@ -163,15 +166,19 @@ public class LINE extends SolverAUTO {
             case "mbjb.lower":
             case "sib.upper":
             case "sib.lower":
+            case "scb.upper":
+            case "scb.lower":
             case "ldbcmp.lower":
             case "qr":
             case "lr":
             case "qrf.mmi":
             case "qrf.mem":
+            case "qrf.bethe":
             case "qrf.mmi.ld":
             case "qrf.mmi.linear":
             case "qrf.bas.mmi":
             case "qrf.bas.mem":
+            case "qrf.bas.bethe":
             case "qrf.bas":
             case "qrf.rsrd":
                 if ("ba".equals(options.method)) {
@@ -238,25 +245,30 @@ public class LINE extends SolverAUTO {
             case "nc.exact":
             case "nc.imci":
             case "nc.ls":
+            case "comom":
             case "comomrm":
             case "comomld":
             case "cub":
             case "ls":
             case "nc.le":
             case "le":
+            case "nc.ble":
+            case "ble":
             case "mmint2":
-            case "nc.panacea":
             case "nc.pana":
-            case "nc.panaceald":
-            case "panaceald":
+            case "nc.panald":
+            case "panald":
             case "nc.mmint2":
             case "nc.kt":
+            case "nc.bkt":
+            case "bkt":
+            case "nc.lekt":
+            case "lekt":
             case "nc.deterministic":
             case "nc.sampling":
             case "nc.propfair":
             case "nc.comom":
             case "nc.comomld":
-            case "nc.mom":
             case "nc.cub":
             case "nc.brute":
             case "nc.rd":
@@ -280,10 +292,21 @@ public class LINE extends SolverAUTO {
                 options.method = options.method.replace("mam.", "");
                 return new SolverMAM(model, options);
 
-            // Default fallback
+            // Default fallback: the AUTO selection intents ('default', 'heur',
+            // 'sim', 'fast', 'accurate', 'bound', ...) land here and are answered
+            // by the auto solver. An UNRECOGNISED name must NOT: without this
+            // gate the branch accepted any string and silently returned a full
+            // answer from the auto solver, so 'nc.bogus' and a removed name like
+            // 'nc.mom' were indistinguishable from a supported method. Gate on
+            // the cross-solver vocabulary, which is the same list MATLAB's
+            // LINE.m 'otherwise' branch checks.
             default:
                 if ("auto".equals(options.method)) {
                     options.method = "default";
+                }
+                if (!listValidOptions().get("allMethods").contains(options.method)) {
+                    line_error(mfilename(new Object() {
+                    }), "The '" + options.method + "' method is unsupported by this solver.");
                 }
                 return new LINE(model, options);
         }

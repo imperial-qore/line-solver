@@ -35,6 +35,14 @@ for k=1:K
     chain(k) = find(sn.chains(:,k));
 end
 
+% THE TWO RESTRICTIONS OF THIS ANALYZER, RAISED RATHER THAN RETURNED. Both used
+% to end in a warning and a result: an unsupported discipline returned empty
+% matrices and a closed model fell through the branch below with QN..XN still
+% at their zero initialization, so SolverMAM reported an entirely zero table as
+% if it were the answer. SolverMAM.getMethodFeatureSet states the same two rules
+% declaratively -- 'dec.mmap' drops SchedStrategy_INF, ClosedClass and
+% SelfLoopingClass -- so findSolver no longer offers the pair; this is what a
+% caller who names the method by hand meets.
 for ist=1:sn.nstations
     switch sn.sched(ist)
         case SchedStrategy.EXT
@@ -42,14 +50,10 @@ for ist=1:sn.nstations
         case {SchedStrategy.FCFS, SchedStrategy.HOL, SchedStrategy.FCFSPRPRIO, SchedStrategy.PS}
             % no-op
         otherwise
-            if options.verbose
-                line_warning(mfilename,'The dec.mmap method does not support this scheduling strategy.\n');
-            end
-            [QN,UN,RN,TN,CN,XN] = deal([],[],[],[],[],[]);
-            totiter = 0;
-            method = '';
-            runtime = toc(Tstart);
-            return
+            line_error(mfilename, sprintf(['The dec.mmap method does not support the %s ' ...
+                'scheduling strategy at station %d: the departure-process fixed point is ' ...
+                'built for EXT, FCFS, HOL, FCFSPRPRIO and PS stations only. Use the ' ...
+                'dec.source method.'], SchedStrategy.toText(sn.sched(ist)), ist));
     end
 end
 
@@ -89,9 +93,10 @@ if all(isinf(sn.njobs)) % is open
         line_printf('\nMAM parametric decomposition completed in %d iterations.',totiter);
     end
 else
-    if options.verbose
-        line_warning(mfilename,'This model is not supported by SolverMAM yet. Returning with no result.\n');
-    end
+    line_error(mfilename, ['The dec.mmap method supports open models only: the ' ...
+        'departure-process fixed point iterates on arrival streams that a closed ' ...
+        'population does not have. Use the dec.source method, or method ''default'', ' ...
+        'which routes a closed model to an analyzer that solves it.']);
 end
 runtime = toc(Tstart);
 

@@ -25,8 +25,10 @@ from .network_struct import (
     DropStrategy,
 )
 
+from .gd_balance import sn_gd_balance
 from .demands import (
     sn_get_demands_chain,
+    sn_interlock_chain,
     SnGetDemandsResult,
 )
 
@@ -47,9 +49,11 @@ from .transforms import (
     sn_set_priority,
     sn_set_routing,
     sn_refresh_visits,
+    sn_refresh_cacheqn_visits,
     sn_set_fork_fanout,
     sn_set_service_batch,
     sn_nonmarkov_toph,
+    sn_rt_stations,
 )
 
 from .getters import (
@@ -58,6 +62,7 @@ from .getters import (
     sn_pn_firing_rates,
     sn_pn_avg_rates,
     sn_get_arvr_from_tput,
+    sn_map_modulation,
     sn_get_node_arvr_from_tput,
     sn_get_node_tput_from_tput,
     sn_get_product_form_chain_params,
@@ -72,10 +77,11 @@ from .utils import (
     sn_rtnodes_to_rtorig,
 )
 
-from .fj_visits import (
+from .sn_fj_visits_spn import (
     sn_fj_visits_spn,
 )
 
+from .compat_rate import sn_compat_rate, sn_compat_peak, sn_compat_scaling
 from .predicates import (
     # Model type predicates
     sn_is_closed_model,
@@ -126,9 +132,12 @@ from .predicates import (
     sn_has_fork_join,
     sn_has_priorities,
     sn_has_class_switching,
+    sn_has_quorum_join,
     sn_has_fractional_populations,
     # Product form predicates
     sn_has_sd_routing,
+    sn_has_blocking,
+    sn_is_mm1k_loss,
     sn_has_product_form,
     sn_has_bursty_arrival,
     sn_has_product_form_not_het_fcfs,
@@ -137,7 +146,11 @@ from .predicates import (
     sn_is_state_valid,
 )
 
+from .patience import sn_patience_handles
+from .arrival_rate import sn_arrival_rate_fun
+
 __all__ = [
+    'sn_gd_balance',
     # Core classes
     'MatrixArray',
     'NetworkStruct',
@@ -163,14 +176,17 @@ __all__ = [
     'sn_set_priority',
     'sn_set_routing',
     'sn_refresh_visits',
+    'sn_refresh_cacheqn_visits',
     'sn_set_fork_fanout',
     'sn_set_service_batch',
     'sn_nonmarkov_toph',
+    'sn_rt_stations',
     # Getter functions
     'ChainParams',
     'sn_pn_firing_rates',
     'sn_pn_avg_rates',
     'sn_get_arvr_from_tput',
+    'sn_map_modulation',
     'sn_get_node_arvr_from_tput',
     'sn_get_node_tput_from_tput',
     'sn_get_product_form_chain_params',
@@ -224,9 +240,15 @@ __all__ = [
     'sn_has_fork_join',
     'sn_has_priorities',
     'sn_has_class_switching',
+    'sn_has_quorum_join',
     'sn_has_fractional_populations',
     # Product form predicates
     'sn_has_sd_routing',
+    'sn_has_blocking',
+    'sn_compat_rate',
+    'sn_compat_peak',
+    'sn_compat_scaling',
+    'sn_is_mm1k_loss',
     'sn_has_product_form',
     'sn_has_bursty_arrival',
     'sn_has_product_form_not_het_fcfs',
@@ -241,4 +263,7 @@ __all__ = [
     'sn_refresh_process_fields',
     'sn_is_phasetype',
     'sn_rtnodes_to_rtorig',
+    'sn_interlock_chain',
+    'sn_patience_handles',
+    'sn_arrival_rate_fun',
 ]

@@ -1,32 +1,37 @@
 function val = perm(A, m)
-% Computes the permanent of matrix A applying computational savings if 
-% some rows or columns are repeated
+% VAL = PERM(A)      permanent of the square matrix A
+% VAL = PERM(A, M)   permanent of the matrix whose column J is column J of A
+%                    repeated M(J) times, so that SUM(M) == SIZE(A,1)
+%
+% Computational savings are applied when rows or columns are repeated.
 
-if nargin==1
-    % Find unique columns and their indices
-    [uniqueCols, ~, ic] = unique(A', 'rows', 'stable');
+% Conditioning is a floating-point notion, so symbolic input keeps the caller's
+% orientation and its supplied multiplicities unchanged.
+numericInput = isnumeric(A);
 
-    % Count occurrences of each unique column
-    m = histcounts(ic, 1:(size(uniqueCols,1)+1));
+if nargin==2 && numericInput
+    % Materialize the expansion so both entry points share the orientation
+    % choice below; without this the two-argument form is pinned to whichever
+    % orientation the caller happened to build.
+    A = repelem(A, 1, m(:)');
+end
 
-    % If no repeated columns (m is all ones), check for repeated rows
-    if all(m == 1)
-        [uniqueRows, ~, ir] = unique(A, 'rows', 'stable');
-        % Count occurrences of each unique row
-        m_rows = histcounts(ir, 1:(size(uniqueRows,1)+1));
-
-        % If there are repeated rows, transpose and use row multiplicities
-        if any(m_rows > 1)
-            A = uniqueRows';
-            m = m_rows;
-        else
-            % No repeated columns or rows, use original matrix
-            A = uniqueCols';
-        end
-    else
-        % There are repeated columns, use unique columns
-        A = uniqueCols';
+if numericInput
+    % Grouping repeated rows means expanding the transpose, which leaves the
+    % permanent unchanged but can raise the largest inclusion-exclusion term by
+    % many orders of magnitude. Orientation is chosen first, grouping second;
+    % see _kb/03-api-layer.md.
+    if perm_conditioning(A') < perm_conditioning(A)
+        A = A';
     end
+
+    % Find unique columns of the chosen orientation and their multiplicities
+    [uniqueCols, ~, ic] = unique(A', 'rows', 'stable');
+    m = histcounts(ic, 1:(size(uniqueCols,1)+1));
+    A = uniqueCols';
+elseif nargin==1
+    % Symbolic single-argument call: every column is its own group
+    m = ones(1, size(A,2));
 end
 
 R = length(m);

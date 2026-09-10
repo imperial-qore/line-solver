@@ -353,11 +353,10 @@ public class CacheAfterEventTest {
         assertNotNull(result.outspace, "Should return output states for cache miss");
         assertEquals(1, result.outspace.getNumRows(), "Should have 1 possible outcome");
 
-        // READ switches the job to the retrieval (pending) class; the item is recorded in the
-        // retrieval-system bitmap on the subsequent DEP, when the job departs the cache for the queue
-        // (so the bitmap is unchanged here).
+        // READ switches the job to the retrieval (pending) class and marks item 1 as being
+        // fetched in block A, so that a concurrent request for it is a delayed hit.
         int varStart = model.numClasses;
-        assertCacheStateRow(result.outspace, 0, varStart, new int[]{3, 4, 5, 0, 0, 0, 0, 0});
+        assertCacheStateRow(result.outspace, 0, varStart, new int[]{3, 4, 5, 1, 0, 0, 0, 0});
 
         // Should switch to the retrieval class for item 1
         assertJobClass(result.outspace, 0, varStart, (int) model.retrievalPendingClasses.get(0, 0));
@@ -377,11 +376,10 @@ public class CacheAfterEventTest {
         assertNotNull(result.outspace, "Should return output states for cache miss");
         assertEquals(1, result.outspace.getNumRows(), "Should have 1 possible outcome");
 
-        // READ switches the job to the retrieval (pending) class; the item is recorded in the
-        // retrieval-system bitmap on the subsequent DEP, when the job departs the cache for the queue
-        // (so the bitmap is unchanged here).
+        // READ switches the job to the retrieval (pending) class and marks item 1 as being
+        // fetched in block A, so that a concurrent request for it is a delayed hit.
         int varStart = model.numClasses;
-        assertCacheStateRow(result.outspace, 0, varStart, new int[]{3, 4, 5, 0, 1, 0, 0, 0});
+        assertCacheStateRow(result.outspace, 0, varStart, new int[]{3, 4, 5, 1, 1, 0, 0, 0});
 
         // Should switch to the retrieval class for item 1
         assertJobClass(result.outspace, 0, varStart, (int) model.retrievalPendingClasses.get(0, 0));
@@ -454,6 +452,7 @@ public class CacheAfterEventTest {
     @Test
     public void testRS_n5_m3_readItem1_delayed_hit() {
         TestCacheModel model = createCacheModelWithRetrievalSystem(5, new int[]{3}, ReplacementStrategy.RR);
+        seedNodeSpace(model, 1);
         Matrix inspace = createCacheStateWithRetrievalSystem(model, new int[]{3, 4, 5}, new int[]{1}, 0);
 
         model.sn.varsparam.set(model.cacheNodeIndex, 0, 0); // item 1
@@ -537,8 +536,9 @@ public class CacheAfterEventTest {
         assertNotNull(result.outspace, "Should return output states for cache miss");
         assertEquals(1, result.outspace.getNumRows(), "Should have 1 possible outcome");
 
+        // READ marks item 1 as being fetched in block A.
         int varStart = model.numClasses;
-        assertCacheStateRow(result.outspace, 0, varStart, new int[]{3, 4, 5, 0, 0, 0, 0, 0});
+        assertCacheStateRow(result.outspace, 0, varStart, new int[]{3, 4, 5, 1, 0, 0, 0, 0});
 
         assertJobClass(result.outspace, 0, varStart, (int) model.retrievalPendingClasses.get(0, 0));
 
@@ -557,8 +557,9 @@ public class CacheAfterEventTest {
         assertNotNull(result.outspace, "Should return output states for cache miss");
         assertEquals(1, result.outspace.getNumRows(), "Should have 1 possible outcome");
 
+        // READ marks item 1 as being fetched in block A.
         int varStart = model.numClasses;
-        assertCacheStateRow(result.outspace, 0, varStart, new int[]{3, 4, 5, 0, 1, 0, 0, 0});
+        assertCacheStateRow(result.outspace, 0, varStart, new int[]{3, 4, 5, 1, 1, 0, 0, 0});
 
         assertJobClass(result.outspace, 0, varStart, (int) model.retrievalPendingClasses.get(0, 0));
 
@@ -568,6 +569,7 @@ public class CacheAfterEventTest {
     @Test
     public void testRS_n5_m21_readItem1_delayed_hit() {
         TestCacheModel model = createCacheModelWithRetrievalSystem(5, new int[]{2, 1}, ReplacementStrategy.RR);
+        seedNodeSpace(model, 1);
         Matrix inspace = createCacheStateWithRetrievalSystem(model, new int[]{3, 4, 5}, new int[]{1}, 0);
 
         model.sn.varsparam.set(model.cacheNodeIndex, 0, 0); // item 1
@@ -877,6 +879,16 @@ public class CacheAfterEventTest {
         return state;
     }
 
+    /**
+     * Store the enumerated local-variable space of the cache node, as the state-space
+     * generator would. afterEventCache reads the delayed-hit truncation level off it,
+     * so a merge onto an in-flight fetch is only representable once it is present.
+     */
+    private void seedNodeSpace(TestCacheModel model, int maxPending) {
+        model.sn.space.put(model.sn.stateful.get((int) model.sn.nodeToStateful.get(model.cacheNodeIndex)),
+                State.spaceLocalVarsPublic(model.sn, model.cacheNodeIndex, maxPending));
+    }
+
     private Matrix createCacheStateWithRetrievalSystem(TestCacheModel model, int[] cachedItems, int[] itemsInRetrieval,
                                                        int jobClassIndex) {
         assertTrue(itemsInRetrieval.length <= model.retrievalSystemCapacity,
@@ -885,8 +897,10 @@ public class CacheAfterEventTest {
         Matrix cacheStateNoRetrieval = createCacheState(model, cachedItems);
         int noRetrievalCols = cacheStateNoRetrieval.getNumCols();
 
-        // Retrieval system is encoded as a per-item occupancy bitmap (one column per item)
-        int numCols = noRetrievalCols + model.numItems;
+        // Local-variable layout of a retrieval cache: cache contents, then block A (a
+        // per-item occupancy bitmap), then block B (one count per retrieval class)
+        int widthB = State.cacheRetrievalClassMap(model.sn, model.cacheNodeIndex)[0].length;
+        int numCols = noRetrievalCols + model.numItems + widthB;
         Matrix state = new Matrix(1, numCols);
 
         for (int i = 0; i < noRetrievalCols; i++) {

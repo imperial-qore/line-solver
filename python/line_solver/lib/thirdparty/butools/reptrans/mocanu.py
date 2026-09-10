@@ -146,7 +146,7 @@ def TransformToMonocyclic (A, maxSize=100, precision=1e-14):
         Ni = febs[i]["n"]*febs[i]["multip"]
         G[pos:pos+Ni,pos:pos+Ni] = febGenerator (febs[i]["sigma"], febs[i]["z"], febs[i]["n"], febs[i]["multip"])
         if i < len(febs)-1:
-            G[pos+Ni-1, pos+Ni] = -np.sum(np.sum(G[pos+Ni-1,:],1),0)
+            G[pos+Ni-1, pos+Ni] = -np.asarray(G[pos+Ni-1,:]).sum()
         pos = pos + Ni
 
     return G

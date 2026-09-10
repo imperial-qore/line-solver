@@ -6,12 +6,11 @@ function [QN, UN, RN, TN, CN, XN, totiter, ld] = solver_mam_ldqbd(sn, options)
 % and one FCFS Queue (multi-server, PH service supported).
 %
 % Exactness: exact for exponential service at any number of servers, and for PH
-% service at a single server. For PH service with c > 1 servers it is an
-% approximation: the c parallel PH servers are collapsed into one PH process
-% scaled by min(n,c), which ignores the phase of each individual busy server
-% (the exact chain tracks the multiset of the min(n,c) in-service phases).
-% Measured against SolverCTMC the residual error is ~1e-2 relative on Erlang and
-% HyperExp, still ~16x below the dec.source error on the same models.
+% service at any number of servers. The multiserver PH chain is built by
+% LDQBD_MPHC, whose level coordinate is the MULTISET of the phases the min(n,c)
+% busy servers sit in; the collapsed single-phase approximation this solver used
+% until 2026-08-18 (one PH process run at min(n,c) times its speed, ~1e-2
+% relative against SolverCTMC) is gone.
 %
 % Two regimes are handled:
 %   CLOSED: one Delay (INF) + one Queue, finite population N. Level n = jobs at
@@ -29,28 +28,17 @@ function [QN, UN, RN, TN, CN, XN, totiter, ld] = solver_mam_ldqbd(sn, options)
 % All rights reserved.
 
 %% Validate model structure
+% The shape rules live in MAM_LDQBD_APPLICABLE, which SolverMAM.supportsModelMethod
+% and solver_mam_analyzer ask as well: one body, so the report and this run agree.
+[shapeOk, shapeWhy, regime] = mam_ldqbd_applicable(sn);
+if ~shapeOk
+    line_error(mfilename, shapeWhy);
+end
 M = sn.nstations;
 K = sn.nclasses;
 N = sn.njobs';
 
-if K ~= 1
-    line_error(mfilename, 'LDQBD method requires a single-class model.');
-end
-
-nDelay  = sum(sn.sched == SchedStrategy.INF);
-nQueue  = sum(sn.sched == SchedStrategy.FCFS);
-nSource = sum(sn.sched == SchedStrategy.EXT);
-
-isOpen = ~isfinite(N);
-if isOpen
-    if nSource ~= 1 || nQueue ~= 1 || M ~= 2
-        line_error(mfilename, 'Open LDQBD method requires exactly one Source and one Queue station.');
-    end
-else
-    if nDelay ~= 1 || nQueue ~= 1 || M ~= 2
-        line_error(mfilename, 'Closed LDQBD method requires exactly one Delay and one Queue station.');
-    end
-end
+isOpen = strcmp(regime, 'open');
 
 %% Identify stations
 queueIdx = find(sn.sched == SchedStrategy.FCFS);
@@ -81,6 +69,33 @@ else
     mean_service = map_mean(PH_queue);
 end
 
+%% Setup and delay-off at the queue
+% The station alternates OFF -> setup -> busy -> delay-off around the service,
+% so the chain carries phases the block builder below has no place for. The
+% closed regime hands the whole chain to qbd_setupdelayoff_closed; every other
+% combination is refused BY NAME rather than answered as if the server were
+% always warm, which is what this solver did until 2026-09 and is BUG-78.
+hasSetup = isfield(sn,'hassetup') && numel(sn.hassetup) >= queueIdx && sn.hassetup(queueIdx);
+alpharate = NaN; alphascv = NaN; betarate = NaN; betascv = NaN;
+if hasSetup
+    if isOpen
+        line_error(mfilename, ['Open LDQBD does not model a setup/delay-off server; ' ...
+            'use options.method=''dec.source'', whose qbd_setupdelayoff covers the open case.']);
+    end
+    if isPH || nservers(queueIdx) > 1
+        line_error(mfilename, ['Closed LDQBD models a setup/delay-off server with ' ...
+            'exponential service at a single server only; this station has ' ...
+            'phase-type service or several servers.']);
+    end
+    nodeIdx = sn.stationToNode(queueIdx);
+    np = sn.nodeparam{nodeIdx};
+    fparam = np{end};
+    alpharate = map_lambda(fparam.setupTime);
+    alphascv = map_scv(fparam.setupTime);
+    betarate = map_lambda(fparam.delayoffTime);
+    betascv = map_scv(fparam.delayoffTime);
+end
+
 %% Per-level service factor: load-dependent scaling if set, else min(n,c)
 % sn.lldscaling(queueIdx, n) is the load-dependent multiplier on the base rate;
 % when absent, a c-server queue scales as min(n,c). This is the level-dependent
@@ -91,21 +106,26 @@ if hasLLD
     lld = sn.lldscaling(queueIdx, :);
     lldlimit = numel(lld);
     sfMax = lld(lldlimit);          % saturated factor (capacity ceiling)
+    % Peak capacity normalizes the utilization, and it is the LARGEST factor the
+    % table declares, not the saturated one: a non-monotone alpha peaks in the
+    % middle. Same rule as CTMC's ceff = max(nservers, max(lldscaling(ist,:))),
+    % which is what makes the two report the same number.
+    utilPeak = max(nServers, max(lld));
 else
     lld = [];
     lldlimit = 0;
     sfMax = nServers;
+    utilPeak = nServers;
+end
+if hasSetup && hasLLD
+    line_error(mfilename, ['Closed LDQBD models a setup/delay-off server at its nominal ' ...
+        'rate only; this station also declares a load-dependent scaling.']);
 end
 
 %% Arrival rate per level and number of levels
 rt = sn.rt;
 if isOpen
-    % External Poisson arrivals only (MAP/MMPP arrivals are not yet supported).
-    arrProc = PH{srcIdx}{1};
-    if numel(arrProc{1}) > 1
-        line_error(mfilename, ['Open LDQBD method currently supports Poisson (exponential) ' ...
-            'arrivals only; the Source uses a MAP/MMPP process.']);
-    end
+    % External Poisson arrivals only; MAM_LDQBD_APPLICABLE refused a MAP above.
     lambda = rates(srcIdx, 1);
     lambda_eff = lambda * rt(srcIdx, queueIdx);
     rho = lambda_eff * mean_service / sfMax;   % sfMax = saturated capacity factor
@@ -161,35 +181,56 @@ if ~isPH
         Q2{n} = sf(n) * mu;
     end
 else
-    Q0{1} = arrRate(1) * alpha;                 % level 0 -> 1: start service in a phase
-    for n = 1:Nlev-1
-        Q0{n+1} = arrRate(n+1) * eye(nPhases);  % level n -> n+1: preserve phase
-    end
-    Q1{1} = -arrRate(1);                        % level 0: only arrivals
-    for n = 1:Nlev
-        Q1{n+1} = sf(n) * D0 - arrRate(n+1) * eye(nPhases);
-    end
-    Q2{1} = sf(1) * D1 * ones(nPhases, 1);      % level 1 -> 0: empty the queue
-    for n = 2:Nlev
-        Q2{n} = sf(n) * D1;                     % level n -> n-1: complete and restart
-    end
+    % PH service: the level carries the MULTISET of the phases the min(n,c)
+    % busy servers sit in, which is exact at any number of servers. At c = 1
+    % the multiset is just the phase, so this reproduces the single-server
+    % blocks (sf(n)*D0 - arr*I, sf(n)*D1) entry for entry.
+    [Q0, Q1, Q2] = ldqbd_mphc(D0, D1, alpha, nServers, arrRate, sf);
 end
 
 %% Solve LD-QBD
-ldqbd_options = struct('epsilon', options.tol, 'maxIter', options.iter_max, 'verbose', false);
-[R, pi_ldqbd] = ldqbd(Q0, Q1, Q2, ldqbd_options); %#ok<ASGLU>
-
-%% Performance metrics (per-level stationary distribution pi_ldqbd)
-mean_queue = (0:Nlev) * pi_ldqbd';
-
-% Utilization: probability busy for a (load-dependent) single server, else the
-% average fraction of c servers in use.
-if hasLLD || nServers == 1
-    util_ps = 1 - pi_ldqbd(1);
+if hasSetup
+    % SETUP AND DELAY-OFF, the closed vacation queue. The level-dependent chain
+    % this needs is the one above with two extra phase families -- the setup
+    % above level 0 and the delay-off at level 0 -- and qbd_setupdelayoff_closed
+    % builds and solves exactly that, so it is called rather than duplicated.
+    % Without it the blocks above describe a server that is ALWAYS warm and the
+    % answer is byte-identical across any setup mean (BUG-78).
+    [mean_queue, X_setup] = qbd_setupdelayoff_closed(N, 1/lambda_eff, mu, ...
+        alpharate, alphascv, betarate, betascv);
+    pi_ldqbd = [];
 else
-    util_ps = 0;
+    ldqbd_options = struct('epsilon', options.tol, 'maxIter', options.iter_max, 'verbose', false);
+    [R, pi_ldqbd] = ldqbd(Q0, Q1, Q2, ldqbd_options); %#ok<ASGLU>
+    %% Performance metrics (per-level stationary distribution pi_ldqbd)
+    mean_queue = (0:Nlev) * pi_ldqbd';
+end
+
+% Utilization is the fraction of the station's PEAK capacity in use,
+% sum_n pi(n) * sf(n) / utilPeak, which is the work-based convention CTMC, MVA,
+% NC and serial SSA all report. utilPeak = max(c, max(alpha)) is CTMC's own
+% normalizer, so the two agree state for state.
+%
+% This subsumes the two special cases it replaces rather than approximating
+% them: without load dependence sf(n) = min(n,c) and utilPeak = c, giving the
+% average fraction of c servers in use; at c = 1 that is sf(n) = 1 for every
+% n >= 1, so the sum collapses to 1 - pi(0).
+%
+% It used to report 1 - pi(0) under load dependence, i.e. P(busy). That reads a
+% station running alpha(n) times faster as no busier than one running at its
+% nominal rate, and put MAM 0.9587 against CTMC's 0.6612 on a 4-job closed model
+% with alpha = [1 1.5 2 2.5].
+util_ps = 0;
+if hasSetup
+    % With a setup the server is DELIVERING work only in the busy phase, so the
+    % level occupancy over-counts it: a level is occupied during the setup too.
+    % The utilization law gives the same work-based number without needing the
+    % per-phase vector, X*E[S]/peak, which is what the level sum reduces to
+    % without a setup.
+    util_ps = X_setup * mean_service / utilPeak;
+else
     for n = 1:Nlev
-        util_ps = util_ps + (min(n, nServers) / nServers) * pi_ldqbd(n+1);
+        util_ps = util_ps + (sf(n) / utilPeak) * pi_ldqbd(n+1);
     end
 end
 
@@ -262,6 +303,7 @@ if nargout >= 8
         'Nlev', Nlev, 'nPhases', nPhases, 'isPH', isPH, 'isOpen', isOpen, ...
         'queueIdx', queueIdx, 'refIdx', refIdx, 'M', M, ...
         'nServers', nServers, 'mean_service', mean_service, 'hasLLD', hasLLD, ...
+        'sf', {sf}, 'utilPeak', utilPeak, ...
         'lambda_eff', lambda_eff, 'delayRate', delayRate, 'N', Npop);
 end
 

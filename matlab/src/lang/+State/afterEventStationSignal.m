@@ -1,5 +1,14 @@
-function [outspace, outrate, outprob] = afterEventStationSignal(sn, ind, ist, inspace, class, K, Ks, S, pie, space_buf, space_srv, space_var)
-% [OUTSPACE, OUTRATE, OUTPROB] = AFTEREVENTSTATIONSIGNAL(SN, IND, IST, INSPACE, CLASS, K, KS, S, PIE, SPACE_BUF, SPACE_SRV, SPACE_VAR)
+function [outspace, outrate, outprob, outstart] = afterEventStationSignal(sn, ind, ist, inspace, class, K, Ks, S, pie, space_buf, space_srv, space_var)
+% [OUTSPACE, OUTRATE, OUTPROB, OUTSTART] = AFTEREVENTSTATIONSIGNAL(SN, IND, IST, INSPACE, CLASS, K, KS, S, PIE, SPACE_BUF, SPACE_SRV, SPACE_VAR)
+%
+% OUTSTART is the START annotation of each successor row (see State.tagArc):
+% removing an IN-SERVICE victim hands its server to the head of the waiting
+% line, which is a service start like a departure promotion. Removing a
+% WAITING victim starts nobody. A batch removal can therefore start several
+% jobs on one arc, and because two removal orders may end in the same
+% destination state with different promotions, the merged row carries the
+% probability-weighted EXPECTED number of starts -- which is what the START
+% filtration integrates against the arc weight.
 %
 % Passive arrival of a G-network signal class at station IST. A signal never
 % joins the station: it acts on the jobs already there and is annihilated.
@@ -31,12 +40,14 @@ function [outspace, outrate, outprob] = afterEventStationSignal(sn, ind, ist, in
 % All rights reserved.
 
 [~, nirm, sirm] = State.toMarginal(sn, ind, inspace, K, Ks, space_buf, space_srv, space_var);
+R = sn.nclasses;
 
 % CATASTROPHE: derived from signaltype as well as the iscatastrophe flag.
 if State.isCatastropheSignal(sn, class)
     outspace = [zeros(1, size(space_buf, 2)), zeros(1, size(space_srv, 2)), space_var];
     outrate = -1;
     outprob = 1;
+    outstart = zeros(1, R); % the station is emptied: nothing is left to start
     return
 end
 
@@ -56,6 +67,7 @@ if isempty(tgtclasses) || ntot <= 0
     outspace = [space_buf, space_srv, space_var]; % no victim: the signal vanishes
     outrate = -1;
     outprob = 1;
+    outstart = zeros(1, R);
     return
 end
 
@@ -69,6 +81,7 @@ end
 
 outspace = [];
 outprob = [];
+outstart = [];
 for ik = 1:numel(kvals)
     if kprobs(ik) <= 0
         continue
@@ -76,49 +89,59 @@ for ik = 1:numel(kvals)
     if kvals(ik) <= 0
         outspace = [outspace; space_buf, space_srv, space_var]; %#ok<AGROW>
         outprob = [outprob; kprobs(ik)]; %#ok<AGROW>
+        outstart = [outstart; zeros(1, R)]; %#ok<AGROW>
         continue
     end
-    [sp, pr] = removeBatch(sn, ist, space_buf, space_srv, space_var, ...
-        kvals(ik), tgtclasses, policy, K, Ks, S, pie);
+    [sp, pr, st] = removeBatch(sn, ist, space_buf, space_srv, space_var, ...
+        kvals(ik), tgtclasses, policy, K, Ks, S, pie, R);
     outspace = [outspace; sp]; %#ok<AGROW>
     outprob = [outprob; kprobs(ik) * pr]; %#ok<AGROW>
+    outstart = [outstart; st]; %#ok<AGROW>
 end
 
 % Merge duplicate destination states so the generator sees one entry each.
-[outspace, outprob] = mergeStates(outspace, outprob);
+[outspace, outprob, outstart] = mergeStates(outspace, outprob, outstart);
 outrate = -1 * ones(size(outspace, 1), 1); % passive action
 end
 
-function [outspace, outprob] = removeBatch(sn, ist, buf, srv, var, k, tgtclasses, policy, K, Ks, S, pie)
+function [outspace, outprob, outstart] = removeBatch(sn, ist, buf, srv, var, k, tgtclasses, policy, K, Ks, S, pie, R)
 % Remove k jobs one at a time; sequential uniform draws without replacement
-% reproduce a uniform choice of the removed subset.
+% reproduce a uniform choice of the removed subset. The START counts of the
+% removals accumulate along each path, since every removal that frees a server
+% may promote a waiting job.
 outspace = [buf, srv, var];
 outprob = 1;
+outstart = zeros(1, R);
 for step = 1:k
     nextspace = [];
     nextprob = [];
+    nextstart = [];
     for row = 1:size(outspace, 1)
         b = outspace(row, 1:size(buf, 2));
         s = outspace(row, size(buf, 2) + (1:size(srv, 2)));
         v = outspace(row, size(buf, 2) + size(srv, 2) + 1:end);
-        [sp, pr] = removeOne(sn, ist, b, s, v, tgtclasses, policy, K, Ks, S, pie);
+        [sp, pr, st] = removeOne(sn, ist, b, s, v, tgtclasses, policy, K, Ks, S, pie, R);
         if isempty(sp)
             % nothing left to remove: the state is already drained
             nextspace = [nextspace; outspace(row, :)]; %#ok<AGROW>
             nextprob = [nextprob; outprob(row)]; %#ok<AGROW>
+            nextstart = [nextstart; outstart(row, :)]; %#ok<AGROW>
         else
             nextspace = [nextspace; sp]; %#ok<AGROW>
             nextprob = [nextprob; outprob(row) * pr]; %#ok<AGROW>
+            nextstart = [nextstart; repmat(outstart(row, :), size(sp, 1), 1) + st]; %#ok<AGROW>
         end
     end
-    [outspace, outprob] = mergeStates(nextspace, nextprob);
+    [outspace, outprob, outstart] = mergeStates(nextspace, nextprob, nextstart);
 end
 end
 
-function [outspace, outprob] = removeOne(sn, ist, buf, srv, var, tgtclasses, policy, K, Ks, S, pie)
-% Enumerate the single-victim outcomes and their probabilities.
+function [outspace, outprob, outstart] = removeOne(sn, ist, buf, srv, var, tgtclasses, policy, K, Ks, S, pie, R)
+% Enumerate the single-victim outcomes, their probabilities and the class each
+% outcome pulls into the freed server (none, for a waiting victim).
 outspace = [];
 outprob = [];
+outstart = zeros(0, R);
 
 [waitPos, waitClass, waitWeight, isOrdered, isPairBuf] = waitingVictims(sn, ist, buf, tgtclasses);
 [srvClass, srvPhase, srvCount] = inServiceVictims(srv, tgtclasses, K, Ks);
@@ -141,6 +164,7 @@ if ageOrdered && nwait > 0
     [b2, s2] = dropWaiting(buf, srv, waitPos(pick), isOrdered, isPairBuf, waitClass(pick));
     outspace = [b2, s2, var];
     outprob = 1;
+    outstart = zeros(1, R); % a waiting victim frees no server
     return
 end
 
@@ -158,6 +182,7 @@ if nwait > 0
         [b2, s2] = dropWaiting(buf, srv, waitPos(w), isOrdered, isPairBuf, waitClass(w));
         outspace = [outspace; b2, s2, var]; %#ok<AGROW>
         outprob = [outprob; waitWeight(w) / total]; %#ok<AGROW>
+        outstart = [outstart; zeros(1, R)]; %#ok<AGROW>
     end
 end
 if policy == RemovalPolicy.RANDOM || nwait == 0
@@ -165,12 +190,17 @@ if policy == RemovalPolicy.RANDOM || nwait == 0
         if srvCount(j) <= 0
             continue
         end
-        [b2, s2] = dropInService(sn, ist, buf, srv, srvClass(j), srvPhase(j), K, Ks, S, pie, isOrdered, isPairBuf);
+        [b2, s2, promo] = dropInService(sn, ist, buf, srv, srvClass(j), srvPhase(j), K, Ks, S, pie, isOrdered, isPairBuf);
         outspace = [outspace; b2, s2, var]; %#ok<AGROW>
         outprob = [outprob; srvCount(j) / total]; %#ok<AGROW>
+        st = zeros(1, R);
+        if promo > 0
+            st(promo) = 1; % the freed server took the head of the waiting line
+        end
+        outstart = [outstart; st]; %#ok<AGROW>
     end
 end
-[outspace, outprob] = mergeStates(outspace, outprob);
+[outspace, outprob, outstart] = mergeStates(outspace, outprob, outstart);
 end
 
 function [pos, cls, weight, isOrdered, isPairBuf] = waitingVictims(sn, ist, buf, tgtclasses)
@@ -253,9 +283,11 @@ else
 end
 end
 
-function [buf, srv] = dropInService(sn, ist, buf, srv, cls, phase, K, Ks, S, pie, isOrdered, isPairBuf)
+function [buf, srv, promo] = dropInService(sn, ist, buf, srv, cls, phase, K, Ks, S, pie, isOrdered, isPairBuf)
 % Remove an in-service job and, at a station that keeps a waiting line, pull
-% the head of line into the freed server.
+% the head of line into the freed server. PROMO is the class that took the
+% server, 0 when none did.
+promo = 0;
 srv(Ks(cls) + phase) = srv(Ks(cls) + phase) - 1;
 if isempty(buf) || sum(srv) >= S(ist)
     return
@@ -298,21 +330,33 @@ switch sn.sched(ist)
         if ~isempty(promo)
             buf(promo) = buf(promo) - 1;
             srv(Ks(promo) + 1) = srv(Ks(promo) + 1) + 1;
+        else
+            promo = 0; % keep the promoted class a scalar for the tag
         end
     otherwise
         % no waiting line to promote from
 end
 end
 
-function [space, prob] = mergeStates(space, prob)
+function [space, prob, start] = mergeStates(space, prob, start)
+% Merge duplicate destination rows. The probabilities add; the START counts
+% are averaged over the merged branches WEIGHTED BY those probabilities, so
+% that prob*count -- the quantity the filtration accumulates -- is conserved.
+% Two removal orders can reach the same state having promoted different
+% classes, so the merged row generally carries a fractional expected count.
 if isempty(space)
     return
 end
 [u, ~, ic] = unique(space, 'rows', 'stable');
 p = zeros(size(u, 1), 1);
+s = zeros(size(u, 1), size(start, 2));
 for i = 1:numel(ic)
     p(ic(i)) = p(ic(i)) + prob(i);
+    s(ic(i),:) = s(ic(i),:) + prob(i) * start(i,:);
 end
+nz = p > 0;
+s(nz,:) = s(nz,:) ./ p(nz);
 space = u;
 prob = p;
+start = s;
 end

@@ -1151,9 +1151,18 @@ public final class KPCFit {
         }
 
         if (2 * options.maxNumStates - 1 > E.length) {
-            throw new IllegalArgumentException(
-                    "MaxNumStates of " + options.maxNumStates + " requires at least "
-                            + (2 * options.maxNumStates - 1) + " moments, but only " + E.length + " provided.");
+            // largest power-of-2 number of states fittable from the supplied
+            // moments (matching MATLAB kpcfit_ph_options 0.4.0) instead of throwing
+            int maxFeasible = 1 << (int) Math.floor(Math.log(Math.max(1, (E.length + 1) / 2)) / Math.log(2));
+            if (options.verbose) {
+                System.err.println("Warning: MaxNumStates of " + options.maxNumStates + " requires "
+                        + (2 * options.maxNumStates - 1) + " moments but only " + E.length
+                        + " supplied; reduced to " + maxFeasible + ".");
+            }
+            options.maxNumStates = maxFeasible;
+            if (options.minNumStates > maxFeasible) {
+                options.minNumStates = maxFeasible;
+            }
         }
 
         if (options.minNumStates > options.maxNumStates) {

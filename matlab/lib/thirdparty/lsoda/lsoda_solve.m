@@ -18,6 +18,8 @@ function [T, Y] = lsoda_solve(odefun, tspan, y0, options)
 %               .MaxStep - Maximum internal steps per interval (default 5000)
 %               .MaxOrdNonStiff - Max order for Adams method (1-12, default 12)
 %               .MaxOrdStiff    - Max order for BDF method (1-5, default 5)
+%               .Backend - 'mex' or 'matlab'; by default the compiled MEX is
+%                          used where present and lsoda_matlab.m otherwise
 %
 %   Outputs:
 %     T - Column vector of output times
@@ -35,14 +37,9 @@ function [T, Y] = lsoda_solve(odefun, tspan, y0, options)
     % Ensure y0 is a column vector
     y0 = y0(:);
 
-    % Handle tspan: if only [t0 tf], pass directly to MEX for adaptive
-    % stepping (itask=2 mode collects all internal solver steps).
-    % If >2 elements, integrate to each prescribed output time (itask=1).
-    if length(tspan) == 2
-        tspan = tspan(:)';
-    else
-        tspan = tspan(:)';
-    end
+    % [t0 tf] runs itask=2 (every internal step is collected), more than two
+    % entries runs itask=1 (integrate to each prescribed output time).
+    tspan = tspan(:)';
 
     % Default options
     rtol = 1e-6;
@@ -59,21 +56,39 @@ function [T, Y] = lsoda_solve(odefun, tspan, y0, options)
         if isfield(options, 'MaxOrdStiff'), mxords = options.MaxOrdStiff; end
     end
 
-    % Build MEX if needed
+    % Select the backend: the compiled MEX when it is available, the pure
+    % MATLAB port otherwise. options.Backend forces one of 'mex', 'matlab'.
+    backend = '';
+    if nargin >= 4 && ~isempty(options) && isfield(options, 'Backend')
+        backend = lower(options.Backend);
+    end
+
     thisDir = fileparts(mfilename('fullpath'));
     mexName = ['lsoda_mex.' mexext];
-    if ~exist(fullfile(thisDir, mexName), 'file')
-        fprintf('lsoda_mex not found, building...\n');
+    haveMex = exist(fullfile(thisDir, mexName), 'file') == 3;
+
+    if strcmp(backend, 'matlab')
+        [T, Y] = lsoda_matlab(odefun, tspan, y0, rtol, atol, mxstep, mxordn, mxords);
+        return
+    end
+
+    if ~haveMex
         oldDir = cd(thisDir);
         try
             build_lsoda_mex();
+            haveMex = exist(fullfile(thisDir, mexName), 'file') == 3;
         catch ME
-            cd(oldDir);
-            rethrow(ME);
+            if strcmp(backend, 'mex')
+                cd(oldDir);
+                rethrow(ME);
+            end
         end
         cd(oldDir);
     end
 
-    % Call the MEX function
-    [T, Y] = lsoda_mex(odefun, tspan, y0, rtol, atol, mxstep, mxordn, mxords);
+    if haveMex
+        [T, Y] = lsoda_mex(odefun, tspan, y0, rtol, atol, mxstep, mxordn, mxords);
+    else
+        [T, Y] = lsoda_matlab(odefun, tspan, y0, rtol, atol, mxstep, mxordn, mxords);
+    end
 end

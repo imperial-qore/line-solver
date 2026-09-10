@@ -16,7 +16,10 @@ classdef CacheClassSwitcher < StatefulClassSwitcher
         actualDelayedHitProb;      % delayed-hit fraction per arrival class (retrieval system; filled after solve)
         actualHitProbList;         % [classes x lists] per-list (per-level) hit fraction (filled after solve, where available)
         actualItemProb;            % [items x (lists+1)] per-item occupancy: col 1 = miss, cols 2..end = per-list (filled after solve, where available)
+        actualListCost;            % [1 x lists] mean storage cost held by each list (filled after solve when item sizes are set)
         actualResidT;     % expected latency per arrival class (filled after solve)
+        actualDelayedHitQLen;      % [1 x items] mean secondary requests waiting on the fetch of each item
+        actualDelayedHitQLenFull;  % [1 x items] as above, including the request that triggered the fetch
     end
 
     methods
@@ -40,6 +43,7 @@ classdef CacheClassSwitcher < StatefulClassSwitcher
             self.actualDelayedHitProb = sparse([]); % filled after model solution (retrieval system)
             self.actualHitProbList = sparse([]); % filled after model solution (per-list hit fractions)
             self.actualItemProb = sparse([]); % filled after model solution (per-item per-list occupancy)
+            self.actualListCost = []; % filled after model solution (mean per-list storage cost)
             self.actualResidT = sparse([]); % filled after model solution
         end
     end

@@ -10,7 +10,6 @@ import java.util.List;
 public final class Mapqn_qrf_noblo_mem {
     private Mapqn_qrf_noblo_mem() {}
 
-    private static final double LOGTOL = 1e-6;
 
     public static Mapqn_solution solve(double[][][][] MAPs, int N, double[][] rt) {
         int M = MAPs.length;
@@ -32,7 +31,7 @@ public final class Mapqn_qrf_noblo_mem {
             for (int h = 0; h < K[i]; h++) {
                 for (int k = 0; k < K[i]; k++) {
                     mu[i][h][k] = D1[h][k];
-                    v[i][k][h] = (h == k) ? 0.0 : D0[h][k];
+                    v[i][h][k] = (h == k) ? 0.0 : D0[h][k]; // (from, to), as mu is
                 }
             }
         }
@@ -94,27 +93,25 @@ public final class Mapqn_qrf_noblo_mem {
         final int[] Kf = K;
         final int[] Ff = F;
 
-        // MEM objective (minimize negative entropy)
+        // MEM objective: memObjective returns the NEGATIVE entropy, so minimizing it
+        // maximizes H, which is what the AMPL model asks for.
         Mapqn_nlp_solver.ObjectiveFn objective = new Mapqn_nlp_solver.ObjectiveFn() {
             @Override
             public double apply(double[] x) {
-                Double[][][][][][][] p2 = Mapqn_qrf_noblo_mmi.unflattenP2(x, Mf, Nf, KmaxF, MRf);
-                double fobj = 0.0;
-                for (int m = 0; m < MRf; m++) {
-                    for (int i = 0; i < Mf; i++) {
-                        for (int k = 0; k < Kf[i]; k++) {
-                            for (int ni = 1; ni <= Ff[i]; ni++) {
-                                double pval = p2[i][ni][k][i][ni][k][m];
-                                fobj -= pval * Math.log(LOGTOL + pval);
-                            }
-                        }
-                    }
-                }
-                return fobj;
+                return Mapqn_qrf_noblo_mmi.memObjective(x, Mf, Nf, Kf, KmaxF, Ff, MRf);
+            }
+        };
+        Mapqn_nlp_solver.GradientFn gradient = new Mapqn_nlp_solver.GradientFn() {
+            @Override
+            public void apply(double[] x, double[] gradOut) {
+                Mapqn_qrf_noblo_mmi.memGradient(x, gradOut, Mf, Nf, Kf, KmaxF, Ff, MRf);
             }
         };
 
-        double[] xOpt = Mapqn_nlp_solver.solve(objective, numVars, Aeq, beq, Aub, bub, lb, ub, x0);
+        double[] start = Mapqn_nlp_solver.feasibleStart(Aeq, beq, Aub, bub, numVars);
+        if (start != null) x0 = start;
+        double[] xOpt = Mapqn_nlp_solver.solve(objective, gradient, numVars,
+                Aeq, beq, Aub, bub, lb, ub, x0);
         return Mapqn_qrf_noblo_mmi.extractResults(xOpt, M, N, K, Kmax, F, MR);
     }
 }

@@ -1,0 +1,93 @@
+{
+  "class": {
+    "JMT": "stochastic",
+    "MVA": "deterministic"
+  },
+  "example": "polling_gated",
+  "solvers": {
+    "JMT": [
+      {
+        "ArvR": 0.0,
+        "JobClass": "myClass1",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "mySource",
+        "Tput": 1.0012,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "myClass2",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "mySource",
+        "Tput": 0.80026,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 1.0012,
+        "JobClass": "myClass1",
+        "QLen": 11.31,
+        "ResidT": 11.34,
+        "RespT": 11.34,
+        "Station": "myQueue",
+        "Tput": 1.0008,
+        "Util": 0.24989
+      },
+      {
+        "ArvR": 0.80026,
+        "JobClass": "myClass2",
+        "QLen": 11.312,
+        "ResidT": 14.149,
+        "RespT": 14.149,
+        "Station": "myQueue",
+        "Tput": 0.79995,
+        "Util": 0.53337
+      }
+    ],
+    "MVA": [
+      {
+        "ArvR": 0.0,
+        "JobClass": "myClass1",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "mySource",
+        "Tput": 1.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "myClass2",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "mySource",
+        "Tput": 0.8,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 1.0,
+        "JobClass": "myClass1",
+        "QLen": 11.22,
+        "ResidT": 11.22,
+        "RespT": 11.22,
+        "Station": "myQueue",
+        "Tput": 1.0,
+        "Util": 0.25
+      },
+      {
+        "ArvR": 0.8,
+        "JobClass": "myClass2",
+        "QLen": 11.403,
+        "ResidT": 14.254,
+        "RespT": 14.254,
+        "Station": "myQueue",
+        "Tput": 0.8,
+        "Util": 0.53333
+      }
+    ]
+  }
+}

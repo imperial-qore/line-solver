@@ -11,7 +11,7 @@ classdef Activity < LayeredNetworkElement
         parent;
         parentName;                 %string
         boundToEntry;               %string
-        callOrder;                  %string \in {'STOCHASTIC', 'DETERMINISTIC'}
+        callOrder;                  %string, one of 'STOCHASTIC' or 'DETERMINISTIC'
         syncCallDests = cell(0);   %string array
         syncCallMeans = [];        %integer array
         asyncCallDests = cell(0);  %string array
@@ -21,6 +21,7 @@ classdef Activity < LayeredNetworkElement
         thinkTimeMean;             %double
         thinkTimeSCV;              %double
         phase = 1;                 %integer: phase number (1 or 2)
+        syncCallGroups = cell(0);  %cell of struct('strategy',RoutingStrategy,'dests',{names})
     end
     
     methods
@@ -172,10 +173,13 @@ classdef Activity < LayeredNetworkElement
             % OBJ = SETPHASE(OBJ, PHASENUM)
             % Set the phase number for this activity.
             % Phase 1: activities before the reply is sent
-            % Phase 2: activities after the reply is sent (post-reply processing)
+            % Phase 2, 3: activities after the reply is sent (post-reply
+            % processing). The range is 1..3 because lqn-core.xsd bounds the
+            % phase attribute there; every consumer of lsn.actphase tests
+            % phase > 1, so 3 is served exactly as 2 is.
 
-            if ~isnumeric(phaseNum) || phaseNum < 1 || phaseNum > 2
-                line_error(mfilename, 'Phase must be 1 or 2.');
+            if ~isnumeric(phaseNum) || phaseNum < 1 || phaseNum > 3
+                line_error(mfilename, 'Phase must be 1, 2 or 3.');
             end
             obj.phase = phaseNum;
         end
@@ -213,6 +217,90 @@ classdef Activity < LayeredNetworkElement
             obj.syncCallMeans = [obj.syncCallMeans; synchCallMean];
         end
         
+        %synchCallRoundRobin
+        function obj = synchCallRoundRobin(obj, synchCallDests, synchCallMean)
+            % OBJ = SYNCHCALLROUNDROBIN(OBJ, SYNCHCALLDESTS, SYNCHCALLMEAN)
+            %
+            % Dispatch synchronous calls round-robin over a set of target
+            % entries. SYNCHCALLMEAN is the total mean number of calls per
+            % invocation; successive calls go to the targets in cyclic order, so
+            % each target receives SYNCHCALLMEAN/numel(SYNCHCALLDESTS) of them.
+            % The probabilistic model with the same per-target means is the
+            % ungrouped equivalent: the group adds the deterministic
+            % interleaving, not a different call rate.
+            %
+            % Only the squashed ('flat') layering can represent this, because
+            % under 'srvn' the targets never share a submodel.
+
+            if nargin<3
+                synchCallMean = 1.0;
+            end
+            obj = obj.addCallGroup(RoutingStrategy.RROBIN, synchCallDests, ...
+                synchCallMean, 'synchCallRoundRobin');
+        end
+
+        %synchCallJSQ
+        function obj = synchCallJSQ(obj, synchCallDests, synchCallMean)
+            % OBJ = SYNCHCALLJSQ(OBJ, SYNCHCALLDESTS, SYNCHCALLMEAN)
+            %
+            % Dispatch synchronous calls to the least loaded of a set of target
+            % entries. Same contract as SYNCHCALLROUNDROBIN, with the cyclic
+            % pointer replaced by join-the-shortest-queue: each call goes to the
+            % target task whose station holds the fewest jobs at dispatch time,
+            % ties split uniformly.
+            %
+            % Only the squashed ('flat') layering can represent this, and only a
+            % layer solver with state-dependent routing honours it; see
+            % SolverLN.assertCallGroups.
+
+            if nargin<3
+                synchCallMean = 1.0;
+            end
+            obj = obj.addCallGroup(RoutingStrategy.JSQ, synchCallDests, ...
+                synchCallMean, 'synchCallJSQ');
+        end
+
+        %addCallGroup
+        function obj = addCallGroup(obj, strategy, synchCallDests, synchCallMean, caller)
+            % OBJ = ADDCALLGROUP(OBJ, STRATEGY, SYNCHCALLDESTS, SYNCHCALLMEAN, CALLER)
+            %
+            % Records a routed call group and its per-target call means.
+
+            if numel(synchCallDests) < 2
+                line_error(mfilename, sprintf('%s needs at least two target entries.', caller));
+            end
+            share = synchCallMean / numel(synchCallDests);
+            destNames = cell(1, numel(synchCallDests));
+            for i = 1:numel(synchCallDests)
+                d = synchCallDests{i};
+                if ischar(d)
+                    destNames{i} = d;
+                else
+                    destNames{i} = d.name;
+                end
+                obj = obj.synchCall(destNames{i}, share);
+            end
+            obj = obj.recordCallGroup(strategy, destNames);
+        end
+
+        %recordCallGroup
+        function obj = recordCallGroup(obj, strategy, destNames)
+            % OBJ = RECORDCALLGROUP(OBJ, STRATEGY, DESTNAMES)
+            %
+            % Records the grouping of synchronous calls this activity ALREADY
+            % declares. ADDCALLGROUP issues the member calls and then records
+            % them; the .lqnx reader has read them back as ordinary synch-call
+            % elements, so it records the grouping alone and must not issue
+            % them a second time.
+
+            if numel(destNames) < 2
+                line_error(mfilename, 'A call group needs at least two target entries.');
+            end
+            grp.strategy = strategy;
+            grp.dests = destNames;
+            obj.syncCallGroups{end+1} = grp;
+        end
+
         %asynchCall
         function obj = asynchCall(obj, asynchCallDest, asynchCallMean)
             % OBJ = ASYNCHCALL(OBJ, ASYNCHCALLDEST, ASYNCHCALLMEAN)

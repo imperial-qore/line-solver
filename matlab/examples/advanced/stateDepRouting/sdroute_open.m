@@ -26,7 +26,7 @@ router.setRouting(oclass, RoutingStrategy.RROBIN);
 
 solver = {};
 solver{1} = JMT(model,'seed',23000);
-solver{2} = CTMC(model,'cutoff',5);
+solver{2} = CTMC(model, 'exact','cutoff',5);
 
 AvgTable = {};
 for s=1:length(solver)

@@ -157,6 +157,30 @@ def solver_mam_analyzer(
     if not hasattr(options, 'etaqa_trunc') or options.etaqa_trunc is None:
         options.etaqa_trunc = 8
 
+    # Discrete-time (slotted) models are recognized from the distributions and
+    # routed to the Q-MAM discrete-time algorithms. The test runs before any
+    # phase-type conversion, which would fit a continuous surrogate to a
+    # Geometric and erase the lattice; see _kb/06-solver-catalog.md for the
+    # LAS-DA convention.
+    from ...sn.predicates import sn_is_discrete_time
+    is_dt, slot_length, _dt_info = sn_is_discrete_time(sn, options)
+    if is_dt:
+        from .dt import solver_mam_dt
+        dt_ret = solver_mam_dt(sn, options, slot_length)
+        dt_result = MAMResult()
+        dt_result.QN = dt_ret.QN
+        dt_result.UN = dt_ret.UN
+        dt_result.RN = dt_ret.RN
+        dt_result.TN = dt_ret.TN
+        dt_result.CN = dt_ret.CN
+        dt_result.XN = dt_ret.XN
+        dt_result.AN = dt_ret.TN.copy()
+        dt_result.WN = dt_ret.RN.copy()
+        dt_result.iter = dt_ret.totiter
+        dt_result.method = dt_ret.method
+        dt_result.runtime = time.time() - start_time
+        return dt_result
+
     method = options.method.lower()
 
     # Check model type

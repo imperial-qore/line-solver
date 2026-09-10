@@ -32,7 +32,7 @@ switch options.method
         method = 'spm';
 end
 
-[res, hitprob_pc, missprob_pc, it] = da_cacheqn(sn, missfun, @netsolve, options);
+[res, hitprob_pc, missprob_pc, it, ~, cacheinfo] = da_cacheqn(sn, missfun, @netsolve, options);
 QN = res.Q; UN = res.U; RN = res.R; TN = res.T; CN = res.C; XN = res.X;
 lG = res.lG; runtime = res.runtime;
 
@@ -42,6 +42,14 @@ missprob = zeros(length(caches), K);
 for ci = 1:length(caches)
     hitprob(caches(ci),:) = hitprob_pc(ci,:);
     missprob(caches(ci),:) = missprob_pc(ci,:);
+end
+
+% per-item occupancy from the converged access factors, as SolverMVA reports it
+for ci = 1:length(caches)
+    itemprob = da_cacheqn_itemprob(cacheinfo, ci);
+    if ~isempty(itemprob)
+        self.model.nodes{caches(ci)}.setResultItemProb(itemprob);
+    end
 end
 
     function missrate = miss_exact(gamma, m, lambda_cache, ~)

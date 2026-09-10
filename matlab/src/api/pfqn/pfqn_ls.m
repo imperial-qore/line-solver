@@ -44,7 +44,18 @@ L = L(Lsum > 1e-4,:);
 samples=[];
 
 if isempty(L) || sum(L(:))<1e-4 || isempty(N) || sum(N)==0
-    lGn = - sum(factln(N)) + sum(N.*log(sum(Z,1)));
+    % Z may be absent on this branch, and an empty class contributes 0, not 0*log(0).
+    if nargin<3 || isempty(Z)
+        Zt = zeros(1,numel(N));
+    else
+        Zt = sum(Z,1);
+    end
+    lGn = - sum(factln(N));
+    for r=1:numel(N)
+        if N(r)>0
+            lGn = lGn + N(r)*log(Zt(r));
+        end
+    end
 elseif nargin<3 || isempty(Z) %~exist('Z','var') || isempty(Z)
     umax=pfqn_le_fpi(L,N);
     A = pfqn_le_hessian(L,N,umax'); % slightly faster than pfqn_le_hessianZ
@@ -124,7 +135,9 @@ function [u,v,d]=pfqn_le_fpiZ(L,N,Z)
 [M,R]=size(L);
 eta = sum(N)+M;
 u=ones(M,1)/M;
-v=eta+1;
+% Note: eq. (35) in the SIGMETRICS 2017 paper has a spurious +1 in the v
+% equation; the correct stationary point is v = eta - sum_r xi_r*Z_r.
+v=eta;
 u_1=Inf*u;
 v_1=Inf*v; %#ok<NASGU>
 d=[];
@@ -141,7 +154,7 @@ while norm(u-u_1,1)>1e-10
     for r=1:R
         xi(r)=N(r)/(Z(r)+v*u_1(:)'*L(:,r));
     end
-    v=eta+1;
+    v=eta;
     for r=1:R
         v=v-xi(r)*Z(r);
     end
@@ -182,8 +195,12 @@ function A=pfqn_le_hessianZ(L,N,Z,u,v)
 Ntot=sum(N);
 A=zeros(K);
 csi = zeros(1,R);
+csi2N = zeros(1,R);
 for r=1:R
     csi(r)=N(r)/(Z(r)+v*u*L(:,r));
+    % csi(r)^2/N(r) rewritten as N(r)/c(r)^2. Identical where both are defined, but 0
+    % rather than 0/0 for an empty class. Java and C++ share pfqn_le_hessianZ here.
+    csi2N(r)=N(r)/(Z(r)+v*u*L(:,r))^2;
 end
 Lhat = zeros(K,R);
 for k=1:K
@@ -197,7 +214,7 @@ for i=1:K
         if i~=j
             A(i,j)=-eta*u(i)*u(j);
             for r=1:R
-                A(i,j)=A(i,j)+csi(r)^2*Lhat(i,r)*Lhat(j,r)*(u(i)*u(j))/N(r);
+                A(i,j)=A(i,j)+csi2N(r)*Lhat(i,r)*Lhat(j,r)*(u(i)*u(j));
             end
         end
     end
@@ -208,13 +225,13 @@ end
 A=A(1:(K-1),1:(K-1));
 A(K,K)=1;
 for r=1:R
-    A(K,K)=A(K,K)-(csi(r)^2/N(r))*Z(r)*u*L(:,r);
+    A(K,K)=A(K,K)-csi2N(r)*Z(r)*u*L(:,r);
 end
 A(K,K)=v*A(K,K);
 for i=1:(K-1)
     A(i,K)=0;
     for r=1:R
-        A(i,K)=A(i,K)+v*u(i)*((csi(r)^2/N(r))*Lhat(i,r)*(u*L(:,r))-csi(r)*L(i,r));
+        A(i,K)=A(i,K)+v*u(i)*(csi2N(r)*Lhat(i,r)*(u*L(:,r))-csi(r)*L(i,r));
     end
     A(K,i)=A(i,K);
 end

@@ -114,7 +114,13 @@ public class HillierYuQsysTest {
         src.setArrival(cls, new Exp(2.97));
         q.setService(cls, Erlang.fitMeanAndOrder(1.0, 3));
         m.link(Network.serialRouting(src, q, sink));
-        assertEquals(65.3400, lqMam(m, 3), TOL);
+        // 64.8036799734 is the EXACT M/E3/3 Lq, from the MAP/PH/c QBD of
+        // qsys_mapphc in C++ (double and real:50) and in MATLAB, all agreeing
+        // with SolverMAM to 11 digits and with Little's law on Wq. The 65.3400
+        // this asserted until 2026-08-16 is the c=1 value of the test above:
+        // Pollaczek-Khinchine at lambda=0.99 with E[S^2]=4/3 gives exactly
+        // 0.9801*(4/3)/(2*0.01) = 65.34, a different queue from this one.
+        assertEquals(64.8036799734, lqMam(m, 3), TOL);
     }
 
     // ---------------- M/D/c via MAM (Crommelin embedded DTMC) -------------

@@ -22,6 +22,11 @@ public class HuberLawSampler extends PermSolver {
     private final int numberOfSamples;
     private final long maximumTime; // milliseconds
 
+    /** Draw budget of the classic mode; exceeding it throws rather than spins. */
+    private static final int MAX_DRAWS = 1000000;
+    /** Sweep budget of the doubly stochastic rescaling; exceeding it throws. */
+    private static final int MAX_SINKHORN = 10000;
+
     private final Random random = new Random();
     private Matrix C; // Rescaled doubly stochastic matrix
     private double rescalingConstant = 1.0;
@@ -37,6 +42,9 @@ public class HuberLawSampler extends PermSolver {
     public HuberLawSampler(Matrix matrix, double delta, double alpha2, double epsilon, String mode,
                            int numberOfSamples, long maximumTime, boolean solve) {
         super(matrix);
+        if (matrix.getNumRows() > 0) {
+            PermSupport.requireFullSupport(matrix, "huberlaw");
+        }
         this.delta = delta;
         this.alpha2 = alpha2;
         this.epsilon = epsilon;
@@ -65,7 +73,16 @@ public class HuberLawSampler extends PermSolver {
         List<Integer> acceptedList = new ArrayList<Integer>();
         List<Long> timeList = new ArrayList<Long>();
         int acceptedCount = 0;
+        // Bounded independently of the scaling: with perm(A) = 0 the acceptance
+        // probability is 0 and this loop would never terminate. A cap that
+        // RETURNS a number would be a workaround, so it throws.
         while (acceptedCount < K) {
+            if (acceptedList.size() >= MAX_DRAWS) {
+                throw new IllegalArgumentException("Only " + acceptedCount + " of the " + K
+                        + " required acceptances were obtained in " + acceptedList.size()
+                        + " draws. The acceptance probability is too low for this budget;"
+                        + " relax delta or use the exact engine.");
+            }
             int[] sigma = sample();
             int isAccepted = anyEquals(sigma, n) ? 0 : 1;
             acceptedList.add(isAccepted);
@@ -201,12 +218,15 @@ public class HuberLawSampler extends PermSolver {
     private void rescale() {
         double[][] logMatrix = new double[n][n];
         for (int i = 0; i < n; i++) {
-            for (int j = 0; j < n; j++) logMatrix[i][j] = Math.log(Math.max(matrix.get(i, j), 1e-10));
+            // The matrix is strictly positive here (requireFullSupport in the
+            // constructor), so no log floor is needed.
+            for (int j = 0; j < n; j++) logMatrix[i][j] = Math.log(matrix.get(i, j));
         }
         Matrix logMat = new Matrix(logMatrix);
-        int[] assignment = hungarianAssignment(logMat);
-        double alpha3 = 1.0;
-        for (int i = 0; i < assignment.length; i++) alpha3 *= matrix.get(i, assignment[i]);
+        // A real maximum-weight assignment, not the row-by-row greedy that used
+        // to stand in for it: the weight is alpha3, which sets the flooring
+        // level alpha1 of the Huber-Law bound.
+        int[] assignment = PermSupport.maxWeightAssignment(logMat);
 
         double maxElement = 0.0;
         for (int i = 0; i < n; i++) {
@@ -219,6 +239,10 @@ public class HuberLawSampler extends PermSolver {
             for (int j = 0; j < n; j++) MScaledArr[i][j] = matrix.get(i, j) / maxElement;
         }
         Matrix MScaled = new Matrix(MScaledArr);
+
+        // alpha3 is a permanent lower bound of the scaled matrix, the one floored below
+        double alpha3 = 1.0;
+        for (int i = 0; i < assignment.length; i++) alpha3 *= MScaled.get(i, assignment[i]);
 
         double alpha1 = alpha3 * delta / 3 / factorial(n);
         for (int i = 0; i < n; i++) {
@@ -260,34 +284,24 @@ public class HuberLawSampler extends PermSolver {
         return result;
     }
 
-    private int[] hungarianAssignment(Matrix costMatrix) {
-        int[] assignment = new int[n];
-        for (int i = 0; i < n; i++) assignment[i] = -1;
-        boolean[] usedCols = new boolean[n];
-        for (int i = 0; i < n; i++) {
-            int bestCol = -1;
-            double bestCost = Double.POSITIVE_INFINITY;
-            for (int j = 0; j < n; j++) {
-                if (!usedCols[j] && -costMatrix.get(i, j) < bestCost) {
-                    bestCost = -costMatrix.get(i, j);
-                    bestCol = j;
-                }
-            }
-            if (bestCol != -1) {
-                assignment[i] = bestCol;
-                usedCols[bestCol] = true;
-            }
-        }
-        return assignment;
-    }
-
     private Matrix[] makeDoublyStochastic(Matrix M) {
         Matrix result = M.copy();
         Matrix X = Matrix.eye(n);
         Matrix Y = Matrix.eye(n);
         double maxRowError = Double.POSITIVE_INFINITY;
         double maxColError = Double.POSITIVE_INFINITY;
+        // Capped: a row that sums to zero leaves maxRowError at 1 forever and
+        // the guarded normalization below skips it, so this loop used to spin
+        // without terminating. A cap that RETURNS is a workaround; this throws.
+        int sweeps = 0;
         while (maxRowError > alpha2 || maxColError > alpha2) {
+            if (++sweeps > MAX_SINKHORN) {
+                throw new IllegalArgumentException(
+                        "The doubly stochastic rescaling did not converge in " + MAX_SINKHORN
+                        + " sweeps (row error " + maxRowError + ", column error " + maxColError
+                        + " against a tolerance of " + alpha2 + "). The usual cause is a matrix"
+                        + " without total support.");
+            }
             double[] colSums = new double[n];
             for (int j = 0; j < n; j++) {
                 double s = 0.0;

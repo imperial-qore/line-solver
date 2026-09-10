@@ -2,7 +2,7 @@
 LINE Command-Line Interface
 
 Provides command-line and WebSocket server interface for LINE solver functionality.
-All solver requests are routed through the LINE class (SolverAuto) which automatically
+All solver requests are routed through the LINE class (SolverAUTO) which automatically
 selects the best solver or uses a specified solver/method combination.
 
 Supports loading models from multiple formats (JSIM, LQN, MAT, pickle),
@@ -21,6 +21,7 @@ import os
 import argparse
 import json
 import csv
+import numpy as np
 import pickle
 import tempfile
 import asyncio
@@ -35,8 +36,14 @@ from line_solver.layered import LayeredNetwork
 
 # Valid solver prefixes (for help text)
 VALID_SOLVERS = ['auto', 'line', 'sim', 'exact', 'fast', 'accurate',
-                 'mva', 'ctmc', 'fluid', 'jmt', 'nc', 'ssa', 'ln', 'lqns',
-                 'mam', 'ldes', 'env', 'qns', 'uq']
+                 'mva', 'ctmc', 'fld', 'jmt', 'nc', 'ssa', 'ln', 'ln.mva',
+                 'ln.nc', 'ln.comom', 'lqns', 'mam', 'ldes', 'env', 'qns',
+                 'uq', 'ag', 'ba']
+
+# Solver aliases (alias -> canonical token). `des` and `qnsolver` are the
+# spellings the root `line-cli.py` wrapper offers and `fluid` the one MATLAB
+# does, so all three parse here rather than being rejected by name.
+SOLVER_ALIASES = {'fluid': 'fld', 'des': 'ldes', 'qnsolver': 'qns'}
 
 # Example solver.method combinations
 SOLVER_METHOD_EXAMPLES = [
@@ -44,17 +51,41 @@ SOLVER_METHOD_EXAMPLES = [
     'mva', 'mva.lin', 'mva.exact', 'mva.amva',
     'nc', 'nc.exact', 'nc.ls',
     'ctmc', 'ctmc.gpu',
-    'fluid', 'fluid.statedep',
+    'fld', 'fld.statedep',
     'jmt', 'jmt.jsim', 'jmt.jmva',
 ]
 
-# Solver compatibility with input formats
-JSIM_COMPATIBLE_SOLVERS = ['ctmc', 'fluid', 'jmt', 'mva', 'nc', 'ssa', 'mam', 'ldes', 'auto']
-LQN_COMPATIBLE_SOLVERS = ['ln', 'lqns', 'mva', 'nc', 'env']
+# Solver compatibility with input formats.
+#
+# A JSIM document carries a flat Network, so EVERY Network engine may answer for
+# it: `ag`, `ba`, `qns` and `uq` were absent from this list for no reason but
+# the list, and each was advertised in VALID_SOLVERS, so asking for one was
+# refused on every format this CLI reads -- a dead method name rather than a solver.
+JSIM_COMPATIBLE_SOLVERS = ['ctmc', 'fld', 'jmt', 'mva', 'nc', 'ssa', 'mam', 'ldes',
+                           'qns', 'ag', 'ba', 'uq', 'auto']
+# `env` is NOT here: an Environment is a model CLASS carried by the line-model
+# JSON, not a layered document, so listing it under the LQN formats made
+# SolverENV reachable only through a file that can never hold one.
+LQN_COMPATIBLE_SOLVERS = ['ln', 'ln.mva', 'ln.nc', 'ln.comom', 'lqns', 'mva', 'nc', 'ldes']
+# A PNML document is a place/transition net, so only the solvers whose feature
+# set declares Transition can answer for it; the product-form solvers cannot.
+PNML_COMPATIBLE_SOLVERS = ['ctmc', 'ssa', 'jmt', 'ldes', 'auto']
+# LINE's own portable model, which carries a Network, a LayeredNetwork or an
+# Environment and is dispatched on the type the document declares. `env` is the
+# ONLY token an Environment accepts, as it is in the JAR and C++ CLIs.
+JSON_COMPATIBLE_SOLVERS = sorted(set(
+    JSIM_COMPATIBLE_SOLVERS + LQN_COMPATIBLE_SOLVERS + ['env']))
 JSIM_FORMATS = ['jsim', 'jsimg', 'jsimw']
 LQN_FORMATS = ['lqnx', 'xml']
+PNML_FORMATS = ['pnml']
 MAT_FORMATS = ['mat']
-SUPPORTED_FORMATS = JSIM_FORMATS + LQN_FORMATS + MAT_FORMATS + ['pkl']
+# `json` is LINE's OWN portable model format (doc/line-model.schema.json), the
+# one `save_model`/`load_model` round-trip and the one the JAR, the C++ CLI and
+# the root wrapper all read. It was missing here, so the one interchange format
+# every other codebase shares could not be handed to the native CLI at all.
+JSON_FORMATS = ['json']
+SUPPORTED_FORMATS = (JSON_FORMATS + JSIM_FORMATS + LQN_FORMATS + PNML_FORMATS
+                     + MAT_FORMATS + ['pkl'])
 
 # Output formats
 OUTPUT_FORMATS = ['readable', 'json', 'csv', 'pickle', 'mat']
@@ -63,19 +94,39 @@ OUTPUT_FORMATS = ['readable', 'json', 'csv', 'pickle', 'mat']
 VALID_ANALYSIS_TYPES = [
     # Basic
     'all', 'avg', 'sys', 'stage', 'chain', 'node', 'nodechain',
+    # Cache. These two were absent here while the JAR and C++ CLIs both served
+    # them, so cache hit/miss metrics -- which the model classes make a headline
+    # feature -- could not be reported from this CLI at all.
+    'cache', 'item',
+    # The other station-class tables the reference publishes beside the AvgTable
+    'orbit', 'loss', 'region-loss', 'deadline',
+    # Normalizing constant and the subnetwork busy period (Daduna 1988)
+    'normconst', 'busyperiod',
     # Distribution
     'cdf-respt', 'cdf-passt', 'perct-respt',
     # Transient
     'tran-avg', 'tran-cdf-respt', 'tran-cdf-passt',
     # Probability
-    'prob', 'prob-aggr', 'prob-marg', 'prob-sys', 'prob-sys-aggr',
+    'prob', 'prob-aggr', 'prob-marg', 'prob-sys', 'prob-sys-aggr', 'prob-sys-marg',
     # Sampling
     'sample', 'sample-aggr', 'sample-sys', 'sample-sys-aggr',
     # Reward
-    'reward', 'reward-steady', 'reward-value'
+    'reward', 'reward-steady', 'reward-value',
+    # Sensitivity to the service demands
+    'sens',
+    # SolverUQ's design-point envelope
+    'interval'
 ]
 
-# Analysis types that require specific solvers
+# Analysis types that require specific solvers.
+#
+# KEPT IN STEP WITH `LineCLI.ANALYSIS_SOLVER_COMPAT`. This table used to be
+# narrower than the JAR's in three places, and a narrower gate is not a
+# conservative one: it REFUSES a solve the library performs. `-a prob-marg -s
+# mva` and `-s nc` answer here exactly as they do in the JAR, and `-a prob-aggr
+# -s fld` reads the moment closure's own joint normal, which is the only place
+# that distribution exists -- refusing it sent the caller back to the
+# first-order binomial under the closure's name.
 ANALYSIS_SOLVER_COMPAT = {
     'sample': ['ssa'],
     'sample-aggr': ['ssa'],
@@ -86,10 +137,14 @@ ANALYSIS_SOLVER_COMPAT = {
     'reward-value': ['ctmc'],
     'perct-respt': ['mam'],
     'prob': ['ctmc', 'ssa'],
-    'prob-aggr': ['ctmc', 'ssa'],
-    'prob-marg': ['ctmc', 'ssa'],
+    'prob-aggr': ['ctmc', 'ssa', 'fld'],
+    'prob-marg': ['ctmc', 'ssa', 'mva', 'nc', 'mam'],
     'prob-sys': ['ctmc', 'ssa'],
     'prob-sys-aggr': ['ctmc', 'ssa'],
+    'prob-sys-marg': ['ctmc', 'ssa', 'mva', 'nc', 'mam'],
+    'normconst': ['nc', 'mva'],
+    'busyperiod': ['nc', 'ldes'],
+    'interval': ['uq'],
 }
 
 # Analysis types that require node index
@@ -129,13 +184,16 @@ Examples:
   # LQN model with layered network solver
   line -f model.lqnx -s ln
 
+  # Place/transition net in PNML (ISO/IEC 15909-2)
+  line -f model.pnml -s ctmc
+
 Solver.Method Syntax:
-  Solvers: mva, nc, ctmc, fluid, jmt, ssa, mam, ldes, ln, lqns, env
+  Solvers: mva, nc, ctmc, fld (alias fluid), jmt, ssa, mam, ldes, ln, lqns, env
   Methods vary by solver, e.g.:
     mva.lin, mva.exact, mva.amva
     nc.exact, nc.ls, nc.comom
     ctmc.gpu
-    fluid.statedep, fluid.closing
+    fld.statedep, fld.closing
     jmt.jsim, jmt.jmva
         """
     )
@@ -186,7 +244,7 @@ Solver.Method Syntax:
         metavar='SOLVER',
         help='''Solver or solver.method (default: auto). Options:
 High-level: auto, sim, exact, fast, accurate
-Solvers: mva, nc, ctmc, fluid, jmt, ssa, mam, ldes, ln, lqns
+Solvers: mva, nc, ctmc, fld (alias fluid), jmt, ssa, mam, ldes, ln, lqns
 With method: mva.lin, nc.exact, ctmc.gpu, etc.'''
     )
 
@@ -269,14 +327,96 @@ Reward: reward, reward-steady, reward-value (default: all)'''
         help='Random seed for stochastic solvers (JMT, SSA, LDES)'
     )
 
-    # Verbosity
+    # Verbosity. `debug` turns on the solver console, the running progress log,
+    # and was missing from these choices although VerboseLevel.DEBUG exists and
+    # both other CLIs offer it -- so the console was unreachable from here.
+    # `standard` is the C++ CLI's spelling of `normal`.
     parser.add_argument(
         '-v', '--verbosity',
         type=str,
-        choices=['normal', 'silent'],
+        choices=['normal', 'standard', 'silent', 'debug'],
         default='normal',
         metavar='LEVEL',
-        help='Verbosity level: normal (default) or silent'
+        help='Verbosity level: normal (default; alias standard), silent or debug'
+    )
+
+    # ---- Numeric controls -------------------------------------------------
+    # NONE of these existed here, so a simulation run from this CLI always used
+    # the default 10000 samples, a CTMC could not be given a state-space cutoff,
+    # and a transient analysis answered over a horizon the caller could not
+    # state. Each is the native spelling of the flag `jline.cli.LineCLI` and the
+    # C++ `line-cli` already carried.
+    parser.add_argument(
+        '--samples', type=int, default=None, metavar='N',
+        help='Simulation samples / Monte Carlo draws (SSA, LDES, JMT, UQ)'
+    )
+    parser.add_argument(
+        '--cutoff', type=float, default=None, metavar='K',
+        help='State-space cutoff per open class (CTMC, SSA)'
+    )
+    parser.add_argument(
+        '--timespan', '--tspan', type=str, default=None, metavar='T0,T1',
+        help='Time span of the transient analyses, e.g. --timespan 0,100'
+    )
+    parser.add_argument(
+        '--timestep', type=float, default=None, metavar='DT',
+        help='Fixed transient output step (default: the adaptive ODE grid)'
+    )
+    parser.add_argument(
+        '--method', type=str, default=None, metavar='NAME',
+        help='Algorithm within the chosen solver (also spelled -s solver.method)'
+    )
+    parser.add_argument(
+        '--tol', type=float, default=None, metavar='EPS',
+        help='General solver tolerance'
+    )
+    parser.add_argument(
+        '--iter_tol', type=float, default=None, metavar='EPS',
+        help='Iteration convergence tolerance'
+    )
+    parser.add_argument(
+        '--iter_max', type=int, default=None, metavar='N',
+        help='Maximum iterations'
+    )
+    parser.add_argument(
+        '--multiserver', type=str, default=None, metavar='RULE',
+        help='AMVA multiserver rule (seidmann, softmin, ...)'
+    )
+    parser.add_argument(
+        '--warmupfrac', type=float, default=None, metavar='F',
+        help='Leading fraction of a simulated path discarded before the means'
+    )
+    parser.add_argument(
+        '--stage-solver', type=str, default=None, metavar='SOLVER',
+        help="Solver run at each stage of an Environment ('fluid' or 'ctmc')"
+    )
+    parser.add_argument(
+        '--uq-solver', type=str, default=None, metavar='SOLVER',
+        help='Engine SolverUQ runs at each design point; required by -s uq'
+    )
+    parser.add_argument(
+        '--busyperiod', type=str, default=None, metavar='N[,N...]',
+        help='Orders of -a busyperiod (default: 1)'
+    )
+    parser.add_argument(
+        '--busyperiod-subnet', type=str, default=None, metavar='I[,I...]',
+        help='0-based stations forming the -a busyperiod subnetwork (required)'
+    )
+    parser.add_argument(
+        '--sens-method', type=str, default='auto', metavar='NAME',
+        help='Differentiation of -a sens (default: auto)'
+    )
+    parser.add_argument(
+        '--sens-scheme', type=str, default='forward', metavar='NAME',
+        help='Finite-difference scheme of -a sens (default: forward)'
+    )
+    parser.add_argument(
+        '--sens-step', type=float, default=None, metavar='H',
+        help='Finite-difference step of -a sens'
+    )
+    parser.add_argument(
+        '-m', '--maxreq', type=int, default=None, metavar='N',
+        help='Server mode: quit after processing this many requests'
     )
 
     # Docker mode
@@ -342,7 +482,16 @@ def load_model(filename, input_format, verbose=False):
         raise FileNotFoundError(f"Model file not found: {filename}")
 
     # Load based on format
-    if input_format in JSIM_FORMATS:
+    if input_format in JSON_FORMATS:
+        # LINE's own portable model: the document declares its own type, so one
+        # branch reads a Network, a LayeredNetwork, a Workflow or an Environment.
+        from .io import load_model as load_line_model
+        model = load_line_model(filename)
+        if verbose:
+            print(f"Loaded LINE JSON model from: {filename}")
+        return model
+
+    elif input_format in JSIM_FORMATS:
         m2m = M2M()
         model = m2m.JSIM2LINE(filename)
         if verbose:
@@ -353,6 +502,13 @@ def load_model(filename, input_format, verbose=False):
         model = LayeredNetwork.load(filename, verbose)
         if verbose:
             print(f"Loaded LQN model from: {filename}")
+        return model
+
+    elif input_format in PNML_FORMATS:
+        from .io.pnml_io import load_pnml
+        model = load_pnml(filename)
+        if verbose:
+            print(f"Loaded PNML model from: {filename}")
         return model
 
     elif input_format == 'mat':
@@ -414,20 +570,27 @@ def parse_solver_method(solver_str):
     """
     if '.' in solver_str:
         parts = solver_str.split('.', 1)
-        return parts[0], parts[1]
-    return solver_str, 'default'
+        return SOLVER_ALIASES.get(parts[0], parts[0]), parts[1]
+    return SOLVER_ALIASES.get(solver_str, solver_str), 'default'
 
 
 def validate_solver_compatibility(input_format, solver_str):
     """Validate that solver is compatible with input format."""
     # Extract base solver from solver.method syntax
     solver, _ = parse_solver_method(solver_str)
+    solver = SOLVER_ALIASES.get(solver, solver)
 
     # High-level methods are always valid (LINE handles routing)
     if solver in ['auto', 'line', 'sim', 'exact', 'fast', 'accurate']:
         return
 
-    if input_format in JSIM_FORMATS:
+    if input_format in JSON_FORMATS:
+        if solver not in JSON_COMPATIBLE_SOLVERS:
+            raise ValueError(
+                f"Solver '{solver}' is not compatible with LINE JSON format. "
+                f"Valid solvers: {', '.join(JSON_COMPATIBLE_SOLVERS)}"
+            )
+    elif input_format in JSIM_FORMATS:
         if solver not in JSIM_COMPATIBLE_SOLVERS:
             raise ValueError(
                 f"Solver '{solver}' is not compatible with JSIM format. "
@@ -439,10 +602,86 @@ def validate_solver_compatibility(input_format, solver_str):
                 f"Solver '{solver}' is not compatible with LQN format. "
                 f"Valid solvers: {', '.join(LQN_COMPATIBLE_SOLVERS)}"
             )
+    elif input_format in PNML_FORMATS:
+        if solver not in PNML_COMPATIBLE_SOLVERS:
+            raise ValueError(
+                f"Solver '{solver}' is not compatible with PNML format. "
+                f"Valid solvers: {', '.join(PNML_COMPATIBLE_SOLVERS)}"
+            )
 
 
-def solve_model(model, solver_str, seed=None, verbose=False):
-    """Instantiate solver via LINE (SolverAuto) and run analysis.
+def parse_timespan(spec):
+    """`--timespan` as a two-element list; None when not given.
+
+    BOTH SEPARATORS AND A BARE END TIME, matching the JAR and the C++ line-cli:
+    `T1`, `T0,T1` and `T0:T1` all name the same horizon, so a command line is
+    portable between the front ends.
+    """
+    if spec is None:
+        return None
+    text = str(spec).strip()
+    parts = [p.strip() for p in (text.split(':') if ':' in text else text.split(','))
+             if p.strip()]
+    if len(parts) == 1:
+        return [0.0, float(parts[0])]
+    if len(parts) != 2:
+        raise ValueError("--timespan takes T1, T0,T1 or T0:T1, e.g. --timespan 0,100")
+    return [float(parts[0]), float(parts[1])]
+
+
+def parse_int_list(spec, what):
+    """A comma-separated list of non-negative integers."""
+    if spec is None:
+        return None
+    vals = []
+    for tok in str(spec).split(','):
+        tok = tok.strip()
+        if not tok:
+            continue
+        try:
+            vals.append(int(tok))
+        except ValueError:
+            raise ValueError(f"{what} takes a comma-separated list of integers (got '{spec}')")
+    if not vals:
+        raise ValueError(f"{what} takes at least one integer")
+    return vals
+
+
+def resolve_solver_token(solver_str, method=None, uq_solver=None, stage_solver=None):
+    """The `-s` method name SolverAUTO is given, with the separate flags folded in.
+
+    `--method` becomes the `solver.method` qualifier when the method name does not
+    already carry one; `--uq-solver` and `--stage-solver` become the qualifier of
+    `uq` and `env`, which is how a composite family names its inner solver.
+    A token that already states its own qualifier wins, so an explicit
+    `-s ln.comom` is never rewritten by a flag.
+    """
+    base, qualifier = parse_solver_method(solver_str)
+    base = SOLVER_ALIASES.get(base, base)
+    # parse_solver_method reports an absent qualifier as 'default', which is a
+    # request for the solver's own default rather than a named algorithm.
+    if qualifier == 'default':
+        qualifier = None
+    inner = None
+    if base == 'uq':
+        inner = uq_solver
+        if inner is None and qualifier is None:
+            raise ValueError(
+                "-s uq needs --uq-solver: UQ computes nothing itself, it expands the "
+                "Prior and runs another solver at each design point")
+    elif base == 'env':
+        inner = stage_solver
+    else:
+        inner = method
+    if qualifier:
+        return f"{base}.{qualifier}"
+    if inner:
+        return f"{base}.{SOLVER_ALIASES.get(inner, inner)}"
+    return base
+
+
+def solve_model(model, solver_str, seed=None, verbose=False, knobs=None):
+    """Instantiate solver via LINE (SolverAUTO) and run analysis.
 
     All solver requests are routed through LINE which handles:
     - Automatic solver selection (auto, sim, exact, fast, accurate)
@@ -467,7 +706,17 @@ def solve_model(model, solver_str, seed=None, verbose=False):
     if seed is not None:
         options['seed'] = seed
 
-    # Route all requests through LINE (SolverAuto)
+    # EVERY NUMERIC CONTROL IS FORWARDED, or the solve answers a different
+    # question than the caller asked: without `samples` a simulation always ran
+    # at the default 10000, without `cutoff` a CTMC truncated where it chose,
+    # and without `timespan` a transient analysis substituted 30/minRate. The
+    # keyword names are the solver options' own, so LINE passes them through to
+    # whichever engine it selects.
+    for key, value in (knobs or {}).items():
+        if value is not None:
+            options[key] = value
+
+    # Route all requests through LINE (SolverAUTO)
     # LINE handles solver selection based on the method parameter
     solver = LINE(model, method=solver_str, **options)
 
@@ -527,7 +776,10 @@ def parse_percentiles(percentiles_str):
     return [float(x.strip()) for x in percentiles_str.split(',')]
 
 
-def execute_single_analysis(solver, model, analysis_type, node_idx, class_idx, state, num_events, percentiles, reward_name):
+def execute_single_analysis(solver, model, analysis_type, node_idx, class_idx, state,
+                            num_events, percentiles, reward_name,
+                            sens_method='auto', sens_scheme='forward', sens_step=None,
+                            busy_subnet=None, busy_orders=None):
     """Execute a single analysis type and return results."""
     try:
         # Basic analysis types
@@ -570,6 +822,81 @@ def execute_single_analysis(solver, model, analysis_type, node_idx, class_idx, s
         elif analysis_type == 'nodechain':
             if hasattr(solver, 'get_avg_node_chain_table'):
                 return solver.get_avg_node_chain_table()
+            return None
+
+        # Cache and the other station-class tables the reference publishes
+        # beside the AvgTable. Each has been on the solver API all along; only
+        # the -a vocabulary was missing.
+        elif analysis_type == 'cache':
+            if hasattr(solver, 'getAvgCacheTable'):
+                return solver.getAvgCacheTable()
+            return None
+
+        elif analysis_type == 'item':
+            if hasattr(solver, 'getAvgItemTable'):
+                return solver.getAvgItemTable()
+            return None
+
+        elif analysis_type == 'orbit':
+            if hasattr(solver, 'getAvgOrbitTable'):
+                return solver.getAvgOrbitTable()
+            return None
+
+        elif analysis_type == 'loss':
+            if hasattr(solver, 'getAvgLossTable'):
+                return solver.getAvgLossTable()
+            return None
+
+        elif analysis_type == 'region-loss':
+            if hasattr(solver, 'getAvgRegionLossTable'):
+                return solver.getAvgRegionLossTable()
+            return None
+
+        elif analysis_type == 'deadline':
+            if hasattr(solver, 'getDeadlineTable'):
+                return solver.getDeadlineTable()
+            return None
+
+        elif analysis_type == 'sens':
+            if hasattr(solver, 'getSensitivityTable'):
+                if sens_step is None:
+                    return solver.getSensitivityTable()
+                return solver.getSensitivityTable(sens_method, sens_step, sens_scheme)
+            return None
+
+        elif analysis_type == 'normconst':
+            if hasattr(solver, 'getProbNormConstAggr'):
+                solver.avg_table()
+                return solver.getProbNormConstAggr()
+            return None
+
+        # Mean busy period of a NAMED subnetwork (Daduna, J. ACM 35(3), 1988).
+        # SolverNC evaluates the transform and SolverLDES measures it on the
+        # sample path; the subnetwork has no default, so a missing one is an
+        # error rather than a guess.
+        elif analysis_type == 'busyperiod':
+            if not busy_subnet:
+                raise ValueError(
+                    "-a busyperiod needs --busyperiod-subnet: the busy period is defined "
+                    "for a named subnetwork of stations, and no default can choose one")
+            if not hasattr(solver, 'getAvgBusyPeriod'):
+                return None
+            orders = busy_orders or [1]
+            # The native getter returns MATLAB's `[b, lG, lH]`, the durations
+            # plus the two log normalizing-constant vectors the transform built.
+            # Only the durations are the -a busyperiod report; the constants are
+            # intermediate and are what -a normconst reports in its own right.
+            got = solver.getAvgBusyPeriod(list(busy_subnet), orders)
+            durations = got[0] if isinstance(got, tuple) else got
+            return {
+                'subnet': list(busy_subnet),
+                'orders': list(orders),
+                'b': [float(x) for x in np.atleast_1d(durations)],
+            }
+
+        elif analysis_type == 'interval':
+            if hasattr(solver, 'getInterval'):
+                return solver.getInterval()
             return None
 
         # Distribution analysis types
@@ -640,6 +967,15 @@ def execute_single_analysis(solver, model, analysis_type, node_idx, class_idx, s
                 return solver.get_prob_sys_aggr()
             return None
 
+        elif analysis_type == 'prob-sys-marg':
+            if hasattr(solver, 'getProbSysMarg'):
+                if not state:
+                    raise ValueError(
+                        "-a prob-sys-marg needs --state: the marginal is evaluated at a "
+                        "stated population vector")
+                return solver.getProbSysMarg(state)
+            return None
+
         # Sampling analysis types (SSA only)
         elif analysis_type == 'sample':
             if hasattr(solver, 'sample') and node_idx is not None and model is not None:
@@ -689,7 +1025,8 @@ def execute_single_analysis(solver, model, analysis_type, node_idx, class_idx, s
 
 def get_solver_results(solver, analysis_str, model=None, node_idx=None, class_idx=None,
                        state_str=None, num_events=1000, percentiles_str='50,90,95,99',
-                       reward_name=None):
+                       reward_name=None, sens_method='auto', sens_scheme='forward',
+                       sens_step=None, busy_subnet=None, busy_orders=None):
     """Get results from solver based on analysis types (comma-separated)."""
     results = {}
 
@@ -702,7 +1039,8 @@ def get_solver_results(solver, analysis_str, model=None, node_idx=None, class_id
     for analysis_type in analysis_types:
         result = execute_single_analysis(
             solver, model, analysis_type,
-            node_idx, class_idx, state, num_events, percentiles, reward_name
+            node_idx, class_idx, state, num_events, percentiles, reward_name,
+            sens_method, sens_scheme, sens_step, busy_subnet, busy_orders
         )
         if result is not None:
             results[analysis_type] = result
@@ -885,10 +1223,17 @@ def run_cli(args=None):
     parser = create_parser()
     args = parser.parse_args(args)
 
-    # Set verbosity
-    verbose = args.verbosity == 'normal'
-    if verbose:
+    # Set verbosity. `standard` is the C++ CLI's spelling of `normal`, and
+    # `debug` is what turns on the solver console -- the running progress log,
+    # which is VerboseLevel.DEBUG and has no knob of its own.
+    level = 'normal' if args.verbosity == 'standard' else args.verbosity
+    verbose = level in ('normal', 'debug')
+    if level == 'debug':
+        GlobalConstants.setVerbose(VerboseLevel.DEBUG)
+    elif verbose:
         GlobalConstants.setVerbose(VerboseLevel.STD)
+    else:
+        GlobalConstants.setVerbose(VerboseLevel.SILENT)
 
     # Print banner if verbose
     if verbose:
@@ -900,8 +1245,14 @@ def run_cli(args=None):
     try:
         # Server mode
         if args.port is not None:
-            run_server(args.port, args.input)
+            run_server(args.port, args.input, args.maxreq)
             return
+
+        # Parsed once, before anything is loaded, so a malformed list is a usage
+        # error and not a failure half way through a solve.
+        timespan = parse_timespan(args.timespan)
+        busy_orders = parse_int_list(args.busyperiod, '--busyperiod')
+        busy_subnet = parse_int_list(args.busyperiod_subnet, '--busyperiod-subnet')
 
         # Validate analysis types
         analysis_types = validate_analysis_types(args.analysis)
@@ -924,8 +1275,28 @@ def run_cli(args=None):
         input_format = args.input or detect_input_format(args.file)
         validate_solver_compatibility(input_format, args.solver)
 
+        # THE COMPOSITE FAMILIES NAME THEIR INNER SOLVER IN THE METHOD NAME, not in a
+        # separate option: SolverAUTO reads 'uq.mva' and 'env.fluid' and builds
+        # the inner factory from the qualifier (`_inner_factory`). So
+        # --uq-solver and --stage-solver, which are separate flags in the JAR
+        # and C++ CLIs, are folded into the -s token here rather than passed as
+        # keywords that would land in **kwargs and be silently dropped.
+        solver_token = resolve_solver_token(
+            args.solver, args.method, args.uq_solver, args.stage_solver)
+
         # Solve model
-        solver = solve_model(model, args.solver, args.seed, verbose)
+        knobs = {
+            'samples': args.samples,
+            'cutoff': args.cutoff,
+            'timespan': timespan,
+            'timestep': args.timestep,
+            'tol': args.tol,
+            'iter_tol': args.iter_tol,
+            'iter_max': args.iter_max,
+            'multiserver': args.multiserver,
+            'warmupfrac': args.warmupfrac,
+        }
+        solver = solve_model(model, solver_token, args.seed, verbose, knobs)
 
         # Get results with all new parameters
         results = get_solver_results(
@@ -937,7 +1308,12 @@ def run_cli(args=None):
             state_str=args.state,
             num_events=args.events,
             percentiles_str=args.percentiles,
-            reward_name=args.reward_name
+            reward_name=args.reward_name,
+            sens_method=args.sens_method,
+            sens_scheme=args.sens_scheme,
+            sens_step=args.sens_step,
+            busy_subnet=busy_subnet,
+            busy_orders=busy_orders,
         )
 
         # Format and output results
@@ -949,14 +1325,19 @@ def run_cli(args=None):
             print(formatted)
 
     except Exception as e:
+        # A ONE-LINE ERROR, and the traceback only when asked for. `verbose` is
+        # true by DEFAULT here, so this used to answer a mistyped filename or an
+        # unknown format with a Python stack trace -- the other three CLIs
+        # print one line, and a stack trace is a report about this program
+        # rather than about the caller's command.
         print(f"Error: {str(e)}", file=sys.stderr)
-        if verbose:
+        if level == 'debug':
             import traceback
             traceback.print_exc()
         sys.exit(1)
 
 
-def run_server(port=5863, default_input_format=None):
+def run_server(port=5863, default_input_format=None, max_requests=None):
     """Run WebSocket server for remote model solving."""
     try:
         import websockets
@@ -969,8 +1350,15 @@ def run_server(port=5863, default_input_format=None):
     print(f"LINE Solver - Server Mode")
     print("=" * 80)
     print(f"Listening on port {port}")
+    if max_requests:
+        print(f"Quitting after {max_requests} request(s)")
     print("Press Ctrl+C to stop the server")
     print()
+
+    # -m/--maxreq, the JAR and MATLAB CLIs' "quit after this many requests".
+    # A mutable cell rather than a nonlocal so the counter survives the closure
+    # on every Python this file supports.
+    served = {'n': 0}
 
     async def handle_client(websocket, path):
         """Handle incoming WebSocket connection."""
@@ -1003,7 +1391,7 @@ def run_server(port=5863, default_input_format=None):
                 validate_solver_compatibility(input_format, parsed_args.solver)
 
                 solver = solve_model(model, parsed_args.solver, parsed_args.seed, False)
-                results = get_solver_results(solver, parsed_args.analysis)
+                results = get_solver_results(solver, parsed_args.analysis, model=model)
                 formatted = format_results(results, parsed_args.output, model)
 
                 # Send results back
@@ -1025,6 +1413,13 @@ def run_server(port=5863, default_input_format=None):
                 await websocket.send(f"Error: {str(e)}")
             except:
                 pass
+        finally:
+            # Counted whether the request succeeded or failed: -m bounds how
+            # many requests the process SERVES, which is what makes a scripted
+            # one-shot server terminate rather than needing a signal.
+            served['n'] += 1
+            if max_requests and served['n'] >= max_requests:
+                asyncio.get_event_loop().stop()
 
     # Start server
     start_server = websockets.serve(handle_client, "0.0.0.0", port)

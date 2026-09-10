@@ -613,6 +613,106 @@ public class StochPetriNetModel {
     }
 
     /**
+     * A product-form net solved ANALYTICALLY, and one that no queueing network
+     * expresses.
+     *
+     * <p>The cycle P0 -&gt; T0 -&gt; P1 -&gt; T1 -&gt; P2 -&gt; T2 -&gt; P0 has a
+     * product form, so {@code new NC(model)} solves it exactly through
+     * {@link jline.api.spn.Spn_pf} (complex balance),
+     * {@link jline.api.mdd.Mdd_rec} (the normalising constant by one walk of the
+     * decision diagram holding the reachable set) and
+     * {@link jline.api.spn.Spn_metrics}.</p>
+     *
+     * @return the 3-place cyclic net at N = 4 with rates {1, 1.5, 2}
+     */
+    public static Network spn_productform_cyclic() {
+        Network model = new Network("spn");
+        Place[] pl = new Place[3];
+        Transition[] tr = new Transition[3];
+        double[] rates = {1.0, 1.5, 2.0};
+        for (int i = 0; i < 3; i++) {
+            pl[i] = new Place(model, "P" + i);
+            tr[i] = new Transition(model, "T" + i);
+        }
+        ClosedClass jc = new ClosedClass(model, "Class1", 4, pl[0], 0);
+        for (int i = 0; i < 3; i++) {
+            Mode m = tr[i].addMode("fire");
+            tr[i].setDistribution(m, new Exp(rates[i]));
+            tr[i].setNumberOfServers(m, Integer.valueOf(1));
+            tr[i].setEnablingConditions(m, jc, pl[i], 1);
+            tr[i].setFiringOutcome(m, jc, pl[(i + 1) % 3], 1);
+        }
+        RoutingMatrix P = model.initRoutingMatrix();
+        for (int i = 0; i < 3; i++) {
+            P.set(jc, jc, pl[i], tr[i], 1.0);
+            P.set(jc, jc, tr[i], pl[(i + 1) % 3], 1.0);
+        }
+        model.link(P);
+        for (int i = 0; i < 3; i++) {
+            pl[i].setState(Matrix.singleton(i == 0 ? 4 : 0));
+        }
+        return model;
+    }
+
+    /**
+     * P0 -(Tf)-&gt; P1 + P2 -(Tj)-&gt; P3 -(Tb)-&gt; P0.
+     *
+     * <p>Tf consumes ONE token and produces TWO, Tj the reverse, so the marking
+     * is not a conserved job population and there is no queueing-network
+     * counterpart -- the limitation the MDD-rec paper opens with. Its place
+     * invariant is 2*m0 + m1 + m2 + 2*m3, not the token count. SolverNC's
+     * {@code rec} method solves it exactly.</p>
+     *
+     * @return the fork-join net with 3 tokens at P0
+     */
+    public static Network spn_productform_forkjoin() {
+        Network model = new Network("fj");
+        Place[] pl = new Place[4];
+        for (int i = 0; i < 4; i++) {
+            pl[i] = new Place(model, "P" + i);
+        }
+        Transition tf = new Transition(model, "Tf");
+        Transition tj = new Transition(model, "Tj");
+        Transition tb = new Transition(model, "Tb");
+        ClosedClass jc = new ClosedClass(model, "C", 3, pl[0], 0);
+
+        Mode mf = tf.addMode("f");
+        tf.setDistribution(mf, new Exp(1.3));
+        tf.setNumberOfServers(mf, Integer.valueOf(1));
+        tf.setEnablingConditions(mf, jc, pl[0], 1);
+        tf.setFiringOutcome(mf, jc, pl[1], 1);
+        tf.setFiringOutcome(mf, jc, pl[2], 1);
+
+        Mode mj = tj.addMode("j");
+        tj.setDistribution(mj, new Exp(0.7));
+        tj.setNumberOfServers(mj, Integer.valueOf(1));
+        tj.setEnablingConditions(mj, jc, pl[1], 1);
+        tj.setEnablingConditions(mj, jc, pl[2], 1);
+        tj.setFiringOutcome(mj, jc, pl[3], 1);
+
+        Mode mb = tb.addMode("b");
+        tb.setDistribution(mb, new Exp(1.9));
+        tb.setNumberOfServers(mb, Integer.valueOf(1));
+        tb.setEnablingConditions(mb, jc, pl[3], 1);
+        tb.setFiringOutcome(mb, jc, pl[0], 1);
+
+        RoutingMatrix P = model.initRoutingMatrix();
+        P.set(jc, jc, pl[0], tf, 1.0);
+        P.set(jc, jc, tf, pl[1], 1.0);
+        P.set(jc, jc, tf, pl[2], 1.0);
+        P.set(jc, jc, pl[1], tj, 1.0);
+        P.set(jc, jc, pl[2], tj, 1.0);
+        P.set(jc, jc, tj, pl[3], 1.0);
+        P.set(jc, jc, pl[3], tb, 1.0);
+        P.set(jc, jc, tb, pl[0], 1.0);
+        model.link(P);
+        for (int i = 0; i < 4; i++) {
+            pl[i].setState(Matrix.singleton(i == 0 ? 3 : 0));
+        }
+        return model;
+    }
+
+    /**
      * Main method for testing and demonstrating stochastic Petri net examples.
      *
      * <p>Currently configured to:

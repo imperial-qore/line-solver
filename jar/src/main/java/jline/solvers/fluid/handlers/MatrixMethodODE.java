@@ -31,6 +31,15 @@ public class MatrixMethodODE implements FirstOrderDifferentialEquations {
     private final boolean[] isSourceState;
     private final FluidStateRateMultiplier stateMult;
     private Matrix pQa;
+    private boolean[] isInfState;
+    /**
+     * When set, min(E[n], c) is replaced by E[min(n, c)] under the station's
+     * equilibrium geometric marginal. Set ONLY by the degeneracy repair in
+     * MatrixMethodAnalyzer: min() is FLAT above the server count, so a network of
+     * saturated stations has a CONTINUUM of fixed points and the integrator
+     * returns whichever one it stopped at. See BUGS.md and _kb/06-solver-catalog.md.
+     */
+    private boolean varClosure = false;
 
     public MatrixMethodODE(
             Matrix W, Matrix SQ, Matrix S, Matrix Qa, Matrix ALambda, int numDimensions,
@@ -54,6 +63,7 @@ public class MatrixMethodODE implements FirstOrderDifferentialEquations {
         this.isSourceState = isSourceState;
         this.stateMult = stateMult;
         this.pQa = new Matrix(0, 0);
+        this.isInfState = new boolean[numDimensions];
     }
 
     public MatrixMethodODE(
@@ -87,20 +97,20 @@ public class MatrixMethodODE implements FirstOrderDifferentialEquations {
 
         this(W, SQ, S, Qa, ALambda, numDimensions, isSourceState, stateMult);
 
-        this.pQa = new Matrix(SQ.getNumRows(), 1);
-        int row = 0;
-        for (int i = 0; i < sn.nstations; i++) {
-            double pStarValue = pStarValues.get(i);
-            for (int j = 0; j < sn.nclasses; j++) {
-                int nPhases = (int) sn.phases.get(i, j);
-                if (nPhases == 0) nPhases = 1;
-                for (int k = 0; k < nPhases; k++) {
-                    if (row < pQa.getNumRows()) {
-                        pQa.set(row, 0, pStarValue);
-                    }
-                    row++;
-                }
-            }
+        // Read the exponent off Qa, which is already filtered by keep and by the
+        // immediate-state elimination; walking the FULL (station,class,phase)
+        // space instead misaligns the exponents whenever a state was dropped
+        int nStates = this.Qa.getNumCols();
+        this.pQa = new Matrix(nStates, 1);
+        this.isInfState = new boolean[nStates];
+        for (int i = 0; i < nStates; i++) {
+            int ist = (int) this.Qa.get(0, i);
+            int idx = pStarValues.size() == 1 ? 0 : FastMath.min(ist, pStarValues.size() - 1);
+            pQa.set(i, 0, pStarValues.get(idx));
+            // An INF station has k = infinity, so its share is 1 with no min()
+            // to smooth; S holds the population there, which the p-norm would
+            // otherwise read as a k = N queue
+            this.isInfState[i] = Double.isInfinite(sn.nservers.get(ist, 0));
         }
     }
 
@@ -113,84 +123,94 @@ public class MatrixMethodODE implements FirstOrderDifferentialEquations {
             xDMS.set(i, 0, x[i]);
         }
 
-        MatrixEquation calculateSumXQa = new MatrixEquation();
-        calculateSumXQa.alias(xDMS, "x", SQ, "SQ", GlobalConstants.FineTol, "distribZero");
-        calculateSumXQa.process("sumXQa = distribZero + SQ * x");
-        Matrix sumXQa = calculateSumXQa.lookupSimple("sumXQa");
+        Matrix theta = theta(xDMS);
+        applyStateMultiplier(theta, t);
 
-        int QaCols = this.Qa.getNumCols();
-        Matrix SQa = new Matrix(QaCols, 1);
-        for (int i = 0; i < QaCols; i++) {
-            SQa.set(i, 0, S.get((int) Qa.get(0, i), 0));
-        }
-
-        Matrix dxdtTmp;
-        if (this.pQa.getNumRows() == 0) {
-            dxdtTmp = computeDerivativesWithoutSmoothing(xDMS, sumXQa, SQa, t);
-        } else {
-            dxdtTmp = computeDerivativesUsingPNormSmoothing(xDMS, sumXQa, SQa, t);
-        }
+        MatrixEquation computeDerivatives = new MatrixEquation();
+        computeDerivatives.alias(W, "W", theta, "theta", ALambda, "ALambda");
+        computeDerivatives.process("dxdt = W' * theta + ALambda");
+        Matrix dxdtTmp = computeDerivatives.lookupSimple("dxdt");
 
         for (int i = 0; i < dxdt.length; i++) {
             dxdt[i] = dxdtTmp.get(i);
         }
     }
 
-    private Matrix computeDerivativesUsingPNormSmoothing(
-            Matrix x, Matrix sumXQa, Matrix SQa, double t) {
-
-        Matrix ghat = Matrix.createLike(new Matrix(x));
-        for (int i = 0; i < x.getNumRows(); i++) {
-            double xVal = sumXQa.get(i, 0);
-            double cVal = SQa.get(i, 0);
-            double pVal = pQa.get(i, 0);
-            double ghatVal = 1.0 / FastMath.pow(1 + FastMath.pow(xVal / cVal, pVal), 1.0 / pVal);
-            if (Double.isNaN(ghatVal)) {
-                ghat.set(i, 0, 0);
-            } else {
-                ghat.set(i, 0, ghatVal);
-            }
+    /**
+     * The mass in service, i.e. theta(x) of Ruuskanen et al., PEVA 151 (2021):
+     * eq. (12) without smoothing, eq. (26)-(27) with an exponent set.
+     *
+     * <p>The analyzer reads the metrics off this same theta: eq. (23) takes the
+     * utilization from the share the ODE integrated, so U and T must not revert
+     * to the hard min() after a smoothed solve. The state multiplier is NOT
+     * applied here, since the throughput scales by it while the utilization
+     * does not.</p>
+     */
+    /**
+     * Turns on the variance-carrying saturation term and declares which states
+     * belong to INF stations, which carry no min() to close at all.
+     */
+    public void setVarClosure(boolean[] infStates) {
+        this.varClosure = true;
+        if (infStates != null) {
+            this.isInfState = infStates.clone();
         }
-
-        Matrix thetaEff = new Matrix(x.getNumRows(), 1);
-        for (int i = 0; i < x.getNumRows(); i++) {
-            if (isSourceState != null && i < isSourceState.length && isSourceState[i]) {
-                thetaEff.set(i, 0, 0.0);
-            } else {
-                thetaEff.set(i, 0, x.get(i, 0) * ghat.get(i, 0));
-            }
-        }
-
-        applyStateMultiplier(thetaEff, t);
-
-        MatrixEquation computeDerivatives = new MatrixEquation();
-        computeDerivatives.alias(W, "W", thetaEff, "theta", ALambda, "ALambda");
-        computeDerivatives.process("dxdt = W' * theta + ALambda");
-        return computeDerivatives.lookupSimple("dxdt");
     }
 
-    private Matrix computeDerivativesWithoutSmoothing(
-            Matrix x, Matrix sumXQa, Matrix SQa, double t) {
+    public Matrix theta(Matrix x) {
+        MatrixEquation calculateSumXQa = new MatrixEquation();
+        calculateSumXQa.alias(x, "x", SQ, "SQ", GlobalConstants.FineTol, "distribZero");
+        calculateSumXQa.process("sumXQa = distribZero + SQ * x");
+        Matrix sumXQa = calculateSumXQa.lookupSimple("sumXQa");
 
         int nStates = x.getNumRows();
+        Matrix SQa = new Matrix(nStates, 1);
+        for (int i = 0; i < nStates; i++) {
+            SQa.set(i, 0, S.get((int) Qa.get(0, i), 0));
+        }
+
+        boolean smoothed = this.pQa.getNumRows() > 0;
         Matrix theta = new Matrix(nStates, 1);
         for (int i = 0; i < nStates; i++) {
             if (isSourceState != null && i < isSourceState.length && isSourceState[i]) {
                 theta.set(i, 0, 0.0);
+                continue;
+            }
+            double xVal = x.get(i, 0);
+            double sumVal = sumXQa.get(i, 0);
+            double sVal = SQa.get(i, 0);
+            if (smoothed && !(isInfState != null && i < isInfState.length && isInfState[i])) {
+                double pVal = pQa.get(i, 0);
+                double ghatVal = 1.0 / FastMath.pow(1 + FastMath.pow(sumVal / sVal, pVal), 1.0 / pVal);
+                theta.set(i, 0, Double.isNaN(ghatVal) ? 0.0 : xVal * ghatVal);
+            } else if (smoothed) {
+                theta.set(i, 0, xVal);
+            } else if (varClosure) {
+                // E[min(n, c)] UNDER A GEOMETRIC MARGINAL, not min(E[n], c):
+                //   n ~ Geometric(mean m) => E[min(n,c)] = sum_{k=1..c} p^k
+                //                          = m * (1 - p^c),  p = m/(1+m).
+                // Strictly increasing in m (slope 1/(1+m)^2 at c = 1, still 1e-2
+                // at m = 9, a restoring force the integrator can follow inside
+                // its horizon) and with the same asymptotes, -> c as m -> inf and
+                // -> m as m -> 0. An INF station has a server per job, so there
+                // is no min() to close and S holds the whole population there.
+                double eMin;
+                if (isInfState != null && i < isInfState.length && isInfState[i]) {
+                    eMin = sumVal;
+                } else {
+                    double p = sumVal > 0 ? sumVal / (1.0 + sumVal) : 0.0;
+                    eMin = sumVal * (1.0 - FastMath.pow(p, FastMath.max(sVal, 0.0)));
+                    if (Double.isNaN(eMin) || Double.isInfinite(eMin)) {
+                        eMin = 0.0;
+                    }
+                    eMin = min(eMin, sumVal);
+                }
+                theta.set(i, 0, xVal / sumVal * eMin);
             } else {
-                double xVal = x.get(i, 0);
-                double sumVal = sumXQa.get(i, 0);
-                double sVal = SQa.get(i, 0);
                 theta.set(i, 0, xVal / sumVal * min(sumVal, sVal));
             }
         }
-
-        applyStateMultiplier(theta, t);
-
-        MatrixEquation computeDerivatives = new MatrixEquation();
-        computeDerivatives.alias(W, "W", theta, "theta", ALambda, "ALambda");
-        computeDerivatives.process("dxdt = W' * theta + ALambda");
-        return computeDerivatives.lookupSimple("dxdt");
+        return theta;
     }
 
     /**

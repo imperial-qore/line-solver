@@ -51,14 +51,14 @@ nstates = size(Q, 1);
 nRewards = length(sn.reward);
 
 % Compute stationary distribution for steady-state rewards
-pi = ctmc_solve(Q, options);
+pi = ctmc_stationary(Q, stateSpace, sn, options);
 pi(pi < GlobalConstants.Zero) = 0;
 pi = pi / sum(pi);  % Normalize
 
 % Build index maps for RewardState
 % nodeToStationMap: node.index -> station index
-nodeToStationMap = containers.Map('KeyType', 'int32', 'ValueType', 'int32');
-classToIndexMap = containers.Map('KeyType', 'int32', 'ValueType', 'int32');
+nodeToStationMap = configureDictionary('int32', 'int32');
+classToIndexMap = configureDictionary('int32', 'int32');
 
 for ind = 1:sn.nnodes
     if sn.isstation(ind)

@@ -9,6 +9,7 @@ import jline.io.LQN2UML;
 import jline.lang.layered.*;
 import jline.lang.constant.SchedStrategy;
 import jline.lang.processes.Exp;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -370,11 +371,12 @@ public class SequenceDiagramExporterTest {
 
     @Test
     public void testPdfExportWhenAvailable() throws Exception {
-        // Only test if pdflatex is available
-        if (!TikZExporter.isPdfLatexAvailable()) {
-            System.out.println("Skipping PDF export test - pdflatex not available");
-            return;
-        }
+        // A CASE THAT CANNOT RUN IS SKIPPED, NOT PASSED. Printing and returning
+        // reported green while asserting nothing, so the export stayed
+        // unexercised and invisible in the skip count; TikZExporterTest gates
+        // the same condition this way.
+        Assumptions.assumeTrue(TikZExporter.isPdfLatexAvailable(),
+                "pdflatex not on PATH; skipping PDF export test");
 
         LayeredNetwork model = createSimpleLQN();
 
@@ -389,11 +391,8 @@ public class SequenceDiagramExporterTest {
 
     @Test
     public void testPngExportWhenAvailable() throws Exception {
-        // Only test if pdflatex is available
-        if (!TikZExporter.isPdfLatexAvailable()) {
-            System.out.println("Skipping PNG export test - pdflatex not available");
-            return;
-        }
+        Assumptions.assumeTrue(TikZExporter.isPdfLatexAvailable(),
+                "pdflatex not on PATH; skipping PNG export test");
 
         LayeredNetwork model = createSimpleLQN();
 

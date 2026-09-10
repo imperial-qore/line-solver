@@ -1,10 +1,13 @@
 function updateMetrics(self, it)
-switch self.options.method
+switch self.lnmethod
     case 'moment3'
         % see _kb/06-solver-catalog.md (LN section) for rationale
         updateMetricsMomentBased(self,it)
+    case {'srvn.ph','flat.ph'}
+        % see _kb/06-solver-catalog.md (LN section) for rationale
+        updateMetricsPH(self,it)
     otherwise
-        % default method for 'default', 'mva', 'nc', etc.
+        % 'srvn.cs': the routing encoding of the activity graph
         updateMetricsDefault(self,it)
 end
 end

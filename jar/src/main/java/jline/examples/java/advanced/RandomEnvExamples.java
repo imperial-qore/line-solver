@@ -9,6 +9,7 @@ import jline.lang.nodes.*;
 import jline.lang.processes.*;
 import jline.solvers.NetworkSolver;
 import jline.solvers.env.ENV;
+import jline.solvers.ctmc.CTMC;
 import jline.solvers.fluid.FLD;
 import jline.solvers.wrappers.jmt.JMT;
 import jline.solvers.mva.MVA;
@@ -19,8 +20,8 @@ import java.util.Scanner;
 /**
  * Examples demonstrating queueing networks in random environments.
  * 
- * This class provides Java implementations corresponding to the Kotlin notebooks
- * in jline.examples.kotlin.advanced.randomEnv package.
+ * This class provides Java implementations corresponding to the example notebooks
+ * in jline.examples.java.advanced.randomEnv package.
  */
 public class RandomEnvExamples {
 
@@ -59,16 +60,22 @@ public class RandomEnvExamples {
         Environment envModel = RandomEnvironmentModel.renv_twostages_repairmen();
         int E = envModel.getEnsemble().size();
         
-        // Create solver options
+        // THE ITERATION CONTROLS AND THE STAGE HORIZON ARE PART OF THE GOLDEN.
+        // An environment couples TRANSIENT stage solves, so a row given a
+        // different horizon or integrator answers a different question: the
+        // reference states timespan [0, 1e3] on the fluid solver and leaves the
+        // integrator at its default, and overriding `stiff` or the ODE max step
+        // walks a different trajectory.
         SolverOptions options = new SolverOptions(SolverType.ENV);
+        options.timespan = new double[]{0, Double.POSITIVE_INFINITY};
+        options.iter_max = 100;
         options.iter_tol = 0.01;
-        options.timespan[0] = 0;
+        options.method = "default";
         options.verbose = VerboseLevel.STD;
         
         SolverOptions fluidOptions = new SolverOptions(SolverType.FLUID);
-        fluidOptions.timespan[1] = 1000;
-        fluidOptions.stiff = false;
-        fluidOptions.setODEMaxStep(0.25);
+        fluidOptions.timespan = new double[]{0, 1000};
+        fluidOptions.verbose = VerboseLevel.SILENT;
         
         // Create solvers for each stage
         NetworkSolver[] solvers = new NetworkSolver[E];
@@ -108,21 +115,27 @@ public class RandomEnvExamples {
         Environment envModel = RandomEnvironmentModel.renv_threestages_repairmen();
         int E = envModel.getEnsemble().size();
         
-        // Create solver options
+        // CTMC STAGES, as the reference pins: each stage is solved exactly and
+        // the horizon is the whole line, so the stage solve is a steady state.
         SolverOptions envOptions = new SolverOptions(SolverType.ENV);
+        envOptions.timespan = new double[]{0, Double.POSITIVE_INFINITY};
+        envOptions.iter_max = 100;
         envOptions.iter_tol = 0.05;
-        envOptions.timespan[0] = 0;
+        envOptions.method = "default";
         
-        SolverOptions fluidOptions = new SolverOptions(SolverType.FLUID);
-        fluidOptions.stiff = false;
-        fluidOptions.setODEMaxStep(0.25);
-        fluidOptions.verbose = VerboseLevel.SILENT;
+        // The stage horizon stays at the CTMC default, which is open at both
+        // ends: SolverENV reads timespan[1] to choose between a steady-state and
+        // a transient stage solve, and an open horizon is the steady state the
+        // reference asks each stage for.
+        SolverOptions ctmcOptions = new SolverOptions(SolverType.CTMC);
+        ctmcOptions.stiff = false;
+        ctmcOptions.verbose = VerboseLevel.SILENT;
         
         // Create solvers for each stage
         NetworkSolver[] solvers = new NetworkSolver[E];
         for (int e = 0; e < E; e++) {
-            solvers[e] = new FLD(envModel.getModel(e));
-            solvers[e].options = fluidOptions;
+            solvers[e] = new CTMC(envModel.getModel(e));
+            solvers[e].options = ctmcOptions;
         }
         
         // Create environment solver
@@ -156,15 +169,19 @@ public class RandomEnvExamples {
         Environment envModel = RandomEnvironmentModel.renv_fourstages_repairmen();
         int E = envModel.getEnsemble().size();
         
-        // Create solver options
+        // THIS FIXED POINT IS TOLERANCE-DEPENDENT: run to convergence it lands
+        // on Queue1 Tput 0.97136 where the reference's iter_tol = 0.05 stops it
+        // at 0.9716, and the golden holds the latter. So the controls are stated
+        // rather than left at the engine default.
         SolverOptions options = new SolverOptions(SolverType.ENV);
+        options.timespan = new double[]{0, Double.POSITIVE_INFINITY};
+        options.iter_max = 100;
         options.iter_tol = 0.05;
-        options.timespan[0] = 0;
+        options.method = "default";
         options.verbose = VerboseLevel.STD;
         
         SolverOptions fluidOptions = new SolverOptions(SolverType.FLUID);
-        fluidOptions.stiff = false;
-        fluidOptions.setODEMaxStep(0.25);
+        fluidOptions.timespan = new double[]{0, Double.POSITIVE_INFINITY};
         fluidOptions.verbose = VerboseLevel.SILENT;
         
         // Create solvers for each stage

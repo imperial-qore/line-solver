@@ -73,6 +73,7 @@ from .map_analysis import (
     map_pntiter,
     map_pntquad,
     map2_fit,
+    map2_fit_idc,
     # Utility functions
     map_joint,
     map_issym,
@@ -87,6 +88,8 @@ from .aph2_fitting import (
     aph2_fitall,
     aph2_adjust,
     aph2_fit,
+    aph2_fit_map,
+    aph2_fit_trace,
 )
 from .mmap_ops import (
     mmap_infgen,
@@ -115,6 +118,7 @@ from .mmap_ops import (
     mmap_maps,
     mmap_count_mean,
     mmap_count_var,
+    mmap_count_moment,
     mmap_count_idc,
     mmap_count_mcov,
     mmap_idc,
@@ -130,6 +134,11 @@ from .ldqbd import (
     ldqbd,
     LdqbdResult,
     LdqbdOptions,
+)
+
+from .ldqbd_mphc import (
+    ldqbd_mphc,
+    ph_multisets,
 )
 
 from .map_bmap_1 import (
@@ -180,6 +189,8 @@ from .mapm1ps import (
 from ..mmdp import mmdp_isfeasible
 
 from .mfq import *  # noqa: F401,F403  (mfq_* fluid-queue wrappers)
+
+from .hyperexp_longtail import hyperexp_fit_longtail
 
 __all__ = [
     # MAP analysis
@@ -242,6 +253,7 @@ __all__ = [
     'map_pntiter',
     'map_pntquad',
     'map2_fit',
+    'map2_fit_idc',
     # Utility functions
     'map_joint',
     'map_issym',
@@ -260,6 +272,8 @@ __all__ = [
     'aph2_fitall',
     'aph2_adjust',
     'aph2_fit',
+    'aph2_fit_map',
+    'aph2_fit_trace',
     'mmap_compress',
     'mmap_exponential',
     # New MMAP functions
@@ -280,6 +294,7 @@ __all__ = [
     'mmap_maps',
     'mmap_count_mean',
     'mmap_count_var',
+    'mmap_count_moment',
     'mmap_count_idc',
     'mmap_count_mcov',
     'mmap_idc',
@@ -293,6 +308,9 @@ __all__ = [
     'ldqbd',
     'LdqbdResult',
     'LdqbdOptions',
+    # Exact M/PH/c LD-QBD blocks (multiset of the busy-server phases)
+    'ldqbd_mphc',
+    'ph_multisets',
     # MAP/BMAP/1 queue solver (GI/M/1-type)
     'MAPBMAP1Result',
     'solver_mam_map_bmap_1',
@@ -328,4 +346,5 @@ __all__ = [
     'map_m1ps_sojourn',
     # MMDP
     'mmdp_isfeasible',
+    'hyperexp_fit_longtail',
 ]

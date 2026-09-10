@@ -77,6 +77,8 @@ print('Probability that station M is in the specified aggregated state.\n')
 solver_ctmc = CTMC(model, options)
 pr = solver_ctmc.getProbAggr(target_station)
 print(f'CTMC: Station {M} is in state {target_state} with probability {pr}')
+print('Pmarga_ctmc =')
+print(pr)
 
 solver_nc = NC(model, options)
 pr = solver_nc.getProbAggr(target_station)

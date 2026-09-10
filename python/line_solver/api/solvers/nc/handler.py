@@ -76,6 +76,20 @@ def _lld_encodes_multiserver(lldscaling, nservers, NK, M) -> bool:
     return True
 
 
+def _lld_saturation_level(murow) -> int:
+    """First column (1-based) of the trailing constant run of a limited
+    load-dependence row, i.e. the level b with mu(n)=mu(b) for every n>=b; 1 on a
+    flat or empty row. This is the level pfqn_ldmx_ec infers, so a row cut below
+    it is read as a different, slower station."""
+    murow = np.asarray(murow).flatten()
+    b = murow.size
+    if b == 0:
+        return 1
+    while b > 1 and murow[b - 2] == murow[b - 1]:
+        b -= 1
+    return int(b)
+
+
 @dataclass
 class SolverNCReturn:
     """Result of NC solver analysis."""
@@ -356,7 +370,9 @@ def solver_nc(sn: NetworkStruct, options: Optional[SolverOptions] = None) -> Sol
         # common-random-numbers cancellation in the exp(lGr - lG) ratios.
         pfqn_options = {'method': options.method, 'tol': options.tol,
                         'samples': getattr(options, 'samples', None),
-                        'seed': getattr(options, 'seed', None)}
+                        'seed': getattr(options, 'seed', None),
+                        # pfqn_mcmc reads config.mcmc_batches and config.mcmc_burnin
+                        'config': getattr(options, 'config', None)}
         # Report the algorithm that actually runs, not the one asked for:
         # pfqn_nc substitutes convolution for 'comom', so recording
         # options.method here would name an algorithm that never executed.
@@ -366,6 +382,10 @@ def solver_nc(sn: NetworkStruct, options: Optional[SolverOptions] = None) -> Sol
             # Mixed or closed network: compute normalizing constant for closed chains only
             Nchain_closed = np.array([Nchain[c] if c in closed_chains else 0 for c in range(C)])
             G, lG = pfqn_nc(Lms_scaled, Nchain_closed, Z_scaled, method=options.method, options=pfqn_options)
+            # 'default' picks its algorithm from the problem shape, which only
+            # pfqn_nc knows; without this the banner reports 'default' and the
+            # type field degrades to the conservative approximate label
+            method = pfqn_options.get('resolved_method', method)
         else:
             # Purely open network: no normalizing constant needed
             G, lG = 1.0, 0.0
@@ -379,8 +399,49 @@ def solver_nc(sn: NetworkStruct, options: Optional[SolverOptions] = None) -> Sol
         else:
             Qchain = np.zeros((M, C))
 
+        # Algorithm 2 of Birman-Kogan returns mean values rather than a
+        # multichain constant, so it fills X and Q directly instead of taking
+        # the lG ratios the other methods use.
+        # 'ble/lc' is the same reduction reached by DEFAULT dispatch on a
+        # many-station multichain model, where lG stays the BLE expansion.
+        requested = str(options.method).lower()
+        loadconceal = requested in ('lc', 'lc.ue') or method == 'ble/lc'
+        # Chen-O'Cinneide regularization likewise returns mean values rather than a
+        # constant: it simulates a network that shares the steady state of this one, so
+        # ONE run gives every X(c) and Q(i,c) at once. Differencing lG instead would cost
+        # R + M*R further simulations for the same means. Seidmann's surrogate delay is
+        # added back below, exactly as the constant-ratio branch does.
+        mcmc = requested == 'mcmc'
+        if mcmc and closed_chains:
+            from ...pfqn.mcmc import pfqn_mcmc
+            Nchain_closed = np.array([Nchain[c] if c in closed_chains else 0 for c in range(C)])
+            res = pfqn_mcmc(Lms_scaled, Nchain_closed, Z_scaled, None, pfqn_options)
+            for c in closed_chains:
+                Xchain[c] = res.X[c]
+                for i in range(M):
+                    if np.isinf(nservers[i]):
+                        Qchain[i, c] = Lchain[i, c] * Xchain[c]
+                    else:
+                        Qchain[i, c] = Zms[i, c] * Xchain[c] + res.Q[i, c]
+        if loadconceal and closed_chains:
+            from ...pfqn.bk import pfqn_bklc
+            inner = 'ue' if requested == 'lc.ue' else 'mva'
+            Nchain_closed = np.array([Nchain[c] if c in closed_chains else 0 for c in range(C)])
+            # the fixed point converges linearly and slowly, so a solver-level
+            # reporting tolerance would stop it far from its own limit and at a
+            # different sweep in each codebase: iterate to the method's accuracy
+            Xthin, Qthin, _, _ = pfqn_bklc(Lms_scaled, Nchain_closed, Z_scaled,
+                                             inner, 1e-10, getattr(options, 'iter_max', 1000))
+            for c in closed_chains:
+                Xchain[c] = Xthin[c]
+                for i in range(M):
+                    if np.isinf(nservers[i]):
+                        Qchain[i, c] = Lchain[i, c] * Xchain[c]
+                    else:
+                        Qchain[i, c] = Zms[i, c] * Xchain[c] + Qthin[i, c]
+
         # Compute throughputs for closed chains
-        for c in closed_chains:
+        for c in (() if (loadconceal or mcmc) else closed_chains):
             Nchain_c = float(Nchain[c]) if hasattr(Nchain[c], '__float__') else Nchain[c]
             if Nchain_c <= 0:
                 continue
@@ -520,7 +581,7 @@ def solver_nc(sn: NetworkStruct, options: Optional[SolverOptions] = None) -> Sol
     if U is not None:
         U = np.abs(U)
         U = np.where(~np.isfinite(U), 0.0, U)
-        # Cap utilization at 1.0 for finite-server stations (matches Java/Kotlin Solver_mva.kt)
+        # Cap utilization at 1.0 for finite-server stations (matches Java Solver_mva.java)
         # For INF servers, utilization represents mean number of busy servers (not capped)
         for i in range(M):
             if np.isfinite(nservers[i]):
@@ -916,18 +977,22 @@ def solver_ncld(sn: NetworkStruct, options: Optional[SolverOptions] = None) -> S
                         mu[i, j] = lldscaling[i, -1] if lldscaling.shape[1] > 0 else 1.0
 
         # Compute NC
-        from ...pfqn import pfqn_ncld, pfqn_mushift, pfqn_fnc, pfqn_mvaldmx
+        from ...pfqn import pfqn_ncld, pfqn_mushift, pfqn_fnc, pfqn_ncldmx
         Nchain0 = np.zeros(C)
         # samples/seed must reach the stochastic estimators (pfqn_is / pfqn_ld_is):
         # without seed each call would draw an independent stream, destroying the
         # common-random-numbers cancellation in the exp(lGr - lG) ratios.
         pfqn_options = {'method': options.method, 'tol': options.tol,
                         'samples': getattr(options, 'samples', None),
-                        'seed': getattr(options, 'seed', None)}
+                        'seed': getattr(options, 'seed', None),
+                        # pfqn_mcmc reads config.mcmc_batches and config.mcmc_burnin
+                        'config': getattr(options, 'config', None)}
 
         open_chains = [c for c in range(C) if np.isinf(Nchain[c])]
         if len(open_chains) > 0:
-            # Mixed limited load-dependent network: exact chain-level MVALDMX.
+            # Mixed limited load-dependent network: the chain-level normalizing
+            # constant of Bruell-Balbo-Afshari effective capacity (pfqn_ncldmx),
+            # which never enumerates the closed population lattice.
             # Open chains enter via arrival rates lambdaChain; their reference
             # (source) stations carry only the 1/lambda bookkeeping demand and
             # are excluded. Delay stations fold into the think-time vector; the
@@ -937,20 +1002,33 @@ def solver_ncld(sn: NetworkStruct, options: Optional[SolverOptions] = None) -> S
             queue_stations = [i for i in range(M)
                               if i not in source_stations and i not in delay_stations]
             nq = len(queue_stations)
+            # pfqn_ldmx_ec reads the limited-load-dependence level b_i off the
+            # rate row itself -- the first column equal to the LAST one -- and
+            # treats every rate past it as saturated. Cutting the row at the
+            # closed population declares a c-server station saturated at
+            # min(n,c) with n<c whenever c exceeds it (and with no closed class
+            # at all it flattens the row to mu(1)), so keep every column up to
+            # the start of each row's trailing constant run.
+            lld_width = lldscaling.shape[1]
             ncol = max(1, int(np.sum(Nchain_finite)))
+            for ist in queue_stations:
+                ncol = max(ncol, _lld_saturation_level(lldscaling[ist, :]))
             Zvec = np.zeros(C)
             for di in delay_stations:
                 Zvec += Lchain[di, :]
             Dq = np.zeros((nq, C))
             muq = np.ones((nq, ncol))
-            avail = min(ncol, lldscaling.shape[1]) if lldscaling.shape[1] > 0 else 0
             for qi, ist in enumerate(queue_stations):
                 Dq[qi, :] = Lchain[ist, :]
-                if avail > 0:
+                if lld_width > 0:
+                    avail = min(ncol, lld_width)
                     muq[qi, :avail] = lldscaling[ist, :avail]
-            XN, QN_mx, _, _, lG, _ = pfqn_mvaldmx(lambdaChain, Dq, Nchain, Zvec,
-                                                  muq, np.ones(nq))
-            Xchain = np.asarray(XN, dtype=float).flatten()
+                    muq[qi, avail:] = lldscaling[ist, lld_width - 1]
+            mx = pfqn_ncldmx(lambdaChain, Dq, Nchain, Zvec, muq, np.ones(nq),
+                             pfqn_options)
+            lG = mx.lG
+            QN_mx = mx.QN
+            Xchain = np.asarray(mx.XN, dtype=float).flatten()
             method = 'ncldmx'
             Qchain = np.zeros((M, C))
             for qi, ist in enumerate(queue_stations):
@@ -1116,9 +1194,16 @@ def solver_ncld(sn: NetworkStruct, options: Optional[SolverOptions] = None) -> S
         T = np.where(np.isfinite(T), T, 0.0)
 
     # Utilization correction for multi-server and infinite server stations
+    #
+    # sn.visits is indexed by STATEFUL node while i and sn.refstat are STATION
+    # indices; the two spaces coincide only when every stateful node is a
+    # station, so the raw index is right on most models and silently wrong on
+    # any model carrying a Cache or another non-station stateful node.
+    s2sf = getattr(sn, 'stationToStateful', None)
     for i in range(M):
         if U is None:
             continue
+        i_sf = int(s2sf[i]) if s2sf is not None else i
         if nservers[i] > 1 and np.isfinite(nservers[i]):
             # Multi-server utilization correction
             for r in range(K):
@@ -1136,8 +1221,9 @@ def solver_ncld(sn: NetworkStruct, options: Optional[SolverOptions] = None) -> S
                         refstat = sn.refstat
                         if refstat is not None and r < len(refstat):
                             ref_idx = int(refstat[r])
+                            ref_idx = int(s2sf[ref_idx]) if s2sf is not None else ref_idx
                             if visit_c[ref_idx, r] > 0:
-                                U[i, r] = X[0, r] * visit_c[i, r] / visit_c[ref_idx, r] * ST[i, r] / nservers[i]
+                                U[i, r] = X[0, r] * visit_c[i_sf, r] / visit_c[ref_idx, r] * ST[i, r] / nservers[i]
         elif np.isinf(nservers[i]):
             # Infinite server utilization correction
             # Match MATLAB solver_ncld.m lines 230-244
@@ -1160,8 +1246,9 @@ def solver_ncld(sn: NetworkStruct, options: Optional[SolverOptions] = None) -> S
                             refstat = sn.refstat
                             if refstat is not None and r < len(refstat):
                                 ref_idx = int(refstat[r])
+                                ref_idx = int(s2sf[ref_idx]) if s2sf is not None else ref_idx
                                 if visit_c[ref_idx, r] > 0:
-                                    U[i, r] = lambda_arr[r] * visit_c[i, r] / visit_c[ref_idx, r] * ST[i, r]
+                                    U[i, r] = lambda_arr[r] * visit_c[i_sf, r] / visit_c[ref_idx, r] * ST[i, r]
                 else:
                     # Closed class - use X
                     if X is not None and X[0, r] > 0:
@@ -1178,8 +1265,9 @@ def solver_ncld(sn: NetworkStruct, options: Optional[SolverOptions] = None) -> S
                             refstat = sn.refstat
                             if refstat is not None and r < len(refstat):
                                 ref_idx = int(refstat[r])
+                                ref_idx = int(s2sf[ref_idx]) if s2sf is not None else ref_idx
                                 if visit_c[ref_idx, r] > 0:
-                                    U[i, r] = X[0, r] * visit_c[i, r] / visit_c[ref_idx, r] * ST[i, r]
+                                    U[i, r] = X[0, r] * visit_c[i_sf, r] / visit_c[ref_idx, r] * ST[i, r]
         else:
             # Single server with lldscaling
             if lldscaling.shape[0] > i:
@@ -1277,6 +1365,7 @@ class SolverNCCacheReturn:
     runtime: float           # Runtime in seconds
     method: str              # Method used
     itemprob: Optional[np.ndarray] = None  # Per-item occupancy [n x (h+1)], col 0 = miss
+    listcost: Optional[np.ndarray] = None  # Mean storage cost held by each list [h]
 
 
 def solver_nc_cache_analyzer(sn: NetworkStruct, options: Optional[SolverOptions] = None) -> SolverNCCacheReturn:
@@ -1288,7 +1377,7 @@ def solver_nc_cache_analyzer(sn: NetworkStruct, options: Optional[SolverOptions]
 
     Args:
         sn: NetworkStruct describing the network with a Cache node
-        options: Solver options (method: 'exact', 'sampling', 'spm'/default)
+        options: Solver options (method: 'exact', 'sampling', 'spm'/'rayint'/default)
 
     Returns:
         SolverNCCacheReturn with cache performance metrics
@@ -1303,6 +1392,8 @@ def solver_nc_cache_analyzer(sn: NetworkStruct, options: Optional[SolverOptions]
         cache_miss_spm,
         cache_miss_is,
         cache_prob_is,
+        cache_cost,
+        cache_cost_pathcheck,
     )
 
     if options is None:
@@ -1449,10 +1540,25 @@ def solver_nc_cache_analyzer(sn: NetworkStruct, options: Optional[SolverOptions]
                         for k in range(n):
                             R[v][k] = np.asarray(R_data[v])
         elif isinstance(R_data, np.ndarray):
-            # Single matrix for all users/items
-            for v in range(u):
-                for k in range(n):
-                    R[v][k] = R_data.copy()
+            # DISPATCH ON ndim. accost is a {user, item} cell of (h+1 x h+1)
+            # matrices in MATLAB, so an sn built from a model that carries one
+            # arrives here as a (u, n, h+1, h+1) array. Read as "one matrix for
+            # everything" it hands cache_gamma_lp a 4-D Rvi, whose every column
+            # then has many nonzero rows and the tree test fails with "a list
+            # with more than one parent". Only the 2-D case is a shared matrix.
+            if R_data.ndim == 4:
+                for v in range(min(u, R_data.shape[0])):
+                    for k in range(min(n, R_data.shape[1])):
+                        R[v][k] = R_data[v, k]
+            elif R_data.ndim == 3:
+                # One matrix per item, shared by every user.
+                for v in range(u):
+                    for k in range(min(n, R_data.shape[0])):
+                        R[v][k] = R_data[k]
+            else:
+                for v in range(u):
+                    for k in range(n):
+                        R[v][k] = R_data.copy()
 
     # Fill in default routing if not specified
     # Default: sequential access from level 0 to level h
@@ -1467,27 +1573,93 @@ def solver_nc_cache_analyzer(sn: NetworkStruct, options: Optional[SolverOptions]
                 R[v][k] = R_default
 
     # Compute gamma using cache_gamma_lp
-    gamma, _, _, _ = cache_gamma_lp(lambd, R)
+    gamma, _, _, _, parent = cache_gamma_lp(lambd, R)
+
+    # per-item storage costs and per-list cost caps (ton21cache Sec. IX)
+    sigma = np.atleast_1d(getattr(ch, 'itemsize', None)
+                          if getattr(ch, 'itemsize', None) is not None
+                          else np.array([])).flatten()
+    costcap = np.atleast_1d(getattr(ch, 'costcap', None)
+                            if getattr(ch, 'costcap', None) is not None
+                            else np.array([])).flatten()
+    if len(costcap) > 0:
+        from ...io.logging import line_warning
+        if len(sigma) == 0:
+            raise ValueError('Storage cost caps require per-item sizes; '
+                             'call Cache.setItemSizes first.')
+        if len(sigma) != n:
+            raise ValueError('The item size vector must have one entry per item.')
+        if len(costcap) != h:
+            raise ValueError('The cost cap vector must have one entry per cache list.')
+        viol = cache_cost_pathcheck(gamma, sigma, costcap, parent)
+        if viol.shape[0] > 0:
+            line_warning('solver_nc_cache_analyzer',
+                         'Storage cost caps block the promotion path of item %d into list %d at list %d (and %d further pairs). The exact recursion normalizes over all size-feasible states, which is then a strict superset of the states the cache can reach; cross-check with SolverLDES.'
+                         % (viol[0, 0] + 1, viol[0, 1] + 1, viol[0, 2] + 1, viol.shape[0] - 1))
+    sigma_arg = sigma if len(sigma) > 0 else None
+    cap_arg = costcap if len(costcap) > 0 else None
+
+    cache_method = options.method
+    # 'rayint' is an alias of 'spm': on a cache both name the SPM saddle point, and
+    # the method name stays live for solver_nc_retrieval_analyzer's delayed-hit expansion.
+    if cache_method in ('rayint', 'spm'):
+        cache_method = 'default'
+    # The SPM family serves its size-tilted form (cache_spm_size) once the items
+    # carry storage costs. The saddle escapes to infinity at sum(m) = n, so the
+    # size-free saddle point takes over there rather than the exact recursion,
+    # which would refuse every replacement policy outside RR/FIFO.
+    use_spm_size = (cache_method == 'default' and len(sigma) > 0
+                    and float(np.sum(m)) < n)
+    if len(costcap) > 0 and not use_spm_size and cache_method not in ('exact', 'sampling'):
+        # The size-free SPM and the mean-field methods have no cost-capped
+        # counterpart: the k - sigma_i 1_j argument couples item sizes into the
+        # recursion graph, which only cache_spm_size and the exact path carry.
+        from ...io.logging import line_warning
+        lattice = n * float(np.prod(np.asarray(m) + 1)) * float(np.prod(costcap + 1))
+        cache_method = 'exact' if lattice <= 1e6 else 'sampling'
+        line_warning('solver_nc_cache_analyzer',
+                     "Method '%s' does not support storage cost caps; using '%s' instead."
+                     % (options.method, cache_method))
 
     # Compute miss rates based on method
-    if options.method == 'exact':
+    if cache_method == 'exact':
         # Exact method using recursive computation
-        pij = cache_prob_erec(gamma, m)
+        pij = cache_prob_erec(gamma, m, sigma_arg, cap_arg)
         missRate = np.zeros(u)
         for v in range(u):
             # missRate[v] = sum_k lambda[v,k,0] * pij[k,0]
             missRate[v] = np.dot(lambd[v, :, 0], pij[:, 0])
         method = 'exact'
 
-    elif options.method == 'sampling':
+    elif use_spm_size:
+        # Size-tilted SPM: a 2h Newton solve whose cost does not grow with the
+        # (m,k) lattice the exact recursion walks. O(1/n), so it wants room
+        # between the occupancies and n.
+        from ...cache import cache_spm_size
+        if cap_arg is not None:
+            raycap = cap_arg
+        else:
+            # Sizes but no caps: cap each list at the dearest load it can hold, which
+            # is exactly slack, so the cost coordinate leaves the saddle and the
+            # expansion degenerates to the size-free one.
+            srt = np.sort(np.asarray(sigma, dtype=float))[::-1]
+            raycap = np.array([srt[:int(mj)].sum() for mj in np.atleast_1d(m)])
+        _, lE, rayout = cache_spm_size(gamma, m, sigma, raycap)
+        pij = rayout.pij
+        missRate = np.zeros(u)
+        for v in range(u):
+            missRate[v] = np.dot(lambd[v, :, 0], pij[:, 0])
+        method = 'spm.size'
+
+    elif cache_method == 'sampling':
         # Sampling method
         samples = getattr(options, 'samples', 10000)
         if samples is None:
             samples = 10000
         try:
-            _, missRate_arr, _, _, lE = cache_miss_is(gamma, m, lambd, samples)
+            _, missRate_arr, _, _, lE = cache_miss_is(gamma, m, lambd, samples, sigma_arg, cap_arg)
             missRate = missRate_arr.flatten() if missRate_arr is not None else np.zeros(u)
-            pij = cache_prob_is(gamma, m, samples)
+            pij = cache_prob_is(gamma, m, samples, sigma_arg, cap_arg)
         except Exception:
             # Fallback to SPM
             _, missRate_arr, _, _, lE = cache_miss_spm(gamma, m, lambd)
@@ -1496,7 +1668,8 @@ def solver_nc_cache_analyzer(sn: NetworkStruct, options: Optional[SolverOptions]
         method = 'sampling'
 
     else:
-        # Default: SPM (singular perturbation method)
+        # Size-free SPM (singular perturbation method), the default/spm/rayint
+        # branch with no item sizes
         _, missRate_arr, _, _, lE = cache_miss_spm(gamma, m, lambd)
         missRate = missRate_arr.flatten() if missRate_arr is not None else np.zeros(u)
         pij = cache_prob_spm(gamma, m)
@@ -1634,7 +1807,13 @@ def solver_nc_cache_analyzer(sn: NetworkStruct, options: Optional[SolverOptions]
                      'Per-item cache occupancy (getAvgItemTable) requires the exact algorithm and is skipped for caches with more than 10 items (%d items); reporting NaN.' % n)
         itemprob = np.full((n, h + 1), np.nan)
     else:
-        itemprob = cache_prob_erec(gamma, m)
+        itemprob = cache_prob_erec(gamma, m, sigma_arg, cap_arg)
+
+    # mean storage cost held by each list, K_j = sum_i sigma_i pi_ij
+    listcost = None
+    if sigma_arg is not None and pij is not None and pij.shape == (n, h + 1):
+        listcost = cache_cost(gamma, m, sigma_arg, cap_arg, pij)
+        ch.actuallistcost = listcost
 
     return SolverNCCacheReturn(
         QN=QN,
@@ -1647,7 +1826,8 @@ def solver_nc_cache_analyzer(sn: NetworkStruct, options: Optional[SolverOptions]
         pij=pij,
         runtime=runtime,
         method=method,
-        itemprob=itemprob
+        itemprob=itemprob,
+        listcost=listcost
     )
 
 
@@ -1668,6 +1848,7 @@ class SolverNCCacheQNReturn:
     method: str              # Method used
     visits: Optional[dict] = None       # Updated visit ratios (stateful)
     nodevisits: Optional[dict] = None   # Updated visit ratios (all nodes)
+    itemprob: Optional[list] = None     # Per cache, (n x h+1) embedded occupancy; col 0 = miss
 
 
 def solver_nc_cacheqn_analyzer(
@@ -1777,6 +1958,7 @@ def solver_nc_cacheqn_analyzer(
     hitprob_all = np.zeros((len(caches), K))
     missprob_all = np.zeros((len(caches), K))
     missrate = np.zeros((len(caches), K))
+    cacheinfo = {}  # cache_idx -> converged (gamma, m, strat, lambda_cache, R)
 
     # Main iteration loop
     QN, UN, RN, TN, XN = None, None, None, None, None
@@ -1874,9 +2056,19 @@ def solver_nc_cacheqn_analyzer(
                                 for k in range(n):
                                     R[v][k] = np.asarray(R_cost[v])
                 elif isinstance(R_cost, np.ndarray):
-                    for v in range(u):
-                        for k in range(n):
-                            R[v][k] = R_cost.copy()
+                    # see the ndim dispatch in solver_nc_cache_analyzer
+                    if R_cost.ndim == 4:
+                        for v in range(min(u, R_cost.shape[0])):
+                            for k in range(min(n, R_cost.shape[1])):
+                                R[v][k] = R_cost[v, k]
+                    elif R_cost.ndim == 3:
+                        for v in range(u):
+                            for k in range(min(n, R_cost.shape[0])):
+                                R[v][k] = R_cost[k]
+                    else:
+                        for v in range(u):
+                            for k in range(n):
+                                R[v][k] = R_cost.copy()
 
             # Fill default routing if not specified
             for v in range(u):
@@ -1890,10 +2082,14 @@ def solver_nc_cacheqn_analyzer(
 
             # Compute gamma using cache_gamma_lp
             try:
-                gamma, _, _, _ = cache_gamma_lp(lambda_cache, R)
+                gamma, _, _, _, _ = cache_gamma_lp(lambda_cache, R)
             except Exception:
                 # Fallback: uniform gamma
                 gamma = np.ones((n, h + 1)) / n
+
+            # keep the last (converged) isolated-cache inputs for the per-item law
+            cacheinfo[cache_idx] = (gamma, m, getattr(ch, 'replacestrat', None),
+                                    lambda_cache, R)
 
             # Compute miss rates based on method
             if options.method == 'exact':
@@ -2113,6 +2309,11 @@ def solver_nc_cacheqn_analyzer(
         RN = RN_stations
         TN = TN_stations
 
+    # Per-item occupancy from the converged access factors, as SolverMVA reports it.
+    itemprob = []
+    for cache_idx in range(len(caches)):
+        itemprob.append(_cacheqn_itemprob(cacheinfo.get(cache_idx)))
+
     return SolverNCCacheQNReturn(
         QN=QN,
         UN=UN,
@@ -2128,7 +2329,37 @@ def solver_nc_cacheqn_analyzer(
         method=method,
         visits=sn_work.visits,
         nodevisits=sn_work.nodevisits,
+        itemprob=itemprob,
     )
+
+
+def _cacheqn_itemprob(info):
+    """Per-item occupancy [nitems x (lists+1)] from converged isolated-cache inputs.
+
+    This is the EMBEDDED (per-request) law: the stationary law of the cache-content
+    chain seen at request instants, which coincides with the time-stationary one only
+    under PASTA. SolverCTMC reports the time-weighted counterpart instead.
+
+    The RR/FIFO exact recursion is skipped past 10 items and NaN reported, since an
+    approximation of it is not a distribution.
+    """
+    if info is None:
+        return None
+    from ...cache import cache_prob_erec, cache_ttl_lrua
+    from ...io.logging import line_warning
+    from ....lang.base import ReplacementStrategy
+    gamma, m, strat, lambda_cache, Rcost = info
+    n = int(np.asarray(gamma).shape[0])
+    h = len(np.atleast_1d(m))
+    if n <= 0 or h <= 0:
+        return None
+    if strat == ReplacementStrategy.LRU:
+        return cache_ttl_lrua(lambda_cache, Rcost, m)
+    if n > 10:
+        line_warning('solver_nc_cacheqn_analyzer',
+                     'Per-item cache occupancy (getAvgItemTable) requires the exact algorithm for RR/FIFO and is skipped for caches with more than 10 items (%d items); reporting NaN.' % n)
+        return np.full((n, h + 1), np.nan)
+    return cache_prob_erec(gamma, m)
 
 
 __all__ = [

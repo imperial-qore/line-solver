@@ -1,0 +1,466 @@
+{
+  "class": {
+    "CTMC": "deterministic",
+    "JMT": "stochastic",
+    "MVA": "deterministic"
+  },
+  "example": "prio_hol_open",
+  "solvers": {
+    "CTMC": [
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class1",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.052281,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class2",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.050449,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class3",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.046082,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.20912,
+        "JobClass": "Class1",
+        "QLen": 0.090117,
+        "ResidT": 1.7237,
+        "RespT": 0.43092,
+        "Station": "WebServer",
+        "Tput": 0.20912,
+        "Util": 0.062737
+      },
+      {
+        "ArvR": 0.20179,
+        "JobClass": "Class2",
+        "QLen": 0.12132,
+        "ResidT": 2.4048,
+        "RespT": 0.60119,
+        "Station": "WebServer",
+        "Tput": 0.20179,
+        "Util": 0.1009
+      },
+      {
+        "ArvR": 0.18433,
+        "JobClass": "Class3",
+        "QLen": 0.12559,
+        "ResidT": 2.7255,
+        "RespT": 0.68136,
+        "Station": "WebServer",
+        "Tput": 0.18433,
+        "Util": 0.1106
+      },
+      {
+        "ArvR": 0.052281,
+        "JobClass": "Class1",
+        "QLen": 0.06951,
+        "ResidT": 1.3295,
+        "RespT": 1.3295,
+        "Station": "Storage1",
+        "Tput": 0.052281,
+        "Util": 0.057509
+      },
+      {
+        "ArvR": 0.050449,
+        "JobClass": "Class2",
+        "QLen": 0.075291,
+        "ResidT": 1.4924,
+        "RespT": 1.4924,
+        "Station": "Storage1",
+        "Tput": 0.050449,
+        "Util": 0.065583
+      },
+      {
+        "ArvR": 0.046082,
+        "JobClass": "Class3",
+        "QLen": 0.076531,
+        "ResidT": 1.6607,
+        "RespT": 1.6607,
+        "Station": "Storage1",
+        "Tput": 0.046082,
+        "Util": 0.069123
+      },
+      {
+        "ArvR": 0.052281,
+        "JobClass": "Class1",
+        "QLen": 0.12865,
+        "ResidT": 2.4607,
+        "RespT": 2.4607,
+        "Station": "Storage2",
+        "Tput": 0.052281,
+        "Util": 0.10456
+      },
+      {
+        "ArvR": 0.050449,
+        "JobClass": "Class2",
+        "QLen": 0.1301,
+        "ResidT": 2.5789,
+        "RespT": 2.5789,
+        "Station": "Storage2",
+        "Tput": 0.050449,
+        "Util": 0.10594
+      },
+      {
+        "ArvR": 0.046082,
+        "JobClass": "Class3",
+        "QLen": 0.10964,
+        "ResidT": 2.3793,
+        "RespT": 2.3793,
+        "Station": "Storage2",
+        "Tput": 0.046082,
+        "Util": 0.087556
+      },
+      {
+        "ArvR": 0.052281,
+        "JobClass": "Class1",
+        "QLen": 0.18891,
+        "ResidT": 3.6134,
+        "RespT": 3.6134,
+        "Station": "Storage3",
+        "Tput": 0.052281,
+        "Util": 0.1307
+      },
+      {
+        "ArvR": 0.050449,
+        "JobClass": "Class2",
+        "QLen": 0.1688,
+        "ResidT": 3.3459,
+        "RespT": 3.3459,
+        "Station": "Storage3",
+        "Tput": 0.050449,
+        "Util": 0.095853
+      },
+      {
+        "ArvR": 0.046082,
+        "JobClass": "Class3",
+        "QLen": 0.22741,
+        "ResidT": 4.9349,
+        "RespT": 4.9349,
+        "Station": "Storage3",
+        "Tput": 0.046082,
+        "Util": 0.19815
+      }
+    ],
+    "JMT": [
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class1",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.099476,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class2",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.10099,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class3",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.10032,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.41312,
+        "JobClass": "Class1",
+        "QLen": 0.38216,
+        "ResidT": 3.7095,
+        "RespT": 0.92738,
+        "Station": "WebServer",
+        "Tput": 0.41396,
+        "Util": 0.12259
+      },
+      {
+        "ArvR": 0.40589,
+        "JobClass": "Class2",
+        "QLen": 0.62218,
+        "ResidT": 5.2665,
+        "RespT": 1.3166,
+        "Station": "WebServer",
+        "Tput": 0.40594,
+        "Util": 0.2294
+      },
+      {
+        "ArvR": 0.40095,
+        "JobClass": "Class3",
+        "QLen": 0.48678,
+        "ResidT": 4.9389,
+        "RespT": 1.2347,
+        "Station": "WebServer",
+        "Tput": 0.4009,
+        "Util": 0.2343
+      },
+      {
+        "ArvR": 0.095361,
+        "JobClass": "Class1",
+        "QLen": 0.19583,
+        "ResidT": 2.0471,
+        "RespT": 2.0471,
+        "Station": "Storage1",
+        "Tput": 0.10008,
+        "Util": 0.10891
+      },
+      {
+        "ArvR": 0.097762,
+        "JobClass": "Class2",
+        "QLen": 0.21923,
+        "ResidT": 2.253,
+        "RespT": 2.253,
+        "Station": "Storage1",
+        "Tput": 0.097763,
+        "Util": 0.12798
+      },
+      {
+        "ArvR": 0.097788,
+        "JobClass": "Class3",
+        "QLen": 0.22571,
+        "ResidT": 2.4106,
+        "RespT": 2.4106,
+        "Station": "Storage1",
+        "Tput": 0.097797,
+        "Util": 0.14704
+      },
+      {
+        "ArvR": 0.099388,
+        "JobClass": "Class1",
+        "QLen": 0.47227,
+        "ResidT": 4.8844,
+        "RespT": 4.8844,
+        "Station": "Storage2",
+        "Tput": 0.099392,
+        "Util": 0.18772
+      },
+      {
+        "ArvR": 0.10106,
+        "JobClass": "Class2",
+        "QLen": 0.55426,
+        "ResidT": 5.6882,
+        "RespT": 5.6882,
+        "Station": "Storage2",
+        "Tput": 0.10081,
+        "Util": 0.20439
+      },
+      {
+        "ArvR": 0.097216,
+        "JobClass": "Class3",
+        "QLen": 0.44299,
+        "ResidT": 4.6304,
+        "RespT": 4.6304,
+        "Station": "Storage2",
+        "Tput": 0.096474,
+        "Util": 0.186
+      },
+      {
+        "ArvR": 0.10004,
+        "JobClass": "Class1",
+        "QLen": 0.95343,
+        "ResidT": 9.8985,
+        "RespT": 9.8985,
+        "Station": "Storage3",
+        "Tput": 0.10086,
+        "Util": 0.24673
+      },
+      {
+        "ArvR": 0.10019,
+        "JobClass": "Class2",
+        "QLen": 4.0258,
+        "ResidT": 50.592,
+        "RespT": 50.592,
+        "Station": "Storage3",
+        "Tput": 0.099738,
+        "Util": 0.19686
+      },
+      {
+        "ArvR": 0.097676,
+        "JobClass": "Class3",
+        "QLen": 1.0593,
+        "ResidT": 12.792,
+        "RespT": 12.792,
+        "Station": "Storage3",
+        "Tput": 0.097651,
+        "Util": 0.41115
+      }
+    ],
+    "MVA": [
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class1",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.1,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class2",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.1,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class3",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.1,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.4,
+        "JobClass": "Class1",
+        "QLen": 0.37455,
+        "ResidT": 3.7455,
+        "RespT": 0.93636,
+        "Station": "WebServer",
+        "Tput": 0.4,
+        "Util": 0.12
+      },
+      {
+        "ArvR": 0.4,
+        "JobClass": "Class2",
+        "QLen": 0.45455,
+        "ResidT": 4.5455,
+        "RespT": 1.1364,
+        "Station": "WebServer",
+        "Tput": 0.4,
+        "Util": 0.2
+      },
+      {
+        "ArvR": 0.4,
+        "JobClass": "Class3",
+        "QLen": 0.49455,
+        "ResidT": 4.9455,
+        "RespT": 1.2364,
+        "Station": "WebServer",
+        "Tput": 0.4,
+        "Util": 0.24
+      },
+      {
+        "ArvR": 0.1,
+        "JobClass": "Class1",
+        "QLen": 0.19443,
+        "ResidT": 1.9443,
+        "RespT": 1.9443,
+        "Station": "Storage1",
+        "Tput": 0.1,
+        "Util": 0.11
+      },
+      {
+        "ArvR": 0.1,
+        "JobClass": "Class2",
+        "QLen": 0.21443,
+        "ResidT": 2.1443,
+        "RespT": 2.1443,
+        "Station": "Storage1",
+        "Tput": 0.1,
+        "Util": 0.13
+      },
+      {
+        "ArvR": 0.1,
+        "JobClass": "Class3",
+        "QLen": 0.23443,
+        "ResidT": 2.3443,
+        "RespT": 2.3443,
+        "Station": "Storage1",
+        "Tput": 0.1,
+        "Util": 0.15
+      },
+      {
+        "ArvR": 0.1,
+        "JobClass": "Class1",
+        "QLen": 0.5,
+        "ResidT": 5.0,
+        "RespT": 5.0,
+        "Station": "Storage2",
+        "Tput": 0.1,
+        "Util": 0.2
+      },
+      {
+        "ArvR": 0.1,
+        "JobClass": "Class2",
+        "QLen": 0.525,
+        "ResidT": 5.25,
+        "RespT": 5.25,
+        "Station": "Storage2",
+        "Tput": 0.1,
+        "Util": 0.21
+      },
+      {
+        "ArvR": 0.1,
+        "JobClass": "Class3",
+        "QLen": 0.475,
+        "ResidT": 4.75,
+        "RespT": 4.75,
+        "Station": "Storage2",
+        "Tput": 0.1,
+        "Util": 0.19
+      },
+      {
+        "ArvR": 0.1,
+        "JobClass": "Class1",
+        "QLen": 1.1362,
+        "ResidT": 11.362,
+        "RespT": 11.362,
+        "Station": "Storage3",
+        "Tput": 0.1,
+        "Util": 0.25
+      },
+      {
+        "ArvR": 0.1,
+        "JobClass": "Class2",
+        "QLen": 7.0064,
+        "ResidT": 70.064,
+        "RespT": 70.064,
+        "Station": "Storage3",
+        "Tput": 0.1,
+        "Util": 0.19
+      },
+      {
+        "ArvR": 0.1,
+        "JobClass": "Class3",
+        "QLen": 1.3162,
+        "ResidT": 13.162,
+        "RespT": 13.162,
+        "Station": "Storage3",
+        "Tput": 0.1,
+        "Util": 0.43
+      }
+    ]
+  }
+}

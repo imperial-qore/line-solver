@@ -143,7 +143,16 @@ from .environment import Environment, SolverENV, SolverEnv, ENV
 
 # Import I/O functions (native only)
 from .api.io import qn2jsimg, lqn2qn
+# The exception every deliberate LINE refusal raises, so a caller can
+# `except LineError` instead of catching every RuntimeError in sight. It is
+# re-homed onto the package the way numpy re-homes its own public exceptions:
+# a traceback then ends in `line_solver.LineError`, not in the private
+# `line_solver.api.io.logging.LineError` the reader has no business knowing.
+# Unpickling still resolves, because the name is bound right here.
+from .api.io import LineError
+LineError.__module__ = __name__
 from .io.linemodel_io import save_model, load_model
+from .io.pnml_io import save_pnml, load_pnml
 
 # Environment check (mirror of MATLAB lineInstall)
 from .install import line_install
@@ -228,9 +237,22 @@ def lineStart(verbose=True):
               'DoChecks=true, CoarseTol=%.1e, FineTol=%.1e, Zero=%.1e, MaxInt=%d'
               % (GlobalConstants.Version, GlobalConstants.CoarseTol,
                  GlobalConstants.FineTol, GlobalConstants.Zero, GlobalConstants.MaxInt))
-        print('Type solver.libraries() for third-party dependencies, '
+        print('Type model.help() for the solvers that support a model, '
+              'solver.libraries() for third-party dependencies, '
               'solver.citations() for references.')
     return GlobalConstants.Version
 
 
 line_start = lineStart
+
+
+# RESULT RECORDING, off unless asked for. `LINE_RECORD_RESULTS=1` makes every
+# result-table getter append what it returns to a process-wide buffer, together
+# with the solver and method that produced it, so a consumer reads the values a
+# script COMPUTED rather than the text it printed. That is how the parity suites
+# assert against the shared goldens (see line_solver/result_recorder.py and
+# python/tests/parity/). Imported last, because installing the hooks touches
+# every solver module and they must already be defined; and imported at all only
+# under the flag, so an ordinary run pays nothing.
+if os.environ.get('LINE_RECORD_RESULTS'):
+    from . import result_recorder as _result_recorder  # noqa: F401,E402

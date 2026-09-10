@@ -59,6 +59,21 @@ opts = optimset('Display','off','MaxIter',1000,'TolFun',1e-12,'TolCon',1e-12);
 x0 = quadprog(speye(n), zeros(n,1), A, b, AeqR, beqR, ...
               zeros(n,1), ones(n,1), [], opts);
 
+% quadprog stalls on the larger equality systems (the BAS families leave it at
+% a residual of 7e-01 on a 2-station N=2 instance whose polytope demonstrably
+% contains the exact CTMC point). A pure phase-1 LP over the same matrices
+% lands on the polytope where the minimum-norm QP does not, so fall back to it
+% and let the residual test below decide. 'interior-point' is required
+% explicitly: the R2025a default errors with "Unrecognized field name
+% optimstatus" (see 11-conventions-and-gotchas).
+if isempty(x0) || qrf_lp_residual(x0, AeqR, beqR, A, b, zeros(n,1), ones(n,1)) > 1e-8
+    lpOpts = optimoptions('linprog', 'Display', 'off', 'Algorithm', 'interior-point');
+    xLp = linprog(zeros(n,1), A, b, AeqR, beqR, zeros(n,1), ones(n,1), lpOpts);
+    if ~isempty(xLp) && all(isfinite(xLp))
+        x0 = xLp;
+    end
+end
+
 % Judge the phase 1 by the residual of the point it returned, not by the
 % exit flag: quadprog reports flag 0 (iteration limit) on instances where it
 % has nevertheless landed on the polytope to machine precision.

@@ -6,6 +6,7 @@
 package jline.solvers.fluid.analyzers;
 
 import jline.api.cache.Cache_gamma_lp;
+import jline.lib.rmf.CacheRMF;
 import jline.api.cache.Cache_miss_rmf;
 import jline.api.cache.Cache_miss_sfifo_rmf;
 import jline.api.cache.Cache_miss_fifo_rmf;
@@ -44,11 +45,21 @@ public class RMFAnalyzer implements FluidAnalyzer {
 
     private Matrix xvecIt;
 
+    /**
+     * The moment closure of the LAST network step, when the requested method is
+     * "minnormal". SolverFluid reads its covariance and class blocks off this,
+     * exactly as it does for a cache-free model.
+     */
+    public MinNormalAnalyzer lastMinNormal;
+
     @Override
     public void analyze(NetworkStruct sn, SolverOptions options, SolverResult result) {
         int I = sn.nnodes;
         int K = sn.nclasses;
         int M = sn.nstations;
+        // options.method selects the QUEUEING layer; the cache layer is the
+        // refined mean field either way, it has no first-order alternative here
+        boolean useMoments = options.method != null && options.method.endsWith("minnormal");
 
         // Build statefulNodesClasses indices
         List<Integer> statefulNodes = new ArrayList<Integer>();
@@ -80,6 +91,13 @@ public class RMFAnalyzer implements FluidAnalyzer {
 
         Random random = new Random(options.seed);
         int convergedIter = options.iter_max;
+
+        // converged isolated-cache inputs, for the moment report
+        int[] lastCacheNode = new int[caches.size()];
+        Matrix[] lastCacheM = new Matrix[caches.size()];
+        Matrix[][] lastCacheLambda = new Matrix[caches.size()][];
+        ReplacementStrategy[] lastCacheStrat = new ReplacementStrategy[caches.size()];
+        boolean[] lastCacheLinear = new boolean[caches.size()];
 
         for (int it = 1; it <= options.iter_max; it++) {
             for (int cIdx = 0; cIdx < caches.size(); cIdx++) {
@@ -152,6 +170,13 @@ public class RMFAnalyzer implements FluidAnalyzer {
                 // Solve isolated cache
                 Ret.cacheGamma gammaResult = Cache_gamma_lp.cache_gamma_lp(lambda_cache, R);
                 Matrix gamma = gammaResult.gamma;
+                // the covariance below linearises at the CONVERGED inputs, so keep
+                // overwriting: the last sweep is the fixed point
+                lastCacheNode[cIdx] = ind;
+                lastCacheM[cIdx] = m;
+                lastCacheLambda[cIdx] = lambda_cache;
+                lastCacheStrat[cIdx] = ch.replacestrat;
+                lastCacheLinear[cIdx] = accostIsLinear(ch.accost, h);
 
                 // see _kb/06-solver-catalog.md (JAR-only implementation notes: RMFAnalyzer miss_isolated RANDOM(m) vs FPI)
                 // RANDOM(m) and FIFO(m) share the refined mean field (Gast15
@@ -233,13 +258,23 @@ public class RMFAnalyzer implements FluidAnalyzer {
             // Refresh visits
             sn = SnRefreshVisits.snRefreshVisits(sn, sn.chains, sn.rt, sn.rtnodes);
 
-            // Solve the queueing network using the fluid matrix method
+            // Solve the queueing network. The caches are already relabeled as
+            // class switches above, so this is a plain queueing network and the
+            // moment closure applies to it unchanged: "minnormal" reaches a cache
+            // model through this same decomposition, with the closure in place of
+            // the first-order matrix method.
             SolverOptions fluidOptions = options.copy();
-            fluidOptions.method = "matrix";
             fluidOptions.init_sol = computeFluidInitSol(sn);
-
-            MatrixMethodAnalyzer matrixAnalyzer = new MatrixMethodAnalyzer();
-            matrixAnalyzer.analyze(sn, fluidOptions, result);
+            if (useMoments) {
+                fluidOptions.method = "minnormal";
+                MinNormalAnalyzer minNormalAnalyzer = new MinNormalAnalyzer();
+                minNormalAnalyzer.analyze(sn, fluidOptions, result);
+                lastMinNormal = minNormalAnalyzer;
+            } else {
+                fluidOptions.method = "matrix";
+                MatrixMethodAnalyzer matrixAnalyzer = new MatrixMethodAnalyzer();
+                matrixAnalyzer.analyze(sn, fluidOptions, result);
+            }
 
             // Compute system throughputs XN
             Matrix XN = new Matrix(1, K);
@@ -353,6 +388,117 @@ public class RMFAnalyzer implements FluidAnalyzer {
             }
             ((FluidResult) result).hitProb = hitprobFull;
             ((FluidResult) result).missProb = missprobFull;
+        }
+
+        // The cache half of the moment report: the linear noise covariance of the
+        // item occupancy, at the CONVERGED isolated-cache inputs. Only RR/FIFO on
+        // the linear access chain have the drift it linearises, so a cache
+        // without one is omitted rather than reported as a fabricated zero.
+        if (useMoments && result instanceof FluidResult) {
+            FluidResult fr = (FluidResult) result;
+            List<Matrix> sigmas = new ArrayList<Matrix>();
+            List<Matrix> pi0s = new ArrayList<Matrix>();
+            List<Integer> nodes = new ArrayList<Integer>();
+            Matrix missVar = new Matrix(caches.size(), K);
+            for (int cIdx = 0; cIdx < caches.size(); cIdx++) {
+                if (lastCacheLambda[cIdx] == null || !lastCacheLinear[cIdx]
+                        || (lastCacheStrat[cIdx] != ReplacementStrategy.RR
+                            && lastCacheStrat[cIdx] != ReplacementStrategy.FIFO)) {
+                    continue;
+                }
+                Matrix[] lam = lastCacheLambda[cIdx];
+                int u = lam.length;
+                int n = lam[0].getNumRows();
+                int h = lastCacheM[cIdx].length();
+                double[] lamI = new double[n];
+                for (int v = 0; v < u; v++) {
+                    for (int i = 0; i < n; i++) {
+                        double val = lam[v].get(i, 0);
+                        if (Double.isFinite(val)) {
+                            lamI[i] += val;
+                        }
+                    }
+                }
+                double tot = 0;
+                for (int i = 0; i < n; i++) {
+                    tot += lamI[i];
+                }
+                if (!(tot > 0)) {
+                    continue;
+                }
+                double[] p = new double[n];
+                for (int i = 0; i < n; i++) {
+                    p[i] = lamI[i] / tot;
+                }
+                int[] mi = new int[h];
+                for (int k = 0; k < h; k++) {
+                    mi[k] = (int) Math.round(lastCacheM[cIdx].get(k));
+                }
+                CacheRMF rmf = new CacheRMF(p, mi);
+                double[] x = rmf.fixedPoint();
+                try {
+                    Object[] res = rmf.meanFieldExpansionSteadyState();
+                    double[] pi = (double[]) res[0];
+                    double[] V = (double[]) res[1];
+                    boolean finite = true;
+                    double[] xref = new double[pi.length];
+                    for (int i = 0; i < pi.length; i++) {
+                        xref[i] = pi[i] + V[i] / n;
+                        finite = finite && Double.isFinite(xref[i]);
+                    }
+                    if (finite) {
+                        x = xref;
+                    }
+                } catch (RuntimeException e) {
+                    // keep the plain mean field
+                }
+                double[][] W = rmf.lnaCovariance(x);
+                if (W == null) {
+                    continue;
+                }
+                Matrix Wm = new Matrix(W.length, W.length);
+                for (int a = 0; a < W.length; a++) {
+                    for (int b = 0; b < W.length; b++) {
+                        Wm.set(a, b, W[a][b]);
+                    }
+                }
+                Matrix pi0 = new Matrix(n, 1);
+                for (int i = 0; i < n; i++) {
+                    pi0.set(i, 0, Math.min(1.0, Math.max(0.0, x[i])));
+                }
+                for (int r = 0; r < Math.min(K, u); r++) {
+                    double wtot = 0;
+                    double[] w = new double[n];
+                    for (int i = 0; i < n; i++) {
+                        double val = lam[r].get(i, 0);
+                        w[i] = Double.isFinite(val) ? val : 0.0;
+                        wtot += w[i];
+                    }
+                    if (!(wtot > 0)) {
+                        continue;
+                    }
+                    double acc = 0;
+                    for (int i = 0; i < n; i++) {
+                        for (int j = 0; j < n; j++) {
+                            acc += (w[i] / wtot) * W[i][j] * (w[j] / wtot);
+                        }
+                    }
+                    missVar.set(cIdx, r, Math.max(0.0, acc));
+                }
+                sigmas.add(Wm);
+                pi0s.add(pi0);
+                nodes.add(lastCacheNode[cIdx]);
+            }
+            if (!sigmas.isEmpty()) {
+                fr.momentCacheSigma = sigmas.toArray(new Matrix[0]);
+                fr.momentCachePi0 = pi0s.toArray(new Matrix[0]);
+                fr.momentCacheMissProbVar = missVar;
+                int[] nodeArr = new int[nodes.size()];
+                for (int i = 0; i < nodes.size(); i++) {
+                    nodeArr[i] = nodes.get(i);
+                }
+                fr.momentCacheNode = nodeArr;
+            }
         }
 
         xvecIt = (result instanceof FluidResult) ? ((FluidResult) result).odeStateVec : null;

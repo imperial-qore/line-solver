@@ -34,18 +34,23 @@
  % <tr><td>lE<td>Log of normalizing constant
  % </table>
 %}
-function [E, lE] = cache_is(gamma, m, samples)
-% [E, LE] = CACHE_IS(GAMMA, M, SAMPLES)
+function [E, lE] = cache_is(gamma, m, samples, sigma, k)
+% [E, LE] = CACHE_IS(GAMMA, M, SAMPLES, SIGMA, K)
 %
 % Importance sampling estimation of cache normalizing constant.
 %
 % The normalizing constant E is defined as the sum over all valid cache
 % configurations of the product of gamma values for items in each level.
+% With item sizes SIGMA and per-list storage cost caps K the estimator
+% carries the feasibility indicator I{S in O} of Casale-Gast (IEEE/ACM
+% ToN, 2021), Sec. IX-B, and returns E(m,k).
 %
 % Input:
 %   gamma   - (n x h) item popularity probabilities at each cache level
 %   m       - (1 x h) cache capacity vector
 %   samples - (optional) number of Monte Carlo samples, default 1e5
+%   sigma   - (optional) (1 x n) item storage costs (sizes)
+%   k       - (optional) (1 x h) per-list storage cost caps
 %
 % Output:
 %   E  - normalizing constant estimate
@@ -54,9 +59,18 @@ function [E, lE] = cache_is(gamma, m, samples)
 if nargin < 3 || isempty(samples)
     samples = 1e5;
 end
+if nargin < 5 || isempty(sigma) || isempty(k)
+    sigma = []; k = [];
+else
+    sigma = sigma(:).'; k = k(:).';
+end
 
 % Remove items with zero gamma (no contribution)
-gamma = gamma(sum(gamma, 2) > 0, :);
+keep = sum(gamma, 2) > 0;
+gamma = gamma(keep, :);
+if ~isempty(sigma)
+    sigma = sigma(keep);
+end
 
 [n, h] = size(gamma);
 mt = sum(m);  % total cache capacity
@@ -77,7 +91,7 @@ end
 
 if n == mt
     % All items must be in cache - only one valid configuration
-    E = cache_erec(gamma, m);
+    E = cache_erec(gamma, m, sigma, k);
     lE = log(E);
     return
 end
@@ -102,12 +116,21 @@ for s = 1:samples
 
     % Compute log of unnormalized state probability
     log_state_prob = log_m_fact;
+    feasible = true;
     for j = 1:h
         items_in_level = assignment{j};
+        if ~isempty(sigma) && sum(sigma(items_in_level)) > k(j)
+            feasible = false;
+            break
+        end
         for idx = 1:length(items_in_level)
             i = items_in_level(idx);
             log_state_prob = log_state_prob + log_gamma(i, j);
         end
+    end
+    if ~feasible
+        lZ_samples(s) = -Inf; % I{S_v in O} = 0
+        continue
     end
 
     % Proposal probability is 1/(C(n,mt) * multinomial(mt; m))

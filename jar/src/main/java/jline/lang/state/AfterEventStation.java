@@ -130,7 +130,9 @@ public class AfterEventStation implements Serializable {
         // configured down-server rate. downRateScale is 1 whenever the server is up or
         // no degraded rate was configured, so this is a no-op in every other model.
         if (downRateScale != 1.0 && res.outrate != null && !res.outrate.isEmpty()) {
-            return new Ret.EventResult(res.outspace, Matrix.scaleMult(res.outrate, downRateScale), res.outprob);
+            // the tags travel with the successors: only the rate is rescaled
+            return new Ret.EventResult(res.outspace, Matrix.scaleMult(res.outrate, downRateScale), res.outprob,
+                    res.outstart, res.outpreempt);
         }
         return res;
     }
@@ -230,6 +232,7 @@ public class AfterEventStation implements Serializable {
         Matrix outspace = new Matrix(0, 0);
         Matrix outrate = new Matrix(0, 0);
         Matrix outprob = new Matrix(0, 0);
+        Matrix outstart = new Matrix(0, R);
         Polling.Info pinfoS = Polling.info(sn, ind);
         if (pinfoS == null || !pinfoS.hasSw[jobClass]) {
             return new Ret.EventResult(outspace, outrate, outprob);
@@ -299,9 +302,18 @@ public class AfterEventStation implements Serializable {
                 outrate = Matrix.concatRows(outrate, orS, null);
                 Matrix opS = new Matrix(1, 1); opS.set(0, 0, 1.0);
                 outprob = Matrix.concatRows(outprob, opS, null);
+                // A completed switchover that opens a visit pulls a waiting job
+                // into the server, so it starts service just as an ARV or a DEP
+                // promotion does. This is the one service start a polling
+                // station reaches through neither, and leaving it untagged would
+                // break startRate == TN + preemptRate there for no reason other
+                // than the name of the carrier event.
+                if (resS[1] == Polling.MODE_VISIT) {
+                    outstart = tagArc(outstart, outspace.getNumRows(), 1, R, resS[0] + 1);
+                }
             }
         }
-        return new Ret.EventResult(outspace, outrate, outprob);
+        return new Ret.EventResult(outspace, outrate, outprob, tagPad(outstart, outspace.getNumRows(), R), null);
     }
 
     // Exponential-patience reneging: a waiting (queued, not-in-service) class-r job
@@ -340,6 +352,7 @@ public class AfterEventStation implements Serializable {
         Matrix outspace = new Matrix(0, 0);
         Matrix outrate = new Matrix(0, 0);
         Matrix outprob = new Matrix(0, 0);
+        Matrix outstart = new Matrix(0, R);
         State.StateMarginalStatistics stats = ToMarginal.toMarginal(sn, ind, inspace, phasessz, phaseshift, spaceBuf, spaceSrv, spaceVar);
         double orbit = stats.nir.get(0, jobClass) - stats.sir.get(0, jobClass);
         double inSrv = spaceSrv.elementSum();
@@ -377,6 +390,10 @@ public class AfterEventStation implements Serializable {
                     Matrix prow = new Matrix(1, 1); prow.set(0, 0, 1.0);
                     if (outspace.isEmpty()) { outspace = os; outrate = orow; outprob = prow; }
                     else { outspace = Matrix.concatRows(outspace, os, null); outrate = Matrix.concatRows(outrate, orow, null); outprob = Matrix.concatRows(outprob, prow, null); }
+                    // A successful retry is the only way into the server at a
+                    // retrial station (its departures never promote from the
+                    // orbit), so it carries the START the invariant needs.
+                    outstart = tagArc(outstart, outspace.getNumRows(), 1, R, jobClass + 1);
                 }
                 if (isSimulation && outspace.getNumRows() > 1) {
                     Matrix cum = outrate.cumsumViaCol();
@@ -385,13 +402,15 @@ public class AfterEventStation implements Serializable {
                     int fc = -1; double rnd = Maths.rand();
                     for (int row = 0; row < cumr.getNumRows(); row++) if (rnd > cumr.get(row)) fc = row;
                     fc++;
+                    outstart = tagPad(outstart, outspace.getNumRows(), R);
                     outspace = Matrix.extractRows(outspace, fc, fc + 1, null);
+                    outstart = Matrix.extractRows(outstart, fc, fc + 1, null);
                     Matrix nr = new Matrix(1, 1); nr.set(0, 0, tot); outrate = nr;
                     Matrix np = new Matrix(1, 1); np.set(0, 0, 1.0); outprob = np;
                 }
             }
         }
-        return new Ret.EventResult(outspace, outrate, outprob);
+        return new Ret.EventResult(outspace, outrate, outprob, tagPad(outstart, outspace.getNumRows(), R), null);
     }
 
     private static Ret.EventResult handleArv(NetworkStruct sn, int ind, Matrix inspace, EventType event, int jobClass, boolean isSimulation,
@@ -517,11 +536,23 @@ public class AfterEventStation implements Serializable {
                 }
                 outprob = new Matrix(0, 0);
                 Matrix outprobK = new Matrix(0, 0);
+                // START/PREEMPT annotation of the arrival arcs, accumulated over
+                // the entry-phase loop exactly as outspace is. See Ret.EventResult.
+                Matrix outstart = new Matrix(0, 0);
+                Matrix outpreempt = new Matrix(0, 0);
                 k_loop:
                 for (int kentry = 0; kentry < K.get(jobClass); kentry++) {
                     Matrix spaceVarK = spaceVar.copy();
                     Matrix spaceSrvK = spaceSrv.copy();
                     Matrix spaceBufK = spaceBuf.copy();
+                    // Per-row tag of this arrival: the class that takes a server
+                    // in the row (startK) and the class it displaces (preemptK),
+                    // 0 for neither. Both follow every row selection below, so
+                    // they can be filtered with en_o at the single append site.
+                    Matrix startK = new Matrix(spaceSrvK.getNumRows(), 1);
+                    startK.zero();
+                    Matrix preemptK = new Matrix(spaceSrvK.getNumRows(), 1);
+                    preemptK.zero();
                     switch (sn.sched.get(sn.stations.get(ist))) {
                         case EXT: // source, can receive any "virtual" arrival from the sink as long as it is from an open class
                             if (Utils.isInf(sn.njobs.get(jobClass))) {
@@ -562,6 +593,7 @@ public class AfterEventStation implements Serializable {
                                 // increment spacesrvk by one
                                 for (int row = 0; row < spaceSrvK.getNumRows(); row++) {
                                     spaceSrvK.set(row, col, spaceSrvK.get(row, col) + 1);
+                                    startK.set(row, 0, jobClass + 1); // the job enters service at once
                                 }
                                 outprobK = new Matrix(spaceSrvK.getNumRows(), spaceSrvK.getNumRows());
                                 outprobK.fill(pentry.get(kentry));
@@ -603,6 +635,7 @@ public class AfterEventStation implements Serializable {
                                     int[] resA = Polling.next(pinfoA, ctlA[0], nbufA, R, true);
                                     int colSrvA = (int) (Ks.get(jobClass) + kentry);
                                     spaceSrvK.set(row, colSrvA, spaceSrvK.get(row, colSrvA) + 1);
+                                    startK.set(row, 0, jobClass + 1); // a parked server takes it at once
                                     Matrix setA = Polling.set(pinfoA, varRowA, resA[0], 0, resA[2]);
                                     for (int c = 0; c < setA.getNumCols(); c++) {
                                         spaceVarK.set(row, c, setA.get(0, c));
@@ -632,6 +665,7 @@ public class AfterEventStation implements Serializable {
                                     // Idle servers available - job enters service
                                     int colSrvK = (int) (Ks.get(jobClass) + kentry);
                                     spaceSrvK.set(row, colSrvK, spaceSrvK.get(row, colSrvK) + 1);
+                                    startK.set(row, 0, jobClass + 1);
                                 } else {
                                     // All servers busy - job goes to buffer
                                     spaceBufK.set(row, jobClass, spaceBufK.get(row, jobClass) + 1);
@@ -713,6 +747,7 @@ public class AfterEventStation implements Serializable {
                                 for (int row = 0; row < spaceSrvK.getNumRows(); row++) {
                                     if (idle_srv.get(row, 0) == 1) {
                                         spaceSrvK.set(row, colSrvK, spaceSrvK.get(row, colSrvK) + 1);
+                                        startK.set(row, 0, jobClass + 1);
                                     }
                                 }
                                 // this section dynamically grows the number of elements in the buffer
@@ -746,10 +781,19 @@ public class AfterEventStation implements Serializable {
                                             }
                                         }
                                         if (!emptySlots) {
-                                            // append job slot
-                                            Matrix left = new Matrix(spaceBufK.getNumRows(), 1);
+                                            // append job slot. A buffer block with NO COLUMNS
+                                            // comes back as 0x0 rather than rows-by-0, so its
+                                            // own row count cannot size the new slot: MATLAB
+                                            // reads size(space_buf_k,1) == 1 for a 1x0 block
+                                            // and this read 0, leaving a 0x1 buffer against a
+                                            // 1xC server block, which throws on the concat
+                                            // that forms the new state below.
+                                            boolean hasBufCols = spaceBufK.getNumCols() > 0;
+                                            Matrix left = new Matrix(
+                                                    hasBufCols ? spaceBufK.getNumRows() : spaceSrvK.getNumRows(), 1);
                                             left.zero();
-                                            spaceBufK = Matrix.concatColumns(left, spaceBufK, null);
+                                            spaceBufK = hasBufCols
+                                                    ? Matrix.concatColumns(left, spaceBufK, null) : left;
                                         }
                                     }
                                 }
@@ -891,6 +935,8 @@ public class AfterEventStation implements Serializable {
                                         }
                                     }
                                     spaceVarK = spaceVarKTmp;
+                                    startK = filterTagRows(startK, wbuf_empty);
+                                    preemptK = filterTagRows(preemptK, wbuf_empty);
                                     Matrix emptySlotsTmp = new Matrix(0, 0);
                                     for (int i = 0; i < wbuf_empty.getNumRows(); i++) {
                                         if (wbuf_empty.get(i, 0) == 1) {
@@ -956,6 +1002,8 @@ public class AfterEventStation implements Serializable {
                                         spaceSrvK = srvTmp;
                                         spaceBufK = bufTmp;
                                         spaceVarK = varTmp;
+                                        startK = filterTagRows(startK, idle_srv);
+                                        preemptK = filterTagRows(preemptK, idle_srv);
                                     }
                                 }
                                 outprobK = new Matrix(spaceSrvK.getNumRows(), 1);
@@ -969,6 +1017,9 @@ public class AfterEventStation implements Serializable {
                         case LCFSPRPRIO: // LCFS preempt-resume with priority groups
                         case FCFSPIPRIO: // FCFS preempt-independent with priority groups
                         case LCFSPIPRIO: // LCFS preempt-independent with priority groups
+                        case FCFSPR: // FCFS preempt-resume (no priority)
+                        case FCFSPI: // FCFS preempt-independent (no priority)
+                        case LCFSPI: // LCFS preempt-independent (no priority)
                         case LCFSPR: // LCFS with Preemption
                             // Reset per-entry-phase probability
                             outprobK = new Matrix(0, 0);
@@ -992,6 +1043,9 @@ public class AfterEventStation implements Serializable {
                             Matrix spaceBufKReordLcfspr = new Matrix(0, 0);
                             Matrix spaceSrvKReordLcfspr = new Matrix(0, 0);
                             Matrix spaceVarKReordLcfspr = new Matrix(0, 0);
+                            // tags follow the same reordering
+                            Matrix startKReord = new Matrix(0, 1);
+                            Matrix preemptKReord = new Matrix(0, 1);
 
                             // Add idle states first
                             for (int row = 0; row < idleSrv.getNumRows(); row++) {
@@ -1022,11 +1076,18 @@ public class AfterEventStation implements Serializable {
                                 for (int row = 0; row < spaceSrvKReordLcfspr.getNumRows(); row++) {
                                     spaceSrvKReordLcfspr.set(row, colSrvK, spaceSrvKReordLcfspr.get(row, colSrvK) + 1);
                                 }
+                                startKReord = appendTagRows(startKReord, spaceSrvKReordLcfspr.getNumRows(), jobClass + 1);
+                                preemptKReord = appendTagRows(preemptKReord, spaceSrvKReordLcfspr.getNumRows(), 0);
                             }
 
                             // If all busy, expand output states for all possible choices of job class to preempt
                             Matrix psentryLcfspr = new Matrix(spaceBufKReordLcfspr.getNumRows(), 1);
                             psentryLcfspr.ones(); // probability scaling due to preemption
+
+                            SchedStrategy schedIstPre = sn.sched.get(sn.stations.get(ist));
+                            boolean isPrioPre = schedIstPre == SchedStrategy.FCFSPRPRIO || schedIstPre == SchedStrategy.FCFSPIPRIO ||
+                                                schedIstPre == SchedStrategy.LCFSPRPRIO || schedIstPre == SchedStrategy.LCFSPIPRIO;
+                            boolean isLcfsPrioPre = schedIstPre == SchedStrategy.LCFSPRPRIO || schedIstPre == SchedStrategy.LCFSPIPRIO;
 
                             for (int classpreempt = 0; classpreempt < R; classpreempt++) {
                                 // For priority variants, only higher-priority jobs can preempt
@@ -1039,7 +1100,16 @@ public class AfterEventStation implements Serializable {
                                 // that is neither the base policy nor the PRIO variant.
                                 boolean isPrioAware = isPrioSched;
                                 if (isPrioAware) {
-                                    if (sn.classprio.get(jobClass) >= sn.classprio.get(classpreempt)) continue; // arriving job has same or lower priority
+                                    // Across priority groups a strictly higher-priority arrival
+                                    // preempts. WITHIN a group the base discipline decides: LCFS-PR
+                                    // keeps the NEWEST job in service, so an equal-priority arrival
+                                    // preempts, whereas FCFS-PR never lets an arrival preempt.
+                                    boolean isLcfsPrioFamily = schedIstArr == SchedStrategy.LCFSPRPRIO ||
+                                                               schedIstArr == SchedStrategy.LCFSPIPRIO;
+                                    boolean cannotPreempt = isLcfsPrioFamily
+                                            ? sn.classprio.get(jobClass) > sn.classprio.get(classpreempt)
+                                            : sn.classprio.get(jobClass) >= sn.classprio.get(classpreempt);
+                                    if (cannotPreempt) continue;
                                 }
                                 for (int phasepreempt = 0; phasepreempt < K.get(classpreempt); phasepreempt++) {
                                     // Check if there are jobs of this class/phase to preempt
@@ -1229,8 +1299,95 @@ public class AfterEventStation implements Serializable {
                                             spaceBufKReordLcfspr = Matrix.concatRows(spaceBufKReordLcfspr, spaceBufKPreempt, null);
                                             spaceSrvKReordLcfspr = Matrix.concatRows(spaceSrvKReordLcfspr, spaceSrvKPreempt, null);
                                             spaceVarKReordLcfspr = Matrix.concatRows(spaceVarKReordLcfspr, spaceVarKPreempt, null);
+                                            // the displaced job leaves the server and the
+                                            // arriving one takes it, on the same arc
+                                            startKReord = appendTagRows(startKReord, spaceSrvKPreempt.getNumRows(), jobClass + 1);
+                                            preemptKReord = appendTagRows(preemptKReord, spaceSrvKPreempt.getNumRows(), classpreempt + 1);
                                         }
                                     }
+                                }
+                            }
+
+                            // Rows where the arrival can preempt nothing: every busy server holds a
+                            // job it may not displace, so the job WAITS in the buffer. Without this
+                            // the loop above emits no state for those rows and the arrival simply
+                            // does not exist, so the class can never enter a busy station and its
+                            // queue is silently understated (MATLAB afterEventStation.m:458-495).
+                            if (isPrioPre) {
+                                Matrix canPreemptPre = new Matrix(spaceSrvK.getNumRows(), 1);
+                                canPreemptPre.zero();
+                                for (int cp = 0; cp < R; cp++) {
+                                    boolean preemptable = isLcfsPrioPre
+                                            ? sn.classprio.get(jobClass) <= sn.classprio.get(cp)
+                                            : sn.classprio.get(jobClass) < sn.classprio.get(cp);
+                                    if (!preemptable) continue;
+                                    for (int ph = 0; ph < K.get(cp); ph++) {
+                                        int colCp = (int) (spaceSrvK.getNumCols() - K.elementSum() + Ks.get(cp) + ph);
+                                        for (int row = 0; row < spaceSrvK.getNumRows(); row++) {
+                                            if (spaceSrvK.get(row, colCp) > 0) canPreemptPre.set(row, 0, 1);
+                                        }
+                                    }
+                                }
+                                // Grow the buffer in simulation, exactly as the preemption branch
+                                // above does. The SSA state vector starts ONE (class,phase) pair
+                                // wide and only ever widens at these two sites, so without this a
+                                // WAITING arrival was dropped as soon as that pair was taken: the
+                                // arrival transition vanished, the station saturated at S+1 jobs
+                                // and the queue length fell well below the exact answer. It bites
+                                // FCFSPIPRIO and FCFSPRPRIO, the two preempt-family disciplines
+                                // whose arrivals both wait and cannot preempt (the non-PRIO names
+                                // preempt unconditionally, the LCFS-PRIO names on equal priority).
+                                // The widened matrix is built ONCE here, not once per row below,
+                                // and a station that is genuinely full must not grow.
+                                Matrix spaceBufKWait = spaceBufK;
+                                if (isSimulation && ni != null && nir != null
+                                        && ni.get(0) < capacity.get(ist)
+                                        && nir.get(0, jobClass) < classcap.get(ist, jobClass)) {
+                                    boolean anyWaitRow = false;
+                                    boolean anyEmptyWaitSlot = false;
+                                    for (int row = 0; row < allBusySrv.getNumRows(); row++) {
+                                        if (allBusySrv.get(row, 0) != 1 || canPreemptPre.get(row, 0) == 1) continue;
+                                        anyWaitRow = true;
+                                        for (int colWait = 0; colWait < spaceBufK.getNumCols(); colWait++) {
+                                            if (spaceBufK.get(row, colWait) == 0) {
+                                                anyEmptyWaitSlot = true;
+                                                break;
+                                            }
+                                        }
+                                        if (anyEmptyWaitSlot) break;
+                                    }
+                                    if (anyWaitRow && !anyEmptyWaitSlot) {
+                                        // prepend two columns for the (class, entry-phase) pair
+                                        Matrix growWait = new Matrix(spaceBufK.getNumRows(), 2);
+                                        growWait.zero();
+                                        spaceBufKWait = Matrix.concatColumns(growWait, spaceBufK, null);
+                                    }
+                                }
+                                for (int row = 0; row < allBusySrv.getNumRows(); row++) {
+                                    if (allBusySrv.get(row, 0) != 1 || canPreemptPre.get(row, 0) == 1) continue;
+                                    // rightmost empty (class,phase) pair, matching the preemption store
+                                    int emptyWait = -1;
+                                    for (int colWait = 0; colWait < spaceBufKWait.getNumCols(); colWait++) {
+                                        if (spaceBufKWait.get(row, colWait) == 0) emptyWait = Math.max(emptyWait, colWait + 1);
+                                    }
+                                    emptyWait = emptyWait - 1;
+                                    if (emptyWait <= 0) continue;
+                                    Matrix bufWait = Matrix.extractRows(spaceBufKWait, row, row + 1, null);
+                                    Matrix srvWait = Matrix.extractRows(spaceSrvK, row, row + 1, null);
+                                    Matrix varWait = Matrix.extractRows(spaceVarK, row, row + 1, null);
+                                    // the waiting job is stored exactly as a preempted one, so on
+                                    // promotion it resumes from the entry phase it was tagged with
+                                    bufWait.set(0, emptyWait - 1, jobClass + 1);
+                                    bufWait.set(0, emptyWait, kentry + 1);
+                                    spaceBufKReordLcfspr = Matrix.concatRows(spaceBufKReordLcfspr, bufWait, null);
+                                    spaceSrvKReordLcfspr = Matrix.concatRows(spaceSrvKReordLcfspr, srvWait, null);
+                                    spaceVarKReordLcfspr = Matrix.concatRows(spaceVarKReordLcfspr, varWait, null);
+                                    // the arrival preempts nothing and waits: no tag
+                                    startKReord = appendTagRows(startKReord, 1, 0);
+                                    preemptKReord = appendTagRows(preemptKReord, 1, 0);
+                                    Matrix onePsentry = new Matrix(1, 1);
+                                    onePsentry.set(0, 0, 1.0);
+                                    psentryLcfspr = Matrix.concatRows(psentryLcfspr, onePsentry, null);
                                 }
                             }
 
@@ -1238,6 +1395,8 @@ public class AfterEventStation implements Serializable {
                             spaceBufK = spaceBufKReordLcfspr;
                             spaceSrvK = spaceSrvKReordLcfspr;
                             spaceVarK = spaceVarKReordLcfspr;
+                            startK = startKReord;
+                            preemptK = preemptKReord;
 
                             // Update probability
                             if (!psentryLcfspr.isEmpty()) {
@@ -1248,274 +1407,6 @@ public class AfterEventStation implements Serializable {
                                     } else {
                                         Matrix newProb = new Matrix(1, 1);
                                         newProb.set(0, 0, pentry.get(kentry) * psentryLcfspr.get(row, 0));
-                                        outprobK = Matrix.concatRows(outprobK, newProb, null);
-                                    }
-                                }
-                            } else {
-                                outprobK = new Matrix(1, 1);
-                                outprobK.set(0, 0, pentry.get(kentry));
-                            }
-                            break;
-                        case LCFSPI: // LCFS with Preemption Independent (restart from phase 1)
-                            // find states with all servers busy
-                            Matrix allBusySrvPI = new Matrix(spaceSrvK.getNumRows(), 1);
-                            Matrix idleSrvPI = new Matrix(spaceSrvK.getNumRows(), 1);
-
-                            for (int i = 0; i < spaceSrvK.getNumRows(); i++) {
-                                Matrix row = Matrix.extractRows(spaceSrvK, i, i + 1, null);
-                                int rowSum = (int) row.elementSum();
-                                if (rowSum >= S.get(ist)) {
-                                    allBusySrvPI.set(i, 0, 1);
-                                    idleSrvPI.set(i, 0, 0);
-                                } else {
-                                    allBusySrvPI.set(i, 0, 0);
-                                    idleSrvPI.set(i, 0, 1);
-                                }
-                            }
-
-                            // Reorder states so that idle ones come first
-                            Matrix spaceBufKReordLcfspi = new Matrix(0, 0);
-                            Matrix spaceSrvKReordLcfspi = new Matrix(0, 0);
-                            Matrix spaceVarKReordLcfspi = new Matrix(0, 0);
-
-                            // Add idle states first
-                            for (int row = 0; row < idleSrvPI.getNumRows(); row++) {
-                                if (idleSrvPI.get(row, 0) == 1) {
-                                    if (spaceBufKReordLcfspi.isEmpty()) {
-                                        spaceBufKReordLcfspi = Matrix.extractRows(spaceBufK, row, row + 1, null);
-                                        spaceSrvKReordLcfspi = Matrix.extractRows(spaceSrvK, row, row + 1, null);
-                                        spaceVarKReordLcfspi = Matrix.extractRows(spaceVarK, row, row + 1, null);
-                                    } else {
-                                        spaceBufKReordLcfspi = Matrix.concatRows(spaceBufKReordLcfspi, Matrix.extractRows(spaceBufK, row, row + 1, null), null);
-                                        spaceSrvKReordLcfspi = Matrix.concatRows(spaceSrvKReordLcfspi, Matrix.extractRows(spaceSrvK, row, row + 1, null), null);
-                                        spaceVarKReordLcfspi = Matrix.concatRows(spaceVarKReordLcfspi, Matrix.extractRows(spaceVarK, row, row + 1, null), null);
-                                    }
-                                }
-                            }
-
-                            // If idle, the job enters service in phase kentry
-                            boolean anyIdlePI = false;
-                            for (int row = 0; row < idleSrvPI.getNumRows(); row++) {
-                                if (idleSrvPI.get(row, 0) == 1) {
-                                    anyIdlePI = true;
-                                    break;
-                                }
-                            }
-
-                            if (anyIdlePI && !spaceSrvKReordLcfspi.isEmpty()) {
-                                int colSrvK = (int) (spaceSrvKReordLcfspi.getNumCols() - K.elementSum() + Ks.get(jobClass) + kentry);
-                                for (int row = 0; row < spaceSrvKReordLcfspi.getNumRows(); row++) {
-                                    spaceSrvKReordLcfspi.set(row, colSrvK, spaceSrvKReordLcfspi.get(row, colSrvK) + 1);
-                                }
-                            }
-
-                            // If all busy, expand output states for all possible choices of job class to preempt
-                            Matrix psentryLcfspi = new Matrix(spaceBufKReordLcfspi.getNumRows(), 1);
-                            psentryLcfspi.ones(); // probability scaling due to preemption
-
-                            for (int classpreempt = 0; classpreempt < R; classpreempt++) {
-                                for (int phasepreempt = 0; phasepreempt < K.get(classpreempt); phasepreempt++) {
-                                    // Check if there are jobs of this class/phase to preempt
-                                    Matrix siPreemptPI = new Matrix(spaceSrvK.getNumRows(), 1);
-                                    for (int row = 0; row < spaceSrvK.getNumRows(); row++) {
-                                        int colPreempt = (int) (spaceSrvK.getNumCols() - K.elementSum() + Ks.get(classpreempt) + phasepreempt);
-                                        siPreemptPI.set(row, 0, spaceSrvK.get(row, colPreempt));
-                                    }
-
-                                    Matrix busyPreemptPI = new Matrix(spaceSrvK.getNumRows(), 1);
-                                    boolean anyBusyPreemptPI = false;
-                                    for (int row = 0; row < siPreemptPI.getNumRows(); row++) {
-                                        if (siPreemptPI.get(row, 0) > 0) {
-                                            busyPreemptPI.set(row, 0, 1);
-                                            anyBusyPreemptPI = true;
-                                        } else {
-                                            busyPreemptPI.set(row, 0, 0);
-                                        }
-                                    }
-
-                                    if (anyBusyPreemptPI) {
-                                        // Update probability scaling - gather all busy states first
-                                        Matrix busyPreemptProbsPI = new Matrix(0, 1);
-                                        // Calculate row sums for ALL rows in spaceSrvK (MATLAB: sum(space_srv_k,2))
-                                        Matrix allRowSumsPI = new Matrix(spaceSrvK.getNumRows(), 1);
-                                        for (int i = 0; i < spaceSrvK.getNumRows(); i++) {
-                                            Matrix row = Matrix.extractRows(spaceSrvK, i, i + 1, null);
-                                            allRowSumsPI.set(i, 0, row.elementSum());
-                                        }
-                                        
-                                        for (int row = 0; row < busyPreemptPI.getNumRows(); row++) {
-                                            if (busyPreemptPI.get(row, 0) == 1) {
-                                                double siPreemptVal = siPreemptPI.get(row, 0);
-                                                double rowSum = allRowSumsPI.get(row, 0);
-                                                Matrix newPsentry = new Matrix(1, 1);
-                                                newPsentry.set(0, 0, siPreemptVal / rowSum);
-                                                busyPreemptProbsPI = Matrix.concatRows(busyPreemptProbsPI, newPsentry, null);
-                                            }
-                                        }
-                                        psentryLcfspi = Matrix.concatRows(psentryLcfspi, busyPreemptProbsPI, null);
-
-                                        // Create preempted states
-                                        Matrix spaceSrvKPreemptPI = new Matrix(0, 0);
-                                        Matrix spaceBufKPreemptPI = new Matrix(0, 0);
-                                        Matrix spaceVarKPreemptPI = new Matrix(0, 0);
-
-                                        for (int row = 0; row < busyPreemptPI.getNumRows(); row++) {
-                                            if (busyPreemptPI.get(row, 0) == 1) {
-                                                if (spaceSrvKPreemptPI.isEmpty()) {
-                                                    spaceSrvKPreemptPI = Matrix.extractRows(spaceSrvK, row, row + 1, null);
-                                                    spaceBufKPreemptPI = Matrix.extractRows(spaceBufK, row, row + 1, null);
-                                                    spaceVarKPreemptPI = Matrix.extractRows(spaceVarK, row, row + 1, null);
-                                                } else {
-                                                    spaceSrvKPreemptPI = Matrix.concatRows(spaceSrvKPreemptPI, Matrix.extractRows(spaceSrvK, row, row + 1, null), null);
-                                                    spaceBufKPreemptPI = Matrix.concatRows(spaceBufKPreemptPI, Matrix.extractRows(spaceBufK, row, row + 1, null), null);
-                                                    spaceVarKPreemptPI = Matrix.concatRows(spaceVarKPreemptPI, Matrix.extractRows(spaceVarK, row, row + 1, null), null);
-                                                }
-                                            }
-                                        }
-
-                                        if (!spaceSrvKPreemptPI.isEmpty()) {
-                                            // Remove preempted job
-                                            int colPreempt = (int) (spaceSrvKPreemptPI.getNumCols() - K.elementSum() + Ks.get(classpreempt) + phasepreempt);
-                                            for (int row = 0; row < spaceSrvKPreemptPI.getNumRows(); row++) {
-                                                spaceSrvKPreemptPI.set(row, colPreempt, spaceSrvKPreemptPI.get(row, colPreempt) - 1);
-                                            }
-
-                                            // Add new job to service
-                                            int colNew = (int) (spaceSrvKPreemptPI.getNumCols() - K.elementSum() + Ks.get(jobClass) + kentry);
-                                            for (int row = 0; row < spaceSrvKPreemptPI.getNumRows(); row++) {
-                                                spaceSrvKPreemptPI.set(row, colNew, spaceSrvKPreemptPI.get(row, colNew) + 1);
-                                            }
-
-                                            // Add preempted job to buffer with (class, phase) pairs
-                                            // Check if buffer needs expansion - match MATLAB logic
-                                            if (isSimulation) {
-                                                // Check if there's room and no empty slots
-                                                boolean needsExpansion = true;
-                                                if (spaceBufKPreemptPI.getNumCols() > 0) {
-                                                    for (int row = 0; row < spaceBufKPreemptPI.getNumRows(); row++) {
-                                                        for (int colBuf = 0; colBuf < spaceBufKPreemptPI.getNumCols(); colBuf++) {
-                                                            if (spaceBufKPreemptPI.get(row, colBuf) == 0) {
-                                                                needsExpansion = false;
-                                                                break;
-                                                            }
-                                                        }
-                                                        if (!needsExpansion) break;
-                                                    }
-                                                }
-
-                                                if (needsExpansion) {
-                                                    // Append two columns for (class, phase) pair - prepend like MATLAB
-                                                    Matrix expansion = new Matrix(spaceBufKPreemptPI.getNumRows(), 2);
-                                                    expansion.zero();
-                                                    spaceBufKPreemptPI = Matrix.concatColumns(expansion, spaceBufKPreemptPI, null);
-                                                }
-                                            }
-
-                                            // Find position for first empty slot - match MATLAB logic exactly
-                                            Matrix emptySlotsPI = new Matrix(spaceBufKPreemptPI.getNumRows(), 1);
-                                            emptySlotsPI.fill(-1);
-
-                                            if (spaceBufKPreemptPI.getNumCols() == 0) {
-                                                // No buffer space  
-                                                emptySlotsPI.zero();
-                                            } else if (spaceBufKPreemptPI.getNumCols() == 2) {
-                                                // Only one pair slot - check if first column (class) is empty
-                                                for (int row = 0; row < spaceBufKPreemptPI.getNumRows(); row++) {
-                                                    if (spaceBufKPreemptPI.get(row, 0) == 0) {
-                                                        emptySlotsPI.set(row, 0, 1); // Position 1 in MATLAB indexing
-                                                    } else {
-                                                        emptySlotsPI.set(row, 0, 0); // No empty slot
-                                                    }
-                                                }
-                                            } else {
-                                                // Multiple pair slots - find first empty pair using MATLAB logic
-                                                for (int row = 0; row < spaceBufKPreemptPI.getNumRows(); row++) {
-                                                    int maxPos = -1;
-                                                    for (int colPair = 0; colPair < spaceBufKPreemptPI.getNumCols(); colPair++) {
-                                                        if (spaceBufKPreemptPI.get(row, colPair) == 0) {
-                                                            maxPos = Math.max(maxPos, colPair + 1); // 1-based indexing
-                                                        }
-                                                    }
-                                                    // Subtract 1 for (class, preempt-phase) pairs like MATLAB
-                                                    emptySlotsPI.set(row, 0, maxPos - 1);
-                                                }
-                                            }
-
-                                            // Filter states where buffer has empty slots
-                                            Matrix wbuf_emptyPI = new Matrix(emptySlotsPI.getNumRows(), 1);
-                                            for (int i = 0; i < emptySlotsPI.getNumRows(); i++) {
-                                                if (emptySlotsPI.get(i, 0) > 0) {
-                                                    wbuf_emptyPI.set(i, 0, 1);
-                                                } else {
-                                                    wbuf_emptyPI.set(i, 0, 0);
-                                                }
-                                            }
-                                            
-                                            // Only process states with empty buffer slots
-                                            if (wbuf_emptyPI.elementSum() > 0) {
-                                                // Filter matrices to only include states with empty buffer slots
-                                                Matrix spaceSrvKPreemptFilteredPI = new Matrix(0, 0);
-                                                Matrix spaceBufKPreemptFilteredPI = new Matrix(0, 0);
-                                                Matrix spaceVarKPreemptFilteredPI = new Matrix(0, 0);
-                                                Matrix emptySlotsFilteredPI = new Matrix(0, 1);
-                                                
-                                                for (int row = 0; row < wbuf_emptyPI.getNumRows(); row++) {
-                                                    if (wbuf_emptyPI.get(row, 0) == 1) {
-                                                        if (spaceSrvKPreemptFilteredPI.isEmpty()) {
-                                                            spaceSrvKPreemptFilteredPI = Matrix.extractRows(spaceSrvKPreemptPI, row, row + 1, null);
-                                                            spaceBufKPreemptFilteredPI = Matrix.extractRows(spaceBufKPreemptPI, row, row + 1, null);
-                                                            spaceVarKPreemptFilteredPI = Matrix.extractRows(spaceVarKPreemptPI, row, row + 1, null);
-                                                            emptySlotsFilteredPI = Matrix.extractRows(emptySlotsPI, row, row + 1, null);
-                                                        } else {
-                                                            spaceSrvKPreemptFilteredPI = Matrix.concatRows(spaceSrvKPreemptFilteredPI, Matrix.extractRows(spaceSrvKPreemptPI, row, row + 1, null), null);
-                                                            spaceBufKPreemptFilteredPI = Matrix.concatRows(spaceBufKPreemptFilteredPI, Matrix.extractRows(spaceBufKPreemptPI, row, row + 1, null), null);
-                                                            spaceVarKPreemptFilteredPI = Matrix.concatRows(spaceVarKPreemptFilteredPI, Matrix.extractRows(spaceVarKPreemptPI, row, row + 1, null), null);
-                                                            emptySlotsFilteredPI = Matrix.concatRows(emptySlotsFilteredPI, Matrix.extractRows(emptySlotsPI, row, row + 1, null), null);
-                                                        }
-                                                    }
-                                                }
-                                                
-                                                // Store preempted job in buffer - LCFSPI: use phase 1 placeholder (actual restart uses pie distribution)
-                                                for (int row = 0; row < spaceBufKPreemptFilteredPI.getNumRows(); row++) {
-                                                    int emptySlot = (int) emptySlotsFilteredPI.get(row, 0);
-                                                    if (emptySlot > 0) { // MATLAB uses 1-based indexing
-                                                        // Convert back to 0-based for Java
-                                                        int zeroBasedSlot = emptySlot - 1;
-                                                        spaceBufKPreemptFilteredPI.set(row, zeroBasedSlot, classpreempt + 1); // Store class (1-based)
-                                                        // For LCFSPI: store phase 1 as placeholder, actual restart will use pie distribution
-                                                        spaceBufKPreemptFilteredPI.set(row, zeroBasedSlot + 1, 1); // Phase placeholder for LCFSPI
-                                                    }
-                                                }
-                                                
-                                                // Use filtered matrices
-                                                spaceSrvKPreemptPI = spaceSrvKPreemptFilteredPI;
-                                                spaceBufKPreemptPI = spaceBufKPreemptFilteredPI;
-                                                spaceVarKPreemptPI = spaceVarKPreemptFilteredPI;
-                                            }
-
-                                            // Add to reordered states
-                                            spaceBufKReordLcfspi = Matrix.concatRows(spaceBufKReordLcfspi, spaceBufKPreemptPI, null);
-                                            spaceSrvKReordLcfspi = Matrix.concatRows(spaceSrvKReordLcfspi, spaceSrvKPreemptPI, null);
-                                            spaceVarKReordLcfspi = Matrix.concatRows(spaceVarKReordLcfspi, spaceVarKPreemptPI, null);
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Set final output matrices
-                            spaceBufK = spaceBufKReordLcfspi;
-                            spaceSrvK = spaceSrvKReordLcfspi;
-                            spaceVarK = spaceVarKReordLcfspi;
-
-                            // Update probability
-                            if (!psentryLcfspi.isEmpty()) {
-                                for (int row = 0; row < psentryLcfspi.getNumRows(); row++) {
-                                    if (outprobK.isEmpty()) {
-                                        outprobK = new Matrix(1, 1);
-                                        outprobK.set(0, 0, pentry.get(kentry) * psentryLcfspi.get(row, 0));
-                                    } else {
-                                        Matrix newProb = new Matrix(1, 1);
-                                        newProb.set(0, 0, pentry.get(kentry) * psentryLcfspi.get(row, 0));
                                         outprobK = Matrix.concatRows(outprobK, newProb, null);
                                     }
                                 }
@@ -1610,6 +1501,17 @@ public class AfterEventStation implements Serializable {
                         newRates.fill(-1);
                         outrate = Matrix.concatRows(outrate, newRates, null);
                         outprob = Matrix.concatRows(outprob, outprob_k_en_o, null);
+                        // Tag the arcs just appended. en_o drops the rows the
+                        // capacity filter deleted, so the tags stay aligned with
+                        // outspace row for row.
+                        if (startK.getNumRows() != outspaceK.getNumRows()) {
+                            throw new RuntimeException("Arrival tag vector holds " + startK.getNumRows()
+                                    + " rows against " + outspaceK.getNumRows() + " successor rows at station "
+                                    + sn.nodenames.get(ind) + ": a scheduling branch reselected rows without carrying"
+                                    + " the START/PREEMPT tags with them.");
+                        }
+                        outstart = appendTagBlock(outstart, filterTagRows(startK, en_o), R);
+                        outpreempt = appendTagBlock(outpreempt, filterTagRows(preemptK, en_o), R);
                     }
                 }
 
@@ -1667,14 +1569,145 @@ public class AfterEventStation implements Serializable {
                             }
                         }
                         firing_ctr++;
+                        outstart = tagPad(outstart, outspace.getNumRows(), R);
+                        outpreempt = tagPad(outpreempt, outspace.getNumRows(), R);
                         outspace = Matrix.extractRows(outspace, firing_ctr, firing_ctr + 1, null);
+                        // the tags of the sampled arc
+                        outstart = Matrix.extractRows(outstart, firing_ctr, firing_ctr + 1, null);
+                        outpreempt = Matrix.extractRows(outpreempt, firing_ctr, firing_ctr + 1, null);
                         outrate = new Matrix(1, 1);
                         outrate.set(0, 0, -1);
                         outprob = new Matrix(1, 1);
                         outprob.set(0, 0, 1);
                     }
                 }
-        return new Ret.EventResult(outspace, outrate, outprob);
+        return new Ret.EventResult(outspace, outrate, outprob,
+                tagPad(outstart, outspace.getNumRows(), R), tagPad(outpreempt, outspace.getNumRows(), R));
+    }
+
+    /**
+     * Keep the rows of a per-row tag column where MASK is 1, mirroring the row
+     * selection the state matrices undergo at the same site.
+     */
+    private static Matrix filterTagRows(Matrix tags, Matrix mask) {
+        Matrix out = new Matrix(0, 1);
+        for (int row = 0; row < mask.getNumRows() && row < tags.getNumRows(); row++) {
+            if (mask.get(row, 0) == 1) {
+                Matrix one = new Matrix(1, 1);
+                one.set(0, 0, tags.get(row, 0));
+                out = out.isEmpty() ? one : Matrix.concatRows(out, one, null);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Append NROWS entries carrying the same 1-based class id (0 = no tag) to a
+     * per-row tag column.
+     */
+    private static Matrix appendTagRows(Matrix tags, int nrows, int cls) {
+        for (int i = 0; i < nrows; i++) {
+            Matrix one = new Matrix(1, 1);
+            one.set(0, 0, cls);
+            tags = tags.isEmpty() ? one : Matrix.concatRows(tags, one, null);
+        }
+        return tags;
+    }
+
+    /**
+     * Expand a per-row tag column of 1-based class ids into a (rows x classes)
+     * count block and append it to the accumulated annotation, padding the rows
+     * appended earlier without a tag with zeros.
+     */
+    private static Matrix appendTagBlock(Matrix acc, Matrix clsPerRow, int R) {
+        Matrix blk = new Matrix(clsPerRow.getNumRows(), R);
+        blk.zero();
+        for (int row = 0; row < clsPerRow.getNumRows(); row++) {
+            int cls = (int) Math.round(clsPerRow.get(row, 0));
+            if (cls > 0 && cls <= R) {
+                blk.set(row, cls - 1, blk.get(row, cls - 1) + 1);
+            }
+        }
+        if (acc == null || acc.isEmpty()) {
+            return blk;
+        }
+        if (blk.getNumRows() == 0) {
+            return acc;
+        }
+        return Matrix.concatRows(acc, blk, null);
+    }
+
+    /**
+     * Record a tag on the block of NBLK successor rows that ends at row NTOT of
+     * outspace, i.e. on the rows the caller has just appended. CLS is the
+     * 1-based class the tag refers to, 0 for none. Rows appended earlier and
+     * left untagged are padded with zeros here, so only the arcs that actually
+     * carry a tag need to say anything.
+     */
+    private static Matrix tagArc(Matrix tags, int ntot, int nblk, int R, int cls) {
+        if (nblk <= 0) {
+            return tags == null ? new Matrix(0, R) : tags;
+        }
+        Matrix acc = (tags == null) ? new Matrix(0, R) : tags;
+        int nbefore = ntot - nblk;
+        if (acc.getNumRows() < nbefore) {
+            Matrix pad = new Matrix(nbefore - acc.getNumRows(), R);
+            pad.zero();
+            acc = acc.isEmpty() ? pad : Matrix.concatRows(acc, pad, null);
+        }
+        Matrix blk = new Matrix(nblk, R);
+        blk.zero();
+        if (cls > 0 && cls <= R) {
+            for (int row = 0; row < nblk; row++) {
+                blk.set(row, cls - 1, 1);
+            }
+        }
+        return acc.isEmpty() ? blk : Matrix.concatRows(acc, blk, null);
+    }
+
+    /**
+     * Like tagArc, but with one class per appended row: CLSPERROW holds the
+     * 1-based class each row tags (0 = none) and its length is the block size.
+     */
+    private static Matrix tagArcRows(Matrix tags, int ntot, int R, Matrix clsPerRow) {
+        int nblk = clsPerRow.getNumRows();
+        if (nblk <= 0) {
+            return tags == null ? new Matrix(0, R) : tags;
+        }
+        Matrix acc = (tags == null) ? new Matrix(0, R) : tags;
+        int nbefore = ntot - nblk;
+        if (acc.getNumRows() < nbefore) {
+            Matrix pad = new Matrix(nbefore - acc.getNumRows(), R);
+            pad.zero();
+            acc = acc.isEmpty() ? pad : Matrix.concatRows(acc, pad, null);
+        }
+        Matrix blk = new Matrix(nblk, R);
+        blk.zero();
+        for (int row = 0; row < nblk; row++) {
+            int cls = (int) Math.round(clsPerRow.get(row, 0));
+            if (cls > 0 && cls <= R) {
+                blk.set(row, cls - 1, blk.get(row, cls - 1) + 1);
+            }
+        }
+        return acc.isEmpty() ? blk : Matrix.concatRows(acc, blk, null);
+    }
+
+    /**
+     * Bring a tag block up to NTOT rows and R columns, so that it can be indexed
+     * with the same row indices as outspace. Arcs that carry no tag are zeros.
+     */
+    private static Matrix tagPad(Matrix tags, int ntot, int R) {
+        if (tags == null || tags.isEmpty()) {
+            Matrix z = new Matrix(ntot, R);
+            z.zero();
+            return z;
+        }
+        if (tags.getNumRows() >= ntot) {
+            return tags;
+        }
+        Matrix pad = new Matrix(ntot - tags.getNumRows(), tags.getNumCols());
+        pad.zero();
+        return Matrix.concatRows(tags, pad, null);
     }
 
     private static Ret.EventResult handleDep(NetworkStruct sn, int ind, Matrix inspace, EventType event, int jobClass, boolean isSimulation,
@@ -1687,6 +1720,10 @@ public class AfterEventStation implements Serializable {
         List<Matrix> kir = null;
         Matrix ni = null;
         Matrix nir = null;
+        // START annotation of the departure arcs: a completion hands the freed
+        // server to a waiting job, and that promotion is the service start.
+        // A departure preempts nobody, so there is no PREEMPT counterpart here.
+        Matrix outstart = new Matrix(0, R);
                 // Marked (MMAP) source class: the shared modulating chain lives
                 // in the carrier's phase block (mark index 1); this class's
                 // departures fire from there using its per-mark matrix D1k
@@ -2546,7 +2583,7 @@ public class AfterEventStation implements Serializable {
                                                                 spaceSrv.set(row, (int) (Ks.get((int) start_svc_class.value() - 1) + kentry), spaceSrv.get(row, (int) (Ks.get((int) start_svc_class.value() - 1) + kentry)) + 1);
                                                             }
                                                         }
-                                                        // extract 3 matrices: space_buf_kd with only the rows where enWbuf is true, space_srv with only the rows where enWbuf is true, and space_var_kd with only the rows where enWbuf is true
+                                                        // extract space_buf_kd, space_srv, space_var_kd keeping only the rows where enWbuf is true
                                                         Matrix space_buf_kd_en = new Matrix(0, 0);
                                                         for (int row = 0; row < enWbuf.getNumRows(); row++) {
                                                             if (enWbuf.get(row, 0) == 1) {
@@ -2580,6 +2617,8 @@ public class AfterEventStation implements Serializable {
                                                         Matrix left_bottom_outspace = Matrix.concatColumns(space_buf_kd_en, space_srv_en, null);
                                                         Matrix bottom_outspace = Matrix.concatColumns(left_bottom_outspace, space_var_kd_en, null);
                                                         outspace = Matrix.concatRows(outspace, bottom_outspace, null);
+                                                        // the head of the buffer takes the vacated server
+                                                        outstart = tagArc(outstart, outspace.getNumRows(), bottom_outspace.getNumRows(), R, (int) start_svc_class.value());
 
                                                         Matrix rate_k = rate_kd.copy();
                                                         // multiply each element in rate_k in rows (across all columns) where enWbuf is one by pentry_svc_class(kentry)
@@ -2922,6 +2961,7 @@ public class AfterEventStation implements Serializable {
                                                     Matrix left_bottom_hol_buf = Matrix.concatColumns(spaceBufKEnWbufHol, spaceSrvKEnWbufHol, null);
                                                     Matrix bottom_hol_buf = Matrix.concatColumns(left_bottom_hol_buf, spaceVarEnWbufHol, null);
                                                     outspace = Matrix.concatRows(outspace, bottom_hol_buf, null);
+                                                    outstart = tagArc(outstart, outspace.getNumRows(), bottom_hol_buf.getNumRows(), R, svcClassIdx + 1);
 
                                                     Matrix rateKHol = new Matrix(0, 0);
                                                     bufRowIdx = 0;
@@ -3789,6 +3829,7 @@ public class AfterEventStation implements Serializable {
                                                         Matrix left_bottom_wbuf_lcfsprio = Matrix.concatColumns(spaceBufEnWbufLcfsprio, spaceSrvEnWbufLcfsprio, null);
                                                         Matrix bottom_wbuf_lcfsprio = Matrix.concatColumns(left_bottom_wbuf_lcfsprio, spaceVarEnWbufLcfsprio, null);
                                                         outspace = Matrix.concatRows(outspace, bottom_wbuf_lcfsprio, null);
+                                                        outstart = tagArc(outstart, outspace.getNumRows(), bottom_wbuf_lcfsprio.getNumRows(), R, startClassIdxLcfsprio + 1);
 
                                                         // Apply pie probability to rate
                                                         Matrix rateKLcfsprio = rate.copy();
@@ -3888,33 +3929,17 @@ public class AfterEventStation implements Serializable {
                                         // as FCFS relates to FCFSPRIO. Branching here on whether
                                         // the class priorities differ silently turned every LCFS
                                         // station with distinct priorities into an LCFSPRIO one.
-                                        final boolean hasDiffPrioDepLcfs = false;
                                         Matrix colFirstNnz = new Matrix(0, 0);
                                         Matrix startSvcClassLcfs = new Matrix(0, 0);
 
                                         for (int row = 0; row < enWbufLcfs.getNumRows(); row++) {
                                             if (enWbufLcfs.get(row, 0) == 1) {
+                                                // First non-zero column: leftmost = most recent arrival
                                                 int firstCol = -1;
-                                                if (hasDiffPrioDepLcfs) {
-                                                    // Priority-aware: find leftmost among highest-priority class
-                                                    double bestPrio = Double.MAX_VALUE;
-                                                    for (int col = 0; col < spaceBuf.getNumCols(); col++) {
-                                                        if (spaceBuf.get(row, col) != 0) {
-                                                            int cls = (int) spaceBuf.get(row, col) - 1; // 0-based class
-                                                            double prio = sn.classprio.get(cls);
-                                                            if (prio < bestPrio) {
-                                                                bestPrio = prio;
-                                                                firstCol = col; // leftmost among best priority
-                                                            }
-                                                        }
-                                                    }
-                                                } else {
-                                                    // Default: find first non-zero column (leftmost = most recent)
-                                                    for (int col = 0; col < spaceBuf.getNumCols(); col++) {
-                                                        if (spaceBuf.get(row, col) != 0) {
-                                                            firstCol = col;
-                                                            break;
-                                                        }
+                                                for (int col = 0; col < spaceBuf.getNumCols(); col++) {
+                                                    if (spaceBuf.get(row, col) != 0) {
+                                                        firstCol = col;
+                                                        break;
                                                     }
                                                 }
 
@@ -4120,6 +4145,7 @@ public class AfterEventStation implements Serializable {
                                                     Matrix left_bottom_lcfs_k = Matrix.concatColumns(spaceBufEnKLcfs, spaceSrvEnKLcfs, null);
                                                     Matrix bottom_lcfs_k = Matrix.concatColumns(left_bottom_lcfs_k, spaceVarEnKLcfs, null);
                                                     outspace = Matrix.concatRows(outspace, bottom_lcfs_k, null);
+                                                    outstart = tagArc(outstart, outspace.getNumRows(), bottom_lcfs_k.getNumRows(), R, (int) startClass);
 
                                                     Matrix rateKLcfs = new Matrix(0, 0);
                                                     // Build rate for ALL enabled states, not just states with buffer
@@ -4206,34 +4232,21 @@ public class AfterEventStation implements Serializable {
                                         // Plain LCFSPR resumes the most recently preempted job;
                                         // LCFSPRPRIO is the priority-aware variant and carries its
                                         // own handling. See the arrival path for the same rule.
-                                        final boolean hasDiffPrioDepLcfspr = false;
                                         Matrix colFirstNnzLcfspr = new Matrix(0, 0);
                                         Matrix startSvcClassLcfspr = new Matrix(0, 0);
                                         Matrix kentryLcfspr = new Matrix(0, 0);
+                                        // per-row promoted class (1-based, 0 = none), tagged at the append below
+                                        Matrix startRowLcfspr = new Matrix(enWbufLcfspr.getNumRows(), 1);
+                                        startRowLcfspr.zero();
 
                                         for (int row = 0; row < enWbufLcfspr.getNumRows(); row++) {
                                             if (enWbufLcfspr.get(row, 0) == 1) {
+                                                // First non-zero column: leftmost = most recent arrival
                                                 int firstCol = -1;
-                                                if (hasDiffPrioDepLcfspr) {
-                                                    // Priority-aware: find leftmost pair among highest-priority class
-                                                    double bestPrio = Double.MAX_VALUE;
-                                                    for (int col = 0; col < spaceBuf.getNumCols() - 1; col += 2) {
-                                                        if (spaceBuf.get(row, col) != 0) {
-                                                            int cls = (int) spaceBuf.get(row, col) - 1; // 0-based class
-                                                            double prio = sn.classprio.get(cls);
-                                                            if (prio < bestPrio) {
-                                                                bestPrio = prio;
-                                                                firstCol = col; // leftmost among best priority
-                                                            }
-                                                        }
-                                                    }
-                                                } else {
-                                                    // Default: find first non-zero column (leftmost = most recent)
-                                                    for (int col = 0; col < spaceBuf.getNumCols(); col++) {
-                                                        if (spaceBuf.get(row, col) != 0) {
-                                                            firstCol = col;
-                                                            break;
-                                                        }
+                                                for (int col = 0; col < spaceBuf.getNumCols(); col++) {
+                                                    if (spaceBuf.get(row, col) != 0) {
+                                                        firstCol = col;
+                                                        break;
                                                     }
                                                 }
 
@@ -4343,9 +4356,9 @@ public class AfterEventStation implements Serializable {
                                                 outprob = Matrix.concatRows(outprob, outprobBottomLcfspr, null);
 
                                                 if (isSimulation && eventCache.isEnabled()) {
-                                                    eventCache.put(key, new Ret.EventResult(outspace, outrate, outprob));
+                                                    eventCache.put(key, new Ret.EventResult(outspace, outrate, outprob, tagPad(outstart, outspace.getNumRows(), R), null));
                                                 }
-                                                return new Ret.EventResult(outspace, outrate, outprob);
+                                                return new Ret.EventResult(outspace, outrate, outprob, tagPad(outstart, outspace.getNumRows(), R), null);
                                             }
 
                                             // Add job to service with preserved phase
@@ -4353,6 +4366,7 @@ public class AfterEventStation implements Serializable {
                                             for (int row = 0; row < enWbufLcfspr.getNumRows(); row++) {
                                                 if (enWbufLcfspr.get(row, 0) == 1) {
                                                     int startClass = (int) startSvcClassLcfspr.get(bufRowIdxLcfspr, 0) - 1; // Convert to 0-based index
+                                                    startRowLcfspr.set(row, 0, startClass + 1);
                                                     int kentry = (int) kentryLcfspr.get(bufRowIdxLcfspr, 0);
                                                     // Use Ks.length() instead of Ks.getNumRows() since Ks is a row vector
                                                     if (startClass >= 0 && startClass < Ks.length()) {
@@ -4384,6 +4398,8 @@ public class AfterEventStation implements Serializable {
                                             }
                                         }
                                         outspace = Matrix.concatRows(outspace, spaceBufEnLcfspr, null);
+                                        // the most recently preempted job resumes on the freed server
+                                        outstart = tagArcRows(outstart, outspace.getNumRows(), R, filterTagRows(startRowLcfspr, en));
 
                                         Matrix rateEnLcfspr = new Matrix(0, 0);
                                         for (int row = 0; row < en.getNumRows(); row++) {
@@ -4414,8 +4430,11 @@ public class AfterEventStation implements Serializable {
                                         break;
 
                                     case LCFSPRPRIO:
-                                    case FCFSPRPRIO: {
-                                        // LCFSPRPRIO/FCFSPRPRIO departure - like LCFSPR but with priority-based buffer selection
+                                    case FCFSPRPRIO:
+                                    case FCFSPR: {
+                                        // LCFSPRPRIO/FCFSPRPRIO/FCFSPR departure - like LCFSPR but
+                                        // scanning the buffer from the FCFS end, and for the PRIO
+                                        // variants selecting the most urgent class first
                                         SchedStrategy schedIstDep = sn.sched.get(sn.stations.get(ist));
 
                                         // Record departure from service
@@ -4458,14 +4477,23 @@ public class AfterEventStation implements Serializable {
                                         Matrix colTargetPrio = new Matrix(0, 0);
                                         Matrix startSvcClassPrio = new Matrix(0, 0);
                                         Matrix kentryPrio = new Matrix(0, 0);
+                                        // per-row promoted class (1-based, 0 = none), tagged at the append below
+                                        Matrix startRowPrio = new Matrix(enWbufPrio.getNumRows(), 1);
+                                        startRowPrio.zero();
 
                                         for (int row = 0; row < enWbufPrio.getNumRows(); row++) {
                                             if (enWbufPrio.get(row, 0) == 1) {
                                                 double minPrio = Double.POSITIVE_INFINITY;
                                                 int targetBufCol = -1;
 
+                                                // Priority-awareness is a property of the declared
+                                                // policy: the plain variants promote by arrival order
+                                                // alone, the PRIO variants scan for the most urgent
+                                                // class first.
+                                                boolean isPrioDep = schedIstDep == SchedStrategy.LCFSPRPRIO ||
+                                                                    schedIstDep == SchedStrategy.FCFSPRPRIO;
                                                 if (schedIstDep == SchedStrategy.LCFSPRPRIO) {
-                                                    // LCFSPRPRIO: scan left-to-right, use < so leftmost (most recently preempted) wins
+                                                    // LCFS: scan left-to-right, use < so leftmost (most recently preempted) wins
                                                     for (int col = 0; col < spaceBuf.getNumCols(); col += 2) {
                                                         double bufVal = spaceBuf.get(row, col);
                                                         if (bufVal > 0) {
@@ -4478,10 +4506,15 @@ public class AfterEventStation implements Serializable {
                                                         }
                                                     }
                                                 } else {
-                                                    // FCFSPRPRIO: scan right-to-left, first match = rightmost (longest waiting)
+                                                    // FCFS: scan right-to-left, first match = rightmost (longest waiting)
                                                     for (int col = spaceBuf.getNumCols() - 2; col >= 0; col -= 2) {
                                                         double bufVal = spaceBuf.get(row, col);
                                                         if (bufVal > 0) {
+                                                            if (!isPrioDep) {
+                                                                // plain FCFSPR resumes the oldest, whatever its class
+                                                                targetBufCol = col;
+                                                                break;
+                                                            }
                                                             int cls = (int) bufVal - 1; // 0-based class index
                                                             double prio = classprio[cls];
                                                             if (prio < minPrio) {
@@ -4523,15 +4556,23 @@ public class AfterEventStation implements Serializable {
                                             }
                                         }
 
-                                        // Remove job from buffer (set both class and phase to 0)
+                                        // Remove the promoted pair, closing the hole by padding a
+                                        // whole empty PAIR on the left. The buffer is right-aligned
+                                        // as State.fromMarginal enumerates it, so zeroing the pair
+                                        // in place leaves a layout the enumerator never emits: the
+                                        // successor is then unreachable and every full-buffer state
+                                        // comes out absorbing.
                                         Matrix spaceBufPrio = spaceBuf.copy();
                                         int bufRowIdxPrio = 0;
                                         for (int row = 0; row < enWbufPrio.getNumRows(); row++) {
                                             if (enWbufPrio.get(row, 0) == 1) {
                                                 int targetCol = (int) colTargetPrio.get(bufRowIdxPrio, 0);
                                                 if (targetCol >= 0) {
-                                                    spaceBufPrio.set(row, targetCol, 0); // zero popped job class
-                                                    spaceBufPrio.set(row, targetCol + 1, 0); // zero popped phase
+                                                    for (int col = targetCol + 1; col >= 2; col--) {
+                                                        spaceBufPrio.set(row, col, spaceBuf.get(row, col - 2));
+                                                    }
+                                                    spaceBufPrio.set(row, 0, 0);
+                                                    spaceBufPrio.set(row, 1, 0);
                                                 }
                                                 bufRowIdxPrio++;
                                             }
@@ -4598,9 +4639,9 @@ public class AfterEventStation implements Serializable {
                                                 outprob = Matrix.concatRows(outprob, outprobBottomPrio, null);
 
                                                 if (isSimulation && eventCache.isEnabled()) {
-                                                    eventCache.put(key, new Ret.EventResult(outspace, outrate, outprob));
+                                                    eventCache.put(key, new Ret.EventResult(outspace, outrate, outprob, tagPad(outstart, outspace.getNumRows(), R), null));
                                                 }
-                                                return new Ret.EventResult(outspace, outrate, outprob);
+                                                return new Ret.EventResult(outspace, outrate, outprob, tagPad(outstart, outspace.getNumRows(), R), null);
                                             }
 
                                             // Add job to service with preserved phase
@@ -4608,6 +4649,7 @@ public class AfterEventStation implements Serializable {
                                             for (int row = 0; row < enWbufPrio.getNumRows(); row++) {
                                                 if (enWbufPrio.get(row, 0) == 1) {
                                                     int startClass = (int) startSvcClassPrio.get(bufRowIdxPrio, 0) - 1; // Convert to 0-based index
+                                                    startRowPrio.set(row, 0, startClass + 1);
                                                     int kentry = (int) kentryPrio.get(bufRowIdxPrio, 0);
                                                     if (startClass >= 0 && startClass < Ks.length()) {
                                                         int colIndex = (int) (Ks.get(startClass) + kentry - 1);
@@ -4637,6 +4679,8 @@ public class AfterEventStation implements Serializable {
                                             }
                                         }
                                         outspace = Matrix.concatRows(outspace, spaceBufEnPrio, null);
+                                        // the highest-priority waiting job resumes on the freed server
+                                        outstart = tagArcRows(outstart, outspace.getNumRows(), R, filterTagRows(startRowPrio, en));
 
                                         Matrix rateEnPrio = new Matrix(0, 0);
                                         for (int row = 0; row < en.getNumRows(); row++) {
@@ -4668,8 +4712,11 @@ public class AfterEventStation implements Serializable {
                                     }
 
                                     case FCFSPIPRIO:
-                                    case LCFSPIPRIO: {
-                                        // FCFSPIPRIO/LCFSPIPRIO departure - like FCFSPRPRIO/LCFSPRPRIO but preempt-independent (restart from pie)
+                                    case LCFSPIPRIO:
+                                    case FCFSPI: {
+                                        // FCFSPIPRIO/LCFSPIPRIO/FCFSPI departure - like the PR arm
+                                        // above but preempt-independent: the stored phase is
+                                        // discarded and the promoted job restarts from pie
                                         SchedStrategy schedIstPiPrio = sn.sched.get(sn.stations.get(ist));
 
                                         // Record departure from service
@@ -4787,10 +4834,17 @@ public class AfterEventStation implements Serializable {
                                                             }
                                                         }
                                                     } else {
-                                                        // FCFSPIPRIO: scan right-to-left, rightmost highest-priority wins
+                                                        // FCFS: scan right-to-left, rightmost highest-priority wins
+                                                        boolean isPrioPi = schedIstPiPrio == SchedStrategy.FCFSPIPRIO ||
+                                                                           schedIstPiPrio == SchedStrategy.LCFSPIPRIO;
                                                         for (int col = spaceBuf.getNumCols() - 2; col >= 0; col -= 2) {
                                                             double bufVal = spaceBuf.get(row, col);
                                                             if (bufVal > 0) {
+                                                                if (!isPrioPi) {
+                                                                    // plain FCFSPI promotes the oldest, whatever its class
+                                                                    targetBufCol = col;
+                                                                    break;
+                                                                }
                                                                 int cls = (int) bufVal - 1;
                                                                 double prio = classprioPiPrio[cls];
                                                                 if (prio < minPrio) {
@@ -4836,14 +4890,21 @@ public class AfterEventStation implements Serializable {
                                                     Matrix spaceBufPiPrio = spaceBuf.copy();
                                                     Matrix spaceSrvPiPrio = spaceSrv.copy();
 
-                                                    // Remove job from buffer (set both class and phase to 0) and add to service
+                                                    // Remove the promoted pair and add it to service. The
+                                                    // hole is closed by padding a whole empty PAIR on the
+                                                    // left, keeping the buffer right-aligned as
+                                                    // State.fromMarginal enumerates it; zeroing in place
+                                                    // makes the successor unreachable.
                                                     int bufRowIdxPiPrio = 0;
                                                     for (int row = 0; row < enWbufPiPrio.getNumRows(); row++) {
                                                         if (enWbufPiPrio.get(row, 0) == 1) {
                                                             int targetCol = (int) colTargetPiPrio.get(bufRowIdxPiPrio, 0);
                                                             if (targetCol >= 0) {
-                                                                spaceBufPiPrio.set(row, targetCol, 0); // zero class
-                                                                spaceBufPiPrio.set(row, targetCol + 1, 0); // zero phase
+                                                                for (int col = targetCol + 1; col >= 2; col--) {
+                                                                    spaceBufPiPrio.set(row, col, spaceBuf.get(row, col - 2));
+                                                                }
+                                                                spaceBufPiPrio.set(row, 0, 0);
+                                                                spaceBufPiPrio.set(row, 1, 0);
                                                             }
                                                             // Add job to service in phase kentry (pie distribution)
                                                             spaceSrvPiPrio.set(row, (int) (Ks.get(startClassIdxPiPrio) + kentry),
@@ -4867,6 +4928,7 @@ public class AfterEventStation implements Serializable {
                                                         }
                                                     }
                                                     outspace = Matrix.concatRows(outspace, spaceBufEnPiPrio, null);
+                                                    outstart = tagArc(outstart, outspace.getNumRows(), spaceBufEnPiPrio.getNumRows(), R, startClassIdxPiPrio + 1);
 
                                                     // Apply pie probability to rates
                                                     Matrix rateKPiPrio = rate.copy();
@@ -5097,6 +5159,7 @@ public class AfterEventStation implements Serializable {
                                                             Matrix leftBottomWbufLcfspi = Matrix.concatColumns(spaceBufEnWbufLcfspi, spaceSrvEnWbufLcfspi, null);
                                                             Matrix bottomWbufLcfspi = Matrix.concatColumns(leftBottomWbufLcfspi, spaceVarEnWbufLcfspi, null);
                                                             outspace = Matrix.concatRows(outspace, bottomWbufLcfspi, null);
+                                                            outstart = tagArc(outstart, outspace.getNumRows(), bottomWbufLcfspi.getNumRows(), R, startClassIdx + 1);
                                                             
                                                             // Apply pie distribution probability to rates
                                                             Matrix rateKLcfspi = rateLcfspi.copy();
@@ -5208,6 +5271,11 @@ public class AfterEventStation implements Serializable {
                                                     bufRowD, srvRowD, varRowD, K, Ks, pie.get(sn.stations.get(ist)), sn.jobclasses, R);
                                             for (int jD = 0; jD < landD.rows.size(); jD++) {
                                                 outspace = Matrix.concatRows(outspace, landD.rows.get(jD), null);
+                                                // a visit (mode 1) pulls a waiting class-qD job into the
+                                                // server; a switchover or a park starts nobody
+                                                if (modeD == Polling.MODE_VISIT) {
+                                                    outstart = tagArc(outstart, outspace.getNumRows(), 1, R, qD + 1);
+                                                }
                                                 double cdD = cdScalar(cdscaling, sn.stations.get(ist), nir, jobClass);
                                                 double lldD;
                                                 if (ni.hasInfinite()) {
@@ -5387,6 +5455,7 @@ public class AfterEventStation implements Serializable {
                                                     Matrix leftBottomWbufSiro = Matrix.concatColumns(spaceBufEnWbufSiro, spaceSrvEnWbufSiro, null);
                                                     Matrix bottomWbufSiro = Matrix.concatColumns(leftBottomWbufSiro, spaceVarEnWbufSiro, null);
                                                     outspace = Matrix.concatRows(outspace, bottomWbufSiro, null);
+                                                    outstart = tagArc(outstart, outspace.getNumRows(), bottomWbufSiro.getNumRows(), R, r + 1);
 
                                                     Matrix rateKSiro = rateR.copy();
                                                     for (int row = 0; row < enWbufSiro.getNumRows(); row++) {
@@ -5656,6 +5725,7 @@ public class AfterEventStation implements Serializable {
                                                                     Matrix leftBottomWbufR = Matrix.concatColumns(spaceBufREnWbuf, spaceSrvREnWbuf, null);
                                                                     Matrix bottomWbufR = Matrix.concatColumns(leftBottomWbufR, spaceVarEnWbuf, null);
                                                                     outspace = Matrix.concatRows(outspace, bottomWbufR, null);
+                                                                    outstart = tagArc(outstart, outspace.getNumRows(), bottomWbufR.getNumRows(), R, r + 1);
                                                                 }
 
                                                                 if (ni.hasInfinite()) {
@@ -5697,7 +5767,8 @@ public class AfterEventStation implements Serializable {
 
                             }
                         }
-                        Ret.EventResult result_d = new Ret.EventResult(outspace, outrate, outprob);
+                        outstart = tagPad(outstart, outspace.getNumRows(), R);
+                        Ret.EventResult result_d = new Ret.EventResult(outspace, outrate, outprob, outstart, null);
                         eventCache.put(key, result_d);
                         if (isSimulation) {
                             if (outspace.getNumRows() > 1) {
@@ -5714,6 +5785,8 @@ public class AfterEventStation implements Serializable {
                                 }
                                 firing_ctr++;
                                 outspace = Matrix.extractRows(outspace, firing_ctr, firing_ctr + 1, null);
+                                // the tags of the sampled arc
+                                outstart = Matrix.extractRows(outstart, firing_ctr, firing_ctr + 1, null);
                                 double outrate_val = outrate.elementSum();
                                 outrate = new Matrix(1, 1);
                                 outrate.set(0, 0, outrate_val);
@@ -5723,7 +5796,8 @@ public class AfterEventStation implements Serializable {
                         }
                     }
                 } else {
-                    Ret.EventResult result_d = new Ret.EventResult(outspace, outrate, outprob);
+                    outstart = tagPad(outstart, outspace.getNumRows(), R);
+                    Ret.EventResult result_d = new Ret.EventResult(outspace, outrate, outprob, outstart, null);
                     eventCache.put(key, result_d);
                 }
         // True BAS: when the front job is already blocked (completed, held at the server),
@@ -5746,7 +5820,7 @@ public class AfterEventStation implements Serializable {
                 outrate.set(row, 1.0e7);
             }
         }
-        return new Ret.EventResult(outspace, outrate, outprob);
+        return new Ret.EventResult(outspace, outrate, outprob, tagPad(outstart, outspace.getNumRows(), R), null);
     }
 
     private static Ret.EventResult handlePhase(NetworkStruct sn, int ind, Matrix inspace, EventType event, int jobClass, boolean isSimulation,
@@ -6029,6 +6103,8 @@ public class AfterEventStation implements Serializable {
                                         case LCFSPI:
                                         case FCFSPIPRIO:
                                         case LCFSPIPRIO:
+                                        case FCFSPR:
+                                        case FCFSPI:
                                         case SIRO:
                                         case SEPT:
                                         case LEPT:
@@ -6182,6 +6258,14 @@ public class AfterEventStation implements Serializable {
         List<double[]> outRows = new ArrayList<double[]>();
         List<Double> outRate = new ArrayList<Double>();
         List<Double> outProb = new ArrayList<Double>();
+        // START tag of each emitted row. A PAS station has one clock for the
+        // whole station and no server to hold, so "in service" means "at a
+        // position whose rate increment Delta_mu is positive": a job starts
+        // exactly when a position goes from a zero increment to a positive one.
+        // With mu(c) = 1 only the head is served (M/M/1), with mu(c) = |c| every
+        // position is (M/M/inf), and the rule reproduces both. Nothing is ever
+        // pushed back out of service here, so there is no PREEMPT counterpart.
+        List<double[]> outStartRows = new ArrayList<double[]>();
 
         for (int row = 0; row < nRows; row++) {
             // extract the ordered list (1-based, contiguous) and the var columns
@@ -6203,6 +6287,10 @@ public class AfterEventStation implements Serializable {
                 outRows.add(outRow);
                 outRate.add(-1.0);
                 outProb.add(1.0);
+                int[] cArv = new int[n + 1];
+                System.arraycopy(c, 0, cArv, 0, n);
+                cArv[n] = jobClass1;
+                outStartRows.add(pasStarted(muFun, c, cArv, R));
             } else if (event == EventType.DEP) {
                 if (n == 0) continue;
                 double muPrev = 0.0;
@@ -6221,6 +6309,7 @@ public class AfterEventStation implements Serializable {
                     outRows.add(outRow);
                     outRate.add(ratep);
                     outProb.add(1.0);
+                    outStartRows.add(pasStarted(muFun, c, res.cnew, R));
                 }
             }
             // PHASE: PAS service is exponential, no phase transitions
@@ -6244,6 +6333,9 @@ public class AfterEventStation implements Serializable {
                 if (u <= acc) { pick = i; break; }
             }
             double[] chosen = outRows.get(pick);
+            double[] chosenStart = outStartRows.get(pick);
+            outStartRows = new ArrayList<double[]>();
+            outStartRows.add(chosenStart);
             outRows = new ArrayList<double[]>();
             outRows.add(chosen);
             outRate = new ArrayList<Double>();
@@ -6256,12 +6348,50 @@ public class AfterEventStation implements Serializable {
         Matrix outspace = new Matrix(m, nCols);
         Matrix outrate = new Matrix(m, 1);
         Matrix outprob = new Matrix(m, 1);
+        Matrix outstart = new Matrix(m, R);
+        outstart.zero();
         for (int i = 0; i < m; i++) {
             double[] r = outRows.get(i);
             for (int col = 0; col < nCols; col++) outspace.set(i, col, r[col]);
             outrate.set(i, 0, outRate.get(i));
             outprob.set(i, 0, outProb.get(i));
+            double[] st = outStartRows.get(i);
+            for (int cls = 0; cls < R; cls++) outstart.set(i, cls, st[cls]);
         }
-        return new Ret.EventResult(outspace, outrate, outprob);
+        return new Ret.EventResult(outspace, outrate, outprob, outstart, null);
+    }
+
+    /**
+     * Per-class count of the positions of CNEW that are served (Delta_mu > 0)
+     * and were not served in COLD. See the START tag note in
+     * afterEventStationPas; both lists hold 1-based class indices.
+     */
+    private static double[] pasStarted(SerializableFunction<Matrix, Double> muFun, int[] cold, int[] cnew, int R) {
+        double[] st = new double[R];
+        double[] incNew = pasIncrements(muFun, cnew);
+        double[] incOld = pasIncrements(muFun, cold);
+        for (int p = 0; p < incNew.length; p++) {
+            if (incNew[p] <= 0) continue;
+            if (p < incOld.length && incOld[p] > 0) continue; // already being served
+            int cls = cnew[p];
+            if (cls > 0 && cls <= R) st[cls - 1] += 1;
+        }
+        return st;
+    }
+
+    /**
+     * Per-position service rate increments Delta_mu(c1..cp) = mu(c1..cp) - mu(c1..c_{p-1}).
+     */
+    private static double[] pasIncrements(SerializableFunction<Matrix, Double> muFun, int[] c) {
+        double[] inc = new double[c.length];
+        double muPrev = 0.0;
+        for (int p = 0; p < c.length; p++) {
+            Matrix prefix = new Matrix(1, p + 1);
+            for (int i = 0; i <= p; i++) prefix.set(0, i, c[i] - 1); // 0-based for mu
+            double muCur = muFun.apply(prefix);
+            inc[p] = muCur - muPrev;
+            muPrev = muCur;
+        }
+        return inc;
     }
 }

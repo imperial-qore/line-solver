@@ -39,14 +39,14 @@ static emlrtRSInfo sb_emlrtRSI = {
                                                                       */
 };
 
-static emlrtRSInfo lc_emlrtRSI = {
+static emlrtRSInfo jc_emlrtRSI = {
     78,       /* lineNo */
     "repmat", /* fcnName */
     "/usr/local/MATLAB/R2025a/toolbox/eml/lib/matlab/elmat/repmat.m" /* pathName
                                                                       */
 };
 
-static emlrtRSInfo mc_emlrtRSI = {
+static emlrtRSInfo kc_emlrtRSI = {
     85,       /* lineNo */
     "repmat", /* fcnName */
     "/usr/local/MATLAB/R2025a/toolbox/eml/lib/matlab/elmat/repmat.m" /* pathName
@@ -61,7 +61,7 @@ static emlrtRTEInfo g_emlrtRTEI = {
     "assertValidSizeArg.m" /* pName */
 };
 
-static emlrtRTEInfo j_emlrtRTEI = {
+static emlrtRTEInfo i_emlrtRTEI = {
     64,                   /* lineNo */
     15,                   /* colNo */
     "assertValidSizeArg", /* fName */
@@ -69,7 +69,7 @@ static emlrtRTEInfo j_emlrtRTEI = {
     "assertValidSizeArg.m" /* pName */
 };
 
-static emlrtRTEInfo mb_emlrtRTEI = {
+static emlrtRTEInfo ib_emlrtRTEI = {
     73,       /* lineNo */
     28,       /* colNo */
     "repmat", /* fName */
@@ -107,7 +107,7 @@ void b_repmat(const emlrtStack *sp, const emxArray_real_T *a, real_T varargin_2,
     d = varargin_2;
   }
   if (!(d <= 2.147483647E+9)) {
-    emlrtErrorWithMessageIdR2018a(&st, &j_emlrtRTEI, "Coder:MATLAB:pmaxsize",
+    emlrtErrorWithMessageIdR2018a(&st, &i_emlrtRTEI, "Coder:MATLAB:pmaxsize",
                                   "Coder:MATLAB:pmaxsize", 0);
   }
   i = a->size[0];
@@ -115,16 +115,16 @@ void b_repmat(const emlrtStack *sp, const emxArray_real_T *a, real_T varargin_2,
   b->size[0] = a->size[0];
   i1 = (int32_T)varargin_2;
   b->size[1] = (int32_T)varargin_2;
-  emxEnsureCapacity_real_T(sp, b, ibtile, &mb_emlrtRTEI);
+  emxEnsureCapacity_real_T(sp, b, ibtile, &ib_emlrtRTEI);
   b_data = b->data;
-  st.site = &lc_emlrtRSI;
+  st.site = &jc_emlrtRSI;
   if ((int32_T)varargin_2 > 2147483646) {
     b_st.site = &x_emlrtRSI;
     check_forloop_overflow_error(&b_st);
   }
   for (jtilecol = 0; jtilecol < i1; jtilecol++) {
     ibtile = jtilecol * i;
-    st.site = &mc_emlrtRSI;
+    st.site = &kc_emlrtRSI;
     if (i > 2147483646) {
       b_st.site = &x_emlrtRSI;
       check_forloop_overflow_error(&b_st);
@@ -163,7 +163,7 @@ void repmat(const emlrtStack *sp, const emxArray_real_T *a, real_T varargin_1,
   b->size[0] = (int32_T)varargin_1;
   i1 = a->size[1];
   b->size[1] = a->size[1];
-  emxEnsureCapacity_real_T(sp, b, ibmat, &mb_emlrtRTEI);
+  emxEnsureCapacity_real_T(sp, b, ibmat, &ib_emlrtRTEI);
   b_data = b->data;
   st.site = &rb_emlrtRSI;
   if (a->size[1] > 2147483646) {

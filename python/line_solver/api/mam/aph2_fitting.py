@@ -183,3 +183,34 @@ def aph2_fit(M1: float, M2: float, M3: float) -> List[np.ndarray]:
             raise RuntimeError('Fitting APH(2): feasibility could not be restored')
 
     return APHS[0]
+
+
+def aph2_fit_map(map_) -> List[np.ndarray]:
+    """
+    Fit a MAP of arbitrary order by a canonical APH(2). Mirrors aph2_fit_map.m.
+
+    Args:
+        map_: the MAP to fit, as [D0, D1].
+
+    Returns:
+        The fitted APH(2) as [D0, D1].
+    """
+    from .map_analysis import map_moment
+    D0 = np.asarray(map_[0], dtype=float)
+    D1 = np.asarray(map_[1], dtype=float)
+    return aph2_fit(map_moment(D0, D1, 1), map_moment(D0, D1, 2), map_moment(D0, D1, 3))
+
+
+def aph2_fit_trace(T) -> List[np.ndarray]:
+    """
+    Fit a trace of inter-arrival times by a canonical APH(2). Mirrors
+    aph2_fit_trace.m: the first three raw sample moments drive aph2_fit.
+
+    Args:
+        T: the inter-arrival times.
+
+    Returns:
+        The fitted APH(2) as [D0, D1].
+    """
+    T = np.asarray(T, dtype=float).ravel()
+    return aph2_fit(float(np.mean(T)), float(np.mean(T ** 2)), float(np.mean(T ** 3)))

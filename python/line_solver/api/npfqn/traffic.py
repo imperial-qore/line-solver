@@ -190,6 +190,7 @@ def npfqn_traffic_split_cs(
     Args:
         MMAP_input: Input MMAP as list [D0, D1, D2, ...].
         P: Class switching probability matrix (R x J) where:
+
            - R is the number of arrival classes
            - J = M * R where M is the number of destinations
            - P[r, (jst-1)*R + s] = probability that class r arrival
@@ -289,6 +290,7 @@ def npfqn_traffic_merge_cs(
     Args:
         MMAPs: Dictionary of MMAP traffic flows indexed by source.
         prob: Class switching probability matrix ((n*R) x R) where:
+
               - n is the number of sources
               - R is the number of classes
               - prob[(i-1)*R + r, s] = probability that class r from source i

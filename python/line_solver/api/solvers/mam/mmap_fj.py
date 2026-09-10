@@ -47,7 +47,7 @@ from ...mam.mmap_ops import (
 )
 from ...mam.qbd_depproc import qbd_depproc_etaqa, qbd_depproc_etaqa_ps
 from ...npfqn.traffic import npfqn_traffic_merge, npfqn_traffic_split_cs
-from ...qsys import qsys_mmck
+from ...qsys import qsys_mmck, qsys_mmapg1k
 from ....constants import GlobalConstants
 from ....lib.thirdparty.butools.queues import MMAPPH1FCFS
 from ....lib.thirdparty.fj import sn_build_fj_sync_map
@@ -66,6 +66,7 @@ __all__ = [
     'solver_mam_basic_mmap_closed',
     'solver_mam_traffic_mmap',
     'mam_truncate_renorm',
+    'mam_svc_mixture',
     'mam_detect_mmck',
 ]
 
@@ -133,32 +134,11 @@ def _proc_to_map(entry: Any) -> Optional[List[np.ndarray]]:
     """
     if entry is None:
         return None
-    if isinstance(entry, (list, tuple)) and len(entry) >= 2 and not isinstance(entry[0], dict):
-        D0 = np.atleast_2d(np.asarray(entry[0], dtype=np.float64))
-        D1 = np.atleast_2d(np.asarray(entry[1], dtype=np.float64))
-        return [D0, D1]
-    if isinstance(entry, dict):
-        if 'rate' in entry:
-            r = float(entry['rate'])
-            return [np.array([[-r]]), np.array([[r]])]
-        if 'k' in entry and 'mu' in entry:
-            k = int(entry['k'])
-            mu = float(entry['mu'])
-            alpha = np.zeros((1, k))
-            alpha[0, 0] = 1.0
-            T = np.zeros((k, k))
-            for i in range(k):
-                T[i, i] = -mu
-                if i < k - 1:
-                    T[i, i + 1] = mu
-            t0 = -T @ np.ones((k, 1))
-            return [T, t0 @ alpha]
-        if 'probs' in entry and 'rates' in entry:
-            p = np.asarray(entry['probs'], dtype=np.float64).reshape(1, -1)
-            mu_h = np.asarray(entry['rates'], dtype=np.float64).ravel()
-            T = np.diag(-mu_h)
-            t0 = -T @ np.ones((mu_h.size, 1))
-            return [T, t0 @ p]
+    # sn.proc stores (D0, D1); proc_to_map also accepts the legacy descriptors.
+    from ...sn.proc_form import proc_to_map
+    D0, D1 = proc_to_map(entry)
+    if D0 is not None:
+        return [np.atleast_2d(D0), np.atleast_2d(D1)]
     raise RuntimeError("solver_mam_basic_mmap: unsupported process representation %r"
                        % type(entry))
 
@@ -214,6 +194,61 @@ def mam_detect_mmck(sn: NetworkStruct, ist: int, K: int,
     return _mam_detect_mmck(sn, ist, K)
 
 
+def mam_svc_mixture(D_arr: List[np.ndarray],
+                    pie_list: List[np.ndarray],
+                    D0_list: List[np.ndarray]) -> Dict[str, Any]:
+    """Arrival-weighted phase-type mixture of the per-class service laws.
+
+    Port of matlab/src/solvers/MAM/mam_svc_mixture.m. Returns the service
+    descriptor accepted by qsys_mapg1k/qsys_mmapg1k.
+
+    The mixture is PH(alpha_mix, T_mix) with alpha_mix = [w_1*pie_1, ...],
+    T_mix = blkdiag(D0_1, ...), and w_k = lambda_k/sum_j lambda_j the fraction
+    of arrivals belonging to class k. It is therefore the service law of an
+    arbitrary packet, and it reduces to the common law exactly (as a
+    distribution) when every class shares one.
+
+    Args:
+        D_arr: [D0, D_class1, ..., D_classR], the arrival MMAP
+        pie_list: per-class PH initial distributions
+        D0_list: per-class PH sub-generators
+
+    Returns:
+        Dict service descriptor with keys 'type' ('ph'), 'alpha', 'T'.
+    """
+    from ...mc.ctmc import ctmc_solve
+    n_classes = len(pie_list)
+    D0 = np.asarray(D_arr[0], dtype=np.float64)
+    # 1-D on BOTH sides: with theta a (1,M) row and e a (M,1) column the product
+    # below is a (1,1) array, and numpy 2 no longer coerces a size-1 array to a
+    # scalar, so every float() here raised TypeError instead of computing.
+    e_arr = np.ones(D0.shape[0])
+    Dsum = np.zeros_like(D0)
+    for k in range(n_classes):
+        Dsum = Dsum + np.asarray(D_arr[k + 1], dtype=np.float64)
+    theta = np.asarray(ctmc_solve(D0 + Dsum), dtype=np.float64).reshape(-1)
+    lambda_k = np.zeros(n_classes)
+    for k in range(n_classes):
+        lambda_k[k] = float(theta @ np.asarray(D_arr[k + 1], dtype=np.float64) @ e_arr)
+    sumL = float(np.sum(lambda_k))
+    if sumL > 0:
+        w = lambda_k / sumL
+    else:
+        w = np.ones(n_classes) / n_classes
+
+    n_k = [np.asarray(p).size for p in pie_list]
+    n_total = int(np.sum(n_k))
+    alpha_mix = np.zeros(n_total)
+    T_mix = np.zeros((n_total, n_total))
+    offset = 0
+    for k in range(n_classes):
+        nk = n_k[k]
+        alpha_mix[offset:offset + nk] = w[k] * np.asarray(pie_list[k]).flatten()
+        T_mix[offset:offset + nk, offset:offset + nk] = np.asarray(D0_list[k])
+        offset += nk
+    return {'type': 'ph', 'alpha': alpha_mix, 'T': T_mix}
+
+
 def mam_truncate_renorm(D_arr: List[np.ndarray],
                         pie_list: List[np.ndarray],
                         D0_list: List[np.ndarray],
@@ -249,8 +284,9 @@ def mam_truncate_renorm(D_arr: List[np.ndarray],
         Dsum = np.zeros_like(D0)
         for k in range(n_classes):
             Dsum = Dsum + np.asarray(D_arr[k + 1], dtype=np.float64)
-        e_arr = np.ones((D0.shape[0], 1))
-        theta = np.asarray(ctmc_solve(D0 + Dsum), dtype=np.float64).reshape(1, -1)
+        # 1-D on both sides; see mam_svc_mixture for why the (1,1) product broke.
+        e_arr = np.ones(D0.shape[0])
+        theta = np.asarray(ctmc_solve(D0 + Dsum), dtype=np.float64).reshape(-1)
         lambda_k = np.zeros(n_classes)
         for k in range(n_classes):
             lambda_k[k] = float(theta @ np.asarray(D_arr[k + 1], dtype=np.float64) @ e_arr)
@@ -692,6 +728,7 @@ def solver_mam_basic_mmap_inner(sn: NetworkStruct,
                     if is_finite_cap:
                         capK = int(cap[ist])
                         is_mmck, mu_mmck = mam_detect_mmck(sn, ist, K, arv)
+                        loss_per_class_fc = None
                         if is_mmck:
                             lam = mmap_lambda(arv)
                             aggr_lambda = float(np.nansum(lam))
@@ -699,6 +736,21 @@ def solver_mam_basic_mmap_inner(sn: NetworkStruct,
                                                   int(nservers[ist]), capK)
                             mean_q_fc = exact_res['meanQueueLength']
                             loss_prob_fc = exact_res['lossProbability']
+                        elif int(nservers[ist]) == 1:
+                            # Exact MMAP[K]/G/1/K with per-class loss ratio; the
+                            # phase resolution of pKvec tells apart classes of
+                            # equal rate but different burstiness, which the
+                            # truncate-and-renormalize fallback cannot express.
+                            marks = arrival_marks(arv)
+                            svc_mix = mam_svc_mixture(
+                                marks,
+                                [pie[ist][k] for k in range(K)],
+                                [D0c[ist][k] for k in range(K)])
+                            ex_res = qsys_mmapg1k(marks[0], marks[1:], svc_mix, capK)
+                            mean_q_fc = ex_res['meanQueueLength']
+                            loss_prob_fc = ex_res['lossAggregate']
+                            loss_per_class_fc = np.asarray(ex_res['lossRatio'],
+                                                           dtype=np.float64)
                         else:
                             mean_q_fc, loss_prob_fc, _ = mam_truncate_renorm(
                                 arrival_marks(arv),
@@ -707,7 +759,11 @@ def solver_mam_basic_mmap_inner(sn: NetworkStruct,
                                 capK)
                         lambda_inflow = np.asarray(mmap_lambda(arv), dtype=np.float64)
                         lambda_inflow = np.nan_to_num(lambda_inflow, nan=0.0)
-                        TN_eff = lambda_inflow * (1 - loss_prob_fc)
+                        if loss_per_class_fc is not None:
+                            # exact branch: the loss ratio differs by class
+                            TN_eff = lambda_inflow * (1 - loss_per_class_fc[:K])
+                        else:
+                            TN_eff = lambda_inflow * (1 - loss_prob_fc)
                         sum_tn = float(np.sum(TN_eff))
                         S_actual = np.array([ph_mean(ist, k) * nservers[ist]
                                              for k in range(K)])

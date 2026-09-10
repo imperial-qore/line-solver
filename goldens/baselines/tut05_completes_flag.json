@@ -1,0 +1,40 @@
+{
+  "class": {
+    "NC": "deterministic"
+  },
+  "example": "tut05_completes_flag",
+  "solvers": {
+    "NC": [
+      {
+        "ArvR": 0.16667,
+        "JobClass": "Class1",
+        "QLen": 0.16667,
+        "ResidT": 0.33333,
+        "RespT": 1.0,
+        "Station": "Queue",
+        "Tput": 0.16667,
+        "Util": 0.16667
+      },
+      {
+        "ArvR": 0.16667,
+        "JobClass": "Class2",
+        "QLen": 0.33333,
+        "ResidT": 0.66667,
+        "RespT": 2.0,
+        "Station": "Queue",
+        "Tput": 0.16667,
+        "Util": 0.33333
+      },
+      {
+        "ArvR": 0.16667,
+        "JobClass": "Class3",
+        "QLen": 0.5,
+        "ResidT": 1.0,
+        "RespT": 3.0,
+        "Station": "Queue",
+        "Tput": 0.16667,
+        "Util": 0.5
+      }
+    ]
+  }
+}

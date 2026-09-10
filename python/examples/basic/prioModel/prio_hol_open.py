@@ -98,9 +98,10 @@ if __name__ == '__main__':
     # Run solvers
     solver = np.array([], dtype=object)
     solver = np.append(solver, CTMC(model, seed=23000, cutoff=1, samples=10000))
-    # iter_tol=1e-4 mirrors the MATLAB example's options=lineDefaults (generic
-    # SolverOptions iter_tol=1e-4); the MVA-specific default is 1e-6.
-    solver = np.append(solver, MVA(model, seed=23000, iter_tol=1e-4))
+    # No iter_tol here: the MVA-specific default (1e-6) is what the other
+    # engines solve at, and the generic 1e-4 stopped the AMVA fixed point 2.9e-5
+    # short on Storage3. The MATLAB twin restores it the same way.
+    solver = np.append(solver, MVA(model, seed=23000))
     solver = np.append(solver, JMT(model, seed=23000, samples=10000))
     solver = np.append(solver, SSA(model, seed=23000, samples=10000))
 

@@ -45,9 +45,9 @@ public enum RoutingStrategy {
     
     /** KCHOICES is now SQ: shortest queue of d, SQ(d) */
     SQ,
-    
-    /** Reinforcement Learning - adaptive routing based on learned policies */
-    RL,
+
+    /** Krzesinski (1987) product-form state-dependent routing */
+    SDR,
     
     /** Disabled routing - no routing allowed (jobs are dropped) */
     DISABLED;
@@ -72,8 +72,8 @@ public enum RoutingStrategy {
                 return "RoutingStrategy_JSQ";
             case SQ:
                 return "RoutingStrategy_SQ";
-            case RL:
-                return "RoutingStrategy_RL";
+            case SDR:
+                return "RoutingStrategy_SDR";
             default:
                 return "";
         }

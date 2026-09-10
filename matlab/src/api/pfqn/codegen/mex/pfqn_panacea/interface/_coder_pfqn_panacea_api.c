@@ -18,7 +18,7 @@
 #include "rt_nonfinite.h"
 
 /* Variable Definitions */
-static emlrtRTEInfo yb_emlrtRTEI = {
+static emlrtRTEInfo sb_emlrtRTEI = {
     1,                         /* lineNo */
     1,                         /* colNo */
     "_coder_pfqn_panacea_api", /* fName */
@@ -157,13 +157,13 @@ void pfqn_panacea_api(const mxArray *const prhs[3], int32_T nlhs,
   emlrtHeapReferenceStackEnterFcnR2012b(&st);
   prhs_copy_idx_2 = emlrtProtectR2012b(prhs[2], 2, false, -1);
   /* Marshall function inputs */
-  emxInit_real_T(&st, &L, 2, &yb_emlrtRTEI);
+  emxInit_real_T(&st, &L, 2, &sb_emlrtRTEI);
   L->canFreeData = false;
   emlrt_marshallIn(&st, emlrtAlias(prhs[0]), "L", L);
-  emxInit_real_T(&st, &N, 2, &yb_emlrtRTEI);
+  emxInit_real_T(&st, &N, 2, &sb_emlrtRTEI);
   N->canFreeData = false;
   c_emlrt_marshallIn(&st, emlrtAlias(prhs[1]), "N", N);
-  emxInit_real_T(&st, &Z, 2, &yb_emlrtRTEI);
+  emxInit_real_T(&st, &Z, 2, &sb_emlrtRTEI);
   Z->canFreeData = false;
   c_emlrt_marshallIn(&st, emlrtAlias(prhs_copy_idx_2), "Z", Z);
   /* Invoke the target function */

@@ -141,6 +141,10 @@ def map_joint_moment(MAP: List[np.ndarray], k: int, l: int) -> float:
 
     E[X_n^k * X_{n+1}^l] for a MAP with inter-arrival times X_n.
 
+    Uses the embedded transition kernel P = (-D0)^{-1} D1 between the two
+    resolvents. Sanity check: for a Poisson process the interarrivals are
+    independent, so map_joint_moment(MAP, 1, 1) == map_mean(MAP) ** 2.
+
     Args:
         MAP: Markovian Arrival Process as [D0, D1]
         k: Power for first inter-arrival time
@@ -163,12 +167,21 @@ def map_joint_moment(MAP: List[np.ndarray], k: int, l: int) -> float:
     except np.linalg.LinAlgError:
         neg_D0_inv = np.linalg.pinv(-D0)
 
-    # E[X_n^k * X_{n+1}^l] = k! * l! * π_e * (-D0)^{-k} * D1 * (-D0)^{-l} * e
+    # E[X_n^k * X_{n+1}^l] = k! * l! * pie * (-D0)^{-k} * P * (-D0)^{-l} * e,
+    # with P = (-D0)^{-1} * D1 the EMBEDDED TRANSITION KERNEL. The kernel, not
+    # D1 alone, is what carries the chain from one arrival to the next: D1 is a
+    # rate and P is a probability, so using D1 here leaves the result short by
+    # one factor of (-D0)^{-1} and therefore dimensionally wrong -- a moment of
+    # two TIMES has to scale as time squared.
+    #
+    # A POISSON PROCESS SHOWS IT AT ONCE: its interarrivals are independent, so
+    # E[X_n X_{n+1}] must equal E[X]^2. At rate 1.5 that is 0.4444, while the
+    # D1 form returns 0.6667, which is the mean itself.
     result = pie.copy()
     for _ in range(k):
         result = result @ neg_D0_inv
 
-    result = result @ D1
+    result = result @ neg_D0_inv @ D1
 
     for _ in range(l):
         result = result @ neg_D0_inv

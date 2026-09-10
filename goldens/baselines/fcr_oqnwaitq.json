@@ -1,0 +1,70 @@
+{
+  "class": {
+    "JMT": "stochastic"
+  },
+  "example": "fcr_oqnwaitq",
+  "solvers": {
+    "JMT": [
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class1",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.39141,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class2",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.30305,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.20234,
+        "JobClass": "Class1",
+        "QLen": 0.31806,
+        "ResidT": 0.87926,
+        "RespT": 1.7585,
+        "Station": "Queue1",
+        "Tput": 0.20234,
+        "Util": 0.19559
+      },
+      {
+        "ArvR": 0.18319,
+        "JobClass": "Class2",
+        "QLen": 0.31161,
+        "ResidT": 1.0956,
+        "RespT": 1.826,
+        "Station": "Queue1",
+        "Tput": 0.18228,
+        "Util": 0.19379
+      },
+      {
+        "ArvR": 0.26291,
+        "JobClass": "Class1",
+        "QLen": 0.40681,
+        "ResidT": 1.0959,
+        "RespT": 1.6859,
+        "Station": "Queue2",
+        "Tput": 0.2629,
+        "Util": 0.23346
+      },
+      {
+        "ArvR": 0.21366,
+        "JobClass": "Class2",
+        "QLen": 0.37782,
+        "ResidT": 1.214,
+        "RespT": 1.7343,
+        "Station": "Queue2",
+        "Tput": 0.21036,
+        "Util": 0.20623
+      }
+    ]
+  }
+}

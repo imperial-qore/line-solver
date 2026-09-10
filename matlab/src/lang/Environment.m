@@ -21,6 +21,64 @@ classdef Environment < Ensemble
     end
     
     methods
+
+        function T = findSolver(self, metric, showAll)
+            % T = FINDSOLVER(METRIC, SHOWALL)
+            %
+            % Which solvers and solver methods can analyze this random
+            % environment.
+            %
+            %   model.findSolver()            every runnable (solver, method) pair
+            %   model.findSolver('', true)    also the refused pairs, and why
+            %
+            % One row per pair, with columns Solver, Method, Runnable, Class,
+            % Metrics and Reason; Method is the method name to pass as a solver
+            % method. FINDMETHOD and HELP are aliases.
+            %
+            % The only family FAMILYACCEPTSMODELCLASS admits for an
+            % Environment is 'env', whose inner models are solved by the
+            % family its method name names ('env.fluid') or by LINE per submodel.
+            %
+            % See also SolverAUTO.findSolver
+            if nargin < 2
+                metric = '';
+            end
+            if nargin < 3
+                showAll = false;
+            end
+            % The guard covers the CONSTRUCTION as well as the walk:
+            % SolverAUTO probes every candidate with supports(model) as it
+            % builds them, and a report must not print.
+            verboseGuard = GlobalConstants.pushVerbose(VerboseLevel.SILENT); %#ok<NASGU>
+            T = SolverAUTO(self, 'verbose', 0).findSolver(metric, showAll);
+        end
+
+        function T = findMethod(self, metric, showAll)
+            % T = FINDMETHOD(METRIC, SHOWALL)
+            % Alias of FINDSOLVER; see Environment.findSolver.
+            if nargin < 2
+                metric = '';
+            end
+            if nargin < 3
+                showAll = false;
+            end
+            T = self.findSolver(metric, showAll);
+        end
+
+        function T = help(self, metric, showAll)
+            % T = HELP(METRIC, SHOWALL)
+            % Alias of FINDSOLVER; see Environment.findSolver. It shadows the
+            % builtin HELP for Environment objects, deliberately; the class
+            % documentation is still reached by name as `help Environment`.
+            if nargin < 2
+                metric = '';
+            end
+            if nargin < 3
+                showAll = false;
+            end
+            T = self.findSolver(metric, showAll);
+        end
+
         function self = Environment(name, num_stages)
             % SELF = ENVIRONMENT(NAME, NUM_STAGES)
             % NAME - Name of the environment

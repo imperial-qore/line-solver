@@ -15,7 +15,7 @@ import numpy as np
 from line_solver.layered import LayeredNetwork, Processor, Task, Entry, Activity
 from line_solver.constants import SchedStrategy
 from line_solver.distributions import Exp
-from line_solver import Environment, SolverENV, SolverLN, SolverFluid, SolverCTMC
+from line_solver import Environment, SolverENV, SolverLN, SolverFLD, SolverCTMC
 
 
 def build_lqn(name, db_mean):
@@ -65,8 +65,8 @@ def stage_aggregate(model, T, layer_factory):
 
 def _env_tput_sum(env, layer_factory, T):
     ln_factory = lambda m: SolverLN(m, layer_factory, timespan=[0, T],
-                                    iter_max=8, verbose=False)
-    s = SolverENV(env, ln_factory, {'iter_max': 3, 'iter_tol': 0.05, 'verbose': False})
+                                    verbose=False)
+    s = SolverENV(env, ln_factory, {'iter_max': 10, 'iter_tol': 0.03, 'verbose': False})
     _, _, TN = s.avg()
     TN = np.atleast_2d(TN)
     return float(np.nansum(TN[np.isfinite(TN)]))
@@ -106,7 +106,7 @@ def build_lqn_small(name, db_mean):
 
 def stage_ctmc_tput(model, T):
     """Single-stage aggregate steady throughput via SolverLN with CTMC layers."""
-    Qt, Ut, Tt = SolverLN(model, lambda mm: SolverCTMC(mm, verbose=False),
+    Qt, Ut, Tt = SolverLN(model, lambda mm: SolverCTMC(mm, 'exact', verbose=False),
                           timespan=[0, T], iter_max=6, verbose=False).getTranAvg()
     tot = 0.0
     for i in range(len(Tt)):
@@ -132,7 +132,7 @@ def env3_stage_ctmc(T):
     env.addTransition(1, 2, Exp(0.3))
     env.addTransition(2, 1, Exp(0.6))
     env.addTransition(1, 0, Exp(0.6))
-    ctmc = lambda mm: SolverCTMC(mm, verbose=False)
+    ctmc = lambda mm: SolverCTMC(mm, 'exact', verbose=False)
     ln_factory = lambda m: SolverLN(m, ctmc, timespan=[0, T], iter_max=6, verbose=False)
     s = SolverENV(env, ln_factory, {'iter_max': 2, 'iter_tol': 0.1, 'verbose': False})
     _, _, TN = s.avg()
@@ -142,13 +142,25 @@ def env3_stage_ctmc(T):
 
 
 def main():
-    # Fluid layer solvers (matching the MATLAB example); a short transient
-    # window keeps the native fluid ODE well-conditioned, and the SolverLN
-    # inner iteration is capped so the meanfield loop stays fast in Python.
-    T = 5
-    layer_factory = lambda mm: SolverFluid(mm, verbose=False)
+    # Fluid layer solvers and the transient window of the MATLAB example, which
+    # is the reference this twin has to reproduce.
+    #
+    # T IS THE REFERENCE'S 50, NOT A SHORTER WINDOW. It was 5 here, with the
+    # SolverLN and SolverENV iterations capped alongside it, on the reasoning
+    # that a short window keeps the native fluid ODE well-conditioned and the
+    # meanfield loop fast. It does neither: measured 2026-08-27, T=5 costs 53.3 s
+    # and T=50 costs 60.9 s, so the whole saving was 7 seconds. What the short
+    # window DID cost is the physics this example exists to assert. Check (2)
+    # compares the environment blend against the single-stage references, and at
+    # T=5 those references are read off the middle of a transient rather than
+    # from the steady state the check assumes -- so the blend came out ABOVE the
+    # faster stage (UP=4.2275 DOWN=1.5561 ENV=4.2874) and the assertion failed on
+    # a horizon that was too short, not on a defect. At the reference's horizon
+    # it holds (UP=4.2728 DOWN=1.2001 ENV=4.2446).
+    T = 50
+    layer_factory = lambda mm: SolverFLD(mm, verbose=False)
     ln_factory = lambda m: SolverLN(m, layer_factory, timespan=[0, T],
-                                    iter_max=8, verbose=False)
+                                    verbose=False)
 
     up = build_lqn('LQN_UP', 0.8)
     down = build_lqn('LQN_DOWN', 3.0)
@@ -159,7 +171,7 @@ def main():
     env.addTransition(0, 1, Exp(0.2))   # mean UP time = 5
     env.addTransition(1, 0, Exp(1.0))   # mean DOWN time = 1
 
-    opts = {'iter_max': 3, 'iter_tol': 0.05, 'verbose': False}
+    opts = {'iter_max': 20, 'iter_tol': 0.02, 'verbose': False}
     env_solver = SolverENV(env, ln_factory, opts)
     QN, UN, TN = env_solver.avg()
     QN = np.atleast_2d(QN)

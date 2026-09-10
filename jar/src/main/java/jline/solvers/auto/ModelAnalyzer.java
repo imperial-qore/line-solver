@@ -60,7 +60,11 @@ public class ModelAnalyzer {
         if (N != null) {
             for (int i = 0; i < N.getNumRows(); i++) {
                 for (int j = 0; j < N.getNumCols(); j++) {
-                    totalJobs += (int) N.get(i, j);
+                    // Open classes carry njobs=Inf, which casts to MAX_VALUE
+                    double nij = N.get(i, j);
+                    if (!Double.isInfinite(nij) && !Double.isNaN(nij)) {
+                        totalJobs += (int) nij;
+                    }
                 }
             }
         }

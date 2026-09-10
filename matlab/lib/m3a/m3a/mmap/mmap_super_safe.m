@@ -23,8 +23,20 @@ for iz = 1:numel(MMAPs)
 end
 scv_unmarked = cellfun(@map_scv, MMAPs);
 [~,Iset]=sort(scv_unmarked); % sort flows with small scv first
+% Mark provenance, so the SCV sort cannot permute the marking. mmap_super
+% concatenates the marks of its operands in FOLD order, and every caller reads
+% mark k as its own k-th class, so folding low-SCV first silently renamed the
+% classes whenever the components' SCVs did not happen to be in caller order.
+% A zero-rate component has an infinite mean, hence SCV NaN, which sort() puts
+% last, so a chain that never visits a station moved its marks ahead of a chain
+% that does. The sort stays, as the numerical heuristic it was meant to be, and
+% the marks are permuted back at the end.
+markcounts = cellfun(@(x) numel(x)-2, MMAPs);
+markbase = cumsum([0, markcounts(:)']);
+outorder = [];
 SUP = {};
 for i=Iset(:)' % low-SCV first
+    outorder = [outorder, markbase(i)+(1:markcounts(i))]; %#ok<AGROW>
     % Bound the order of each individual flow to maxorder. A single flow
     % whose order already exceeds maxorder (e.g. a high-order Erlang from a
     % near-deterministic APH fit) would otherwise pass through uncapped as
@@ -54,6 +66,12 @@ for i=Iset(:)' % low-SCV first
             SUP = mmap_super(SUP,MMAPs{i}, method);
         end
     end
-  
+
+end
+% Restore the caller's mark order; 'match' keeps one mark per class and fails
+% the count test, so it is left alone.
+if numel(SUP)-2 == numel(outorder) && ~issorted(outorder)
+    [~,perm] = sort(outorder);
+    SUP = {SUP{1}, SUP{2}, SUP{2+perm}};
 end
 end

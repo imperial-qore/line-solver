@@ -103,23 +103,17 @@ else
         % Scalar level 0: start with pi_0 = 1
         pi_cell{1} = 1;
     else
-        % Matrix level 0: solve boundary equation
+        % Matrix level 0: solve the boundary equation pi_0*(Q1^(0)+R^(1)Q2^(1))=0.
+        % That matrix is the generator of the process censored on level 0, so the
+        % boundary vector is its stationary distribution and CTMC_SOLVE is the
+        % right instrument. Picking the eigenvector of the smallest-magnitude
+        % eigenvalue of A' is not: eigenvalues near zero are not separated from
+        % the true null direction on a stiff block, and a complex conjugate pair
+        % returns a vector with no probabilistic meaning at all.
         Q1_0 = Q1{1};
         Q2_1 = Q2{1};
         A = Q1_0 + R{1} * Q2_1;
-
-        % Find null space of A' (left null space of A)
-        [V, D] = eig(A');
-        [~, idx] = min(abs(diag(D)));
-        pi0 = real(V(:, idx))';
-
-        % Ensure positive and normalize
-        if sum(pi0) < 0
-            pi0 = -pi0;
-        end
-        pi0 = abs(pi0);
-        pi0 = pi0 / sum(pi0);
-        pi_cell{1} = pi0;
+        pi_cell{1} = ctmc_solve(ctmc_makeinfgen(A));
     end
 
     % Forward recursion: pi_n = pi_{n-1} * R^(n)

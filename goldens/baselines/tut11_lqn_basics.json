@@ -1,0 +1,173 @@
+{
+  "class": {
+    "LN": "deterministic",
+    "LQNS": "deterministic"
+  },
+  "example": "tut11_lqn_basics",
+  "solvers": {
+    "LN": [
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": "NaN",
+        "ResidT": "NaN",
+        "RespT": "NaN",
+        "Station": "ClientProcessor",
+        "Tput": "NaN",
+        "Util": 0.49912
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": "NaN",
+        "ResidT": "NaN",
+        "RespT": "NaN",
+        "Station": "DBProcessor",
+        "Tput": "NaN",
+        "Util": 0.99823
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 7.5,
+        "ResidT": 1.7253,
+        "RespT": "NaN",
+        "Station": "ClientTask",
+        "Tput": 0.49912,
+        "Util": 0.49912
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 6.6433,
+        "ResidT": 5.324,
+        "RespT": "NaN",
+        "Station": "DBTask",
+        "Tput": 1.2478,
+        "Util": 0.99823
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 7.5,
+        "ResidT": "NaN",
+        "RespT": 15.035,
+        "Station": "ClientEntry",
+        "Tput": 0.49912,
+        "Util": 0.49912
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 6.6433,
+        "ResidT": "NaN",
+        "RespT": 5.324,
+        "Station": "DBEntry",
+        "Tput": 1.2478,
+        "Util": 0.99823
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 7.5,
+        "ResidT": 1.7253,
+        "RespT": 15.035,
+        "Station": "ClientActivity",
+        "Tput": 0.49912,
+        "Util": 0.49912
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 6.6433,
+        "ResidT": 5.324,
+        "RespT": 5.324,
+        "Station": "DBActivity",
+        "Tput": 1.2478,
+        "Util": 0.99823
+      }
+    ],
+    "LQNS": [
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": "NaN",
+        "ResidT": "NaN",
+        "RespT": "NaN",
+        "Station": "ClientProcessor",
+        "Tput": "NaN",
+        "Util": 0.49696
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": "NaN",
+        "ResidT": "NaN",
+        "RespT": "NaN",
+        "Station": "DBProcessor",
+        "Tput": "NaN",
+        "Util": 0.99392
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 7.5152,
+        "ResidT": "NaN",
+        "RespT": "NaN",
+        "Station": "ClientTask",
+        "Tput": 0.49696,
+        "Util": 0.49696
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 6.6626,
+        "ResidT": "NaN",
+        "RespT": "NaN",
+        "Station": "DBTask",
+        "Tput": 1.2424,
+        "Util": 0.99392
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 7.5152,
+        "ResidT": "NaN",
+        "RespT": 15.122,
+        "Station": "ClientEntry",
+        "Tput": 0.49696,
+        "Util": 0.49696
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 6.6626,
+        "ResidT": "NaN",
+        "RespT": 5.3627,
+        "Station": "DBEntry",
+        "Tput": 1.2424,
+        "Util": 0.99392
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 7.5152,
+        "ResidT": "NaN",
+        "RespT": 15.122,
+        "Station": "ClientActivity",
+        "Tput": 0.49696,
+        "Util": 0.49696
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 6.6626,
+        "ResidT": "NaN",
+        "RespT": 5.3627,
+        "Station": "DBActivity",
+        "Tput": 1.2424,
+        "Util": 0.99392
+      }
+    ]
+  }
+}

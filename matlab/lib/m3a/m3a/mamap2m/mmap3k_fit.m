@@ -3,7 +3,7 @@ function [MMAP, EXACT] = mmap3k_fit(D0, D1, P, F, B, B2)
 % Closed-form marking fit of an MMAP(3,K): a marked MAP of third order.
 %
 % The MMAP(2,K) argument does not depend on the order. Two facts carry over
-% (verified symbolically, see sage/proofs/mmap3k_marking_inverse.py):
+% (verified symbolically, see io/sage/proofs/mmap3k_marking_inverse.py):
 %  1. every per-class characteristic in which the class matrix appears exactly
 %     once is LINEAR in the marking fractions, so z = nnz(D1) fractions per
 %     class are determined by z characteristics through a square system;

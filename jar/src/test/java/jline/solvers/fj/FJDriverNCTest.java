@@ -43,7 +43,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * route neither degenerates on the auxiliary classes nor drifts from the MVA
  * route, measured against the exact SolverCTMC solution of the same model.
  *
- * <p>Java mirror of line-test.git/test_fj_driver_nc.m.
+ * <p>Java mirror of line-test.git/test/testsFJ/test_fj_driver_nc.m.
  */
 public class FJDriverNCTest {
 
@@ -304,7 +304,7 @@ public class FJDriverNCTest {
 
     @Test
     public void testNcClosedForkJoinIsNoWorseThanMvaAgainstCtmc() throws Exception {
-        // Mirrors the accuracy check of line-test.git/test_fj_driver_nc.m. Station
+        // Mirrors the accuracy check of line-test.git/test/testsFJ/test_fj_driver_nc.m. Station
         // 4 is the Join, whose queue length is the synchronisation delay of the
         // transformed formulation and is not comparable with the exact one.
         Matrix Qc = new SolverCTMC(buildClosedFJ(3), silentCtmc()).getAvgQLen();

@@ -241,15 +241,20 @@ public class PermanentTest {
      */
     @Test
     public void testHeuristicPermanentIdentityMatrix() {
+        // The identity is zero off the diagonal, so it has no full support.
+        // The heuristic used to floor those zeros to 1e-15 before Sinkhorn and
+        // return a positive number, and this test asserted only that
+        // positivity -- which the floor guaranteed by construction and which
+        // said nothing about accuracy. The floor is not invertible: it changes
+        // the permanent by n! eps, O(1) by n = 18. On the identity the old
+        // estimate was the van der Waerden bound n!/n^n, its worst case:
+        // 3.63e-4 at n = 10 and 6.75e-17 at n = 40, against an exact 1.
         int n = 4;
         Matrix identity = Matrix.eye(n);
 
-        HeuristicPermanent heuristic = new HeuristicPermanent(identity, true);
-        double approx = heuristic.getValue();
-
-        // Heuristic may not be accurate for sparse matrices, just check positivity
-        assertTrue(approx > 0,
-            "HeuristicPermanent should be positive");
+        assertThrows(IllegalArgumentException.class, () -> {
+            new HeuristicPermanent(identity, true);
+        }, "HeuristicPermanent should refuse a matrix without full support");
     }
 
     /**
@@ -293,12 +298,16 @@ public class PermanentTest {
             product *= val;
         }
 
-        HeuristicPermanent heuristic = new HeuristicPermanent(diagonal, true);
-        double approx = heuristic.getValue();
+        // Zero off the diagonal, so no full support: refused rather than
+        // floored. See testHeuristicPermanentIdentityMatrix.
+        assertThrows(IllegalArgumentException.class, () -> {
+            new HeuristicPermanent(diagonal, true);
+        }, "HeuristicPermanent should refuse a matrix without full support");
 
-        // Heuristic may not be accurate for sparse matrices, just check positivity
-        assertTrue(approx > 0,
-            "HeuristicPermanent should be positive for diagonal matrix");
+        // The exact engine remains correct on the same matrix.
+        double exact = new RyzerPermanent(diagonal, "graycode", true).getValue();
+        assertEquals(product, exact, 1e-9,
+            "The exact permanent of a diagonal matrix is the product of its diagonal");
     }
 
     /**
@@ -427,5 +436,163 @@ public class PermanentTest {
             "HeuristicPermanent should produce positive result");
         assertTrue(endTime - startTime < 1000,
             "HeuristicPermanent should complete in less than 1 second for 10x10 matrix");
+    }
+
+    /**
+     * Test 17: SaddlePointPermanent is exact on a single column.
+     *
+     * At h == 1 no direction survives the homogeneity of the integrand, the
+     * Laplace factor is empty, and the expansion returns the exact
+     * n! prod_k a(k,0).
+     */
+    @Test
+    public void testSaddlePointPermanentExactOnSingleColumn() {
+        for (int n = 1; n <= 6; n++) {
+            Matrix col = new Matrix(n, 1);
+            double product = 1.0;
+            for (int i = 0; i < n; i++) {
+                double v = 0.1 + 0.13 * (i + 1);
+                col.set(i, 0, v);
+                product *= v;
+            }
+            double factorial = 1.0;
+            for (int i = 2; i <= n; i++) {
+                factorial *= i;
+            }
+            double expected = factorial * product;
+            SaddlePointPermanent spm = new SaddlePointPermanent(col, new int[]{n}, true);
+            assertEquals(expected, spm.getValue(), 1e-12 * expected,
+                "The saddle point must be exact for a single column");
+        }
+    }
+
+    /**
+     * Test 18: SaddlePointPermanent closed form on the all-ones matrix.
+     *
+     * J_n scales to itself (xi = 1), so phi = n log n, the reduced Laplacian
+     * I - J/n has determinant 1/n, and the estimate is (2 pi)^(-(n-1)/2)
+     * n^(n+1/2). That is the analytic anchor the MATLAB, native Python and C++
+     * twins are held to as well.
+     */
+    @Test
+    public void testSaddlePointPermanentClosedFormOnAllOnes() {
+        for (int n = 2; n <= 10; n++) {
+            Matrix ones = new Matrix(n, n);
+            for (int i = 0; i < n; i++) {
+                for (int j = 0; j < n; j++) {
+                    ones.set(i, j, 1.0);
+                }
+            }
+            double expected = Math.pow(2.0 * Math.PI, -0.5 * (n - 1)) * Math.pow(n, n + 0.5);
+            SaddlePointPermanent spm = new SaddlePointPermanent(ones, true);
+            assertEquals(expected, spm.getValue(), 1e-9 * expected,
+                "The saddle point on J_" + n + " must match its closed form");
+        }
+    }
+
+    /**
+     * Test 19: SaddlePointPermanent lands nearer than the capacity it corrects.
+     *
+     * exp(getLogCapacity()) is the Gurvits capacity, an upper bound of the
+     * permanent. The Gaussian factor is what turns that e^n-scale bound into a
+     * usable estimate, so it must land strictly nearer the exact value.
+     */
+    @Test
+    public void testSaddlePointPermanentBeatsItsCapacity() {
+        java.util.Random random = new java.util.Random(4711);
+        for (int n = 3; n <= 8; n++) {
+            Matrix matrix = new Matrix(n, n);
+            for (int i = 0; i < n; i++) {
+                for (int j = 0; j < n; j++) {
+                    matrix.set(i, j, random.nextDouble() + 0.05);
+                }
+            }
+            double reference = new RyzerPermanent(matrix, "graycode", true).getValue();
+            SaddlePointPermanent spm = new SaddlePointPermanent(matrix, true);
+            double capacity = Math.exp(spm.getLogCapacity());
+            assertTrue(capacity >= reference * (1.0 - 1e-9),
+                "The capacity must be an upper bound of the permanent");
+            assertTrue(Math.abs(spm.getValue() - reference) < Math.abs(capacity - reference),
+                "The Gaussian factor must bring the capacity nearer the permanent");
+            assertEquals(Math.log(spm.getValue()), spm.getLogValue(), 1e-12,
+                "getLogValue must be the logarithm of getValue");
+            // measured bias at unit multiplicities, near (e/sqrt(2 pi))^n
+            double bias = Math.pow(Math.E / Math.sqrt(2.0 * Math.PI), n);
+            assertTrue(spm.getValue() >= reference && spm.getValue() <= reference * bias * 1.1,
+                "The saddle point overestimates by about (e/sqrt(2 pi))^n at unit multiplicities");
+        }
+    }
+
+    /**
+     * Test 20: SaddlePointPermanent sharpens as the column multiplicities grow.
+     *
+     * With h fixed this is a genuine asymptotic expansion in min(m). The matrix
+     * whose 2k rows all equal (a, b) with m = (k, k) has permanent
+     * (2k)! (ab)^k, and the expansion returns exactly 4^k / (C(2k,k) sqrt(pi k))
+     * times it: an analytic ratio, free of the matrix, decreasing to 1 like
+     * 1 + 1/(8k).
+     */
+    @Test
+    public void testSaddlePointPermanentSharpensWithMultiplicities() {
+        final double a = 0.7;
+        final double b = 1.3;
+        double previous = Double.POSITIVE_INFINITY;
+        for (int k = 1; k <= 8; k++) {
+            Matrix rows = new Matrix(2 * k, 2);
+            for (int i = 0; i < 2 * k; i++) {
+                rows.set(i, 0, a);
+                rows.set(i, 1, b);
+            }
+            double exact = 1.0;
+            for (int i = 2; i <= 2 * k; i++) {
+                exact *= i;
+            }
+            exact *= Math.pow(a * b, k);
+            double estimate = new SaddlePointPermanent(rows, new int[]{k, k}, true).getValue();
+            double ratio = estimate / exact;
+            double binomial = 1.0;
+            for (int i = 1; i <= k; i++) {
+                binomial = binomial * (k + i) / i;
+            }
+            double closed = Math.pow(4.0, k) / (binomial * Math.sqrt(Math.PI * k));
+            assertEquals(closed, ratio, 1e-9 * closed,
+                "The ratio at m = (k,k) must match its closed form");
+            assertTrue(Math.abs(ratio - (1.0 + 1.0 / (8.0 * k))) < 0.01 / k,
+                "The ratio must approach 1 + 1/(8k)");
+            assertTrue(ratio < previous, "The expansion must sharpen as k grows");
+            previous = ratio;
+        }
+    }
+
+    /**
+     * Test 21: SaddlePointPermanent refuses what it cannot expand.
+     *
+     * A structural zero has no full support and flooring it is not invertible;
+     * sum(m) != n makes the coefficient identically zero by homogeneity.
+     */
+    @Test
+    public void testSaddlePointPermanentRefusals() {
+        Matrix zeroRow = new Matrix(3, 3);
+        zeroRow.set(0, 0, 1.0); zeroRow.set(0, 1, 2.0); zeroRow.set(0, 2, 3.0);
+        zeroRow.set(2, 0, 4.0); zeroRow.set(2, 1, 5.0); zeroRow.set(2, 2, 6.0);
+        assertThrows(RuntimeException.class, () -> new SaddlePointPermanent(zeroRow, true));
+
+        Matrix negative = new Matrix(2, 2);
+        negative.set(0, 0, -1.0); negative.set(0, 1, 2.0);
+        negative.set(1, 0, 3.0); negative.set(1, 1, 4.0);
+        assertThrows(RuntimeException.class, () -> new SaddlePointPermanent(negative, true));
+
+        Matrix wide = new Matrix(4, 2);
+        for (int i = 0; i < 4; i++) {
+            wide.set(i, 0, 1.0);
+            wide.set(i, 1, 1.0);
+        }
+        assertThrows(RuntimeException.class, () -> new SaddlePointPermanent(wide, true));
+        assertThrows(RuntimeException.class,
+            () -> new SaddlePointPermanent(wide, new int[]{1, 1}, true));
+
+        // sum(m) = 4 = rows is accepted, and the columns are interchangeable here
+        SaddlePointPermanent ok = new SaddlePointPermanent(wide, new int[]{2, 2}, true);
+        assertTrue(ok.getValue() > 0.0, "A feasible multiplicity vector must be accepted");
     }
 }

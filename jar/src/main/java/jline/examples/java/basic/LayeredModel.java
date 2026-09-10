@@ -7,6 +7,7 @@ package jline.examples.java.basic;
 
 import jline.VerboseLevel;
 import jline.lang.constant.SchedStrategy;
+import jline.lang.constant.ServerType;
 import jline.lang.constant.SolverType;
 import jline.lang.layered.*;
 import jline.lang.processes.APH;
@@ -154,21 +155,82 @@ public class LayeredModel {
     }
 
     /**
-     * Layered network with function task demonstrating FaaS/serverless.
+     * Layered network with a task whose servers switch off when idle.
      * <p>
      * Features:
      * - 2 processors (P1 infinite, P2 with 4 servers)
-     * - FunctionTask demonstrating cold start and keep-alive behavior
-     * - Setup time (cold start penalty) and delay-off time (warm duration)
-     * - Synchronous calls between client and function layers
-     * - Representative of serverless/FaaS architectures
+     * - SetupTask paying an activation delay and an idle keep-alive period
+     * - Setup time (activation penalty) and delay-off time (idle window)
+     * - Synchronous calls between the client and the setup-task layer
+     * - Serverless cold start / keep-alive is one instance of this pattern
      *
-     * @return configured layered network with function task
+     * @return configured layered network with a setup task
      * @throws Exception if model creation fails
      */
-    public static LayeredNetwork lqn_function() throws Exception {
+    /**
+     * A processor whose servers are not interchangeable.
+     *
+     * <p>P1 declares three servers, but they are not a homogeneous pool: S1 is
+     * dedicated to task T2, S3 to task T3, and only S2 can take either. Neither
+     * task can therefore reach more than two of the three servers, and the
+     * model is a different system from a plain multiplicity-3 processor even
+     * though it holds the same number of servers.
+     *
+     * <pre>
+     *   P1 (3 servers)     S1 --- T2
+     *                      S2 --&lt; T2, T3
+     *                      S3 --- T3
+     * </pre>
+     *
+     * <p>The pools are declared with {@link jline.lang.constant.ServerType},
+     * the same class the heterogeneous queueing station uses, with the
+     * compatible entities being the OPERANDS of the layered server: the tasks
+     * of a processor, or the entries of a task.
+     *
+     * <p>SolverLN lowers the declaration to the activated-server rate of
+     * {@link jline.api.sn.SnCompatRate}, carried onto the layer station as a
+     * joint dependence, so a compatibility declaration is an APPROXIMATION
+     * inside a layer and is admitted only under the class-switching layerings
+     * ("srvn.cs", "flat.cs").
+     *
+     * @param compatibility true for the compatibility graph, false for one
+     *                      fully-compatible pool of three (the neutral pool)
+     */
+    public static LayeredNetwork lqn_server_pools(boolean compatibility) throws Exception {
 
-        LayeredNetwork model = new LayeredNetwork("faas_test_example");
+        LayeredNetwork model = new LayeredNetwork("LQNserverPools");
+
+        Processor P0 = new Processor(model, "P0", 1, SchedStrategy.PS);
+        Processor P1 = new Processor(model, "P1", 3, SchedStrategy.PS);
+
+        Task T1 = new Task(model, "T1", 3, SchedStrategy.REF).on(P0).setThinkTime(new Exp(1.0));
+        Task T2 = new Task(model, "T2", 3, SchedStrategy.FCFS).on(P1);
+        Task T3 = new Task(model, "T3", 3, SchedStrategy.FCFS).on(P1);
+
+        Entry E1 = new Entry(model, "E1").on(T1);
+        Entry E2 = new Entry(model, "E2").on(T2);
+        Entry E3 = new Entry(model, "E3").on(T3);
+
+        new Activity(model, "A1", new Exp(2.0)).on(T1).boundTo(E1).synchCall(E2, 1.0).synchCall(E3, 1.0);
+        new Activity(model, "A2", new Exp(3.0)).on(T2).boundTo(E2).repliesTo(E2);
+        new Activity(model, "A3", new Exp(2.0)).on(T3).boundTo(E3).repliesTo(E3);
+
+        if (compatibility) {
+            P1.addServerType(new ServerType("S1", 1, 1.0, T2));       // dedicated to T2
+            P1.addServerType(new ServerType("S2", 1, 1.0, T2, T3));   // shared
+            P1.addServerType(new ServerType("S3", 1, 1.0, T3));       // dedicated to T3
+        } else {
+            // one pool of three, every task eligible on every server: the
+            // neutral declaration, which reproduces the plain multiserver
+            P1.addServerType(new ServerType("All", 3, 1.0, T2, T3));
+        }
+
+        return model;
+    }
+
+    public static LayeredNetwork lqn_setup() throws Exception {
+
+        LayeredNetwork model = new LayeredNetwork("setup_example");
 
         // Definition of processors, tasks and entries
         Processor P1 = new Processor(model, "P1", Integer.MAX_VALUE, SchedStrategy.INF);
@@ -178,9 +240,9 @@ public class LayeredModel {
         Entry E1 = new Entry(model, "E1").on(T1);
 
         //Task T2 = new Task(model, "T2", 1, SchedStrategy.FCFS).on(P2); // Commented alternative
-        FunctionTask T2 = new FunctionTask(model, "F2", 6, SchedStrategy.FCFS).on(P2).setThinkTime(Exp.fitMean(8.0));
-        T2.setSetupTime(new Exp(1.0));      // Cold start time
-        T2.setDelayOffTime(new Exp(2.0));   // Time before function instance is removed
+        SetupTask T2 = new SetupTask(model, "F2", 6, SchedStrategy.FCFS).on(P2).setThinkTime(Exp.fitMean(8.0));
+        T2.setSetupTime(new Exp(1.0));      // Activation time
+        T2.setDelayOffTime(new Exp(2.0));   // Idle time before a server powers off
 
         Entry E2 = new Entry(model, "E2").on(T2);
 
@@ -523,6 +585,103 @@ public class LayeredModel {
         precActs.add("B3");
         precActs.add("B5");
         T2.addPrecedence(ActivityPrecedence.AndJoin(precActs, "B6"));
+
+        return model;
+    }
+
+
+    /**
+     * Entry-level open arrival: an exogenous Poisson stream that is not a call.
+     * <p>
+     * Features:
+     * - One processor, one task, one entry taking Exp(0.2) open arrivals
+     * - Nothing else reaches T1, so the stream is carried by the thread pool it
+     *   drives rather than by an open class of its own
+     * <p>
+     * Rate 0.2 against a mean service of 1.6 is 0.32 of the host. With no caller
+     * T1 has no task layer, so SolverLN closes its caller chain on the known
+     * arrival rate, the construction a forwarding target gets. Reported: entry
+     * throughput 0.2, utilization 0.32, response time 1.6, which lqns gives
+     * exactly and lqsim (0.192-0.200) and LDES (0.19986 / 0.31957 / 1.599)
+     * confirm; MATLAB, native Python and the C++ port agree. The earlier reading
+     * of 0.425 / 0.68 / 2.3529 was an artifact of ALSO placing an open class on
+     * the layer, which loaded the host twice.
+     *
+     * @return configured layered network model
+     * @throws Exception if model creation fails
+     */
+    public static LayeredNetwork lqn_open_arrival() throws Exception {
+        LayeredNetwork model = new LayeredNetwork("openArrivalLQN");
+
+        Processor P1 = new Processor(model, "P1", 1, SchedStrategy.PS);
+        Task T1 = new Task(model, "T1", 1, SchedStrategy.FCFS).on(P1);
+        T1.setThinkTime(Immediate.getInstance());
+        Entry E1 = new Entry(model, "E1").on(T1);
+        E1.setArrival(new Exp(0.2));
+
+        new Activity(model, "A1", Exp.fitMean(1.6)).on(T1).boundTo(E1).repliesTo(E1);
+
+        return model;
+    }
+
+
+    /**
+     * AND fork/join on a task that also receives an entry-level open arrival.
+     * <p>
+     * Features:
+     * - Server task with two entries, each with its own AND fork/join
+     * - SE is called by the closed Client (rendezvous), OE takes a Poisson stream
+     * - OE has no reply activity: an open-arrival entry is send-no-reply
+     * <p>
+     * External references: lqns 6.2.28 (valid) gives Client throughput 0.413391,
+     * Server task throughput 0.513391, OE throughput 0.1 with open-wait 1.22917;
+     * lqsim (T=5e5, seed 1234) gives 0.4154, 0.52242 and open-wait 1.10546.
+     * SolverLN refuses the combination: the fork-join transform mints its own
+     * Source and collides with the Source the open stream is routed through. The
+     * flat counterpart that IS solved is ForkJoinModel.fj_mixed_openclosed().
+     *
+     * @return configured layered network model
+     * @throws Exception if model creation fails
+     */
+    public static LayeredNetwork lqn_fork_open_arrival() throws Exception {
+        LayeredNetwork model = new LayeredNetwork("lqnForkOpenArrival");
+
+        Processor P1 = new Processor(model, "P1", Integer.MAX_VALUE, SchedStrategy.INF);
+        Processor P2 = new Processor(model, "P2", Integer.MAX_VALUE, SchedStrategy.INF);
+
+        Task T1 = new Task(model, "Client", 1, SchedStrategy.REF).on(P1);
+        T1.setThinkTime(Exp.fitMean(1.0));
+        Task T2 = new Task(model, "Server", 1, SchedStrategy.FCFS).on(P2);
+        T2.setThinkTime(Immediate.getInstance());
+
+        Entry CE = new Entry(model, "CE").on(T1);
+        Entry SE = new Entry(model, "SE").on(T2);
+        Entry OE = new Entry(model, "OE").on(T2);
+        OE.setArrival(new Exp(0.1));
+
+        new Activity(model, "CA", Exp.fitMean(0.5)).on(T1).boundTo(CE).synchCall(SE, 1);
+
+        new Activity(model, "RA1", Exp.fitMean(0.2)).on(T2).boundTo(SE);
+        new Activity(model, "RA2", Exp.fitMean(0.3)).on(T2);
+        new Activity(model, "RA3", Exp.fitMean(0.4)).on(T2);
+        new Activity(model, "RA4", Exp.fitMean(0.1)).on(T2).repliesTo(SE);
+
+        new Activity(model, "OA1", Exp.fitMean(0.2)).on(T2).boundTo(OE);
+        new Activity(model, "OA2", Exp.fitMean(0.3)).on(T2);
+        new Activity(model, "OA3", Exp.fitMean(0.4)).on(T2);
+        new Activity(model, "OA4", Exp.fitMean(0.1)).on(T2);
+
+        ArrayList<String> rendezvousBranches = new ArrayList<String>();
+        rendezvousBranches.add("RA2");
+        rendezvousBranches.add("RA3");
+        T2.addPrecedence(ActivityPrecedence.AndFork("RA1", rendezvousBranches));
+        T2.addPrecedence(ActivityPrecedence.AndJoin(rendezvousBranches, "RA4"));
+
+        ArrayList<String> openBranches = new ArrayList<String>();
+        openBranches.add("OA2");
+        openBranches.add("OA3");
+        T2.addPrecedence(ActivityPrecedence.AndFork("OA1", openBranches));
+        T2.addPrecedence(ActivityPrecedence.AndJoin(openBranches, "OA4"));
 
         return model;
     }

@@ -6,6 +6,7 @@ import jline.solvers.ctmc.CTMC;
 import jline.solvers.ssa.SSA;
 import jline.solvers.mva.MVA;
 import jline.solvers.nc.NC;
+import jline.solvers.fluid.FLD;
 import jline.solvers.NetworkAvgNodeTable;
 
 public class CacheExamples {
@@ -37,6 +38,12 @@ public class CacheExamples {
             NetworkAvgNodeTable avgTable4 = solver4.getAvgNodeTable();
             //System.out.println("--- NC Solver ---");
             avgTable4.print();
+
+            model.reset();
+            // The reference runs the RMF fluid limit here, which is what its golden
+            // holds; the default fluid closure answers a different question.
+            FLD solverFLD = new FLD(model, "method", "rmf");
+            solverFLD.getAvgNodeTable().print();
             
             jline.lang.nodes.Cache cacheNode = (jline.lang.nodes.Cache) model.getNodeByName("Cache");
             double hitRatio = cacheNode.getHitRatio().get(0);
@@ -50,6 +57,36 @@ public class CacheExamples {
         }
     }
     
+    /**
+     * LRU cache replacement (cache_replc_lru.ipynb).
+     *
+     * <p>The reference's three solvers, at its own run length and seed: the SSA
+     * row of the golden is that measurement, not a longer or shorter one.
+     */
+    public static void cache_replc_lru() {
+        Network model = CacheModel.cache_replc_lru();
+
+        try {
+            new CTMC(model, "keep", false).getAvgNodeTable().print();
+            model.reset();
+        } catch (Exception e) {
+            System.out.println("CTMC failed: " + e.getMessage());
+        }
+        try {
+            new SSA(model, "samples", 100000, "verbose", true, "method", "serial", "seed", 23000)
+                    .getAvgNodeTable().print();
+            model.reset();
+        } catch (Exception e) {
+            System.out.println("SSA failed: " + e.getMessage());
+        }
+        try {
+            new MVA(model).getAvgNodeTable().print();
+            model.reset();
+        } catch (Exception e) {
+            System.out.println("MVA failed: " + e.getMessage());
+        }
+    }
+
     public static void cache_replc_fifo() {
         //System.out.println("=== Cache FIFO Example ===");
         Network model = CacheModel.cache_replc_fifo();
@@ -61,7 +98,7 @@ public class CacheExamples {
             avgTable1.print();
             
             model.reset();
-            SSA solver2 = new SSA(model, "samples", 10000, "verbose", true, "method", "serial", "seed", 1);
+            SSA solver2 = new SSA(model, "samples", 100000, "verbose", true, "method", "serial", "seed", 23000);
             NetworkAvgNodeTable avgTable2 = solver2.getAvgNodeTable();
             //System.out.println("--- SSA Solver ---");
             avgTable2.print();
@@ -71,6 +108,12 @@ public class CacheExamples {
             NetworkAvgNodeTable avgTable3 = solver3.getAvgNodeTable();
             //System.out.println("--- MVA Solver ---");
             avgTable3.print();
+
+            model.reset();
+            // The reference runs the RMF fluid limit here, which is what its golden
+            // holds; the default fluid closure answers a different question.
+            FLD solverFLD = new FLD(model, "method", "rmf");
+            solverFLD.getAvgNodeTable().print();
             
         } catch (Exception e) {
             //System.out.println("Error in cache_replc_fifo: " + e.getMessage());
@@ -105,6 +148,12 @@ public class CacheExamples {
             NetworkAvgNodeTable avgTable4 = solver4.getAvgNodeTable();
             //System.out.println("--- NC Solver ---");
             avgTable4.print();
+
+            model.reset();
+            // The reference runs the RMF fluid limit here, which is what its golden
+            // holds; the default fluid closure answers a different question.
+            FLD solverFLD = new FLD(model, "method", "rmf");
+            solverFLD.getAvgNodeTable().print();
             
             jline.lang.nodes.Cache cacheNode = (jline.lang.nodes.Cache) model.getNodeByName("Cache");
             double hitRatio = cacheNode.getHitRatio().get(0);
@@ -119,13 +168,12 @@ public class CacheExamples {
     }
     
     public static void cache_compare_replc() {
-        //System.out.println("=== Cache Compare Replacement Strategies ===");
-        
+        System.out.println("=== Cache Compare Replacement Strategies ===");
+
         ReplacementStrategy[] replStrat = {ReplacementStrategy.RR, ReplacementStrategy.FIFO, ReplacementStrategy.LRU};
-        
+
         for (int s = 0; s < replStrat.length; s++) {
-            //System.out.println("--- Testing " + replStrat[s] + " ---");
-            
+
             try {
                 // Create a fresh model for each strategy (replacement strategy is set in constructor)
                 Network model;
@@ -140,7 +188,7 @@ public class CacheExamples {
                 }
                 jline.lang.nodes.Cache cacheNode = (jline.lang.nodes.Cache) model.getNodeByName("Cache");
                 
-                // Skip CTMC solver as commented in Kotlin notebook
+                // Skip CTMC solver as commented in the source notebook
                 
                 model.reset();
                 MVA solver2 = new MVA(model, "seed", 1, "verbose", false);
@@ -157,10 +205,10 @@ public class CacheExamples {
                     ncHitRatio = Double.NaN;
                 }
                 
-                //System.out.printf("%s: MVA=%.8f, NC=%.8f%n", replStrat[s], mvaHitRatio, ncHitRatio);
-                
+                System.out.printf("%s: MVA=%.8f, NC=%.8f%n", replStrat[s], mvaHitRatio, ncHitRatio);
+
             } catch (Exception e) {
-                //System.out.println("Error testing " + replStrat[s] + ": " + e.getMessage());
+                System.out.println("Error testing " + replStrat[s] + ": " + e.getMessage());
             }
         }
     }

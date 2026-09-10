@@ -33,7 +33,7 @@ static emlrtRSInfo ib_emlrtRSI = {
     "applyScalarFunctionInPlace.m" /* pathName */
 };
 
-static emlrtRTEInfo n_emlrtRTEI = {
+static emlrtRTEInfo l_emlrtRTEI = {
     117,              /* lineNo */
     5,                /* colNo */
     "scalar_gammaln", /* fName */
@@ -227,7 +227,7 @@ void applyScalarFunctionInPlace(const emlrtStack *sp, emxArray_real_T *x)
         b_x = x_data[k];
         if (!muDoubleScalarIsNaN(b_x)) {
           if (b_x < 0.0) {
-            emlrtErrorWithMessageIdR2018a(&d_st, &n_emlrtRTEI,
+            emlrtErrorWithMessageIdR2018a(&d_st, &l_emlrtRTEI,
                                           "MATLAB:gammaln:negativeVal",
                                           "MATLAB:gammaln:negativeVal", 0);
           } else if (b_x > 2.55E+305) {

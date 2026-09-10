@@ -20,36 +20,35 @@ mvaElem.setAttribute('xmlns:xsi', xmlnsXsi);
 mvaElem.setAttribute('xsi:noNamespaceSchemaLocation', 'JMTmodel.xsd');
 
 algTypeElement = mvaDoc.createElement('algType');
+% The single-server restriction of the closed-form algorithms is asked of
+% jmtMethodRefusal, the same predicate SolverJMT.supportsModelMethod asks, so
+% the gate that decides whether to OFFER the pair and the run that executes it
+% cannot answer differently. It carries the message this switch used to build.
+% 'jmva' is passed as the ENGINE because this IS the JMVA writer whoever called
+% it: SolverQNS reaches it with its own method names, and the document it emits
+% has no capacity element either. Keyed on the caller's method name instead, a
+% QNS run was handed JSIM's buffer verdict.
+structural = jmtMethodRefusal(sn, options.method, options, 'jmva');
+if ~isempty(structural)
+    line_error(mfilename, structural);
+end
 switch options.method
     case {'jmva.recal'}
-        if max(sn.nservers(isfinite(sn.nservers))) > 1
-            line_error(mfilename,sprintf('%s does not support multi-server stations.',options.method));
-        end
         algTypeElement.setAttribute('name','RECAL');
+    case {'jmva.comom'}
+        % Was missing, so this writer sent 'MVA' and the exact engine answered
+        % under the CoMoM name -- the JAR, the C++ port and native python all
+        % emit CoMoM here.
+        algTypeElement.setAttribute('name','CoMoM');
     case {'jmva.chow'}
-        if max(sn.nservers(isfinite(sn.nservers))) > 1
-            line_error(mfilename,sprintf('%s does not support multi-server stations.',options.method));
-        end
         algTypeElement.setAttribute('name','Chow');
     case {'jmva.bs','jmva.amva'}
-        if max(sn.nservers(isfinite(sn.nservers))) > 1
-            line_error(mfilename,sprintf('%s does not support multi-server stations.',options.method));
-        end
         algTypeElement.setAttribute('name','Bard-Schweitzer');
     case {'jmva.aql'}
-        if max(sn.nservers(isfinite(sn.nservers))) > 1
-            line_error(mfilename,sprintf('%s does not support multi-server stations.',options.method));
-        end
         algTypeElement.setAttribute('name','AQL');
     case {'jmva.lin'}
-        if max(sn.nservers(isfinite(sn.nservers))) > 1
-            line_error(mfilename,sprintf('%s does not support multi-server stations.',options.method));
-        end
         algTypeElement.setAttribute('name','Linearizer');
     case {'jmva.dmlin'}
-        if max(sn.nservers(isfinite(sn.nservers))) > 1
-            line_error(mfilename,sprintf('%s does not support multi-server stations.',options.method));
-        end
         algTypeElement.setAttribute('name','De Souza-Muntz Linearizer');
     %case {'jmva.ls'}
     %    algTypeElement.setAttribute('name','Logistic Sampling');
@@ -97,13 +96,24 @@ for c=1:sn.nchains
 end
 
 isLoadDep = false(1,sn.nstations);
+% Effective server count per station. A load-dependent scaling reaches JMVA as
+% the c of an <ldstation>, the same encoding saveNumberOfServers uses for JSIM:
+% SolverJMT.supportsModelMethod admits only alpha(n) = min(n,c), so max(alpha)
+% is that c. Reading sn.nservers alone wrote a <listation> at nominal service
+% time and dropped the scaling.
+cEff = sn.nservers(:)';
+if ~isempty(sn.lldscaling)
+    for i=1:min(sn.nstations, size(sn.lldscaling,1))
+        cEff(i) = max(cEff(i), max(sn.lldscaling(i,:)));
+    end
+end
 for i=1:sn.nstations
     switch sn.nodetype(sn.stationToNode(i))
         case NodeType.Delay
             statElem = mvaDoc.createElement('delaystation');
             statElem.setAttribute('name',sn.nodenames{sn.stationToNode(i)});
         case NodeType.Queue
-            if sn.nservers(i) == 1
+            if cEff(i) == 1
                 isLoadDep(i) = false;
                 statElem = mvaDoc.createElement('listation');
                 statElem.setAttribute('name',sn.nodenames{sn.stationToNode(i)});
@@ -126,13 +136,13 @@ for i=1:sn.nstations
             % For open models (Inf population), use nservers as cutoff
             % since service time is constant at S/c for n >= c
             if any(isinf(NK))
-                ldLimit = sn.nservers(i);
+                ldLimit = cEff(i);
             else
                 ldLimit = sum(NK);
             end
 
             for n=2:ldLimit
-                ldSrvString = sprintf('%s;%s',ldSrvString,num2str(STchain(i,c)/min( n, sn.nservers(i) )));
+                ldSrvString = sprintf('%s;%s',ldSrvString,num2str(STchain(i,c)/min( n, cEff(i) )));
             end
             statSrvTimeElem.appendChild(mvaDoc.createTextNode(ldSrvString));
             srvTimesElem.appendChild(statSrvTimeElem);

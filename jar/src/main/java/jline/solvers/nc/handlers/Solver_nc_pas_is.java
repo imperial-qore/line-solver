@@ -17,7 +17,10 @@ import jline.util.SerializableFunction;
 import jline.util.matrix.Matrix;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.ToDoubleFunction;
 
 /**
@@ -190,7 +193,10 @@ public final class Solver_nc_pas_is {
             if (N[r] > 0) {
                 int[] Nm = N.clone();
                 Nm[r]--;
-                double Gr = Pfqn_pas_is.pfqn_pas_is(Nm, mu, H, nsamples, seed, false).G;
+                // Only the constant is read here, so this run skips the
+                // queue-length coefficients: same stream, same G, none of the
+                // per-sample bookkeeping behind them.
+                double Gr = Pfqn_pas_is.pfqn_pas_is(Nm, mu, H, nsamples, seed, false, false).G;
                 if (G > 0) {
                     X.set(r, Gr / G);
                 }
@@ -251,13 +257,57 @@ public final class Solver_nc_pas_is {
         return svc;
     }
 
+    /** Count vectors kept per rank rate; a miss past it just recomputes. */
+    private static final int RANK_RATE_MEMO_LIMIT = 1 << 17;
+
+    /** A count vector usable as a HashMap key, copied so the caller may reuse its array. */
+    private static final class CountKey {
+        private final int[] n;
+        private final int hash;
+
+        CountKey(int[] counts) {
+            this.n = counts.clone();
+            this.hash = Arrays.hashCode(this.n);
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            if (this == other) {
+                return true;
+            }
+            if (!(other instanceof CountKey)) {
+                return false;
+            }
+            return Arrays.equals(this.n, ((CountKey) other).n);
+        }
+
+        @Override
+        public int hashCode() {
+            return hash;
+        }
+    }
+
     private static ToDoubleFunction<int[]> makeRankRate(final SerializableFunction<Matrix, Double> fun) {
         // OI rank rate on a per-class count/support vector n. svcRateFun(c) takes
         // an ordered microstate list; permutation-invariant for an OI station, so
         // evaluate on a canonical 0-based microstate with n_r copies of class r.
+        //
+        // MEMOIZED on the count vector: the importance sampler calls this
+        // 2(ell+1) times per sampled ordering and walks the same prefix
+        // occupancies over and over, so building a Matrix microstate and
+        // re-evaluating the balance function on it dominated the estimator. The
+        // rate depends on nothing but the counts, so the memo returns what the
+        // rebuild would have returned, bit for bit. Pfqn_pas_is hands this
+        // handle an array it reuses across samples, hence the copy in CountKey.
+        final Map<CountKey, Double> memo = new HashMap<CountKey, Double>();
         return new ToDoubleFunction<int[]>() {
             @Override
             public double applyAsDouble(int[] n) {
+                CountKey key = new CountKey(n);
+                Double hit = memo.get(key);
+                if (hit != null) {
+                    return hit.doubleValue();
+                }
                 int len = 0;
                 for (int v : n) {
                     if (v > 0) {
@@ -271,7 +321,11 @@ public final class Solver_nc_pas_is {
                         c.set(0, col++, r);
                     }
                 }
-                return fun.apply(c);
+                double rate = fun.apply(c);
+                if (memo.size() < RANK_RATE_MEMO_LIMIT) {
+                    memo.put(key, Double.valueOf(rate));
+                }
+                return rate;
             }
         };
     }

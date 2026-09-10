@@ -29,7 +29,9 @@ from ...lang.classes import ClosedClass, OpenClass
 from ...distributions import Exp, Immediate, Disabled
 from ...constants import SchedStrategy, GlobalConstants
 from ...lang.base import ReplacementStrategy
-from ...api.io.logging import line_debug
+from ...api.sn.compat_rate import sn_compat_scaling
+from ...api.io.logging import line_debug, line_warning
+from ...layered import _call_count_dist
 from ..base import EnsembleSolver
 
 
@@ -66,6 +68,90 @@ class CallType(IntEnum):
     FWD = 3
 
 
+from ...api.lqn import call_hashname, entry_workflow, ph_moments, serial_law
+from ...distributions import APH, PH
+from ...lang.workflow import Workflow
+
+#: Method names that state the ensemble's LAYERING and ENCODING. They are the
+#: vocabulary of SolverLN alone; a layer solver cannot dispatch on them.
+_LN_LEVEL_METHODS = frozenset((
+    'srvn', 'srvn.ph', 'srvn.cs', 'srvncs', 'ph', 'cs',
+    'flat', 'flat.cs', 'flatcs', 'flat.ph', 'flatph', 'squashed', 'squashed.ph',
+    'moment3',
+))
+
+
+def ln_requested_method(method) -> str:
+    """Normalise a SolverLN method name onto one the solver dispatches on.
+
+    A method name carries TWO decisions: the LAYERING, which fixes what a
+    submodel is, and the ENCODING, which fixes how an activity graph is written
+    into it. 'srvn.cs' encodes the activity graph as ROUTING, 'srvn.ph' as a
+    composed phase-type server law, 'srvn' is the alias that takes 'srvn.ph'
+    where it can serve the model and 'srvn.cs' otherwise, 'flat.cs' squashes
+    every server into one submodel with the routing encoding, 'flat.ph' squashes
+    them with the composed one ('flat' is the alias of 'flat.cs' and resolves
+    unconditionally rather than probing 'flat.ph', because a model is squashed in
+    order to express what only the routing encoding carries), and 'moment3' is
+    the three-moment distribution pass over the routing layers. 'default' is the srvn alias, so a
+    model solved without naming a method takes the better of the two srvn
+    encodings; an unrecognised token takes 'srvn.cs'.
+    """
+    if not method or not isinstance(method, str):
+        return 'srvn'
+    m = method.lower()
+    if m in ('srvn.ph', 'ph'):
+        return 'srvn.ph'
+    if m in ('srvn.cs', 'srvncs', 'cs'):
+        return 'srvn.cs'
+    if m in ('srvn', 'default', 'auto', ''):
+        return 'srvn'
+    if m in ('flat.cs', 'flatcs', 'flat', 'squashed'):
+        return 'flat.cs'
+    if m in ('flat.ph', 'flatph', 'squashed.ph'):
+        return 'flat.ph'
+    if m == 'moment3':
+        return 'moment3'
+    # An unrecognised token takes the routing encoding, which is what every name
+    # other than 'moment3' resolved to before the alias existed.
+    return 'srvn.cs'
+
+
+# CallType, as the struct stores it: 1=SYNC, 2=ASYNC, 3=FWD
+_SYNC = 1
+_ASYNC = 2
+_FWD = 3
+
+
+def _alpha_of(dist) -> np.ndarray:
+    """Initial vector of a phase-type distribution, as a row."""
+    return np.asarray(dist.getInitProb(), dtype=float).reshape(1, -1)
+
+
+def _subgen_of(dist) -> np.ndarray:
+    """Subgenerator of a phase-type distribution: D0 of its (D0, D1) pair."""
+    return np.asarray(dist.getRepresentation()[0], dtype=float)
+
+
+class PHLayer:
+    """One two-station layer, and the caller classes that cycle through it."""
+
+    def __init__(self):
+        self.idx: int = 0
+        self.ishost: bool = False
+        self.callers: List[int] = []
+        self.class_of_caller: Dict[int, int] = {}
+        self.nreplicas: int = 1
+        self.qstations: List[int] = []
+        self.svcmean_by_class: Dict[int, float] = {}
+        # entries are (class index, entry index) or (class index, -call index)
+        self.open_arrivals: List[Tuple[int, int]] = []
+        # Closed population of the MODEL this server sits in. Under 'flat.ph'
+        # that is every caller of the single network, not only the callers of
+        # this one station, so it is recorded here rather than recomputed.
+        self.npop: float = 0.0
+
+
 class OptionsDict(dict):
     """A dict that supports attribute-style access."""
     def __getattr__(self, name):
@@ -91,18 +177,31 @@ class SolverLNOptions:
     iter_max: int = 200  # MATLAB default for LN
     iter_tol: float = 5e-3  # MATLAB default for LN (looser than default for LQN models)
     verbose: bool = field(default_factory=default_verbose)
-    tol: float = 1e-6
+    tol: float = 1e-4  # MATLAB SolverOptions LN case; JAR SolverOptions.java:379, cpp solver_ln.h:228
     seed: Optional[int] = None  # base seed for stochastic layer solvers; randomized when not set
     # Transient window [t0, t1] for getTranAvg; propagated to layer solvers only
     # around the transient call (SolverENV over an LQN stage sets this).
     timespan: Optional[Any] = None
-    # 'python' (native) or 'java' (delegate the layered solve to jline.jar via
-    # JSON); env LINE_SOLVER_LANG overrides the default.
+    # 'python' (native), 'java' (delegate the layered solve to jline.jar via
+    # JSON) or 'cpp' (delegate it to line-cli via the .lqnx interchange, since
+    # the C++ port has no LQN JSON reader); env LINE_SOLVER_LANG overrides the
+    # default.
     lang: str = field(default_factory=lambda: os.environ.get('LINE_SOLVER_LANG', 'python'))
+    # Arithmetic backend, lang='cpp' ONLY: 'double' (default), 'exact' or
+    # 'real:<digits>'. The other langs are IEEE double throughout, so it is left
+    # None and line-cli is invoked without --arith unless the caller sets it. The
+    # layer solver must be MVA, since the C++ fluid layers are double-only. USE
+    # 'real:<digits>' AND NOT 'exact' HERE: rational arithmetic grows the
+    # coefficients unboundedly along an outer fixed point, so an exact layered
+    # solve does not terminate in practice, while real:64 costs 4x double.
+    arith: Optional[str] = None
 
     # Config options (matches MATLAB options.config)
     config: OptionsDict = field(default_factory=lambda: OptionsDict({
         'interlocking': True,
+        # Layering strategy: 'srvn' places each server in its own submodel,
+        # 'flat' places every processor and task in a single submodel
+        'layering': 'srvn',
         'relax': 'fixed',  # 'none', 'fixed', 'adaptive', 'auto' - matches LQNS default
         'relax_factor': 0.5,  # under-relaxation factor
         'relax_min': 0.1,  # MATLAB default
@@ -116,6 +215,85 @@ class SolverLNOptions:
     }))
 
 
+def _region_capable_layer_solver(model):
+    """
+    Pick the first solver whose feature set covers a layer carrying an admission
+    constraint. The order is by decreasing accuracy: CTMC is exact but
+    state-space bound, LDES and SSA simulate. Selection is by supports() so it
+    self-corrects if another solver later declares Region.
+    """
+    from ..solver_ctmc.solver_ctmc import SolverCTMC
+    from ..solver_ssa.solver_ssa import SolverSSA
+    from ..wrappers.solver_ldes.solver_ldes import SolverLDES
+    for ctor in (SolverCTMC, SolverLDES, SolverSSA):
+        if ctor.supports(model):
+            return ctor(model, verbose=False)
+    raise ValueError(f"LN layer {model.getName()} carries an admission constraint but none of "
+                     f"SolverCTMC, SolverLDES, SolverSSA supports it. Supply a layer solver "
+                     f"factory explicitly.")
+
+
+def _layer_dep_handle(f, cols, nclasses, layer_model):
+    """
+    Lift a service-rate dependence handle declared on a LayeredNetwork server to
+    the layer station that represents it. F maps the per-operand population vector
+    of that server to a scalar scaling shared by every operand or to a per-operand
+    vector; COLS[j] lists the layer classes (1-based) through which operand j
+    occupies the station.
+
+    Solvers evaluate the handle in two different index spaces: CTMC and the exact
+    recursions pass a per-class vector, while the AMVA and NC chain recursions
+    pass a per-chain vector. The handle therefore reads len(n) to pick the space,
+    aggregates the operand populations in it, and answers a vector of the SAME
+    length, since the caller indexes the answer with the index it passed in. An
+    index belonging to no operand keeps the neutral scaling 1.
+    """
+    chain_cols = {}
+
+    def handle(n):
+        n = np.atleast_1d(np.asarray(n, dtype=float)).ravel()
+        idx = cols
+        if n.size != nclasses:
+            if n.size not in chain_cols:
+                chain_cols[n.size] = _layer_chain_cols(cols, layer_model, n.size)
+            idx = chain_cols[n.size]
+        nop = np.array([float(np.sum(n[[c - 1 for c in idx[j]]])) if idx[j] else 0.0
+                        for j in range(len(idx))])
+        w = np.atleast_1d(np.asarray(f(nop), dtype=float)).ravel()
+        v = np.ones(n.size)
+        for j in range(len(idx)):
+            for c in idx[j]:
+                v[c - 1] = w[min(j, w.size - 1)]
+        return v
+    return handle
+
+
+def _layer_chain_cols(cols, layer_model, nchains):
+    """Operand columns of a layer station in the chain index space."""
+    sn = layer_model.getStruct()
+    chains = np.atleast_2d(np.asarray(sn.chains, dtype=float))
+    out = []
+    for cols_of_operand in cols:
+        ch = set()
+        for c in cols_of_operand:
+            for k in np.where(chains[:, c - 1] > 0)[0]:
+                if k + 1 <= nchains:
+                    ch.add(int(k) + 1)
+        out.append(sorted(ch))
+    return out
+
+
+def _layer_peak(peak_per_operand, cols, nclasses):
+    """Spread a per-operand peak rate scaling onto the classes of the layer station."""
+    peak_per_operand = np.atleast_1d(np.asarray(peak_per_operand, dtype=float)).ravel()
+    peak = np.ones(nclasses)
+    for j in range(len(cols)):
+        pj = peak_per_operand[min(j, peak_per_operand.size - 1)]
+        for c in cols[j]:
+            peak[c - 1] = pj
+    return peak
+
+
 class SolverLN(EnsembleSolver):
     """
     Native Python Layered Network (LN) solver.
@@ -126,16 +304,23 @@ class SolverLN(EnsembleSolver):
     - Uses MVA solvers for each layer
     - Implements the same fixed-point iteration with convergence testing
 
-    The algorithm:
-    1. Build layer submodels: one for each processor (host layer) and one for each task
-    2. Initialize service demands and think times from LQN structure
-    3. Iterate until convergence:
-       a. Solve each layer using MVA
-       b. Update service times based on lower-layer response times
-       c. Update think times based on caller waiting times
-       d. Update routing probabilities based on throughputs
-       e. Check convergence
-    4. Aggregate results from all layers
+    The algorithm::
+
+        1. Build layer submodels: one per processor (host layer) and per task
+        2. Initialize service demands and think times from LQN structure
+        3. Iterate until convergence:
+           a. Solve each layer using MVA
+           b. Update service times based on lower-layer response times
+           c. Update think times based on caller waiting times
+           d. Update routing probabilities based on throughputs
+           e. Check convergence
+        4. Aggregate results from all layers
+
+    ``options.lang`` delegates the whole layered solve instead: ``'java'`` to
+    ``jline.jar`` over JSON, ``'cpp'`` to the C++ ``line-cli`` over the ``.lqnx``
+    interchange (steady state only, and it refuses what that interchange cannot
+    carry -- see ``solvers/cpp_dispatch.py``). Either way the native fixed point
+    never runs and ``options.arith`` selects the C++ arithmetic backend.
 
     Args:
         model: LayeredNetwork model
@@ -194,8 +379,13 @@ class SolverLN(EnsembleSolver):
         self.thinkproc: List = None
         self.thinktproc: List = None
         self.entryproc: List = None
+        # method='moment3': True once the moment-based entry-law pass has run.
+        self.moment_pass_done: bool = False
         self.entrycdfrespt: List = None
         self.callresidt: np.ndarray = None
+        # per-entry service time resolved by the servtmatrix solve, kept for
+        # inspection exactly as MATLAB's SolverLN keeps it
+        self.entry_servt: np.ndarray = None
         self.callservt: np.ndarray = None
         self.callservtproc: List = None
         self.callservtcdf: List = None
@@ -209,7 +399,7 @@ class SolverLN(EnsembleSolver):
         self.ptaskcallers_step: List = None
         self.ilscaling: np.ndarray = None
 
-        # LQNS V5-style interlock data structures (built once at init)
+        # Interlock path tables of Franks (1999), Ch. 4 (built once at init)
         self.il_table_all: np.ndarray = None    # (nentries x nentries) reachability, all phases
         self.il_table_ph1: np.ndarray = None    # (nentries x nentries) reachability, phase-1 only
         self.il_common_entries: list = None      # common parent entry abs-indices per server
@@ -269,15 +459,31 @@ class SolverLN(EnsembleSolver):
             method = kwargs.get('method', 'default')
             if isinstance(method, str):
                 method = method.lower()
-        elif callable(solver_factory_or_options) and not isinstance(solver_factory_or_options, type):
+        elif callable(solver_factory_or_options) and not isinstance(solver_factory_or_options, SolverLNOptions):
+            # a solver class (SolverMVA) is as valid a factory as a lambda, and
+            # MATLAB's @SolverMVA maps onto the class, so both must forward the
+            # third argument; excluding types dropped `options` silently
             self.solver_factory = solver_factory_or_options
             if options is not None:
-                if hasattr(options, 'get'):
+                if hasattr(options, 'get') and not hasattr(options, 'method'):
                     method = options.get('method', 'default')
-                elif hasattr(options, 'method'):
-                    method = getattr(options, 'method', 'default')
                 else:
-                    method = 'default'
+                    method = getattr(options, 'method', 'default')
+                # An options object passed alongside a factory carries the same
+                # fields as one passed on its own; forwarding only `method`
+                # would silently drop config entries such as `layering`.
+                # lang/arith are forwarded with the rest: a factory says which
+                # solver runs each layer, not which engine runs the ensemble, so
+                # dropping them would silently ignore a requested lang='cpp'.
+                for _f in ('iter_max', 'iter_tol', 'verbose', 'tol', 'config', 'lang', 'arith'):
+                    if hasattr(options, _f):
+                        _v = getattr(options, _f)
+                        if _v is not None:
+                            kwargs.setdefault(_f, _v)
+                    elif hasattr(options, 'get'):
+                        _v = options.get(_f, None)
+                        if _v is not None:
+                            kwargs.setdefault(_f, _v)
             else:
                 # honor a method passed as a keyword argument alongside a factory
                 method = kwargs.get('method', 'default')
@@ -299,6 +505,8 @@ class SolverLN(EnsembleSolver):
             kwargs.setdefault('verbose', solver_factory_or_options.verbose)
             kwargs.setdefault('tol', solver_factory_or_options.tol)
             kwargs.setdefault('config', solver_factory_or_options.config)
+            kwargs.setdefault('lang', solver_factory_or_options.lang)
+            kwargs.setdefault('arith', solver_factory_or_options.arith)
         elif hasattr(solver_factory_or_options, 'method'):
             method = getattr(solver_factory_or_options, 'method', 'default')
         else:
@@ -315,10 +523,18 @@ class SolverLN(EnsembleSolver):
                     UserWarning
                 )
             # MVA handles LQN layer models correctly; LN iter_tol=5e-3 is forwarded.
-            self.solver_factory = lambda m: SolverMVA(
-                m, self.options,  # Pass the full options object
-                verbose=False
+            self.solver_factory = lambda m: (
+                _region_capable_layer_solver(m)
+                if getattr(m.getStruct(), 'nregions', 0) > 0
+                else SolverMVA(m, self._layer_options(), verbose=False)
             )
+        elif isinstance(self.solver_factory, type):
+            # a bare solver class carries no options of its own, so the layer
+            # solver is given the LN options exactly as the default factory does
+            _cls = self.solver_factory
+            # kept because the lambda hides the class from the feature checks
+            self._layer_solver_cls = _cls
+            self.solver_factory = lambda m: _cls(m, self._layer_options(), verbose=False)
 
         kwargs.pop('method', None)
         self.options = SolverLNOptions(method=method, **kwargs)
@@ -340,43 +556,44 @@ class SolverLN(EnsembleSolver):
         if (hasattr(self.lqn, 'actphase') and self.lqn.actphase is not None
                 and np.any(self.lqn.actphase > 1)):
             self.hasPhase2 = True
-            self.servt_ph1 = np.zeros(self.lqn.nidx + 1)
-            self.servt_ph2 = np.zeros(self.lqn.nidx + 1)
-            self.util_ph1 = np.zeros(self.lqn.nidx + 1)
-            self.util_ph2 = np.zeros(self.lqn.nidx + 1)
-            self.prOvertake = np.zeros(self.lqn.nentries + 1)
+            self.servt_ph1 = np.zeros(self.lqn.nidx)
+            self.servt_ph2 = np.zeros(self.lqn.nidx)
+            self.util_ph1 = np.zeros(self.lqn.nidx)
+            self.util_ph2 = np.zeros(self.lqn.nidx)
+            self.prOvertake = np.zeros(self.lqn.nentries)
         else:
             self.hasPhase2 = False
 
     def _apply_forwarding_rendezvous(self):
-        """Port of LQNS Phase::addForwardingRendezvous (phase.cc): replace each
-        forwarding chain reachable from a synchronous call by caller-side
-        pseudo rendezvous (SYNC) calls to the forwarding targets, with mean
-        equal to the original call mean times the product of the forwarding
-        probabilities on the path. After this transformation the forwarded
-        workload is carried by ordinary SYNC call classes, so layer
-        construction, think times, populations and the interlock analysis all
-        see plain rendezvous arcs. This matches LQNS, which drops FWD arcs
-        from the interlock analysis ("Drop forward -- keep rnv",
-        interlock.cc). FWD calls remain in the struct but no longer
-        contribute blocking anywhere in SolverLN. Asynchronous calls into a
-        forwarding chain are left untouched (LQNS breaks the backward search
-        at a send-no-reply)."""
+        """Forwarding transformation of Franks (1999), Sec. 3.3.1 and Fig. 3.8.
+
+        Each forwarding chain reachable from a synchronous call is reconnected
+        to the client that issued the original rendezvous, as a pseudo
+        rendezvous (SYNC) call whose mean is the original call mean times the
+        product of the forwarding probabilities along the path. One level of
+        servers disappears from the layering and the forwarded workload is
+        carried by ordinary SYNC call classes, so layer construction, think
+        times, populations and the interlock analysis all see plain rendezvous
+        arcs. As the thesis notes, the pseudo arcs are excluded from the slice
+        times and from the overtaking and interlock probabilities. FWD calls
+        remain in the struct but no longer contribute blocking anywhere in
+        SolverLN. Asynchronous calls into a forwarding chain are left
+        untouched, since a send-no-reply terminates the chain of blocking."""
         lqn = self.lqn
-        if lqn.ncalls == 0 or not np.any(np.asarray(lqn.calltype[1:lqn.ncalls + 1]) == CallType.FWD):
+        if lqn.ncalls == 0 or not np.any(np.asarray(lqn.calltype[:lqn.ncalls]) == CallType.FWD):
             return
 
         ncalls0 = lqn.ncalls
-        for cidx in range(1, ncalls0 + 1):
+        for cidx in range(ncalls0):
             if int(lqn.calltype[cidx]) != CallType.SYNC:
                 continue
-            aidx = int(lqn.callpair[cidx, 1])
+            aidx = int(lqn.callpair[cidx, 0])
             tidx = self._get_parent(aidx)
             base_mean = self._get_call_mean(cidx)
             if base_mean is None or base_mean <= 0:
                 continue
             # BFS through the forwarding chain of the sync target
-            frontier = [int(lqn.callpair[cidx, 2])]
+            frontier = [int(lqn.callpair[cidx, 1])]
             probs = [1.0]
             visited_e = []
             while frontier:
@@ -385,42 +602,43 @@ class SolverLN(EnsembleSolver):
                 if eidx in visited_e:
                     continue
                 visited_e.append(eidx)
-                for fcidx in range(1, ncalls0 + 1):
-                    if int(lqn.calltype[fcidx]) != CallType.FWD or int(lqn.callpair[fcidx, 1]) != eidx:
+                for fcidx in range(ncalls0):
+                    if int(lqn.calltype[fcidx]) != CallType.FWD or int(lqn.callpair[fcidx, 0]) != eidx:
                         continue
                     fprob = self._get_call_mean(fcidx)
-                    tgt = int(lqn.callpair[fcidx, 2])
+                    tgt = int(lqn.callpair[fcidx, 1])
                     pseudo_mean = base_mean * p_path * (fprob or 0.0)
                     target_tidx = self._get_parent(tgt)
                     if pseudo_mean > 0 and target_tidx != tidx:
                         # merge into an existing SYNC call with the same (activity,target) pair, else append a new pseudo SYNC call.
-                        mrow = 0
-                        for scan in range(1, lqn.ncalls + 1):
+                        # call indices are 0-based here, so 0 is a real call and cannot double as the not-found sentinel (MATLAB/C++ are 1-based and do use 0)
+                        mrow = -1
+                        for scan in range(lqn.ncalls):
                             if int(lqn.calltype[scan]) == CallType.SYNC \
-                                    and int(lqn.callpair[scan, 1]) == aidx \
-                                    and int(lqn.callpair[scan, 2]) == tgt:
+                                    and int(lqn.callpair[scan, 0]) == aidx \
+                                    and int(lqn.callpair[scan, 1]) == tgt:
                                 mrow = scan
                                 break
-                        if mrow > 0:
+                        if mrow >= 0:
                             newmean = self._get_call_mean(mrow) + pseudo_mean
-                            lqn.callpair[mrow, 3] = newmean
+                            lqn.callpair[mrow, 2] = newmean
                             if isinstance(lqn.callproc, list) and mrow < len(lqn.callproc):
-                                lqn.callproc[mrow] = Exp.fit_mean(newmean)
+                                lqn.callproc[mrow] = _call_count_dist(newmean)
                             elif isinstance(lqn.callproc, dict):
-                                lqn.callproc[mrow] = Exp.fit_mean(newmean)
+                                lqn.callproc[mrow] = _call_count_dist(newmean)
                         else:
-                            ncall = lqn.ncalls + 1
-                            lqn.ncalls = ncall
+                            ncall = lqn.ncalls
+                            lqn.ncalls = ncall + 1
                             newrow = np.zeros((1, lqn.callpair.shape[1]))
-                            newrow[0, 1] = aidx
-                            newrow[0, 2] = tgt
-                            newrow[0, 3] = pseudo_mean
+                            newrow[0, 0] = aidx
+                            newrow[0, 1] = tgt
+                            newrow[0, 2] = pseudo_mean
                             lqn.callpair = np.vstack([lqn.callpair, newrow])
                             lqn.calltype = np.append(lqn.calltype, CallType.SYNC)
                             if isinstance(lqn.callproc, list):
-                                lqn.callproc.append(Exp.fit_mean(pseudo_mean))
+                                lqn.callproc.append(_call_count_dist(pseudo_mean))
                             elif isinstance(lqn.callproc, dict):
-                                lqn.callproc[ncall] = Exp.fit_mean(pseudo_mean)
+                                lqn.callproc[ncall] = _call_count_dist(pseudo_mean)
                             if hasattr(lqn, 'callsof') and isinstance(lqn.callsof, dict):
                                 lqn.callsof.setdefault(aidx, []).append(ncall)
                             if hasattr(lqn, 'iscaller') and lqn.iscaller is not None:
@@ -462,9 +680,9 @@ class SolverLN(EnsembleSolver):
         # Rebuild callsof from callpair if empty
         if isinstance(lqn.callsof, dict) and len(lqn.callsof) == 0:
             if hasattr(lqn, 'callpair') and lqn.callpair is not None:
-                for cidx in range(1, lqn.ncalls + 1):
+                for cidx in range(lqn.ncalls):
                     if cidx < lqn.callpair.shape[0]:
-                        src_aidx = int(lqn.callpair[cidx, 1])  # source activity in column 1
+                        src_aidx = int(lqn.callpair[cidx, 0])  # source activity in column 0
                         if src_aidx > 0:
                             if src_aidx not in lqn.callsof:
                                 lqn.callsof[src_aidx] = []
@@ -500,7 +718,7 @@ class SolverLN(EnsembleSolver):
 
         # Mark disconnected components to ignore
         # MATLAB SolverLN.construct lines 169-185: weaklyconncomp(graph'+graph)
-        self.ignore = np.zeros(lqn.nidx + 1, dtype=bool)
+        self.ignore = np.zeros(lqn.nidx, dtype=bool)
         if hasattr(lqn, 'graph') and lqn.graph is not None:
             graph = np.asarray(lqn.graph)
             n = graph.shape[0]
@@ -532,7 +750,7 @@ class SolverLN(EnsembleSolver):
             if n_components > 1:
                 # Find which components contain REF tasks
                 wcc_has_ref = np.zeros(n_components, dtype=bool)
-                for t in range(1, lqn.ntasks + 1):
+                for t in range(lqn.ntasks):
                     tidx = lqn.tshift + t
                     if tidx < n and self._is_ref_task(tidx):
                         wcc_has_ref[labels[tidx]] = True
@@ -549,14 +767,15 @@ class SolverLN(EnsembleSolver):
                                 self.ignore[idx] = True
 
         # Initialize internal data structures
-        self.entrycdfrespt = [None] * (lqn.nentries + 1)
+        self.entrycdfrespt = [None] * lqn.nentries
         self.hasconverged = False
+        self.moment_pass_done = False
 
         # Initialize service and think time processes
-        self.servtproc = [None] * (lqn.nidx + 1)
-        self.thinkproc = [None] * (lqn.nidx + 1)
-        self.callservtproc = [None] * (lqn.ncalls + 1)
-        self.tputproc = [None] * (lqn.nidx + 1)
+        self.servtproc = [None] * lqn.nidx
+        self.thinkproc = [None] * lqn.nidx
+        self.callservtproc = [None] * lqn.ncalls
+        self.tputproc = [None] * lqn.nidx
 
         # prefer the full Distribution from lqn.hostdem_proc (keeps SCV/phase-type); fall back to the Exp-fitted scalar mean.
         hostdem_proc = getattr(lqn, 'hostdem_proc', None)
@@ -611,7 +830,7 @@ class SolverLN(EnsembleSolver):
                         self.thinkproc[idx + 1] = mean_or_dist
 
         # Copy activity think times - convert floats to Exp distributions
-        self.actthinkproc = [None] * (lqn.nidx + 1)
+        self.actthinkproc = [None] * lqn.nidx
         if hasattr(lqn, 'actthink') and isinstance(lqn.actthink, dict):
             for idx, mean_or_dist in lqn.actthink.items():
                 if mean_or_dist is not None:
@@ -623,13 +842,13 @@ class SolverLN(EnsembleSolver):
                         self.actthinkproc[idx] = mean_or_dist
 
         # entries have Immediate servtproc initially; entry service time (servt) is computed iteratively from activities during update_layers.
-        for e in range(1, lqn.nentries + 1):
+        for e in range(lqn.nentries):
             eidx = lqn.eshift + e
             # Set servtproc to Immediate for entries (matches MATLAB: hostdem{eidx} is empty for entries)
             self.servtproc[eidx] = Immediate()
 
         # call service time process = target entry's hostdem (Immediate for entries, matches MATLAB line 194-196).
-        for cidx in range(1, lqn.ncalls + 1):
+        for cidx in range(lqn.ncalls):
             tgt_eidx = self._get_call_target_entry(cidx)
             if tgt_eidx is not None and tgt_eidx > 0 and tgt_eidx < len(self.servtproc):
                 if self.servtproc[tgt_eidx] is not None:
@@ -644,52 +863,23 @@ class SolverLN(EnsembleSolver):
         self.servtmatrix = self._get_entry_service_matrix()
 
         # Initialize job counts
-        self.njobs = np.zeros((lqn.tshift + lqn.ntasks + 1, lqn.tshift + lqn.ntasks + 1))
+        self.njobs = np.zeros((lqn.tshift + lqn.ntasks, lqn.tshift + lqn.ntasks))
 
         # Build layers
         self._build_layers()
 
-        # post-construction FunctionTask solver override, based on setupTime; mirrors MATLAB SolverLN.m:140-151.
-        has_function_task = (hasattr(lqn, 'isfunction') and lqn.isfunction is not None
-                            and np.any(np.asarray(lqn.isfunction) == 1))
-        if has_function_task:
-            for e in range(len(self.ensemble)):
-                layer_model = self.ensemble[e]
-                if layer_model is None:
-                    continue
-                # MATLAB checks self.ensemble{e}.stations{2}.setupTime
-                # stations{2} is the server station (index 1 in 0-based)
-                stations = layer_model.get_stations() if hasattr(layer_model, 'get_stations') else []
-                if len(stations) >= 2:
-                    server_station = stations[1]
-                    has_setup = (hasattr(server_station, '_setup_time')
-                                 and server_station._setup_time
-                                 and any(v is not None for v in server_station._setup_time.values()))
-                    if has_setup:
-                        # Set functionParams on layer model attribute for MAM solver
-                        if not hasattr(layer_model, 'attribute') or layer_model.attribute is None:
-                            layer_model.attribute = {}
-                        # Get first setup/delayoff distributions
-                        setup_dist = next((v for v in server_station._setup_time.values() if v is not None), None)
-                        delayoff_dist = None
-                        if hasattr(server_station, '_delay_off_time') and server_station._delay_off_time:
-                            delayoff_dist = next((v for v in server_station._delay_off_time.values() if v is not None), None)
-                        if setup_dist is not None:
-                            layer_model.attribute['functionParams'] = {
-                                'setupTime': setup_dist,
-                                'delayoffTime': delayoff_dist,
-                                'serverIdx': layer_model.attribute.get('serverIdx', 2) if isinstance(layer_model.attribute, dict) else 2
-                            }
-                        try:
-                            from ..solver_mam import SolverMAM
-                            self.solvers[e] = SolverMAM(layer_model, method='dec.poisson', verbose=0)
-                        except (ImportError, Exception):
-                            pass  # Keep existing solver
-                    # Non-FunctionTask layers keep their existing solver
+        # A setup no longer forces the MAM decomposition on the layer. The open
+        # M/G/1-with-setup QBD reads the idle period from the Poisson rate 1/X, and
+        # in a CLOSED layer the idle period a thread sees is the rest of the cycle,
+        # 1/X - S: on lqn_setup that is 1.0 against the 2.29 the open reading gives,
+        # so the thread was powered down far more often than it is and the answer
+        # landed 12.67% below LDES. The cold start is charged to the ENTRY instead,
+        # with the probability that the thread was actually found down: see
+        # _setup_charge.
 
         self.njobsorig = self.njobs.copy()
 
-        # Build interlock tables (LQNS V5 static analysis)
+        # Build the interlock path tables of Sec. 4.2
         if self.options.config.get('interlocking', False):
             self._init_interlock()
 
@@ -698,7 +888,7 @@ class SolverLN(EnsembleSolver):
                    self.nlayers, lqn.nhosts, lqn.ntasks, lqn.nentries, lqn.nacts)
 
         # Initialize caller probability tracking
-        self.ptaskcallers = np.zeros((lqn.nhosts + lqn.ntasks + 1, lqn.nhosts + lqn.ntasks + 1))
+        self.ptaskcallers = np.zeros((lqn.nhosts + lqn.ntasks, lqn.nhosts + lqn.ntasks))
         self.ptaskcallers_step = [np.zeros_like(self.ptaskcallers) for _ in range(self.nlayers + 2)]
 
         # Compute reset indices (convert to int for list indexing)
@@ -715,6 +905,104 @@ class SolverLN(EnsembleSolver):
 
         # Store ensemble in model
         self.model.ensemble = self.ensemble
+
+    def listValidMethods(self):
+        """Valid methods for this solver, SolverLN.m verbatim.
+
+        Each name states the LAYERING and the ENCODING; ln_requested_method
+        normalises the alias spellings ('ph', 'cs', 'srvncs', 'flatcs',
+        'squashed', 'squashed.ph') onto these, and they are left out here to
+        keep the list unambiguous, exactly as the reference does.
+        """
+        return ['srvn', 'srvn.ph', 'srvn.cs', 'flat', 'flat.cs', 'flat.ph',
+                'moment3', 'default']
+
+    list_valid_methods = listValidMethods
+
+    def supportsModelMethod(self, method):
+        """The encoding rules the layer builders enforce at solve time, stated
+        here so a CALLER can see them before running.
+
+        'srvn.ph' and 'flat.ph' compose each entry into ONE phase-type law, and
+        several constructs have nowhere to go in that law: a forwarding call
+        whose target is not in the caller's activity graph, a routed call group
+        whose dispatch order the composition folds away, a cache task, an
+        admission constraint, a queue-dependent rate on a station the
+        composition replaces. 'flat.ph' additionally squashes every layer into
+        one network, which per-layer state (a replica, a powered-down setup
+        thread) cannot survive.
+
+        None of these is a feature name, so none can be a feature-set delta:
+        they are properties of what the METHOD does to the model. Left only in
+        the builders they were invisible to every gate above them, and
+        ``listValidMethods`` returns the same eight names for every model, so a
+        report offered every encoding on every layered model.
+
+        Phase 2 is deliberately NOT tested: that refusal reads ``self.hasPhase2``,
+        which is built during layering rather than being a property of the model,
+        so a gate cannot ask it without doing the layering it precedes. Mirrors
+        MATLAB ``ln_method_refusal``.
+        """
+        m = str(method).lower()
+        if m not in ('srvn.ph', 'flat.ph'):
+            return True, ''
+        lqn = getattr(self, 'lqn', None)
+        if lqn is None:
+            return True, ''
+
+        # -- the squashing refusals, 'flat.ph' only ------------------------
+        # Each carries PER-LAYER state that one submodel cannot hold, so they
+        # are properties of the flattening and not of the encoding.
+        if m == 'flat.ph':
+            nelem = lqn.nhosts + lqn.ntasks
+            for i in range(nelem):
+                if float(lqn.repl[0, i]) > 1:
+                    return False, ("method='flat.ph' does not support replicated processors or "
+                                   "tasks, whose replicas need a submodel each. "
+                                   "Use method='srvn.ph'.")
+            hs = getattr(lqn, 'hassetup', None)
+            if hs is not None and np.any(np.asarray(hs).ravel()[:nelem]):
+                return False, ("method='flat.ph' does not support setup tasks, whose "
+                               "powered-down threads are per-layer state. "
+                               "Use method='srvn.ph'.")
+
+        # -- the composed-entry-law refusals, both PH encodings -------------
+        iscache = getattr(lqn, 'iscache', None)
+        if iscache is not None and np.any(np.asarray(iscache).ravel()):
+            return False, ("method='%s' does not support cache tasks. "
+                           "Use method='default'." % m)
+        for cidx in range(lqn.ncalls):
+            if self._ph_call_type(cidx) == _FWD:
+                return False, ("method='%s' does not support forwarding calls, whose target is "
+                               "not part of the caller's activity graph. "
+                               "Use method='default'." % m)
+        hs = getattr(lqn, 'hassetup', None)
+        if hs is not None:
+            hsf = np.asarray(hs).ravel()
+            for i in range(len(hsf)):
+                if not hsf[i]:
+                    continue
+                if self._get_sched(i) == SchedStrategy.INF or not np.isfinite(float(lqn.mult[0, i])):
+                    return False, ("method='%s': task '%s' declares a setup time on an "
+                                   "infinite-server task, which holds no thread to power down; "
+                                   "give it a finite multiplicity." % (m, self._ph_name(i)))
+        if getattr(lqn, 'callgroups', None):
+            return False, ("method='%s' does not support routed call groups, whose dispatch "
+                           "order is a routing property. Use method='flat.cs'." % m)
+        if getattr(lqn, 'lincon', None):
+            return False, ("method='%s' does not support admission constraints on a layer "
+                           "station. Use method='default'." % m)
+        for fndep in ('lldscaling', 'cdscaling', 'jdscaling', 'pools'):
+            dep = getattr(lqn, fndep, None) or {}
+            if dep:
+                sidxdep = sorted(dep.keys())[0]
+                what = 'server pools' if fndep == 'pools' else fndep
+                return False, ("method='%s' does not support queue-dependent service rates on "
+                               "a layer station ('%s' declares %s). Use method='srvn.cs'."
+                               % (m, self._ph_name(sidxdep), what))
+        return True, ''
+
+    supports_model_method = supportsModelMethod
 
     def supports(self, model) -> bool:
         """Check if the layered model is supported.
@@ -742,7 +1030,7 @@ class SolverLN(EnsembleSolver):
         for e in range(min(len(ensemble), len(self.solvers))):
             solver = self.solvers[e]
             layer = ensemble[e]
-            # SolverMAM/SolverFLD declare supports(sn,method)->(bool,reason), a different contract from the boolean supports(model) MATLAB assumes; gate via the layer solver's own feature set.
+            # SolverMAM/SolverFLD declare supports(sn,method)->(bool,reason), unlike boolean supports(model) MATLAB assumes; gate via the layer solver's featset.
             get_featureset = getattr(type(solver), 'getFeatureSet', None)
             if get_featureset is not None:
                 if not supports_via_featureset(type(solver), layer):
@@ -762,48 +1050,204 @@ class SolverLN(EnsembleSolver):
     def _get_call_target_entry(self, cidx: int) -> Optional[int]:
         """Get the target entry index for a call."""
         lqn = self.lqn
-        if cidx < 1 or cidx > lqn.ncalls:
+        if cidx < 0 or cidx >= lqn.ncalls:
             return None
         if isinstance(lqn.callpair, dict):
             pair = lqn.callpair.get(cidx, None)
             if pair is not None:
-                return pair[2]  # Column 2 is target entry
+                return pair[1]  # Column 1 is target entry
         else:
             if cidx < lqn.callpair.shape[0]:
-                return int(lqn.callpair[cidx, 2])  # Column 2 is target entry
+                return int(lqn.callpair[cidx, 1])  # Column 1 is target entry
         return None
 
     def _get_call_source_activity(self, cidx: int) -> Optional[int]:
         """Get the source activity index for a call."""
         lqn = self.lqn
-        if cidx < 1 or cidx > lqn.ncalls:
+        if cidx < 0 or cidx >= lqn.ncalls:
             return None
         if isinstance(lqn.callpair, dict):
             pair = lqn.callpair.get(cidx, None)
             if pair is not None:
-                return pair[1]  # Column 1 is source activity
+                return pair[0]  # Column 0 is source activity
         else:
             if cidx < lqn.callpair.shape[0]:
-                return int(lqn.callpair[cidx, 1])  # Column 1 is source activity
+                return int(lqn.callpair[cidx, 0])  # Column 0 is source activity
         return None
+
+    def _assert_series_parallel_forks(self):
+        """Reject activity graphs whose AND forks and joins are not properly nested.
+
+        The traversal pairs a join with the most recent fork through a LIFO stack
+        of fork classes, so it can only represent series-parallel graphs.
+        """
+        lqn = self.lqn
+        graph = getattr(lqn, 'graph', None)
+        posttype = getattr(lqn, 'actposttype', None)
+        pretype = getattr(lqn, 'actpretype', None)
+        if graph is None or posttype is None or pretype is None:
+            return
+        post_and_value = 12  # ActivityPrecedenceType.ID_POST_AND
+        pre_and_value = 2    # ActivityPrecedenceType.ID_PRE_AND
+        post = np.asarray(posttype).flatten()
+        pre = np.asarray(pretype).flatten()
+        ashift = lqn.nhosts + lqn.ntasks + lqn.nentries
+        nidx = lqn.nidx
+        acts = range(ashift, nidx)
+
+        def preds(x):
+            return [p for p in acts if p < graph.shape[0] and x < graph.shape[1] and graph[p, x] != 0]
+
+        is_fork = set()
+        for f in acts:
+            for b in acts:
+                if (f < graph.shape[0] and b < graph.shape[1] and graph[f, b] != 0
+                        and b < len(post) and post[b] == post_and_value):
+                    is_fork.add(f)
+                    break
+
+        def enclosing_fork(a):
+            seen, queue = set(), [a]
+            while queue:
+                cur = queue.pop(0)
+                if cur in seen:
+                    continue
+                seen.add(cur)
+                ps = preds(cur)
+                hit = [p for p in ps if p in is_fork]
+                if hit:
+                    return hit[0]
+                queue.extend(ps)
+            return -1
+
+        for j in acts:
+            inputs = [i for i in preds(j) if i < len(pre) and pre[i] == pre_and_value]
+            if len(inputs) < 2:
+                continue
+            forks = {enclosing_fork(i) for i in inputs}
+            if len(forks) > 1 or -1 in forks:
+                name = lqn.hashnames[j] if j < len(lqn.hashnames) else str(j)
+                raise RuntimeError(
+                    "Activity '%s' joins branches of different AND forks; SolverLN supports "
+                    "only properly nested (series-parallel) fork-join graphs." % name)
+
+    def _is_srvn_ph(self) -> bool:
+        """True when the layers are the collapsed phase-type ones of 'srvn.ph'."""
+        return getattr(self, 'lnmethod', None) == 'srvn.ph'
+
+    def _is_ph_encoding(self) -> bool:
+        """True when the layers carry the COMPOSED phase-type server law rather
+        than the routing encoding of the activity graph, under either layering.
+        The encoding, not the layering, decides which update and reconstruction
+        passes run, so every such dispatch asks this and not for one method name.
+        """
+        return getattr(self, 'lnmethod', None) in ('srvn.ph', 'flat.ph')
+
+    def _probe_srvn_ph(self) -> bool:
+        """Answer whether 'srvn.ph' can serve this model, without disturbing the solver.
+
+        Both the feature gate and the series-parallel reduction can refuse, and
+        the second only finds out by composing the per-entry workflows -- work the
+        build then reuses, since those laws do not depend on the iterate.
+        """
+        try:
+            self._ph_init_state()
+            self._assert_srvn_ph_supported()
+            self._ph_init_laws()
+            self._ph_laws_ready = True
+            return True
+        except Exception as e:                                  # noqa: BLE001
+            self._ph_laws_ready = False
+            line_debug("LN: method=srvn cannot use srvn.ph on this model (%s)", e)
+            return False
 
     def _build_layers(self):
         """Build layer submodels (matches MATLAB buildLayers)."""
         lqn = self.lqn
 
+        # Method resolution. A method name carries both the LAYERING and the
+        # ENCODING: 'srvn.ph' replaces the routing encoding of the activity graph
+        # by a composed phase-type server law, 'srvn' is the alias that takes it
+        # where it can serve the model and 'srvn.cs' otherwise, and 'flat.cs'
+        # squashes every server into one submodel. The choice is made ONCE, here,
+        # and every later dispatch reads self.lnmethod.
+        # See _kb/06-solver-catalog.md (LN section).
+        requested = ln_requested_method(getattr(self.options, 'method', None))
+        # the method names the layering, so it sets it
+        self._force_flat = requested in ('flat.cs', 'flat.ph')
+        if requested == 'flat.ph':
+            # the squashed layering with the composed law: ONE submodel holding
+            # every server, and a caller visiting each of them once per
+            # invocation. The feature gate is the srvn.ph one plus the refusals a
+            # single submodel carries -- see _ph_flat_server_set.
+            self._ph_laws_ready = False
+            self._ph_init_state()
+            self.lnmethod = 'flat.ph'
+            self._build_layers_ph(flat=True)
+            return
+        if requested in ('srvn.ph', 'srvn'):
+            hard = requested == 'srvn.ph'
+            if self._is_flat_layering():
+                if hard:
+                    raise ValueError("method='srvn.ph' requires the srvn layering, because it "
+                                     "replaces each server by a submodel of its own. Use "
+                                     "method='srvn.cs' for that layering.")
+                line_debug("LN: method=srvn cannot use srvn.ph under the flat layering")
+            else:
+                self._ph_laws_ready = False
+                if hard:
+                    self._ph_init_state()
+                    self.lnmethod = 'srvn.ph'
+                    self._build_layers_ph()
+                    return
+                if self._probe_srvn_ph():
+                    self.lnmethod = 'srvn.ph'
+                    self._build_layers_ph()
+                    return
+        # The label reports what was BUILT, so a model squashed through
+        # options.config.layering reads back as 'flat.cs' even when no method
+        # named it.
+        if requested == 'moment3':
+            self.lnmethod = 'moment3'
+        else:
+            self.lnmethod = 'flat.cs' if self._is_flat_layering() else 'srvn.cs'
+
+        self._assert_series_parallel_forks()
+
         # Initialize ensemble with None for each potential layer
-        self.ensemble = [None] * (lqn.nhosts + lqn.ntasks + 1)
+        self.ensemble = [None] * (lqn.nhosts + lqn.ntasks)
 
         # Initialize update maps as lists of lists
-        servt_map = [[] for _ in range(lqn.nhosts + lqn.ntasks + 1)]
-        thinkt_map = [[] for _ in range(lqn.nhosts + lqn.ntasks + 1)]
-        actthinkt_map = [[] for _ in range(lqn.nhosts + lqn.ntasks + 1)]
-        arvproc_map = [[] for _ in range(lqn.nhosts + lqn.ntasks + 1)]
-        call_map = [[] for _ in range(lqn.nhosts + lqn.ntasks + 1)]
-        route_map = [[] for _ in range(lqn.nhosts + lqn.ntasks + 1)]
+        servt_map = [[] for _ in range(lqn.nhosts + lqn.ntasks)]
+        thinkt_map = [[] for _ in range(lqn.nhosts + lqn.ntasks)]
+        actthinkt_map = [[] for _ in range(lqn.nhosts + lqn.ntasks)]
+        arvproc_map = [[] for _ in range(lqn.nhosts + lqn.ntasks)]
+        call_map = [[] for _ in range(lqn.nhosts + lqn.ntasks)]
+        route_map = [[] for _ in range(lqn.nhosts + lqn.ntasks)]
 
+        # see _kb/06-solver-catalog.md (LN section) for the layering taxonomy
+        self._assert_call_groups()
+        flat_servers = self._flat_server_set() if self._is_flat_layering() else []
+
+        if flat_servers:
+            flat_callers = [lqn.tshift + t for t in range(lqn.ntasks)
+                            if not self.ignore[lqn.tshift + t]]
+            self._build_layer_recursive(flat_servers, flat_callers, False,
+                                        servt_map, thinkt_map, actthinkt_map,
+                                        arvproc_map, call_map, route_map, flat=True)
+        else:
+            self._build_layers_srvn(servt_map, thinkt_map, actthinkt_map,
+                                    arvproc_map, call_map, route_map)
+
+        self._finish_layers(servt_map, thinkt_map, actthinkt_map,
+                            arvproc_map, call_map, route_map, flat_servers)
+
+    def _build_layers_srvn(self, servt_map, thinkt_map, actthinkt_map,
+                           arvproc_map, call_map, route_map):
+        """One submodel per processor and per called task (default layering)."""
+        lqn = self.lqn
         # Build one submodel for every processor (host layer)
-        for hidx in range(1, lqn.nhosts + 1):
+        for hidx in range(lqn.nhosts):
             if not self.ignore[hidx]:
                 tasks_on_host = self._get_tasks_of_host(hidx)
                 if tasks_on_host:
@@ -848,7 +1292,7 @@ class SolverLN(EnsembleSolver):
                                                    arvproc_map, call_map, route_map)
 
         # Build one submodel for every task (task layer)
-        for t in range(1, lqn.ntasks + 1):
+        for t in range(lqn.ntasks):
             tidx = lqn.tshift + t
             if not self.ignore[tidx] and not self._is_ref_task(tidx):
                 # Check if task has callers
@@ -858,6 +1302,10 @@ class SolverLN(EnsembleSolver):
                                                servt_map, thinkt_map, actthinkt_map,
                                                arvproc_map, call_map, route_map)
 
+    def _finish_layers(self, servt_map, thinkt_map, actthinkt_map,
+                       arvproc_map, call_map, route_map, flat_servers):
+        """Flatten the update maps and index the ensemble."""
+        lqn = self.lqn
         # Convert maps to numpy arrays
         self.servt_classes_updmap = self._flatten_map(servt_map)
         self.thinkt_classes_updmap = self._flatten_map(thinkt_map)
@@ -881,27 +1329,43 @@ class SolverLN(EnsembleSolver):
         while len(self.solvers) < len(self.ensemble):
             self.solvers.append(None)
 
-        self.idxhash = np.arange(lqn.nhosts + lqn.ntasks + 1, dtype=float)
-        for i, _ in enumerate(self.ensemble):
-            pass  # idxhash will be set below
-
-        # Recalculate idxhash properly
-        self.idxhash = np.full(lqn.nhosts + lqn.ntasks + 1, np.nan)
+        # Position of each host/task element in the compacted ensemble. Element 0
+        # is the first host, not the dead slot the 1-based space used to carry.
+        self.idxhash = np.full(lqn.nhosts + lqn.ntasks, np.nan)
         layer_idx = 0
-        for orig_idx in range(lqn.nhosts + lqn.ntasks + 1):
-            if orig_idx not in empty_models and orig_idx > 0:
+        for orig_idx in range(lqn.nhosts + lqn.ntasks):
+            if orig_idx not in empty_models:
                 self.idxhash[orig_idx] = layer_idx
                 layer_idx += 1
+
+        # Layers carrying an admission constraint need the region wait recovered in
+        # update_metrics -- see _kb/06-solver-catalog.md (LN section)
+        self.layer_has_region = [bool(getattr(e, 'regions', None)) for e in self.ensemble]
+        self.layer_chains = [None] * len(self.ensemble)
+        for e_idx, has_region in enumerate(self.layer_has_region):
+            if has_region:
+                # layer structure is iteration-invariant, so cache the chain matrix
+                self.layer_chains[e_idx] = np.asarray(self.ensemble[e_idx].getStruct().chains)
 
         # Classify layers as host or task
         self.hostLayerIndices = []
         self.taskLayerIndices = []
 
-        for hidx in range(1, lqn.nhosts + 1):
+        if flat_servers:
+            # every server resolves to the single flat layer, which is at once
+            # the host layer and the task layer
+            self.idxhash = np.full(lqn.nhosts + lqn.ntasks, np.nan)
+            for sidx in flat_servers:
+                self.idxhash[sidx] = 0
+            self.hostLayerIndices = [0]
+            self.taskLayerIndices = [0]
+            return
+
+        for hidx in range(lqn.nhosts):
             if not np.isnan(self.idxhash[hidx]):
                 self.hostLayerIndices.append(int(self.idxhash[hidx]))
 
-        for t in range(1, lqn.ntasks + 1):
+        for t in range(lqn.ntasks):
             tidx = lqn.tshift + t
             if not np.isnan(self.idxhash[tidx]):
                 self.taskLayerIndices.append(int(self.idxhash[tidx]))
@@ -959,7 +1423,7 @@ class SolverLN(EnsembleSolver):
                 caller_indices = np.where(lqn.iscaller[:, tidx] > 0)[0]
                 for caller_idx in caller_indices:
                     # Check if caller is a task (not processor/entry/activity)
-                    if lqn.tshift < caller_idx <= lqn.tshift + lqn.ntasks:
+                    if lqn.tshift <= caller_idx < lqn.tshift + lqn.ntasks:
                         if caller_idx not in callers:
                             callers.append(caller_idx)
 
@@ -994,7 +1458,7 @@ class SolverLN(EnsembleSolver):
                     # Compute residt from QN/TN_ref (matches MATLAB updateMetricsDefault.m)
                     if (refstat_k is not None and refclass_c is not None and
                             QN is not None and TN is not None):
-                        TN_ref = TN[refstat_k, refclass_c] if (refstat_k < TN.shape[0] and refclass_c < TN.shape[1]) else 0.0
+                        TN_ref = TN[refstat_k, refclass_c] if (0 <= refstat_k < TN.shape[0] and 0 <= refclass_c < TN.shape[1]) else 0.0
                         if TN_ref > 1e-8:  # GlobalConstants.FineTol
                             qn_val = QN[nodeidx_0, classidx_0]
                             if np.isfinite(qn_val) and qn_val >= 0:
@@ -1154,9 +1618,9 @@ class SolverLN(EnsembleSolver):
 
         for eidx in entries:
             # Find calls targeting this entry (column 2 of callpair has target entry index)
-            for cidx in range(1, callpair.shape[0]):
+            for cidx in range(callpair.shape[0]):
                 if cidx < callpair.shape[0]:
-                    tgt_eidx = int(callpair[cidx, 2]) if callpair.shape[1] > 2 else 0
+                    tgt_eidx = int(callpair[cidx, 1]) if callpair.shape[1] > 1 else 0
                     if tgt_eidx == eidx:
                         # Found a call to this entry - get the source activity
                         src_aidx = self._get_call_source_activity(cidx)
@@ -1178,21 +1642,24 @@ class SolverLN(EnsembleSolver):
     # significant undertaking. The current throughput correction provides reasonable
     # approximations for most fork-join networks.
 
-    def _build_layer_recursive(self, idx: int, callers: List[int], is_host_layer: bool,
+    def _build_layer_recursive(self, idx_set, callers: List[int], is_host_layer: bool,
                                servt_map, thinkt_map, actthinkt_map,
-                               arvproc_map, call_map, route_map):
-        """
-        Build a layer submodel (matches MATLAB buildLayersRecursive).
+                               arvproc_map, call_map, route_map, flat: bool = False):
+        """Build a layer submodel (matches MATLAB buildLayersRecursive).
 
-        This is a simplified implementation that creates the essential layer structure.
-        For 100% MATLAB parity, the full 820-line buildLayersRecursive logic would
-        need to be ported.
+        IDX_SET is the server element of this layer, a scalar under 'srvn'
+        layering and the whole host+task set under 'flat' layering.
         """
         lqn = self.lqn
+        if isinstance(idx_set, (list, tuple, np.ndarray)):
+            idx_set = [int(v) for v in idx_set]
+        else:
+            idx_set = [int(idx_set)]
+        idx = idx_set[0]  # layer key: model name, ensemble slot and update-map column
 
         # Create Network for this layer
         model_name = self._get_hashname(idx)
-        layer_model = Network(model_name)
+        layer_model = Network(model_name + '.Flat' if flat else model_name)
         if hasattr(layer_model, 'set_checks'):
             layer_model.set_checks(False)
 
@@ -1213,7 +1680,7 @@ class SolverLN(EnsembleSolver):
         # Detect cache layer (MATLAB buildLayersRecursive line 36)
         # iscachelayer = all(lqn.iscache(callers)) && ishostlayer
         iscachelayer = False
-        if is_host_layer and hasattr(lqn, 'iscache') and lqn.iscache is not None:
+        if not flat and is_host_layer and hasattr(lqn, 'iscache') and lqn.iscache is not None:
             iscache_arr = lqn.iscache.flatten() if isinstance(lqn.iscache, np.ndarray) else lqn.iscache
             # Check if ALL callers are cache tasks
             if len(callers) > 0:
@@ -1233,8 +1700,8 @@ class SolverLN(EnsembleSolver):
         nservers = self._get_nservers(idx)
         sched = self._get_sched(idx)
 
-        # fan-out replication: single representative replica when caller fan-out covers task replicas; see _kb/06-solver-catalog.md LN Fan-out single-replica modeling.
-        raw_replicas = int(self._get_repl(idx))
+        # fan-out replication: single replica when caller fan-out covers task replicas; see _kb/06-solver-catalog.md LN Fan-out single-replica modeling.
+        raw_replicas = 1 if flat else int(self._get_repl(idx))
         reduce_fanout = False
         if raw_replicas > 1 and len(callers) > 0:
             if not is_host_layer and hasattr(lqn, 'fanout') and lqn.fanout is not None:
@@ -1261,7 +1728,7 @@ class SolverLN(EnsembleSolver):
         # Create stations
         has_sync_callers = self._has_sync_callers(idx, callers)
 
-        if is_host_layer or has_sync_callers:
+        if flat or is_host_layer or has_sync_callers:
             # Create client delay node
             client_delay = Delay(layer_model, 'Clients')
             layer_model.attribute['clientIdx'] = 1
@@ -1270,23 +1737,50 @@ class SolverLN(EnsembleSolver):
             layer_model.attribute['serverIdx'] = 1
             layer_model.attribute['clientIdx'] = None
 
-        # Create server stations (nreplicas copies, matches MATLAB lines 56-67)
-        server_stations = []
-        for m in range(1, nreplicas + 1):
-            if m == 1:
-                ss = Queue(layer_model, model_name, sched)
+        # One station (times its replicas) per server element of the layer
+        srv_stations = {}
+        server_idx_of = {}
+        host_stations = []
+        task_stations = []
+        for sidx in idx_set:
+            s_is_host = sidx <= lqn.nhosts
+            s_name = self._get_hashname(sidx)
+            if flat and any(str(n.getName()) == s_name for n in layer_model.get_nodes()):
+                # an LQN processor and the task it hosts may share a name; two
+                # stations of one layer must not, or link() gives their
+                # class-switch nodes the same name and merges their arcs
+                s_name = s_name + ('.host' if s_is_host else '.task')
+            s_nservers = self._get_nservers(sidx)
+            s_sched = self._get_sched(sidx)
+            stations_of = []
+            for m in range(1, nreplicas + 1):
+                if m == 1:
+                    ss = Queue(layer_model, s_name, s_sched)
+                else:
+                    ss = Queue(layer_model, s_name + '.' + str(m), s_sched)
+                ss.set_number_of_servers(s_nservers)
+                ss.attribute = OptionsDict({
+                    'ishost': s_is_host,
+                    'idx': sidx
+                })
+                # successive same-host activities retain the server; mark immediate feedback so simulators do not re-queue behind waiting jobs.
+                ss.set_immediate_feedback(True)
+                stations_of.append(ss)
+            srv_stations[sidx] = stations_of
+            server_idx_of[sidx] = len(layer_model.get_nodes()) - nreplicas + 1
+            if s_is_host:
+                host_stations.append(server_idx_of[sidx])
             else:
-                ss = Queue(layer_model, model_name + '.' + str(m), sched)
-            ss.set_number_of_servers(nservers)
-            ss.attribute = OptionsDict({
-                'ishost': is_host_layer,
-                'idx': idx
-            })
-            # successive same-host activities retain the server; mark immediate feedback so simulators do not re-queue behind waiting jobs.
-            ss.set_immediate_feedback(True)
-            server_stations.append(ss)
+                task_stations.append(server_idx_of[sidx])
 
-        server_station = server_stations[0]  # Primary for backward compatibility
+        layer_model.attribute['srv_stations'] = srv_stations
+        layer_model.attribute['serverIdxOf'] = server_idx_of
+        layer_model.attribute['hostStations'] = host_stations
+        layer_model.attribute['taskStations'] = task_stations
+        layer_model.attribute['flat'] = flat
+
+        server_stations = srv_stations[idx]
+        server_station = server_stations[0]  # the layer's own server, sole server under 'srvn'
         layer_model.attribute['nreplicas'] = nreplicas
         layer_model.attribute['server_stations'] = server_stations
 
@@ -1295,6 +1789,10 @@ class SolverLN(EnsembleSolver):
         sink_station = None
         if hasattr(lqn, 'arrival') and lqn.arrival:
             for tidx_caller in callers:
+                # an arrival that is the only way into the task is carried by the caller
+                # chain instead, not by a stream -- see _open_arrival_rate_of
+                if self._is_open_arrival_only(tidx_caller):
+                    continue
                 for eidx in self._get_entries_of_task(tidx_caller):
                     if eidx in lqn.arrival and lqn.arrival[eidx] is not None:
                         source_station = Source(layer_model, 'Source')
@@ -1362,6 +1860,13 @@ class SolverLN(EnsembleSolver):
         layer_model.attribute['maxfanout'] = maxfanout
         layer_model.attribute['has_fork'] = has_fork
 
+        # The fork-join transform mints its own Source/Sink pair, detaching the open
+        # stream already routed through this one: see _kb/06-solver-catalog.md (LN section)
+        if has_fork and source_station is not None:
+            raise ValueError(f"SolverLN: layer '{layer_model.getName()}' carries both an AND fork "
+                             "and an open stream (an async call or an entry arrival); the "
+                             "fork-join transform needs a Source of its own")
+
         # Create Cache node for cache layers (MATLAB buildLayersRecursive.m lines 36-39)
         cache_node = None
         if iscachelayer and len(callers) > 0:
@@ -1388,90 +1893,34 @@ class SolverLN(EnsembleSolver):
                     # Cache is the last node added, so use len(get_nodes()) after it was added
                     layer_model.attribute['cacheIdx'] = len(layer_model.get_nodes())
 
-        # Store server attributes
-        if is_host_layer:
-            layer_model.attribute['hosts'].append([None, layer_model.attribute['serverIdx']])
-        else:
-            layer_model.attribute['tasks'].append([None, layer_model.attribute['serverIdx']])
+        # Store server attributes. Under flat layering the station indices live
+        # in hostStations/taskStations only: attribute['hosts'] / ['tasks'] rows
+        # are [class index, LQN element] pairs that consumers match on column 2.
+        if not flat:
+            if is_host_layer:
+                layer_model.attribute['hosts'].append([None, layer_model.attribute['serverIdx']])
+            else:
+                layer_model.attribute['tasks'].append([None, layer_model.attribute['serverIdx']])
 
         # Create classes and set up routing
-        self._create_classes_and_routing(layer_model, idx, callers, is_host_layer,
+        self._create_classes_and_routing(layer_model, idx_set, callers, is_host_layer,
                                         servt_map, thinkt_map, actthinkt_map,
                                         arvproc_map, call_map, route_map,
-                                        reduce_fanout=reduce_fanout)
+                                        reduce_fanout=reduce_fanout, flat=flat)
 
-        # fork-join visit correction not applied here: MVA recomputes visits internally; throughput correction in get_ensemble_avg handles FJ semantics instead.
+        # fork-join visit correction not applied here: MVA recomputes visits internally; throughput correction in get_ensemble_avg handles FJ semantics.
 
         # Store the layer model
         self.ensemble[idx] = layer_model
 
-        # FunctionTask host layers with setup/delayoff use SolverMAM dec.poisson; mirrors MATLAB SolverLN.m:138-148.
-        use_mam_solver = False
-        function_task_idx = None
-        if is_host_layer and hasattr(lqn, 'isfunction') and lqn.isfunction is not None:
-            # Check if ALL callers (tasks on this host) are FunctionTasks
-            # This matches MATLAB: isfunctionlayer = all(lqn.isfunction(callers)) && ishostlayer
-            all_callers_function = True
-            for caller_idx in callers:
-                caller_task_idx = caller_idx
-                if caller_task_idx < lqn.isfunction.shape[1]:
-                    if lqn.isfunction[0, caller_task_idx] != 1:
-                        all_callers_function = False
-                        break
-                else:
-                    all_callers_function = False
-                    break
-
-            if all_callers_function and len(callers) > 0:
-                # Get the FunctionTask index (first caller)
-                function_task_idx = callers[0]
-                # Check if it has setupTime
-                if hasattr(lqn, 'setuptime') and lqn.setuptime is not None:
-                    if isinstance(lqn.setuptime, dict) and function_task_idx in lqn.setuptime and lqn.setuptime[function_task_idx] is not None:
-                        use_mam_solver = True
-                    elif isinstance(lqn.setuptime, np.ndarray):
-                        flat_setuptime = lqn.setuptime.flatten()
-                        if function_task_idx < len(flat_setuptime) and flat_setuptime[function_task_idx] is not None:
-                            use_mam_solver = True
-
-        if use_mam_solver and function_task_idx is not None:
-            # Use SolverMAM with dec.poisson for FunctionTask HOST layers
-            # Store FunctionTask parameters in layer_model.attribute for MAM handler
-            setuptime = None
-            delayofftime = None
-            if hasattr(lqn, 'setuptime') and lqn.setuptime is not None:
-                if isinstance(lqn.setuptime, dict) and function_task_idx in lqn.setuptime:
-                    setuptime = lqn.setuptime[function_task_idx]
-                elif isinstance(lqn.setuptime, np.ndarray):
-                    flat_setuptime = lqn.setuptime.flatten()
-                    if function_task_idx < len(flat_setuptime):
-                        setuptime = flat_setuptime[function_task_idx]
-            if hasattr(lqn, 'delayofftime') and lqn.delayofftime is not None:
-                if isinstance(lqn.delayofftime, dict) and function_task_idx in lqn.delayofftime:
-                    delayofftime = lqn.delayofftime[function_task_idx]
-                elif isinstance(lqn.delayofftime, np.ndarray):
-                    flat_delayofftime = lqn.delayofftime.flatten()
-                    if function_task_idx < len(flat_delayofftime):
-                        delayofftime = flat_delayofftime[function_task_idx]
-
-            if setuptime is not None:
-                layer_model.attribute['functionParams'] = {
-                    'setupTime': setuptime,
-                    'delayoffTime': delayofftime,
-                    'serverIdx': layer_model.attribute['serverIdx']
-                }
-
-            try:
-                from ..solver_mam import SolverMAM
-                solver = SolverMAM(layer_model, method='dec.poisson', verbose=0)
-            except (ImportError, Exception) as e:
-                # Fallback to user-provided solver if MAM not available
-                warnings.warn(f"SolverMAM not available for FunctionTask layer, using fallback: {e}")
-                solver = self.solver_factory(layer_model)
-        else:
-            solver = self.solver_factory(layer_model)
+        # A setup no longer changes how a layer is solved: the cold start is
+        # charged to the entry by _setup_charge, not wired into the station, so
+        # the layer is an ordinary one and the user's own solver serves it.
+        solver = self.solver_factory(layer_model)
 
         self._assert_layer_solver_supports_model(solver, layer_model, idx)
+        self._detach_layer_config(solver)
+        self._silence_layer_solver(solver)
 
         if idx < len(self.solvers):
             self.solvers[idx] = solver
@@ -1480,6 +1929,209 @@ class SolverLN(EnsembleSolver):
                 self.solvers.append(None)
             self.solvers[idx] = solver
 
+    def _is_flat_layering(self) -> bool:
+        """True when the method or options.config.layering asks for the single flat layer."""
+        # method='flat'/'flat.cs' names the layering, so it wins here
+        if getattr(self, '_force_flat', False):
+            return True
+        cfg = getattr(self.options, 'config', None)
+        if cfg is None:
+            return False
+        try:
+            lay = cfg['layering']
+        except (KeyError, TypeError):
+            lay = getattr(cfg, 'layering', None)
+        return isinstance(lay, str) and lay.lower() in ('flat', 'squashed')
+
+    def _assert_call_groups(self) -> None:
+        """Reject routed call groups under any layering that cannot carry them.
+
+        A group states the order in which one caller visits several callees. The
+        srvn layering puts every callee in a submodel of its own and replaces it,
+        in the caller's submodel, by a surrogate delay, so the callees are never
+        co-resident and no node has arcs to more than one of them: the order has
+        nowhere to be expressed and would be silently degraded to the aggregate
+        call means. The squashed layering keeps all of them as stations of one
+        model, which is what makes the strategy representable.
+        """
+        groups = getattr(self.lqn, 'callgroups', None)
+        if not groups:
+            return
+        if not self._is_flat_layering():
+            strategies = sorted({str(getattr(s, 'name', s)) for _, s, _ in groups})
+            raise ValueError(
+                "Call groups routed by %s require the squashed layering; set "
+                "options.config['layering']='flat'. Under srvn the targets never "
+                "share a submodel, so the dispatch order cannot be represented."
+                % ', '.join(strategies))
+        # Under flat the group becomes one dispatch hop with n destinations (see
+        # the routing walk), so the strategy is representable. It is only honoured
+        # by a layer solver that implements state-dependent routing, though: MVA,
+        # NC and FLD would silently return the probabilistic split instead.
+        if not self._layer_solver_supports_routed_groups():
+            raise ValueError(
+                'Routed call groups need a layer solver with state-dependent '
+                'routing (CTMC or SSA); MVA, NC and FLD would silently return '
+                'the probabilistic split under a round-robin or JSQ label.')
+
+    def probe_layer_solver_name(self):
+        """Name the layer solver this ensemble runs, WITHOUT building the layers.
+
+        A delegated solve (lang='java'/'cpp') never enters iterate(), so
+        `self.solvers` is still empty when the dispatcher has to name the layer
+        engine, and reading it off that list reports the NATIVE DEFAULT (MVA)
+        however the caller built the solver. A lambda factory hides the class
+        from `_layer_solver_cls` too, so `LN(model, lambda m: NC(m, opts))` was
+        delegated as an MVA-layered ensemble -- a different fixed point, not a
+        different spelling of the same one (lcq_threehosts: cache hit 0.5 under
+        MVA layers against 0.48331 under NC ones).
+
+        THE FACTORY IS THE DECLARATION, so it is applied to a layer and the
+        product named. CTMC and MAM are skipped because they are the automatic
+        per-layer substitutions (a finite capacity region, a SetupTask's setup
+        times), not a choice the caller made; if every layer resolves to one of
+        those the answer is None and the caller keeps its own default.
+        """
+        cls = getattr(self, '_layer_solver_cls', None)
+        if cls is not None:
+            return getattr(cls, '__name__', str(cls))
+        factory = getattr(self, 'solver_factory', None)
+        ensemble = getattr(self, 'ensemble', None) or []
+        if factory is None:
+            return None
+        for layer in ensemble:
+            if layer is None:
+                continue
+            try:
+                probe = factory(layer)
+            except Exception:
+                continue
+            if probe is None:
+                continue
+            name = None
+            getname = getattr(probe, 'getName', None)
+            if getname is not None:
+                try:
+                    name = getname()
+                except Exception:
+                    name = None
+            if not name:
+                name = type(probe).__name__
+            bare = str(name).replace('Solver', '').upper()
+            if bare in ('CTMC', 'MAM'):
+                continue
+            return name
+        return None
+
+    def _layer_solver_supports_routed_groups(self) -> bool:
+        """True when the layer solver factory declares state-dependent routing."""
+        cls = getattr(self, '_layer_solver_cls', None) or getattr(self, 'solver_factory', None)
+        name = getattr(cls, '__name__', '') or type(cls).__name__ if cls is not None else ''
+        return any(tag in name for tag in ('CTMC', 'SSA', 'LDES', 'JMT'))
+
+    def _call_groups_by_cidx(self):
+        """Resolve lqn.callgroups from target entries to call indices.
+
+        Returns (by_cidx, members): by_cidx maps a call index to (gid, strategy),
+        members maps gid to the ordered list of that group's call indices. A group
+        that does not resolve to at least two calls is dropped, so a stale group
+        cannot silently rewrite a single call's routing.
+        """
+        if getattr(self, '_callgroup_cache', None) is not None:
+            return self._callgroup_cache
+        groups = getattr(self.lqn, 'callgroups', None) or []
+        by_cidx, members = {}, {}
+        callsof = self.lqn.callsof if isinstance(self.lqn.callsof, dict) else {}
+        for gid, (aidx, strategy, entry_idxs) in enumerate(groups):
+            want = {int(e) for e in entry_idxs}
+            found = []
+            for cidx in callsof.get(aidx, []):
+                tgt = self._get_call_target_entry(cidx)
+                if tgt is not None and int(tgt) in want:
+                    found.append(cidx)
+            if len(found) >= 2:
+                members[gid] = found
+                for cidx in found:
+                    by_cidx[cidx] = (gid, strategy)
+        self._callgroup_cache = (by_cidx, members)
+        return self._callgroup_cache
+
+    def _flat_server_set(self) -> List[int]:
+        """Processors and called tasks that become stations of the flat layer.
+
+        The features a single submodel cannot carry are rejected here rather
+        than silently dropped.
+        """
+        lqn = self.lqn
+        nelem = lqn.nhosts + lqn.ntasks
+        for idx in range(nelem):
+            if float(self._get_repl(idx)) > 1:
+                raise ValueError('Flat layering does not support replicated processors or '
+                                 'tasks, use the default srvn layering.')
+        if getattr(lqn, 'iscache', None) is not None:
+            arr = lqn.iscache.flatten()
+            if any(bool(arr[i]) for i in range(min(nelem, len(arr)))):
+                raise ValueError('Flat layering does not support cache tasks, use the '
+                                 'default srvn layering.')
+        if getattr(lqn, 'hassetup', None) is not None:
+            arr = np.asarray(lqn.hassetup).flatten()
+            if any(bool(arr[i]) for i in range(min(nelem, len(arr)))):
+                raise ValueError('Flat layering does not support setup tasks, use the '
+                                 'default srvn layering.')
+
+        servers = []
+        for hidx in range(lqn.nhosts):
+            if not self.ignore[hidx] and self._get_tasks_of_host(hidx):
+                servers.append(hidx)
+        for t in range(lqn.ntasks):
+            tidx = lqn.tshift + t
+            if self.ignore[tidx] or self._is_ref_task(tidx):
+                continue
+            if self._get_callers_of_task(tidx):
+                servers.append(tidx)
+        if not servers:
+            raise ValueError('Flat layering found no server: the model has no processor '
+                             'with tasks.')
+        return servers
+
+    def _servers_for(self, layer_model, elem_idx) -> List:
+        """Stations of ELEM_IDX when it is a server of this layer, empty otherwise."""
+        if elem_idx is None:
+            return []
+        srv = layer_model.attribute.get('srv_stations') if hasattr(layer_model, 'attribute') else None
+        if not srv:
+            return []
+        return srv.get(int(elem_idx), [])
+
+    def _host_is_server(self, layer_model, tidx) -> bool:
+        """True when the processor of task TIDX is a server of this layer."""
+        return bool(self._servers_for(layer_model, self._get_parent(tidx)))
+
+    def _station_idx_of(self, layer_model, elem_idx):
+        """Station index of ELEM_IDX inside LAYER_MODEL, falling back to the
+        layer's own server when ELEM_IDX is not a server there."""
+        default = layer_model.attribute.get('serverIdx', 1) if hasattr(layer_model, 'attribute') else 1
+        if elem_idx is None:
+            return default
+        table = layer_model.attribute.get('serverIdxOf') if hasattr(layer_model, 'attribute') else None
+        if table and int(elem_idx) in table:
+            return table[int(elem_idx)]
+        return default
+
+    def _station_idx_of_class(self, layer_model, cls):
+        """Station of LAYER_MODEL serving CLS: the processor of an activity, the
+        called task of a call, the layer's own server otherwise."""
+        elem = None
+        attr = getattr(cls, 'attribute', None)
+        if attr is not None and len(attr) > 1:
+            if attr[0] == LayeredNetworkElement.ACTIVITY:
+                elem = self._get_parent(self._get_parent(attr[1]))
+            elif attr[0] == LayeredNetworkElement.CALL:
+                cidx = int(attr[1])
+                if self.lqn.callpair is not None and cidx < len(self.lqn.callpair):
+                    elem = self._get_parent(int(self.lqn.callpair[cidx, 1]))
+        return self._station_idx_of(layer_model, elem)
+
     def _get_hashname(self, idx: int) -> str:
         """Get the hash name for an LQN element."""
         lqn = self.lqn
@@ -1487,7 +2139,7 @@ class SolverLN(EnsembleSolver):
             if isinstance(lqn.hashnames, dict):
                 return lqn.hashnames.get(idx, f'Node_{idx}')
             elif isinstance(lqn.hashnames, (list, np.ndarray)):
-                # hashnames is already 0-indexed with position 0 empty
+                # hashnames is 0-based and contiguous: index i is element i
                 if idx < len(lqn.hashnames):
                     return lqn.hashnames[idx]
         return f'Node_{idx}'
@@ -1621,6 +2273,49 @@ class SolverLN(EnsembleSolver):
                 return True
         return False
 
+    def _open_arrival_rate_of(self, tidx: int) -> float:
+        """Total exogenous rate into the entries of TIDX, zero unless the arrival is the
+        only way in.
+
+        A task reached only by an entry arrival has no task layer, because no task calls
+        it, so _update_think_times never gives its caller class a surrogate delay and the
+        class cycles against an Immediate one. Adding an open stream on top of that
+        unthrottled chain saturated lqn_open_arrival: the processor at 0.68 against 0.32
+        from lqns, lqsim and LDES alike. The chain is the representation that honours the
+        thread pool, so the layer builder drops the stream for these tasks and the chain
+        is closed on this rate instead, exactly as a forwarding target is. With a caller
+        or a forwarding source the stream rides a class of its own and this returns 0.
+        """
+        lqn = self.lqn
+        if self._is_ref_task(tidx) or not getattr(lqn, 'arrival', None):
+            return 0.0
+        entries = self._get_entries_of_task(tidx)
+        if not entries:
+            return 0.0
+        for eidx in entries:
+            for name in ('issynccaller', 'isasynccaller'):
+                mat = getattr(lqn, name, None)
+                if mat is None:
+                    continue
+                col = np.asarray(mat)
+                if col.ndim == 2 and eidx < col.shape[1] and np.any(col[:, eidx] != 0):
+                    return 0.0
+        if self._is_forwarding_target_task(tidx):
+            return 0.0
+        rate = 0.0
+        for eidx in entries:
+            arv = lqn.arrival.get(eidx)
+            if arv is None:
+                continue
+            m = arv.getMean()
+            if np.isfinite(m) and m > GlobalConstants.FineTol:
+                rate += 1.0 / m
+        return rate
+
+    def _is_open_arrival_only(self, tidx: int) -> bool:
+        """True when an entry arrival is the only way requests reach task TIDX."""
+        return self._open_arrival_rate_of(tidx) > GlobalConstants.FineTol
+
     def _is_forwarding_target_task(self, tidx: int) -> bool:
         """True if any entry of this task is the target of a forwarding call.
 
@@ -1633,9 +2328,9 @@ class SolverLN(EnsembleSolver):
         entries = self._get_entries_of_task(tidx)
         if not entries:
             return False
-        for cidx in range(1, lqn.ncalls + 1):
+        for cidx in range(lqn.ncalls):
             if cidx < len(lqn.calltype) and int(lqn.calltype[cidx]) == CallType.FWD:
-                if int(lqn.callpair[cidx, 2]) in entries:
+                if int(lqn.callpair[cidx, 1]) in entries:
                     return True
         return False
 
@@ -1658,11 +2353,11 @@ class SolverLN(EnsembleSolver):
                     return True
         return False
 
-    def _create_classes_and_routing(self, layer_model: Network, idx: int,
+    def _create_classes_and_routing(self, layer_model: Network, idx_set,
                                     callers: List[int], is_host_layer: bool,
                                     servt_map, thinkt_map, actthinkt_map,
                                     arvproc_map, call_map, route_map,
-                                    reduce_fanout: bool = False):
+                                    reduce_fanout: bool = False, flat: bool = False):
         """
         Create classes and routing for a layer (simplified version).
 
@@ -1671,15 +2366,15 @@ class SolverLN(EnsembleSolver):
         """
         lqn = self.lqn
 
-        # Initialize FunctionTask/MAM flags (these are set in _build_layer but
+        # Initialize SetupTask/MAM flags (these are set in _build_layer but
         # also referenced here for DelayOff handling)
         use_mam_solver = False
         function_task_idx = None
-        if is_host_layer and hasattr(lqn, 'isfunction') and lqn.isfunction is not None:
+        if is_host_layer and hasattr(lqn, 'hassetup') and lqn.hassetup is not None:
             all_callers_function = True
             for caller_idx in callers:
-                if caller_idx < lqn.isfunction.shape[1]:
-                    if lqn.isfunction[0, caller_idx] != 1:
+                if caller_idx < lqn.hassetup.shape[1]:
+                    if lqn.hassetup[0, caller_idx] != 1:
                         all_callers_function = False
                         break
                 else:
@@ -1696,26 +2391,55 @@ class SolverLN(EnsembleSolver):
                             use_mam_solver = True
 
         # Get stations
+        if isinstance(idx_set, (list, tuple, np.ndarray)):
+            idx_set = [int(v) for v in idx_set]
+        else:
+            idx_set = [int(idx_set)]
+        idx = idx_set[0]  # layer key: update-map column and ensemble slot
+        srv_stations = layer_model.attribute.get('srv_stations', {})
         stations = layer_model.get_nodes()
         client_delay = None
-        server_station = None
-
         for s in stations:
             if isinstance(s, Delay):
                 client_delay = s
-            elif isinstance(s, Queue):
-                server_station = s
+                break
+        server_station = srv_stations.get(idx, [None])[0]
+
+        def servers_for(elem_idx):
+            # Stations of ELEM_IDX when it is a server of this layer, [] otherwise
+            if elem_idx is None:
+                return []
+            return srv_stations.get(int(elem_idx), [])
+
+        def all_server_stations():
+            out = []
+            for _sid in idx_set:
+                out.extend(srv_stations.get(_sid, []))
+            return out
+
+        def host_is_server(tidx_):
+            return bool(servers_for(self._get_parent(tidx_)))
 
         if server_station is None:
             return
 
         # Create classes for each caller
         for tidx_caller in callers:
-            # phase-2a gating mirrors MATLAB buildLayersRecursive.m:156/JAR SolverLN.java:657; activity/call loops stay unconditional so async-only callers still reach the ASYNC branch.
-            has_direct_callers = self._has_direct_callers_for_caller(tidx_caller) if is_host_layer else False
-            is_fwd_target = self._is_forwarding_target_task(tidx_caller) if is_host_layer else False
-            is_sync_caller_to_entries = self._is_sync_caller_to_entries_of(tidx_caller, idx) if not is_host_layer else False
-            create_caller_class = (is_host_layer and (has_direct_callers or is_fwd_target)) or is_sync_caller_to_entries
+            # phase-2a gating mirrors MATLAB buildLayersRecursive.m:156/JAR SolverLN.java:657; activity/call loops unconditional, async-only callers reach ASYNC.
+            caller_on_server = host_is_server(tidx_caller)
+            has_direct_callers = self._has_direct_callers_for_caller(tidx_caller) if caller_on_server else False
+            is_fwd_target = self._is_forwarding_target_task(tidx_caller) if caller_on_server else False
+            # the TASK members of the set, and 0-BASED: hosts occupy 0..nhosts-1
+            # and tasks nhosts..nhosts+ntasks-1, so the first task sits AT
+            # nhosts. MATLAB's `sidx > lqn.nhosts` is the 1-based form of this
+            # test and reads across unchanged only there. Under `>` the first
+            # task's own layer never sees its callers as layer clients, so it is
+            # built with no closed class and no population at all: on lqn_ofbiz
+            # that is FrontEnd_CPU_Task, whose processor layer then ran 90 jobs
+            # against a zero think time and saturated (Util 1.000 against 0.116).
+            is_sync_caller_to_entries = any(self._is_sync_caller_to_entries_of(tidx_caller, _sid)
+                                            for _sid in idx_set if _sid >= lqn.nhosts)
+            create_caller_class = (caller_on_server and (has_direct_callers or is_fwd_target)) or is_sync_caller_to_entries
 
             if client_delay is None:
                 continue
@@ -1756,15 +2480,11 @@ class SolverLN(EnsembleSolver):
                 # client delay: host layers = think time only; task layers = think time + host demand; call response time handled by CALL classes.
                 if is_host_layer:
                     # Host layer: TASK class client delay = think time only
-                    think_time = 0.0
-                    if self.thinkproc[tidx_caller] is not None:
-                        proc = self.thinkproc[tidx_caller]
-                        if isinstance(proc, (int, float, np.integer, np.floating)):
-                            think_time = float(proc)
-                        elif hasattr(proc, 'getMean'):
-                            think_time = proc.getMean()
-                        elif hasattr(proc, 'mean'):
-                            think_time = proc.mean
+                    # a served task's declared think time is not a per-request
+                    # delay, so the seed carries none either -- see
+                    # _ref_think_mean; update_layers replaces this from the
+                    # first iteration on
+                    think_time = self._ref_think_mean(tidx_caller)
 
                     # TASK class delay at client = think time only; non-REF tasks with no think time use Immediate (matches MATLAB Exp(0)).
                     if think_time > 0:
@@ -1774,15 +2494,11 @@ class SolverLN(EnsembleSolver):
                 else:
                     # Task layers: client service = caller's think time + host demand
                     # This represents time the caller spends NOT waiting for this server
-                    think_time = 0.0
-                    if self.thinkproc[tidx_caller] is not None:
-                        proc = self.thinkproc[tidx_caller]
-                        if isinstance(proc, (int, float, np.integer, np.floating)):
-                            think_time = float(proc)
-                        elif hasattr(proc, 'getMean'):
-                            think_time = proc.getMean()
-                        elif hasattr(proc, 'mean'):
-                            think_time = proc.mean
+                    # a served task's declared think time is not a per-request
+                    # delay, so the seed carries none either -- see
+                    # _ref_think_mean; update_layers replaces this from the
+                    # first iteration on
+                    think_time = self._ref_think_mean(tidx_caller)
 
                     # TASK class at client = think time only (matches MATLAB Layer-1 T1 rate); non-REF/no-think-time tasks use Immediate.
                     if think_time > 0:
@@ -1811,7 +2527,8 @@ class SolverLN(EnsembleSolver):
                     total_demand = self._get_initial_call_response_time(tidx_caller, idx)
 
                 # TASK class service at server is always Disabled in both HOST and TASK layers.
-                server_station.set_service(caller_class, Disabled())
+                for _srv in all_server_stations():
+                    _srv.set_service(caller_class, Disabled())
 
                 # Set class attribute (matches MATLAB class.attribute = [type, idx])
                 caller_class.attribute = [LayeredNetworkElement.TASK, tidx_caller]
@@ -1838,15 +2555,17 @@ class SolverLN(EnsembleSolver):
 
                     # ENTRY class: Immediate at client, Disabled at server
                     client_delay.set_service(entry_class, Immediate())
-                    server_station.set_service(entry_class, Disabled())
+                    for _srv in all_server_stations():
+                        _srv.set_service(entry_class, Disabled())
 
                     entry_class.attribute = [LayeredNetworkElement.ENTRY, eidx]
                     entry_class.completes = False
 
                     layer_model.attribute['entries'].append([entry_class.get_index(), eidx])
 
-                    # entry open-arrival distribution creates an OpenClass on the layer's Source/Sink; mirrors MATLAB buildLayersRecursive.m:214-255 / JAR SolverLN.java:718-750.
-                    if source_station is not None and eidx in lqn.arrival and lqn.arrival[eidx] is not None:
+                    # entry open-arrival distribution creates OpenClass on layer's Source/Sink; mirrors MATLAB buildLayersRecursive.m:214-255/JAR SolverLN.java:718-750.
+                    if source_station is not None and eidx in lqn.arrival and lqn.arrival[eidx] is not None \
+                            and not self._is_open_arrival_only(tidx_caller):
                         open_class = OpenClass(layer_model, entry_name + '_Open', 0)
                         source_station.set_arrival(open_class, lqn.arrival[eidx])
                         client_delay.set_service(open_class, Disabled())
@@ -1880,12 +2599,16 @@ class SolverLN(EnsembleSolver):
             if 'activities' not in layer_model.attribute:
                 layer_model.attribute['activities'] = []
             for aidx in activities:
-                if is_host_layer or self._has_sync_callers(idx, callers):
+                act_stations = servers_for(self._get_parent(self._get_parent(aidx))) if flat \
+                    else (srv_stations.get(idx, []) if is_host_layer else [])
+                # the activity's demand belongs on its own processor's station
+                act_stn = act_stations[0] if act_stations else server_station
+                if act_stations or any(self._has_sync_callers(_sid, callers) for _sid in idx_set):
                     activity_name = self._get_hashname(aidx)
                     activity_class = ClosedClass(layer_model, activity_name, 0, client_delay)
 
-                    if is_host_layer:
-                        # host layer: activity classes are Disabled at client (server does the work); mirrors MATLAB buildLayersRecursive ~line 236.
+                    if act_stations:
+                        # the activity runs on a server of this layer, so its demand sits there and the client is Disabled; mirrors MATLAB buildLayersRecursive ~line 236.
                         client_delay.set_service(activity_class, Disabled())
                         if aidx < len(self.servtproc) and self.servtproc[aidx] is not None:
                             base_proc = self.servtproc[aidx]
@@ -1897,44 +2620,19 @@ class SolverLN(EnsembleSolver):
                             elif isinstance(base_proc, (int, float)):
                                 base_mean = float(base_proc)
 
-                            # For FunctionTask: MATLAB uses setDelayOff on the station
-                            # (serverStation.setDelayOff(class, setuptime, delayofftime))
-                            effective_mean = base_mean
-                            if function_task_idx is not None:
-                                parent_tidx = self._get_parent(aidx) if hasattr(self, '_get_parent') else None
-                                if parent_tidx is not None:
-                                    setup_dist = None
-                                    delayoff_dist = None
-                                    if hasattr(lqn, 'setuptime') and lqn.setuptime is not None:
-                                        setup_dist = lqn.setuptime.get(parent_tidx) if isinstance(lqn.setuptime, dict) else None
-                                    if hasattr(lqn, 'delayofftime') and lqn.delayofftime is not None:
-                                        delayoff_dist = lqn.delayofftime.get(parent_tidx) if isinstance(lqn.delayofftime, dict) else None
-
-                                    # Use setDelayOff if server station supports it and distributions are available
-                                    if setup_dist is not None and delayoff_dist is not None and hasattr(server_station, 'set_delay_off'):
-                                        if effective_mean > 0:
-                                            server_station.set_service(activity_class, Exp.fit_mean(effective_mean))
-                                        else:
-                                            server_station.set_service(activity_class, base_proc)
-                                        server_station.set_delay_off(activity_class, setup_dist, delayoff_dist)
-                                    else:
-                                        # Fallback: approximate by adding setup and delayoff means
-                                        setup_mean = 0.0
-                                        delayoff_mean = 0.0
-                                        if setup_dist is not None:
-                                            setup_mean = setup_dist.getMean() if hasattr(setup_dist, 'getMean') else (float(setup_dist) if isinstance(setup_dist, (int, float)) else 0.0)
-                                        if delayoff_dist is not None:
-                                            delayoff_mean = delayoff_dist.getMean() if hasattr(delayoff_dist, 'getMean') else (float(delayoff_dist) if isinstance(delayoff_dist, (int, float)) else 0.0)
-                                        effective_mean += setup_mean + delayoff_mean
-                                        if effective_mean > 0:
-                                            server_station.set_service(activity_class, Exp.fit_mean(effective_mean))
-                                        else:
-                                            server_station.set_service(activity_class, base_proc)
-                            else:
-                                # non-FunctionTask host layer keeps the real host-demand Distribution (not Exp-fit), so moment2/moment3 do not collapse to exponential.
-                                server_station.set_service(activity_class, base_proc)
+                            # A SetupTask's cold start is NOT wired into the layer
+                            # station any more, and it is not folded into the host
+                            # demand either: it is charged to the entry with
+                            # probability p by _setup_charge. Wiring it here routed
+                            # the layer through the open M/G/1-with-setup QBD, which
+                            # powers the thread down far more often than a closed
+                            # layer does, and charged the delay to the ACTIVITY,
+                            # where it is not host demand.
+                            # The host layer keeps the real host-demand Distribution
+                            # (not an Exp fit), so moment2/moment3 do not collapse.
+                            act_stn.set_service(activity_class, base_proc)
                         else:
-                            server_station.set_service(activity_class, Exp.fit_mean(0.001))
+                            act_stn.set_service(activity_class, Exp.fit_mean(0.001))
                     else:
                         # task layer: activities process at CLIENT with host demand (the caller's own activity time), mirrors MATLAB buildLayersRecursive.
                         if aidx < len(self.servtproc) and self.servtproc[aidx] is not None:
@@ -1952,7 +2650,7 @@ class SolverLN(EnsembleSolver):
                                 client_delay.set_service(activity_class, Immediate())
                         else:
                             client_delay.set_service(activity_class, Immediate())
-                        server_station.set_service(activity_class, Disabled())
+                        act_stn.set_service(activity_class, Disabled())
 
                     activity_class.attribute = [LayeredNetworkElement.ACTIVITY, aidx]
                     activity_class.completes = False
@@ -1961,14 +2659,18 @@ class SolverLN(EnsembleSolver):
 
                     # Add servt_map entry for activity classes in host layers (matches MATLAB line 484)
                     # servt_classes_updmap stores: [model_idx, activity_lqn_idx, node_idx, class_idx]
-                    if is_host_layer:
-                        servt_map[idx].append([idx, aidx, layer_model.attribute['serverIdx'], activity_class.get_index()])
+                    if act_stations:
+                        _hidx = self._get_parent(self._get_parent(aidx)) if flat else idx
+                        servt_map[idx].append([idx, aidx,
+                                               layer_model.attribute['serverIdxOf'].get(int(_hidx),
+                                                   layer_model.attribute['serverIdx']),
+                                               activity_class.get_index()])
                     else:
                         # task layer: activity service at client updates from thinkt_map (host processor response time); mirrors MATLAB buildLayersRecursive:585-586.
                         thinkt_map[idx].append([idx, aidx, 1, activity_class.get_index()])
 
-                    # host-layer-only auxiliary think-time class: every other layer already carries think time inside servtproc, so adding it there too would double-charge it (U(P2) came out 9x high).
-                    if (is_host_layer and hasattr(self, 'actthinkproc')
+                    # host-layer-only aux think-time class: other layers carry think time in servtproc, so adding it here would double-charge it (U(P2) 9x high).
+                    if (act_stations and hasattr(self, 'actthinkproc')
                             and aidx < len(self.actthinkproc)
                             and self.actthinkproc[aidx] is not None):
                         think_name = self._get_hashname(aidx) + '.Think'
@@ -1976,12 +2678,15 @@ class SolverLN(EnsembleSolver):
                         think_class.completes = False
                         think_class.attribute = [LayeredNetworkElement.ACTIVITY, aidx]
                         client_delay.set_service(think_class, self.actthinkproc[aidx])
-                        server_station.set_service(think_class, Disabled())
+                        for _srv in all_server_stations():
+                            _srv.set_service(think_class, Disabled())
                         actthinkt_map[idx].append([idx, aidx, 1, think_class.get_index()])
 
             # Create CALL classes for sync calls from this caller's activities (matches MATLAB lines 287-302)
             if 'calls' not in layer_model.attribute:
                 layer_model.attribute['calls'] = []
+            _cgroup_by_cidx, _cgroup_members = self._call_groups_by_cidx()
+            _group_classes = layer_model.attribute.setdefault('call_group_classes', {})
             for aidx in activities:
                 if isinstance(self.lqn.callsof, dict):
                     calls = self.lqn.callsof.get(aidx, [])
@@ -2002,22 +2707,61 @@ class SolverLN(EnsembleSolver):
                         is_sync = (calltype == CallType.SYNC)
 
                     if is_sync:
-                        call_name = self._get_call_hashname(cidx)
-                        call_class = ClosedClass(layer_model, call_name, 0, client_delay)
+                        # A routed call group is ONE dispatch with n destinations, not
+                        # n calls: its members share the dispatch class, which is the
+                        # class the strategy routes and the one that visits the targets
+                        # (its per-station service carries the per-target service time).
+                        # The strategy is a property of a NODE and routes over that
+                        # node's links, so the choice is made at a router whose only
+                        # links are the group's targets; the hop itself must not switch
+                        # class, because a state-dependent routing function is evaluated
+                        # at zero off the class diagonal. The class switch goes on the
+                        # return arc, into a group class the job continues in.
+                        _grp = _cgroup_by_cidx.get(cidx)
+                        if _grp is not None:
+                            _gid = _grp[0]
+                            if _gid in _group_classes:
+                                call_class = _group_classes[_gid][0]
+                                _group_reuse = True
+                            else:
+                                _disp_name = self._get_hashname(aidx) + '.Dispatch%d' % _gid
+                                _router = Router(layer_model, _disp_name + '.Router')
+                                call_class = ClosedClass(layer_model, _disp_name, 0, client_delay)
+                                client_delay.set_service(call_class, Immediate())
+                                for _srv in all_server_stations():
+                                    _srv.set_service(call_class, Disabled())
+                                return_class = ClosedClass(
+                                    layer_model, self._get_call_hashname(cidx) + '.Group%d' % _gid,
+                                    0, client_delay)
+                                return_class.completes = False
+                                return_class.attribute = [LayeredNetworkElement.CALL, cidx]
+                                client_delay.set_service(return_class, Immediate())
+                                for _srv in all_server_stations():
+                                    _srv.set_service(return_class, Disabled())
+                                _group_classes[_gid] = (call_class, return_class, _grp[1], _router)
+                                _group_reuse = False
+                        else:
+                            _group_reuse = False
+                            call_name = self._get_call_hashname(cidx)
+                            call_class = ClosedClass(layer_model, call_name, 0, client_delay)
+                        layer_model.attribute.setdefault('call_class_of_cidx', {})[cidx] = call_class.get_index()
 
                         # Get call mean for Aux class creation (MATLAB lines 305-315)
                         call_mean = self._get_call_mean(cidx)
                         nreplicas = 1  # Typically 1, could be based on processor replication
 
-                        # Create Aux class for fractional call means (matches MATLAB lines 308-314)
+                        # Create Aux class for fractional call means (matches MATLAB lines 308-314).
+                        # A group member's mean is the 1/n share of the dispatch, which the
+                        # n-way split already carries, so the Aux skip path must not also fire.
                         aux_class = None
-                        if call_mean != nreplicas:
+                        if call_mean != 1 and _grp is None:
                             aux_name = call_name + '.Aux'
                             aux_class = ClosedClass(layer_model, aux_name, 0, client_delay)
                             aux_class.completes = False
                             aux_class.attribute = [LayeredNetworkElement.CALL, cidx]  # Same attribute as call class
                             client_delay.set_service(aux_class, Immediate())
-                            server_station.set_service(aux_class, Disabled())
+                            for _srv in all_server_stations():
+                                _srv.set_service(aux_class, Disabled())
                             # Track aux class: [class_index, cidx, call_mean]
                             if 'aux_classes' not in layer_model.attribute:
                                 layer_model.attribute['aux_classes'] = []
@@ -2028,30 +2772,34 @@ class SolverLN(EnsembleSolver):
                         tgt_tidx = self._get_parent(tgt_eidx) if tgt_eidx else None
 
                         # minRespT for server = sum of activities' hostdem in host layers (processor, no activities -> 0) or the server task's activities in task layers.
-                        minRespT = 0.0
-                        if is_host_layer:
+                        tgt_stations = servers_for(tgt_tidx)
+                        seed_idx = tgt_tidx if flat else idx
+                        if flat:
+                            minRespT = self._get_initial_task_total_hostdem(tgt_tidx) if tgt_tidx else 0.0
+                        elif is_host_layer:
                             # Host processor has no activities - minRespT = 0
                             minRespT = 0.0
                         else:
                             # Task layer: server is a task with activities
                             minRespT = self._get_initial_task_total_hostdem(idx) if idx else 0.0
 
-                        # CALL class service times: calls to this layer's server go to SERVER, calls to another task go to CLIENT; host layers route all calls to client.
-                        call_to_server = False
-                        if not is_host_layer:
-                            # Task layer: check if call target is the server task
-                            call_to_server = (tgt_tidx == idx)
+                        # CALL class service times: a call to a task that is a server of
+                        # this layer is served THERE, any other call is a delay at the client.
+                        call_to_server = bool(tgt_stations)
 
                         if call_to_server:
                             # Call to this layer's server - service at SERVER
                             # MATLAB line 727: clientDelay.setService(cidxClass{cidx}, Immediate.getInstance())
                             client_delay.set_service(call_class, Immediate())
-                            if cidx < len(self.callservtproc) and self.callservtproc[cidx] is not None:
-                                server_station.set_service(call_class, self.callservtproc[cidx])
-                            else:
-                                server_station.set_service(call_class, Immediate())
-                            # Record with serverIdx for call_classes_updmap
-                            call_map[idx].append([idx, cidx, layer_model.attribute['serverIdx'], call_class.get_index()])
+                            for _srv in tgt_stations:
+                                if cidx < len(self.callservtproc) and self.callservtproc[cidx] is not None:
+                                    _srv.set_service(call_class, self.callservtproc[cidx])
+                                else:
+                                    _srv.set_service(call_class, Immediate())
+                            # Record the station of the called task for call_classes_updmap
+                            call_map[idx].append([idx, cidx,
+                                                  layer_model.attribute['serverIdxOf'][int(tgt_tidx)],
+                                                  call_class.get_index()])
                         else:
                             # Call to another task - service at CLIENT (MATLAB lines 750, 804)
                             # MATLAB: clientDelay.setService(cidxClass{cidx}, callservtproc{cidx})
@@ -2061,11 +2809,13 @@ class SolverLN(EnsembleSolver):
                                 client_delay.set_service(call_class, Immediate())
                             # MATLAB keeps server at Exp.fitMean(minRespT) which is 1e-8 for minRespT=0
                             # This is set initially at lines 299-300 and NOT changed in the routing setup
-                            server_station.set_service(call_class, Exp.fit_mean(max(minRespT, 1e-8)))
+                            for _srv in all_server_stations():
+                                _srv.set_service(call_class, Exp.fit_mean(max(minRespT, 1e-8)))
                             # Record with clientIdx=1 for call_classes_updmap (MATLAB lines 751, 805)
                             call_map[idx].append([idx, cidx, 1, call_class.get_index()])
 
-                        call_class.attribute = [LayeredNetworkElement.CALL, cidx]
+                        if not _group_reuse:
+                            call_class.attribute = [LayeredNetworkElement.CALL, cidx]
                         call_class.completes = False
 
                         # Track call: [class_index, cidx, src_aidx, tgt_eidx, aux_class_index]
@@ -2073,9 +2823,9 @@ class SolverLN(EnsembleSolver):
                         aux_class_idx = aux_class.get_index() if aux_class else -1
                         layer_model.attribute['calls'].append([call_class.get_index(), cidx, src_aidx, tgt_eidx if tgt_eidx else 0, aux_class_idx])
 
-                        # SYNC forwarding-chain classes are unnecessary: forwarding is already rewritten to caller-side pseudo rendezvous; see _kb/06-solver-catalog.md LN Forwarding as caller-side pseudo-rendezvous.
+                        # SYNC forwarding-chain classes unnecessary: rewritten caller-side; see _kb/06-solver-catalog.md LN Forwarding as caller-side pseudo-rendezvous.
                     else:
-                        # ASYNC call handling fires only when the target entry's task matches this layer's server; mirrors MATLAB buildLayersRecursive.m:299-324 / JAR SolverLN.java:780-814.
+                        # ASYNC call fires only when target entry's task matches this layer's server; mirrors MATLAB buildLayersRecursive.m:299-324/JAR SolverLN.java:780-814.
                         tgt_eidx_async = self._get_call_target_entry(cidx)
                         tgt_parent = self._get_parent(tgt_eidx_async) if tgt_eidx_async else None
                         if tgt_parent != idx:
@@ -2085,6 +2835,10 @@ class SolverLN(EnsembleSolver):
                         # (MATLAB line 301-306 hasSource branch).
                         source_station = layer_model.attribute.get('source_station')
                         sink_station = layer_model.attribute.get('sink_station')
+                        if layer_model.attribute.get('has_fork', False):
+                            raise ValueError(f"SolverLN: layer '{layer_model.getName()}' carries both an "
+                                             "AND fork and an open stream (an async call or an entry "
+                                             "arrival); the fork-join transform needs a Source of its own")
                         if source_station is None:
                             source_station = Source(layer_model, 'Source')
                             sink_station = Sink(layer_model, 'Sink')
@@ -2297,7 +3051,7 @@ class SolverLN(EnsembleSolver):
 
         # Check graph for direct entry->activity edge (activity bound to entry)
         if hasattr(lqn, 'graph') and lqn.graph is not None:
-            for eidx in range(lqn.eshift + 1, lqn.ashift + 1):
+            for eidx in range(lqn.eshift, lqn.ashift):
                 if lqn.graph[eidx, aidx] != 0:
                     return eidx
 
@@ -2470,11 +3224,11 @@ class SolverLN(EnsembleSolver):
         so the hit/miss probabilities need to be applied via the servtmatrix.
         """
         lqn = self.lqn
-        size = lqn.nidx + lqn.ncalls + 1  # +1 for 1-based indexing
+        size = lqn.nidx + lqn.ncalls
         U = np.zeros((size, size))
 
         # For each entry, recursively trace the activity graph
-        for e in range(1, lqn.nentries + 1):
+        for e in range(lqn.nentries):
             eidx = lqn.eshift + e
             self._entry_service_matrix_recursion(eidx, eidx, U, 1.0)
 
@@ -2775,17 +3529,17 @@ class SolverLN(EnsembleSolver):
         if not hasattr(lqn, 'callpair') or lqn.callpair is None:
             return f'Call_{cidx}'
 
-        # callpair format: [_, src_aidx, tgt_eidx, mean] (columns 1 and 2 are src and tgt)
+        # callpair format: [src_aidx, tgt_eidx, mean] (columns 0 and 1 are src and tgt)
         if isinstance(lqn.callpair, np.ndarray):
             if cidx < len(lqn.callpair) and lqn.callpair.ndim > 1:
-                src_aidx = int(lqn.callpair[cidx, 1])  # Column 1 = source activity
-                tgt_eidx = int(lqn.callpair[cidx, 2])  # Column 2 = target entry
+                src_aidx = int(lqn.callpair[cidx, 0])  # Column 0 = source activity
+                tgt_eidx = int(lqn.callpair[cidx, 1])  # Column 1 = target entry
             else:
                 return f'Call_{cidx}'
         elif isinstance(lqn.callpair, dict):
             pair = lqn.callpair.get(cidx, [0, 0, 0, 0])
-            src_aidx = int(pair[1]) if len(pair) > 1 else 0
-            tgt_eidx = int(pair[2]) if len(pair) > 2 else 0
+            src_aidx = int(pair[0]) if len(pair) > 0 else 0
+            tgt_eidx = int(pair[1]) if len(pair) > 1 else 0
         else:
             return f'Call_{cidx}'
 
@@ -2868,17 +3622,28 @@ class SolverLN(EnsembleSolver):
         if not nextaidxs:
             return P, cur_class, job_pos
 
-        # Save pre-fork state so each parallel branch starts identically
+        # Pre-fork state, captured at the first branch so that calls this
+        # activity issues before the fork stay sequential
         # (MATLAB buildLayersRecursive.m lines 522-525)
+        fork_saved = False
         fork_save_cur_class = cur_class
         fork_save_job_pos = job_pos
+        fork_save_station = ctx.get('cur_station')
 
         for nextaidx in nextaidxs:
             # Restore pre-fork state at start of each branch
             # (MATLAB buildLayersRecursive.m lines 531-534)
             if is_next_prec_fork:
-                cur_class = fork_save_cur_class
-                job_pos = fork_save_job_pos
+                if not fork_saved:
+                    if nextaidx in is_post_and_act:
+                        fork_saved = True
+                        fork_save_cur_class = cur_class
+                        fork_save_job_pos = job_pos
+                        fork_save_station = ctx.get('cur_station')
+                else:
+                    cur_class = fork_save_cur_class
+                    job_pos = fork_save_job_pos
+                    ctx['cur_station'] = fork_save_station
             # Loop detection (MATLAB line 440-442)
             is_loop = False
             if hasattr(lqn, 'dag') and lqn.dag is not None:
@@ -2905,8 +3670,8 @@ class SolverLN(EnsembleSolver):
                     for c in lqn.callsof.get(aidx, []):
                         if c < lqn.callpair.shape[0]:
                             pair = lqn.callpair[c]
-                            src = int(pair[1]) if pair.shape[0] > 1 else -1
-                            tgt = int(pair[2]) if pair.shape[0] > 2 else -1
+                            src = int(pair[0]) if pair.shape[0] > 0 else -1
+                            tgt = int(pair[1]) if pair.shape[0] > 1 else -1
                             if src == aidx and tgt == nextaidx:
                                 cidx = c
                                 break
@@ -2927,9 +3692,16 @@ class SolverLN(EnsembleSolver):
                     # nreplicas for this layer (task layers are single-replica)
                     nreplicas = 1
                     # Target entry's parent task — is it the server of this layer?
-                    tgt_eidx_c = int(lqn.callpair[cidx, 2]) if cidx < lqn.callpair.shape[0] else None
+                    tgt_eidx_c = int(lqn.callpair[cidx, 1]) if cidx < lqn.callpair.shape[0] else None
                     tgt_parent = self._get_parent(tgt_eidx_c) if tgt_eidx_c is not None else None
-                    call_to_server = (tgt_parent == layer_idx)
+                    _srv_map = ctx.get('srv_stations', {})
+                    if ctx.get('flat'):
+                        tgt_stn = _srv_map[int(tgt_parent)][0] if int(tgt_parent) in _srv_map else None
+                        call_to_server = tgt_stn is not None
+                        if call_to_server:
+                            server_station = tgt_stn
+                    else:
+                        call_to_server = (tgt_parent == layer_idx)
 
                     callservt_proc = None
                     if cidx < len(self.callservtproc):
@@ -2938,22 +3710,22 @@ class SolverLN(EnsembleSolver):
                     if job_pos == self._AT_CLIENT:
                         if call_to_server:
                             # MATLAB routeSynchCall atClient, call to server (lines 823-861)
-                            if call_mean < nreplicas:
+                            if call_mean < 1:
                                 if aux_cls is not None:
                                     P.set(cur_class, aux_cls, client_delay, client_delay, 1 - call_mean)
                                 P.set(cur_class, call_cls, client_delay, server_station, call_mean / nreplicas)
                                 P.set(call_cls, call_cls, server_station, client_delay, 1.0)
                                 if aux_cls is not None:
                                     P.set(aux_cls, call_cls, client_delay, client_delay, 1.0)
-                            elif call_mean == nreplicas:
+                            elif call_mean == 1:
                                 P.set(cur_class, call_cls, client_delay, server_station, 1.0 / nreplicas)
                                 P.set(call_cls, call_cls, server_station, client_delay, 1.0)
-                            else:  # call_mean > nreplicas
+                            else:  # call_mean > 1
                                 P.set(cur_class, call_cls, client_delay, server_station, 1.0 / nreplicas)
                                 if aux_cls is not None:
                                     P.set(call_cls, aux_cls, server_station, client_delay, 1.0)
                                     P.set(aux_cls, call_cls, client_delay, server_station,
-                                          1.0 - 1.0 / (call_mean / nreplicas))
+                                          (1.0 - 1.0 / call_mean) / nreplicas)
                                     P.set(aux_cls, call_cls, client_delay, client_delay, 1.0 / call_mean)
                             # Services: Immediate at client, callservt at server
                             client_delay.set_service(call_cls, Immediate())
@@ -2963,7 +3735,7 @@ class SolverLN(EnsembleSolver):
                             cur_class = call_cls
                         else:
                             # MATLAB routeSynchCall atClient, call NOT to server (lines 863-879)
-                            if call_mean < nreplicas:
+                            if call_mean < 1:
                                 # call mean is embedded in the demand; see _kb/06-solver-catalog.md LN Call mean embedded in demand.
                                 P.set(cur_class, call_cls, client_delay, client_delay, 1.0)
                                 if aux_cls is not None:
@@ -2971,10 +3743,10 @@ class SolverLN(EnsembleSolver):
                                     cur_class = aux_cls
                                 else:
                                     cur_class = call_cls
-                            elif call_mean == nreplicas:
+                            elif call_mean == 1:
                                 P.set(cur_class, call_cls, client_delay, client_delay, 1.0)
                                 cur_class = call_cls
-                            else:  # call_mean > nreplicas
+                            else:  # call_mean > 1
                                 P.set(cur_class, call_cls, client_delay, client_delay, 1.0)
                                 if aux_cls is not None:
                                     P.set(call_cls, aux_cls, client_delay, client_delay, 1.0)
@@ -2987,37 +3759,76 @@ class SolverLN(EnsembleSolver):
                     else:  # job_pos == _AT_SERVER
                         if call_to_server:
                             # MATLAB routeSynchCall atServer, call to server (lines 882-910)
-                            if call_mean < nreplicas:
-                                P.set(cur_class, call_cls, server_station, client_delay, 1 - call_mean)
-                                P.set(cur_class, call_cls, server_station, server_station, call_mean)
-                                job_pos = self._AT_CLIENT
-                                cur_class = aux_cls if aux_cls is not None else call_cls
-                            elif call_mean == nreplicas:
-                                P.set(cur_class, call_cls, server_station, server_station, 1.0)
-                                job_pos = self._AT_SERVER
-                                cur_class = call_cls
-                            else:  # call_mean > nreplicas
-                                P.set(cur_class, call_cls, server_station, server_station, 1.0)
+                            _from = (ctx.get('cur_station') or server_station) if ctx.get('flat') else server_station
+                            if call_mean < 1:
+                                # The skip flow must enter the Aux class and the reply
+                                # must transit the client in the call class, which is
+                                # therefore declared there: sn_refresh_visits drops any
+                                # (station, class) state whose rate is NaN, and dropping
+                                # this one severs the chain. Routing the skip into the
+                                # call class instead and leaving in Aux gives Aux no
+                                # inbound arc at all, so its chain has no reference
+                                # class; this branch did that under 'srvn' until
+                                # 2026-08-11 (buildLayersRecursive.m:1100-1118, and the
+                                # JAR has carried the reference form all along).
                                 if aux_cls is not None:
-                                    P.set(call_cls, call_cls, server_station, server_station, 1 - 1.0 / call_mean)
-                                    P.set(call_cls, aux_cls, server_station, client_delay, 1.0 / call_mean)
+                                    P.set(cur_class, aux_cls, _from, client_delay, 1 - call_mean)
+                                    P.set(aux_cls, call_cls, client_delay, client_delay, 1.0)
+                                else:
+                                    P.set(cur_class, call_cls, _from, client_delay, 1 - call_mean)
+                                P.set(cur_class, call_cls, _from, server_station, call_mean)
+                                P.set(call_cls, call_cls, server_station, client_delay, 1.0)
+                                client_delay.set_service(call_cls, Immediate())
+                                # both the skip and the visit end in the call class
+                                cur_class = call_cls
                                 job_pos = self._AT_CLIENT
-                                cur_class = aux_cls if aux_cls is not None else call_cls
+                                ctx['cur_station'] = None
+                            elif call_mean == 1:
+                                P.set(cur_class, call_cls, _from, server_station, 1.0)
+                                if ctx.get('flat'):
+                                    # the reply returns the job to the client, as the
+                                    # successor restoration downstream assumes
+                                    P.set(call_cls, call_cls, server_station, client_delay, 1.0)
+                                    client_delay.set_service(call_cls, Immediate())
+                                    job_pos = self._AT_CLIENT
+                                    ctx['cur_station'] = None
+                                else:
+                                    job_pos = self._AT_SERVER
+                                    ctx['cur_station'] = server_station
+                                cur_class = call_cls
+                            else:  # call_mean > 1
+                                P.set(cur_class, call_cls, _from, server_station, 1.0)
+                                if ctx.get('flat'):
+                                    # the geometric repeat transits the client between
+                                    # visits; a self-loop would merge them into one
+                                    if aux_cls is not None:
+                                        P.set(call_cls, aux_cls, server_station, client_delay, 1.0)
+                                        P.set(aux_cls, call_cls, client_delay, server_station, 1 - 1.0 / call_mean)
+                                        P.set(aux_cls, call_cls, client_delay, client_delay, 1.0 / call_mean)
+                                        client_delay.set_service(call_cls, Immediate())
+                                    cur_class = call_cls
+                                else:
+                                    if aux_cls is not None:
+                                        P.set(call_cls, call_cls, server_station, server_station, 1 - 1.0 / call_mean)
+                                        P.set(call_cls, aux_cls, server_station, client_delay, 1.0 / call_mean)
+                                    cur_class = aux_cls if aux_cls is not None else call_cls
+                                job_pos = self._AT_CLIENT
+                                ctx['cur_station'] = None
                             if callservt_proc is not None:
                                 server_station.set_service(call_cls, callservt_proc)
                         else:
                             # MATLAB routeSynchCall atServer, call NOT to server (lines 912-936)
-                            if call_mean < nreplicas:
+                            if call_mean < 1:
                                 P.set(cur_class, call_cls, server_station, client_delay, 1.0)
                                 if aux_cls is not None:
                                     P.set(call_cls, aux_cls, client_delay, client_delay, 1.0)
                                     cur_class = aux_cls
                                 else:
                                     cur_class = call_cls
-                            elif call_mean == nreplicas:
+                            elif call_mean == 1:
                                 P.set(cur_class, call_cls, server_station, client_delay, 1.0)
                                 cur_class = call_cls
-                            else:  # call_mean > nreplicas
+                            else:  # call_mean > 1
                                 P.set(cur_class, call_cls, server_station, client_delay, 1.0)
                                 if aux_cls is not None:
                                     P.set(call_cls, aux_cls, client_delay, client_delay, 1.0)
@@ -3035,6 +3846,16 @@ class SolverLN(EnsembleSolver):
                 server_station = ctx['server_station']
                 is_host_layer = ctx['is_host_layer']
                 is_cache_layer = ctx['is_cache_layer']
+                srv_stations = ctx.get('srv_stations', {})
+                # station of the processor the next activity runs on, None when
+                # that processor is not a server of this layer
+                host_stn = None
+                if ctx.get('flat'):
+                    _h = self._get_parent(self._get_parent(nextaidx))
+                    if _h is not None and int(_h) in srv_stations:
+                        host_stn = srv_stations[int(_h)][0]
+                elif is_host_layer:
+                    host_stn = server_station
                 fork_node = ctx['fork_node']
                 join_node = ctx['join_node']
                 fork_output_routers = ctx['fork_output_routers']
@@ -3046,13 +3867,14 @@ class SolverLN(EnsembleSolver):
                     continue
 
                 # Check if any successor is an entry (MATLAB lines 1010-1021)
-                entry_range = set(lqn.eshift + i for i in range(1, lqn.nentries + 1))
+                entry_range = set(lqn.eshift + i for i in range(lqn.nentries))
                 intersects = any(n in entry_range for n in nextaidxs)
 
                 if not intersects:
                     # Restore state from saved values (MATLAB line 1023-1025)
                     job_pos = ctx['job_pos_key'].get(aidx, job_pos)
                     cur_class = ctx['cur_class_key'].get(aidx, cur_class)
+                    ctx['cur_station'] = ctx.setdefault('cur_station_key', {}).get(aidx, ctx.get('cur_station'))
                 else:
                     # Entry routing state restoration (MATLAB lines 1026-1040)
                     idx_in_nextaidxs = nextaidxs.index(nextaidx) if nextaidx in nextaidxs else 0
@@ -3064,10 +3886,12 @@ class SolverLN(EnsembleSolver):
                         ctx['cur_class_c'] = cur_class
                     job_pos = self._AT_CLIENT
                     cur_class = ctx.get('cur_class_c', cur_class)
+                    ctx['cur_station'] = None
 
                 # Route based on jobPos and layer type
                 if job_pos == self._AT_CLIENT:
-                    if is_host_layer:
+                    if host_stn is not None:
+                        server_station = host_stn
                         if not is_cache_layer:
                             # HOST LAYER, NON-CACHE, atClient (MATLAB lines 1044-1096)
                             if is_next_prec_fork and fork_node is not None:
@@ -3093,6 +3917,7 @@ class SolverLN(EnsembleSolver):
                             if nextaidx < len(self.servtproc) and self.servtproc[nextaidx] is not None:
                                 server_station.set_service(act_cls, self.servtproc[nextaidx])
                             job_pos = self._AT_SERVER
+                            ctx['cur_station'] = server_station
                             cur_class = act_cls
                             # Record servt update map
                             if ctx.get('servt_map') is not None and ctx.get('idx') is not None:
@@ -3133,12 +3958,14 @@ class SolverLN(EnsembleSolver):
                             ctx['thinkt_map'][ctx['idx']].append([ctx['idx'], nextaidx, 1, act_cls.get_index()])
 
                 elif job_pos == self._AT_SERVER or job_pos == self._AT_CACHE:
-                    if is_host_layer:
+                    if host_stn is not None:
+                        from_stn = ctx.get('cur_station') or server_station
+                        server_station = host_stn
                         if not is_cache_layer:
                             # HOST LAYER, NON-CACHE, atServer (MATLAB lines 1217-1258)
                             if is_next_prec_fork and fork_node is not None:
                                 # FORK routing
-                                P.set(cur_class, cur_class, server_station, fork_node, 1.0)
+                                P.set(cur_class, cur_class, from_stn, fork_node, 1.0)
                                 post_and_succs = [s for s in nextaidxs if s in is_post_and_act]
                                 f_idx = post_and_succs.index(nextaidx) + 1 if nextaidx in post_and_succs else -1
                                 if f_idx > 0 and f_idx in fork_output_routers:
@@ -3146,19 +3973,20 @@ class SolverLN(EnsembleSolver):
                                     P.set(cur_class, cur_class, fork_node, fork_output_routers[f_idx], 1.0)
                                     P.set(cur_class, act_cls, fork_output_routers[f_idx], server_station, 1.0)
                                 else:
-                                    P.set(cur_class, act_cls, server_station, server_station, graph[aidx, nextaidx])
+                                    P.set(cur_class, act_cls, from_stn, server_station, graph[aidx, nextaidx])
                             elif aidx in is_pre_and_act and join_node is not None:
                                 # JOIN routing
                                 fork_class = fork_class_stack.pop()
-                                P.set(cur_class, fork_class, server_station, join_node, 1.0)
+                                P.set(cur_class, fork_class, from_stn, join_node, 1.0)
                                 P.set(fork_class, act_cls, join_node, server_station, 1.0)
                             else:
                                 # Serial routing
-                                P.set(cur_class, act_cls, server_station, server_station, graph[aidx, nextaidx])
+                                P.set(cur_class, act_cls, from_stn, server_station, graph[aidx, nextaidx])
                             # Set service at server (servtproc holds Distribution, not float)
                             if nextaidx < len(self.servtproc) and self.servtproc[nextaidx] is not None:
                                 server_station.set_service(act_cls, self.servtproc[nextaidx])
                             job_pos = self._AT_SERVER
+                            ctx['cur_station'] = server_station
                             cur_class = act_cls
                             if ctx.get('servt_map') is not None and ctx.get('idx') is not None:
                                 ctx['servt_map'][ctx['idx']].append([ctx['idx'], nextaidx, 2, act_cls.get_index()])
@@ -3213,20 +4041,30 @@ class SolverLN(EnsembleSolver):
                         if nextaidx in self.servtproc and self.servtproc[nextaidx] is not None:
                             client_delay.set_service(act_cls, self.servtproc[nextaidx])
                         job_pos = self._AT_CLIENT
+                        ctx['cur_station'] = None
                         cur_class = act_cls
                         if ctx.get('thinkt_map') is not None and ctx.get('idx') is not None:
                             ctx['thinkt_map'][ctx['idx']].append([ctx['idx'], nextaidx, 1, act_cls.get_index()])
 
                 # Recursive call (MATLAB lines 1316-1336)
                 if aidx != nextaidx and not is_loop:
+                    # cur_class_c is per-invocation in MATLAB and saved around the
+                    # recursion in the JAR; a shared ctx entry leaks the callee's
+                    # class back into the next fork branch
+                    saved_cur_class_c = ctx.get('cur_class_c')
                     P, cur_class, job_pos = self._recur_act_graph(
                         P, tidx_caller, nextaidx, cur_class, job_pos, ctx)
+                    ctx['cur_class_c'] = saved_cur_class_c
                     # Route back to task class (MATLAB lines 1322-1335)
                     task_cls = ctx['task_classes'][tidx_caller]
                     if job_pos == self._AT_CLIENT:
                         P.set(cur_class, task_cls, client_delay, client_delay, 1.0)
                     else:
-                        P.set(cur_class, task_cls, server_station, client_delay, 1.0)
+                        # the job returns from the station it is actually at, which
+                        # under flat is the callee's station, not this layer's server
+                        _back = (ctx.get('cur_station') or server_station) \
+                            if ctx.get('flat') else server_station
+                        P.set(cur_class, task_cls, _back, client_delay, 1.0)
                     if not cur_class.name.endswith('.Aux'):
                         cur_class.completes = True
 
@@ -3278,7 +4116,13 @@ class SolverLN(EnsembleSolver):
                 if elem_type == LayeredNetworkElement.TASK:
                     task_classes[elem_idx] = cls
                 elif elem_type == LayeredNetworkElement.ENTRY:
-                    entry_classes[elem_idx] = cls
+                    # an entry-arrival OpenClass carries the same [ENTRY, eidx]
+                    # attribute as the entry's own closed class (as in MATLAB), so
+                    # it must not displace it here: the task -> entry and
+                    # entry -> activity routes below would then be wired to the
+                    # open stream, which walks no activity graph
+                    if not isinstance(cls, OpenClass):
+                        entry_classes[elem_idx] = cls
                 elif elem_type == LayeredNetworkElement.ACTIVITY:
                     # Separate Think classes from regular activity classes
                     if hasattr(cls, 'name') and cls.name.endswith('.Think'):
@@ -3291,6 +4135,13 @@ class SolverLN(EnsembleSolver):
                         aux_classes[elem_idx] = cls
                     else:
                         call_classes[elem_idx] = cls
+
+        # A routed group's members all resolve to the group's shared call class;
+        # cls.attribute can only name one cidx, so the mapping is explicit.
+        _cls_by_index = {c.get_index(): c for c in classes}
+        for _cidx, _clsidx in (layer_model.attribute.get('call_class_of_cidx') or {}).items():
+            if _clsidx in _cls_by_index:
+                call_classes[_cidx] = _cls_by_index[_clsidx]
 
         # Build call_mean map from layer attribute
         call_mean_map = {}
@@ -3357,6 +4208,12 @@ class SolverLN(EnsembleSolver):
                         'is_pre_and_act': layer_model.attribute.get('is_pre_and_act', set()),
                         'job_pos_key': {},
                         'cur_class_key': {},
+                        'cur_station_key': {},
+                        'cur_station': None,
+                        # flat layering resolves the station per element rather than
+                        # using the layer's single server
+                        'flat': bool(layer_model.attribute.get('flat')),
+                        'srv_stations': layer_model.attribute.get('srv_stations', {}),
                         'cache_node': cache_node,
                         'servt_map': None,  # Already set during class creation
                         'thinkt_map': None,
@@ -3369,6 +4226,26 @@ class SolverLN(EnsembleSolver):
                                 P, tidx, eidx, entry_cls, self._AT_CLIENT, ctx)
                 else:
                     # Original flat routing (no Fork/Join needed)
+                    # Under flat layering each processor and task owns a station, so
+                    # placement is resolved per element instead of using the layer's
+                    # single server.
+                    _srv_map = layer_model.attribute.get('srv_stations', {}) \
+                        if hasattr(layer_model, 'attribute') else {}
+                    _flat_layer = bool(layer_model.attribute.get('flat')) \
+                        if hasattr(layer_model, 'attribute') else False
+
+                    def _act_station(act_cls, default_srv):
+                        # Station of the processor the activity class runs on
+                        if not _flat_layer:
+                            return default_srv
+                        _a = act_cls.attribute[1] if getattr(act_cls, 'attribute', None) is not None \
+                            and len(act_cls.attribute) > 1 else None
+                        if _a is None:
+                            return default_srv
+                        _h = self._get_parent(self._get_parent(int(_a)))
+                        _st = _srv_map.get(int(_h)) if _h is not None else None
+                        return _st[0] if _st else None
+
                     # ENTRY -> ACTIVITY routing (for each entry, route to its bound activities)
                     for eidx, entry_cls in zip(entries, entry_cls_list):
                         if eidx in entry_classes:
@@ -3401,8 +4278,9 @@ class SolverLN(EnsembleSolver):
                                             P.set(first_act_cls, miss_cls, cache_node, server, 0.5)
                             elif bound_act_cls_list:
                                 first_act_cls = bound_act_cls_list[0]
-                                if is_host_layer:
-                                    P.set(entry_cls, first_act_cls, client, server, 1.0)
+                                _as = _act_station(first_act_cls, server) if (is_host_layer or _flat_layer) else None
+                                if _as is not None:
+                                    P.set(entry_cls, first_act_cls, client, _as, 1.0)
                                 else:
                                     P.set(entry_cls, first_act_cls, client, client, 1.0)
                             elif activity_cls_list:
@@ -3415,17 +4293,26 @@ class SolverLN(EnsembleSolver):
 
                 if not has_forkjoin:
                     # For HOST layers, add explicit routing for activity classes from client to server
-                    if is_host_layer and activity_cls_list:
+                    if (is_host_layer or _flat_layer) and activity_cls_list:
                         for act_cls in activity_cls_list:
-                            P.set(act_cls, act_cls, client, server, 1.0)
+                            _as = _act_station(act_cls, server)
+                            if _as is not None:
+                                P.set(act_cls, act_cls, client, _as, 1.0)
 
                     # Route through activities using flat loop (no fork/join)
                     for i, aidx in enumerate(activities):
                         if aidx not in activity_classes:
                             continue
                         act_cls = activity_classes[aidx]
+                        if _flat_layer:
+                            # the activity runs on its own processor's station
+                            _as_i = _act_station(act_cls, server)
+                            if _as_i is not None:
+                                act_station = _as_i
 
                         sync_call_classes = []
+                        _cgrp_by_cidx, _cgrp_members = self._call_groups_by_cidx()
+                        _seen_groups = set()
                         if isinstance(self.lqn.callsof, dict):
                             calls = self.lqn.callsof.get(aidx, [])
                             for cidx in calls:
@@ -3440,6 +4327,13 @@ class SolverLN(EnsembleSolver):
                                             calltype = CallType.SYNC
                                         is_sync = (calltype == CallType.SYNC)
                                     if is_sync:
+                                        # a group is one dispatch: take its shared class
+                                        # once, at the position of its first member
+                                        _g = _cgrp_by_cidx.get(cidx)
+                                        if _g is not None:
+                                            if _g[0] in _seen_groups:
+                                                continue
+                                            _seen_groups.add(_g[0])
                                         sync_call_classes.append(call_classes[cidx])
 
                         has_sync_call = len(sync_call_classes) > 0
@@ -3447,43 +4341,91 @@ class SolverLN(EnsembleSolver):
                         if has_sync_call:
                             # Process each sync call individually, matching MATLAB routeSynchCall
                             # Each call checks its own target to determine server vs client routing
-                            job_at_client = not is_host_layer  # task layer starts at client
+                            # under flat layering the activity sits on its own
+                            # processor's station, so the job is at a server
+                            job_at_client = (not is_host_layer) and not (
+                                _flat_layer and act_station is not client)
                             cur_cls = act_cls
 
                             for ci, call_cls in enumerate(sync_call_classes):
                                 call_cidx = call_cls.attribute[1] if hasattr(call_cls, 'attribute') else None
-                                tgt_eidx_c = self._get_call_target_entry(call_cidx) if call_cidx else None
-                                tgt_tidx_c = self._get_parent(tgt_eidx_c) if tgt_eidx_c else None
+                                tgt_eidx_c = (self._get_call_target_entry(call_cidx)
+                                              if call_cidx is not None else None)
+                                tgt_tidx_c = (self._get_parent(tgt_eidx_c)
+                                              if tgt_eidx_c is not None else None)
 
                                 this_call_to_server = False
-                                if tgt_tidx_c is not None and server is not None:
+                                call_srv = server
+                                if _flat_layer:
+                                    # every called task has its own station here, so a
+                                    # name match against the layer server never fires
+                                    _st = _srv_map.get(int(tgt_tidx_c)) if tgt_tidx_c is not None else None
+                                    if _st:
+                                        call_srv = _st[0]
+                                        this_call_to_server = True
+                                elif tgt_tidx_c is not None and server is not None:
                                     tgt_name_c = self._get_hashname(tgt_tidx_c)
                                     this_call_to_server = (tgt_name_c == server.name)
 
-                                call_mean = call_mean_map.get(call_cidx, 1.0) if call_cidx else 1.0
+                                call_mean = (call_mean_map.get(call_cidx, 1.0)
+                                             if call_cidx is not None else 1.0)
                                 nreplicas = 1
                                 has_aux = call_cidx in aux_classes
                                 aux_cls = aux_classes.get(call_cidx) if has_aux else None
 
+                                # A routed group is ONE hop with n destinations, taken at a
+                                # router whose only links are those destinations: the
+                                # strategy routes over a NODE's links, not over one class's
+                                # arcs, so any other node would let the job wander to
+                                # stations the group never calls. The hop keeps the class
+                                # (a state-dependent routing function is zero off the class
+                                # diagonal); the switch is on the return arc. The 1/n split
+                                # laid down here is the probabilistic reading a solver
+                                # without state-dependent routing would see.
+                                _grp = _cgrp_by_cidx.get(call_cidx) if call_cidx is not None else None
+                                if _grp is not None and _flat_layer:
+                                    _gid, _strategy = _grp
+                                    _disp_cls, _ret_cls, _, _router = layer_model.attribute[
+                                        'call_group_classes'][_gid]
+                                    _tgt_stations = []
+                                    for _mcidx in _cgrp_members[_gid]:
+                                        _meidx = self._get_call_target_entry(_mcidx)
+                                        _mtidx = self._get_parent(_meidx) if _meidx else None
+                                        _st = _srv_map.get(int(_mtidx)) if _mtidx is not None else None
+                                        if _st:
+                                            _tgt_stations.append((_st[0], _mcidx))
+                                    if len(_tgt_stations) >= 2:
+                                        _from_node = client if job_at_client else act_station
+                                        _share = 1.0 / len(_tgt_stations)
+                                        P.set(cur_cls, _disp_cls, _from_node, _router, 1.0)
+                                        for _st, _mcidx in _tgt_stations:
+                                            P.set(_disp_cls, _disp_cls, _router, _st, _share)
+                                            P.set(_disp_cls, _ret_cls, _st, client, 1.0)
+                                        layer_model.attribute.setdefault('rrobin_sites', []).append(
+                                            (_router.name, _disp_cls.get_index(), _strategy))
+                                        cur_cls = _ret_cls
+                                        job_at_client = True
+                                        continue
+
                                 if job_at_client:
                                     if this_call_to_server:
                                         # MATLAB: atClient, call to server entry
-                                        if call_mean < nreplicas:
-                                            P.set(cur_cls, call_cls, client, server, call_mean / nreplicas)
-                                            P.set(call_cls, call_cls, server, client, 1.0)
+                                        if call_mean < 1:
+                                            P.set(cur_cls, call_cls, client, call_srv, call_mean / nreplicas)
+                                            P.set(call_cls, call_cls, call_srv, client, 1.0)
                                             if has_aux:
                                                 P.set(cur_cls, aux_cls, client, client, 1 - call_mean)
                                                 P.set(aux_cls, call_cls, client, client, 1.0)
                                             cur_cls = call_cls
-                                        elif call_mean == nreplicas:
-                                            P.set(cur_cls, call_cls, client, server, 1.0 / nreplicas)
-                                            P.set(call_cls, call_cls, server, client, 1.0)
+                                        elif call_mean == 1:
+                                            P.set(cur_cls, call_cls, client, call_srv, 1.0 / nreplicas)
+                                            P.set(call_cls, call_cls, call_srv, client, 1.0)
                                             cur_cls = call_cls
-                                        else:  # call_mean > nreplicas
-                                            P.set(cur_cls, call_cls, client, server, 1.0 / nreplicas)
+                                        else:  # call_mean > 1
+                                            P.set(cur_cls, call_cls, client, call_srv, 1.0 / nreplicas)
                                             if has_aux:
-                                                P.set(call_cls, aux_cls, server, client, 1.0)
-                                                P.set(aux_cls, call_cls, client, server, 1.0 - 1.0 / (call_mean / nreplicas))
+                                                P.set(call_cls, aux_cls, call_srv, client, 1.0)
+                                                P.set(aux_cls, call_cls, client, call_srv, (1.0 - 1.0 / call_mean) / nreplicas)
                                                 P.set(aux_cls, call_cls, client, client, 1.0 / call_mean)
                                                 cur_cls = call_cls  # matches MATLAB line 783: curClass = cidxClass{cidx}
                                             else:
@@ -3491,7 +4433,7 @@ class SolverLN(EnsembleSolver):
                                         job_at_client = True
                                     else:
                                         # MATLAB: atClient, call NOT to server
-                                        if call_mean < nreplicas:
+                                        if call_mean < 1:
                                             # Deterministic visit: the call mean is
                                             # embedded in the demand (callservt)
                                             P.set(cur_cls, call_cls, client, client, 1.0)
@@ -3500,10 +4442,10 @@ class SolverLN(EnsembleSolver):
                                                 cur_cls = aux_cls
                                             else:
                                                 cur_cls = call_cls
-                                        elif call_mean == nreplicas:
+                                        elif call_mean == 1:
                                             P.set(cur_cls, call_cls, client, client, 1.0)
                                             cur_cls = call_cls
-                                        else:  # call_mean > nreplicas
+                                        else:  # call_mean > 1
                                             P.set(cur_cls, call_cls, client, client, 1.0)
                                             if has_aux:
                                                 P.set(call_cls, aux_cls, client, client, 1.0)
@@ -3515,35 +4457,75 @@ class SolverLN(EnsembleSolver):
                                     # job at server
                                     if this_call_to_server:
                                         # MATLAB: atServer, call to server entry
-                                        if call_mean < nreplicas:
-                                            P.set(cur_cls, call_cls, server, client, 1 - call_mean)
-                                            P.set(cur_cls, call_cls, server, server, call_mean)
+                                        _from_stn = act_station if _flat_layer else server
+                                        if call_mean < 1:
+                                            if _flat_layer:
+                                                # the skip flow enters the Aux class and the
+                                                # reply transits the client in the call class
+                                                if has_aux:
+                                                    P.set(cur_cls, aux_cls, _from_stn, client, 1 - call_mean)
+                                                    P.set(aux_cls, call_cls, client, client, 1.0)
+                                                else:
+                                                    P.set(cur_cls, call_cls, _from_stn, client, 1 - call_mean)
+                                                P.set(cur_cls, call_cls, _from_stn, call_srv, call_mean)
+                                                P.set(call_cls, call_cls, call_srv, client, 1.0)
+                                                client.set_service(call_cls, Immediate())
+                                                # both the skip and the visit end in the call
+                                                # class, so continuing from Aux would emit the
+                                                # next call's arcs out of a class that has
+                                                # already been routed away
+                                                cur_cls = call_cls
+                                            else:
+                                                P.set(cur_cls, call_cls, server, client, 1 - call_mean)
+                                                P.set(cur_cls, call_cls, server, server, call_mean)
+                                                cur_cls = aux_cls if has_aux else call_cls
                                             job_at_client = True
-                                            cur_cls = aux_cls if has_aux else call_cls
-                                        elif call_mean == nreplicas:
-                                            P.set(cur_cls, call_cls, server, server, 1.0)
-                                            job_at_client = False
+                                        elif call_mean == 1:
+                                            if _flat_layer:
+                                                # the reply returns the job to the client
+                                                P.set(cur_cls, call_cls, _from_stn, call_srv, 1.0)
+                                                P.set(call_cls, call_cls, call_srv, client, 1.0)
+                                                client.set_service(call_cls, Immediate())
+                                                job_at_client = True
+                                            else:
+                                                P.set(cur_cls, call_cls, server, server, 1.0)
+                                                job_at_client = False
                                             cur_cls = call_cls
-                                        else:  # call_mean > nreplicas
-                                            P.set(cur_cls, call_cls, server, server, 1.0)
-                                            if has_aux:
-                                                P.set(call_cls, call_cls, server, server, 1 - 1.0 / call_mean)
-                                                P.set(call_cls, aux_cls, server, client, 1.0 / call_mean)
-                                            job_at_client = True
-                                            cur_cls = aux_cls if has_aux else call_cls
+                                        else:  # call_mean > 1
+                                            if _flat_layer:
+                                                # the geometric repeat visits the CALLED task's
+                                                # station and transits the client between
+                                                # visits, as the atClient split does: a
+                                                # self-loop merges the visits into one and
+                                                # under-counts the call's aggregate service
+                                                P.set(cur_cls, call_cls, _from_stn, call_srv, 1.0)
+                                                if has_aux:
+                                                    P.set(call_cls, aux_cls, call_srv, client, 1.0)
+                                                    P.set(aux_cls, call_cls, client, call_srv, 1 - 1.0 / call_mean)
+                                                    P.set(aux_cls, call_cls, client, client, 1.0 / call_mean)
+                                                    client.set_service(call_cls, Immediate())
+                                                job_at_client = True
+                                                cur_cls = call_cls
+                                            else:
+                                                P.set(cur_cls, call_cls, server, server, 1.0)
+                                                if has_aux:
+                                                    P.set(call_cls, call_cls, server, server, 1 - 1.0 / call_mean)
+                                                    P.set(call_cls, aux_cls, server, client, 1.0 / call_mean)
+                                                job_at_client = True
+                                                cur_cls = aux_cls if has_aux else call_cls
                                     else:
                                         # atServer, call NOT to server
                                         # callmean not needed since we use ResidT to model service time at client
                                         P.set(cur_cls, call_cls, server, client, 1.0)
-                                        if call_mean < nreplicas:
+                                        if call_mean < 1:
                                             if has_aux:
                                                 P.set(call_cls, aux_cls, client, client, 1.0)
                                                 cur_cls = aux_cls
                                             else:
                                                 cur_cls = call_cls
-                                        elif call_mean == nreplicas:
+                                        elif call_mean == 1:
                                             cur_cls = call_cls
-                                        else:  # call_mean > nreplicas
+                                        else:  # call_mean > 1
                                             if has_aux:
                                                 P.set(call_cls, aux_cls, client, client, 1.0)
                                                 cur_cls = aux_cls
@@ -3580,8 +4562,7 @@ class SolverLN(EnsembleSolver):
                             if not has_graph_successors:
                                 is_terminal = False
                                 if hasattr(self.lqn, 'replygraph') and self.lqn.replygraph is not None:
-                                    act_offset = self.lqn.ashift
-                                    act_local_idx = aidx - act_offset - 1 if aidx > act_offset else max(0, aidx - 1)
+                                    act_local_idx = aidx - self.lqn.ashift
                                     if isinstance(self.lqn.replygraph, np.ndarray):
                                         if 0 <= act_local_idx < self.lqn.replygraph.shape[0]:
                                             if np.any(self.lqn.replygraph[act_local_idx, :] > 0):
@@ -3624,10 +4605,14 @@ class SolverLN(EnsembleSolver):
         if source_station is not None and sink_station is not None and entry_open_classes:
             nreplicas_for_open = layer_model.attribute.get('nreplicas', 1) or 1
             for open_cls, _eidx in entry_open_classes:
+                # buildLayersRecursive.m:480-485 clears the class first: an entry
+                # arrival walks no activity graph, and a leftover class-switch arc
+                # puts the open class in the closed chain, making it mixed.
+                P.remove_job_class(open_cls)
                 P.set(open_cls, open_cls, source_station, server, 1.0 / float(nreplicas_for_open))
                 P.set(open_cls, open_cls, server, sink_station, 1.0)
 
-        # async-call-injection open class recirculates at the server until enough calls complete, then drains to sink; mirrors MATLAB buildLayersRecursive.m:415-432/JAR:856-878.
+        # async-call-injection open class recirculates at server until calls done, drains to sink; mirrors MATLAB buildLayersRecursive.m:415-432/JAR:856-878.
         async_open_classes = layer_model.attribute.get('async_open_classes', [])
         if source_station is not None and sink_station is not None and async_open_classes:
             nreplicas_for_open = layer_model.attribute.get('nreplicas', 1) or 1
@@ -3639,13 +4624,20 @@ class SolverLN(EnsembleSolver):
                 if cm <= 0 or not np.isfinite(cm):
                     cm = 1.0
                 p_drain = 1.0 / cm
-                P.set(open_cls, open_cls, source_station, server, 1.0 / float(nreplicas_for_open))
-                # Server self-loop for recirculation (primary only; the replication
-                # block below mirrors self-loops to each replica).
-                if cm != nreplicas_for_open:
-                    P.set(open_cls, open_cls, server, server,
-                          (1.0 - p_drain) / float(nreplicas_for_open))
-                P.set(open_cls, open_cls, server, sink_station, p_drain)
+                if cm < 1:
+                    # fewer than one call per arrival: a single Bernoulli pass, the
+                    # geometric loop below would need a negative repeat probability
+                    P.set(open_cls, open_cls, source_station, sink_station, 1.0 - cm)
+                    P.set(open_cls, open_cls, source_station, server, cm / float(nreplicas_for_open))
+                    P.set(open_cls, open_cls, server, sink_station, 1.0)
+                else:
+                    P.set(open_cls, open_cls, source_station, server, 1.0 / float(nreplicas_for_open))
+                    # Server self-loop for recirculation (primary only; the replication
+                    # block below mirrors self-loops to each replica).
+                    if cm != 1:
+                        P.set(open_cls, open_cls, server, server,
+                              (1.0 - p_drain) / float(nreplicas_for_open))
+                    P.set(open_cls, open_cls, server, sink_station, p_drain)
 
         # replicate routing to additional server replicas (nreplicas>1), splitting incoming probabilities; mirrors MATLAB serverStation loops.
         nreplicas = layer_model.attribute.get('nreplicas', 1)
@@ -3731,10 +4723,219 @@ class SolverLN(EnsembleSolver):
                         if st.get_service(jc) is None:
                             st.set_service(jc, Disabled())
 
+        if layer_model.attribute.get('flat'):
+            # link() installs RAND routing for every (node, class) pair left
+            # without an outgoing arc. With one station per server in a single
+            # layer those spurious uniform arcs let a class wander to stations
+            # it never visits, trapping the flow in a sub-cycle and leaving the
+            # reference class with zero visits (MATLAB buildLayersRecursive.m).
+            from ...constants import RoutingStrategy as _RS
+            from ...lang.nodes import Sink as _Sink
+            outflow = {}
+            for (class_src, _class_dst), routes in P._routes.items():
+                for (node_src, _node_dst), prob in routes.items():
+                    if prob > 0:
+                        outflow.setdefault(id(node_src), set()).add(id(class_src))
+            for node in layer_model.get_nodes():
+                if isinstance(node, _Sink):
+                    continue
+                here = outflow.get(id(node), set())
+                for jobclass in layer_model.classes:
+                    if id(jobclass) not in here:
+                        node.setRouting(jobclass, _RS.DISABLED)
+
         layer_model.link(P)
+        # link() installs the probabilistic split; the declared strategy replaces
+        # it on the dispatch (node, class), whose only arcs are the group's targets
+        for _node_name, _disp_idx, _strategy in layer_model.attribute.get('rrobin_sites', []):
+            for _n in layer_model.get_nodes():
+                if _n.name == _node_name:
+                    for _c in layer_model.classes:
+                        if _c.get_index() == _disp_idx:
+                            _n.setRouting(_c, _strategy)
+                    break
+        self._add_layer_admission_constraint(layer_model, idx)
+        self._add_layer_rate_dependence(layer_model)
+
+    def _add_layer_rate_dependence(self, layer_model):
+        """
+        Emit the service-rate dependences declared on the server elements of this
+        layer onto their stations -- see _kb/06-solver-catalog.md (LN section).
+        Load dependence reads the total station population and maps directly; the
+        class- and joint-dependent handles are declared over the server's
+        operands, which the layer represents as job classes, so each operand is
+        expanded onto the classes that occupy the server on its behalf.
+        """
+        lqn = self.lqn
+        lld = getattr(lqn, 'lldscaling', None) or {}
+        cd = getattr(lqn, 'cdscaling', None) or {}
+        jd = getattr(lqn, 'jdscaling', None) or {}
+        pools = getattr(lqn, 'pools', None) or {}
+        if not lld and not cd and not jd and not pools:
+            return
+        srv_stations = layer_model.attribute.get('srv_stations', {})
+        nclasses = len(layer_model.classes)
+        for sidx, stations in srv_stations.items():
+            has_ld = sidx in lld
+            has_cd = sidx in cd
+            has_jd = sidx in jd
+            has_pools = sidx in pools
+            if not (has_ld or has_cd or has_jd or has_pools):
+                continue
+            cols = self._layer_operand_classes(layer_model, sidx)
+            one_class_per_operand = all(len(c) <= 1 for c in cols)
+            for ss in stations:
+                if has_ld:
+                    ss.set_load_dependence(lld[sidx])
+                if has_cd:
+                    # beta_{i,r} is product-form only while an operand maps to a single
+                    # class; where it aggregates several, the same scaling is emitted as
+                    # a joint dependence, which is numerically identical but not exact
+                    handle = _layer_dep_handle(cd[sidx], cols, nclasses, layer_model)
+                    peak = _layer_peak(lqn.cdscalingpeak[sidx], cols, nclasses)
+                    if one_class_per_operand:
+                        ss.set_class_dependence(handle, peak)
+                    else:
+                        ss.set_joint_dependence(handle, peak)
+                if has_jd:
+                    ss.set_joint_dependence(_layer_dep_handle(jd[sidx], cols, nclasses, layer_model),
+                                            _layer_peak(lqn.jdscalingpeak[sidx], cols, nclasses))
+                if has_pools:
+                    # A compatibility declaration IS a rate law: the pools clear
+                    # mu(n) of sn_compat_rate, which reads only the SUPPORT of n
+                    # and is therefore order independent. Normalising by the
+                    # every-pool-active peak makes eta(n) <= 1 with equality at
+                    # full support, so a fully-compatible pool reproduces the
+                    # plain multiplicity station exactly. The lowering is to a
+                    # JOINT dependence, hence an approximation in the layer: see
+                    # _kb/06-solver-catalog.md (LN section) for why the exact OI
+                    # analyzer cannot serve a class-switching layer.
+                    pl = pools[sidx]
+
+                    def _eta_pool(nop, _pl=pl):
+                        return sn_compat_scaling(_pl['compat'], _pl['counts'], _pl['rates'], nop)
+
+                    ss.set_joint_dependence(
+                        _layer_dep_handle(_eta_pool, cols, nclasses, layer_model),
+                        _layer_peak(np.ones(len(cols)), cols, nclasses))
+
+    def _layer_operand_classes(self, layer_model, sidx):
+        """
+        Layer classes (1-based) through which each operand of server SIDX occupies
+        its station: the tasks of a host through the classes of their activities,
+        the entries of a task through the classes of the calls that target them.
+        """
+        lqn = self.lqn
+        if sidx <= lqn.nhosts:
+            operand_idx = lqn.tasksof.get(sidx, [])
+            cls_by_elem = {}
+            for cls_index, aidx in layer_model.attribute.get('activities', []):
+                cls_by_elem.setdefault(aidx, []).append(cls_index)
+            return [[c for a in lqn.actsof.get(j, []) for c in cls_by_elem.get(a, [])]
+                    for j in operand_idx]
+        operand_idx = lqn.entriesof.get(sidx, [])
+        cls_by_elem = {}
+        for row in layer_model.attribute.get('calls', []):
+            cls_by_elem.setdefault(row[3], []).append(row[0])
+        return [list(cls_by_elem.get(j, [])) for j in operand_idx]
+
+    def _add_layer_admission_constraint(self, layer_model, idx):
+        """
+        Emit the admission constraint of host or task IDX as a finite capacity
+        region on that layer's server station -- see _kb/06-solver-catalog.md
+        (LN section). The constraint is declared over entries or tasks, which the
+        layer represents as job classes, so each declared column is expanded onto
+        the classes that occupy the server on its behalf.
+        """
+        lqn = self.lqn
+        lincon = getattr(lqn, 'lincon', None)
+        if idx is None or not lincon or idx not in lincon:
+            return
+        a_elem, b_elem = lincon[idx]
+        if a_elem is None or a_elem.size == 0:
+            return
+        is_host_layer = layer_model.attribute.get('ishost', False)
+        nclasses = len(layer_model.classes)
+        a_layer = np.zeros((a_elem.shape[0], nclasses))
+        if is_host_layer:
+            # column j is task constrained_idx[j], occupying the host through its activities
+            constrained_idx = lqn.tasksof.get(idx, [])
+            cls_by_elem = {}
+            for cls_index, aidx in layer_model.attribute.get('activities', []):
+                cls_by_elem.setdefault(aidx, []).append(cls_index)
+            members = {j: [c for a in lqn.actsof.get(constrained_idx[j], [])
+                           for c in cls_by_elem.get(a, [])]
+                       for j in range(len(constrained_idx))}
+        else:
+            # column j is entry constrained_idx[j], occupied by the calls that target it
+            constrained_idx = lqn.entriesof.get(idx, [])
+            cls_by_elem = {}
+            for row in layer_model.attribute.get('calls', []):
+                cls_by_elem.setdefault(row[3], []).append(row[0])
+            members = {j: list(cls_by_elem.get(constrained_idx[j], []))
+                       for j in range(len(constrained_idx))}
+        for j, cls_indices in members.items():
+            for cls_index in cls_indices:
+                # the attribute maps carry 1-based class indices
+                if 1 <= cls_index <= nclasses:
+                    a_layer[:, cls_index - 1] += a_elem[:, j]
+        if not np.any(a_layer):
+            return
+        stations = layer_model.attribute.get('server_stations', [])
+        if not stations:
+            return
+        # One region spanning every replica: the constraint models a passive
+        # resource of the server as a whole (a semaphore, a connection pool), so
+        # replicas share the tokens rather than each holding a private copy
+        region = layer_model.add_region(stations[0], *stations[1:])
+        region.setConstraint(a_layer, b_elem)
+
+    def _region_wait(self, layer_idx, nodeidx_0, classidx_0, result):
+        """
+        Waiting time absorbed by an admission constraint in a layer, recovered by
+        Little's law from the layer population deficit. A job blocked at the
+        constraint is counted at no station (JMT WAITQ convention), so its wait is
+        absent from RN; without this the caller never sees the blocking and the
+        fixed point loses flow balance.
+
+        The population is conserved per chain, not per class: a job in a layer
+        switches class along the activity graph, so the call class itself carries
+        population 0. Splitting the chain deficit by throughput gives every
+        region-visiting class the same wait.
+        """
+        flags = getattr(self, 'layer_has_region', None)
+        if not flags or layer_idx < 0 or layer_idx >= len(flags) or not flags[layer_idx]:
+            return 0.0
+        chains = self.layer_chains[layer_idx]
+        if chains is None or chains.size == 0:
+            return 0.0
+        rows = np.flatnonzero(chains[:, classidx_0])
+        if rows.size == 0:
+            return 0.0
+        chain_classes = np.flatnonzero(chains[rows[0], :])
+        QN = result.get('QN')
+        TN = result.get('TN')
+        if QN is None or TN is None:
+            return 0.0
+        layer = self.ensemble[layer_idx]
+        chain_pop = 0.0
+        for k in chain_classes:
+            pop = getattr(layer.classes[k], 'population', None)
+            if pop is not None and np.isfinite(pop):
+                chain_pop += pop
+        deficit = chain_pop - float(np.sum(QN[:, chain_classes]))
+        xregion = float(np.sum(TN[nodeidx_0, chain_classes]))
+        if np.isfinite(deficit) and deficit > 0 and xregion > GlobalConstants.FineTol:
+            return deficit / xregion
+        return 0.0
 
     def init(self):
         """Initialize before starting iterations (matches MATLAB init)."""
+        # The moment3 pass is terminal WITHIN ONE SOLVE, so the flag is scoped to
+        # one iterate(): left standing, the terminal test in converged() fires at
+        # it=0 on the NEXT solve, the loop body never runs and every metric comes
+        # back zero. See BUGS.md BUG-97.
+        self.moment_pass_done = False
         line_debug("LN init: %d layers, relaxation=%s (omega=%.3f)",
                    self.nlayers,
                    self.options.config.get('relax', 'none'),
@@ -3743,15 +4944,15 @@ class SolverLN(EnsembleSolver):
 
         self.unique_route_prob_updmap = np.unique(self.route_prob_updmap[:, 0]) if len(self.route_prob_updmap) > 0 else np.array([])
 
-        self.tput = np.zeros(lqn.nidx + 1)
-        self.tputproc = [None] * (lqn.nidx + 1)
-        self.util = np.zeros(lqn.nidx + 1)
-        self.servt = np.zeros(lqn.nidx + 1)
-        self.residt = np.zeros(lqn.nidx + 1)
-        self.thinkt = np.zeros(lqn.nidx + 1)
-        self.thinktproc = [None] * (lqn.nidx + 1)
-        self.callservt = np.zeros(lqn.ncalls + 1)
-        self.callresidt = np.zeros(lqn.ncalls + 1)
+        self.tput = np.zeros(lqn.nidx)
+        self.tputproc = [None] * lqn.nidx
+        self.util = np.zeros(lqn.nidx)
+        self.servt = np.zeros(lqn.nidx)
+        self.residt = np.zeros(lqn.nidx)
+        self.thinkt = np.zeros(lqn.nidx)
+        self.thinktproc = [None] * lqn.nidx
+        self.callservt = np.zeros(lqn.ncalls)
+        self.callresidt = np.zeros(lqn.ncalls)
         self.servtmatrix = self._get_entry_service_matrix()
 
         # feature-set gate stays armed on layer solvers; see _kb/06-solver-catalog.md LN Feature checks stay armed.
@@ -3770,12 +4971,12 @@ class SolverLN(EnsembleSolver):
             self.relax_omega = 1.0
 
         self.relax_err_history = []
-        self.servt_prev = np.full(lqn.nidx + 1, np.nan)
-        self.residt_prev = np.full(lqn.nidx + 1, np.nan)
-        self.tput_prev = np.full(lqn.nidx + 1, np.nan)
-        self.thinkt_prev = np.full(lqn.nidx + 1, np.nan)
-        self.callservt_prev = np.full(lqn.ncalls + 1, np.nan)
-        self.callresidt_prev = np.full(lqn.ncalls + 1, np.nan)
+        self.servt_prev = np.full(lqn.nidx, np.nan)
+        self.residt_prev = np.full(lqn.nidx, np.nan)
+        self.tput_prev = np.full(lqn.nidx, np.nan)
+        self.thinkt_prev = np.full(lqn.nidx, np.nan)
+        self.callservt_prev = np.full(lqn.ncalls, np.nan)
+        self.callresidt_prev = np.full(lqn.ncalls, np.nan)
 
         # stochastic iteration mode resolution; see _kb/06-solver-catalog.md LN Convergence test: stochastic iteration dispatch.
         self.stochlayers = np.zeros(self.nlayers, dtype=bool)
@@ -3817,7 +5018,7 @@ class SolverLN(EnsembleSolver):
                             self.solvers[e].reset()
 
 
-        # optional layer_init='bound' seeds layer throughput from Majumdar-Woodside box bounds; see _kb/06-solver-catalog.md LN Feature checks stay armed section.
+        # layer_init='bound' seeds layer throughput from Majumdar-Woodside box bounds; see _kb/06-solver-catalog.md LN Feature checks stay armed section.
         init_mode = self.options.config.get('layer_init', None) \
             if isinstance(self.options.config, dict) \
             else getattr(self.options.config, 'layer_init', None)
@@ -3825,7 +5026,7 @@ class SolverLN(EnsembleSolver):
             try:
                 tup, _ = self._box_bounds(True)
                 tlo, _ = self._box_bounds(False)
-                for idx in range(1, lqn.nidx + 1):
+                for idx in range(lqn.nidx):
                     u = tup[idx]
                     l = tlo[idx]
                     if np.isfinite(u) and np.isfinite(l) and u > 0 and l > 0:
@@ -3843,6 +5044,101 @@ class SolverLN(EnsembleSolver):
             except Exception as ex:
                 line_debug("LN box-bound initialization skipped: %s", str(ex))
 
+    def _layer_index_of(self, elem_idx: int) -> Optional[int]:
+        """0-based ensemble index of the layer where ELEM_IDX is a server, None if there is none."""
+        if self.idxhash is None or elem_idx >= len(self.idxhash):
+            return None
+        e = self.idxhash[elem_idx]
+        if e is None or (isinstance(e, float) and np.isnan(e)):
+            return None
+        e = int(e)
+        return e if 0 <= e < len(self.ensemble) else None
+
+    def _layer_takes_interlock(self, e: int) -> bool:
+        """True when the layer solver applies Eq. (4.7) inside its own MVA.
+
+        Only the MVA layer solver reads options.config['interlock'], and only a layer whose
+        sole queueing stations are the host's own tasks can take a matrix built for that host:
+        under flat layering one layer holds every server, so the correction stays on the
+        residence times there.
+        """
+        from ..solver_mva import SolverMVA as _SolverMVA
+        if e >= len(self.solvers) or not isinstance(self.solvers[e], _SolverMVA):
+            return False
+        cfg = getattr(self.options, 'config', None)
+        layering = None
+        if isinstance(cfg, dict):
+            layering = cfg.get('layering', None)
+        elif cfg is not None:
+            layering = getattr(cfg, 'layering', None)
+        if isinstance(layering, str) and layering.lower() in ('flat', 'squashed'):
+            return False
+        # A layer whose MVA path has no interlock term would be moved to another algorithm by
+        # the matrix alone: exact multiserver MVA would become AMVA, the linearizer would
+        # become the load-dependent forward step. That swap is worth far more than the
+        # correction it carries, and on a layer sitting near a bifurcation it turns the LN
+        # iteration into a limit cycle. Such a layer keeps the residt scaling instead.
+        from ...api.solvers.mva.analyzers import mva_carries_interlock
+        return mva_carries_interlock(self.ensemble[e].getStruct(), self.solvers[e].options)
+
+    def _build_layer_interlock(self, e: int, host_tasks, task_pr_il, task_PrIL):
+        """Class-level interlock matrix of one host layer.
+
+        IL[r,s] is the share of the class-s queue that a class-r arrival must not see at the
+        host. The matrix is CLASS-indexed, not chain-indexed, so that a later refreshChains
+        cannot leave it stale; the layer solver aggregates it to chains against the struct it
+        is about to solve. Two classes are interlocked only if BOTH their tasks are, which is
+        the 0/1 relation ir_mkj of Eq. (5); the diagonal stays zero, since a request always
+        sees its own class in full. The entry is the Eq. (5) product Pr(IL_ms)*IR_ms*IR_mr,
+        asymmetric in (r,s) because Pr(IL) is taken from the QUEUED class s, so that the
+        layer's ILw(r,s) = 1-IL(r,s) is the lower-level adjustment rate r_lower.
+        """
+        classes = self.ensemble[e].classes
+        nclasses = len(classes)
+        class_pr_il = np.zeros(nclasses)   # IR
+        class_PrIL = np.zeros(nclasses)    # Pr(IL)
+        host_tasks = list(host_tasks)
+        for r in range(nclasses):
+            tidx = self._client_task_of_class(e, r)
+            if tidx is None:
+                continue
+            if tidx in host_tasks:
+                ti = host_tasks.index(tidx)
+                class_pr_il[r] = task_pr_il[ti]
+                class_PrIL[r] = task_PrIL[ti]
+        IL = np.zeros((nclasses, nclasses))
+        for r in range(nclasses):
+            if class_pr_il[r] <= GlobalConstants.FineTol:
+                continue
+            for sIl in range(nclasses):
+                if sIl == r or class_pr_il[sIl] <= GlobalConstants.FineTol:
+                    continue
+                IL[r, sIl] = class_PrIL[sIl] * class_pr_il[sIl] * class_pr_il[r]
+        return IL if np.any(IL > GlobalConstants.FineTol) else None
+
+    def _client_task_of_class(self, e: int, c: int) -> Optional[int]:
+        """Task that a layer class belongs to, None when the class names no task."""
+        lqn = self.lqn
+        cls = self.ensemble[e].classes[c]
+        attr = getattr(cls, 'attribute', None)
+        if attr is None or len(attr) < 2:
+            return None
+        tidx = None
+        if attr[0] == LayeredNetworkElement.TASK:
+            tidx = int(attr[1])
+        elif attr[0] in (LayeredNetworkElement.ENTRY, LayeredNetworkElement.ACTIVITY):
+            tidx = self._get_parent(int(attr[1]))
+        elif attr[0] == LayeredNetworkElement.CALL:
+            cidx = int(attr[1])
+            if lqn.callpair is not None and cidx < len(lqn.callpair):
+                tidx = self._get_parent(int(lqn.callpair[cidx, 0]))
+        if tidx is None:
+            return None
+        tidx = int(tidx)
+        if tidx < lqn.tshift or tidx >= lqn.tshift + lqn.ntasks:
+            return None
+        return tidx
+
     def _get_parent(self, idx: int) -> Optional[int]:
         """Get parent index for an element."""
         lqn = self.lqn
@@ -3850,14 +5146,52 @@ class SolverLN(EnsembleSolver):
             if isinstance(lqn.parent, dict):
                 return lqn.parent.get(idx)
             elif isinstance(lqn.parent, np.ndarray):
-                # Parent array is 0-indexed at position 0, so access parent[idx] directly
-                # (position 0 is unused, position 1 is for idx 1, etc.)
+                # parent is 0-indexed over elements and carries -1 where an
+                # element has no parent, since 0 is the first host
                 if idx < len(lqn.parent):
                     val = lqn.parent[idx]
                     if isinstance(val, np.ndarray):
-                        val = val.flatten()[0] if len(val) > 0 else 0
-                    return int(val) if val > 0 else None
+                        val = val.flatten()[0] if len(val) > 0 else -1
+                    return int(val) if val >= 0 else None
         return None
+
+    def _calls_of(self, aidx: int) -> List[int]:
+        """Indices of the calls issued by activity aidx."""
+        lqn = self.lqn
+        callsof = getattr(lqn, 'callsof', None)
+        if isinstance(callsof, dict):
+            return [int(c) for c in callsof.get(aidx, [])]
+        if callsof is not None and aidx < len(callsof):
+            entry = callsof[aidx]
+            if entry is None:
+                return []
+            return [int(c) for c in np.asarray(entry).flatten()]
+        return []
+
+    def _chain_ref_indices(self, layer_idx: int, classidx_0: int):
+        """(refstat, refclass) of the chain holding class CLASSIDX_0 in layer LAYER_IDX."""
+        refstat_k = None
+        refclass_c = None
+        if layer_idx < 0 or layer_idx >= len(self.ensemble) or self.ensemble[layer_idx] is None:
+            return refstat_k, refclass_c
+        layer_sn = self.ensemble[layer_idx]._sn if hasattr(self.ensemble[layer_idx], '_sn') else None
+        if layer_sn is None:
+            return refstat_k, refclass_c
+        if getattr(layer_sn, 'chains', None) is not None:
+            chains_arr = np.asarray(layer_sn.chains)
+            if chains_arr.ndim == 2 and classidx_0 < chains_arr.shape[1]:
+                for ch in range(chains_arr.shape[0]):
+                    if chains_arr[ch, classidx_0] > 0:
+                        if getattr(layer_sn, 'refclass', None) is not None:
+                            rc = np.asarray(layer_sn.refclass).flatten()
+                            if ch < len(rc):
+                                refclass_c = int(rc[ch])
+                        break
+        if getattr(layer_sn, 'refstat', None) is not None:
+            rs = np.asarray(layer_sn.refstat).flatten()
+            if classidx_0 < len(rs):
+                refstat_k = int(rs[classidx_0])
+        return refstat_k, refclass_c
 
     def _is_activity_of_entry(self, aidx: int, eidx: int) -> bool:
         """Check if an activity is bound to an entry."""
@@ -4196,7 +5530,7 @@ class SolverLN(EnsembleSolver):
         # Update routing probabilities
         self.update_routing_probabilities(it)
 
-        # refresh_rates() when only service times changed, full refresh_struct() when routing was invalidated; mirrors MATLAB refreshRates/refreshChains split.
+        # refresh_rates() when only service times changed, full refresh_struct() when routing invalidated; mirrors MATLAB refreshRates/refreshChains split.
         for e in range(self.nlayers):
             if e < len(self.ensemble) and self.ensemble[e] is not None:
                 if not self.ensemble[e]._has_struct:
@@ -4207,6 +5541,10 @@ class SolverLN(EnsembleSolver):
                     if e < len(self.solvers) and self.solvers[e] is not None \
                             and hasattr(self.solvers[e], 'options'):
                         self.solvers[e].options.init_sol = None
+                elif self._is_ph_encoding():
+                    # a phase-type service law, whose phases a rate-only refresh
+                    # would drop -- see _kb/06-solver-catalog.md (LN section)
+                    self.ensemble[e].refresh_struct()
                 else:
                     # Only service rates changed - lightweight update
                     # (may trigger full rebuild if _sn was set to None by set_service)
@@ -4235,11 +5573,95 @@ class SolverLN(EnsembleSolver):
 
     def update_metrics(self, it: int):
         """Update metrics (matches MATLAB updateMetrics)."""
-        method = getattr(self.options, 'method', 'default')
-        if method == 'moment3':
+        method = self.lnmethod
+        if self._is_ph_encoding():
+            # see _kb/06-solver-catalog.md (LN section) for rationale
+            self._update_metrics_ph(it)
+        elif method == 'moment3':
             self._update_metrics_moment_based(it)
         else:
             self._update_metrics_default(it)
+
+    def _layer_respt_cdf(self, repo, layer_idx):
+        """Per-(station, class) response time CDFs of one layer, memoised in REPO.
+
+        The fluid passage time is asked for first, as the reference does, and the
+        LAYER's own solver answers when it refuses -- python's fluid getter raises
+        ``passage-time integration failed (stiff augmented system)`` on the PS and
+        INF layers an LQN is mostly made of.
+
+        Returns:
+            RD[station][class], an ``(n, 2)`` ``[cdf, time]`` array or None per
+            cell, or None when neither solver produced anything.
+        """
+        if layer_idx in repo:
+            return repo[layer_idx]
+        raw = None
+        try:
+            from ..solver_fld import SolverFLD
+            raw = SolverFLD(self.ensemble[layer_idx]).getCdfRespT()
+        except Exception:
+            try:
+                raw = self.solvers[layer_idx].getCdfRespT()
+            except Exception:
+                raw = None
+        repo[layer_idx] = self._nested_respt_cdf(raw, self.ensemble[layer_idx])
+        return repo[layer_idx]
+
+    @staticmethod
+    def _nested_respt_cdf(raw, layer):
+        """Bring either getCdfRespT contract to RD[station][class] = [cdf, time].
+
+        TWO CONTRACTS MEET HERE, and the entry assembly indexes only the first.
+        ``SolverFLD`` returns the NESTED shape, ``RD[station][class]`` an
+        ``(n, 2)`` ``[cdf, time]`` array. ``SolverMVA`` and ``SolverNC`` return
+        the FLAT native contract, a list of dicts carrying 1-based ``station`` and
+        ``class`` with numpy ``t`` and ``p`` -- the same contract
+        ``cpp_dispatch.cdf_respt_via_cpp`` documents.
+
+        The flat one is CONVERTED here rather than dropped. The isinstance guard
+        this replaces tested the station row for ``list`` and silently discarded
+        every dict, so on any model whose fluid passage time failed -- which is
+        the common case -- a caller entry convolved its own host demand and NONE
+        of its call terms, and reported an entry service time equal to that bare
+        demand while the activity row beside it carried the full value.
+        """
+        if raw is None:
+            return None
+        if not hasattr(raw, '__len__') or len(raw) == 0:
+            return None
+        first = next((cell for cell in raw if cell is not None), None)
+        if first is None:
+            return None
+        if isinstance(first, (list, tuple)):
+            return raw
+        if isinstance(first, dict):
+            sn = layer.getStruct()
+            M, K = int(sn.nstations), int(sn.nclasses)
+            RD = [[None] * K for _ in range(M)]
+            for cell in raw:
+                if cell is None:
+                    continue
+                # 1-based on the wire, as the native contract specifies
+                i = int(cell['station']) - 1
+                r = int(cell['class']) - 1
+                if not (0 <= i < M and 0 <= r < K):
+                    raise ValueError(
+                        "getCdfRespT returned station=%d class=%d, outside the layer's "
+                        "%d x %d index space" % (i + 1, r + 1, M, K))
+                t = np.asarray(cell['t'], dtype=float).ravel()
+                p = np.asarray(cell['p'], dtype=float).ravel()
+                if t.size != p.size:
+                    raise ValueError(
+                        "getCdfRespT cell (station=%d, class=%d) carries %d times and "
+                        "%d probabilities" % (i + 1, r + 1, t.size, p.size))
+                RD[i][r] = np.column_stack([p, t])
+            return RD
+        raise TypeError(
+            "unrecognised getCdfRespT return shape: expected the nested "
+            "RD[station][class] arrays of SolverFLD or the flat list of "
+            "{station, class, t, p} dicts of SolverMVA/SolverNC, got a %s"
+            % type(first).__name__)
 
     def _update_metrics_moment_based(self, it: int):
         """Moment-based metrics update (matches MATLAB updateMetricsMomentBased)."""
@@ -4249,8 +5671,8 @@ class SolverLN(EnsembleSolver):
             # ===== PRE-CONVERGENCE: Mean-based propagation using exponential fits =====
 
             # First obtain servt of activities at hostlayers
-            self.servt = np.zeros(lqn.nidx + 1)
-            self.residt = np.zeros(lqn.nidx + 1)
+            self.servt = np.zeros(lqn.nidx)
+            self.residt = np.zeros(lqn.nidx)
 
             if self.servt_classes_updmap is not None:
                 for r in range(len(self.servt_classes_updmap)):
@@ -4297,7 +5719,7 @@ class SolverLN(EnsembleSolver):
 
                                 if (refstat_k is not None and refclass_c is not None and
                                         QN is not None and TN is not None and
-                                        refstat_k < TN.shape[0] and refclass_c < TN.shape[1]):
+                                        0 <= refstat_k < TN.shape[0] and 0 <= refclass_c < TN.shape[1]):
                                     TN_ref = TN[refstat_k, refclass_c]
                                     if TN_ref > 1e-8:  # GlobalConstants.FineTol
                                         self.residt[aidx] = QN[nodeidx_0, classidx_0] / TN_ref
@@ -4306,9 +5728,31 @@ class SolverLN(EnsembleSolver):
                                 else:
                                     self.residt[aidx] = WN[nodeidx_0, classidx_0] if WN is not None else RN[nodeidx_0, classidx_0]
 
+                                # An activity think time is in series with the host demand
+                                zt_act = self._act_thinktime(aidx)
+                                if zt_act > 0:
+                                    self.servt[aidx] += zt_act
+                                    self.residt[aidx] += zt_act
+                                    self.servtproc[aidx] = Exp.fit_mean(self.servt[aidx])
+
+                                # async-only targets carry no visit-ratio scaling (matching _update_metrics_default)
+                                if lqn.ashift <= aidx < lqn.ashift + lqn.nacts:
+                                    if hasattr(lqn, 'graph') and isinstance(lqn.graph, np.ndarray):
+                                        for eidx in range(lqn.eshift, lqn.eshift + lqn.nentries):
+                                            if eidx < lqn.graph.shape[0] and aidx < lqn.graph.shape[1] and lqn.graph[eidx, aidx] > 0:
+                                                has_sync_callers = False
+                                                has_async_callers = False
+                                                if isinstance(getattr(lqn, 'issynccaller', None), np.ndarray) and eidx < lqn.issynccaller.shape[1]:
+                                                    has_sync_callers = np.any(lqn.issynccaller[:, eidx])
+                                                if isinstance(getattr(lqn, 'isasynccaller', None), np.ndarray) and eidx < lqn.isasynccaller.shape[1]:
+                                                    has_async_callers = np.any(lqn.isasynccaller[:, eidx])
+                                                if has_async_callers and not has_sync_callers:
+                                                    self.residt[aidx] = self.servt[aidx]
+                                                break
+
             # Estimate call response times at hostlayers
-            self.callservt = np.zeros(lqn.ncalls + 1)
-            self.callresidt = np.zeros(lqn.ncalls + 1)
+            self.callservt = np.zeros(lqn.ncalls)
+            self.callresidt = np.zeros(lqn.ncalls)
 
             if self.call_classes_updmap is not None:
                 for c in range(len(self.call_classes_updmap)):
@@ -4333,16 +5777,18 @@ class SolverLN(EnsembleSolver):
                                     else:
                                         # Include call multiplicity (matching updateMetricsDefault)
                                         call_mean = self._get_call_mean(cidx)
-                                        self.callservt[cidx] = RN[nodeidx_0, classidx_0] * call_mean
+                                        fcr_wait = self._region_wait(layer_idx, nodeidx_0, classidx_0, result)
+                                        self.callservt[cidx] = (RN[nodeidx_0, classidx_0] + fcr_wait) * call_mean
                                         # callresidt uses WN which already includes visit multiplicity
-                                        self.callresidt[cidx] = WN[nodeidx_0, classidx_0]
+                                        self.callresidt[cidx] = WN[nodeidx_0, classidx_0] + fcr_wait
 
-            # Resolve the entry servt summing up these contributions
-            # entry_servt = (I - servtmatrix)^(-1) * [servt; callservt]
-            size = lqn.nidx + lqn.ncalls + 1
+            # Resolve the entry servt summing up these contributions; the terms are
+            # residence times (Vtask=1), rescaled to Ventry=1 by the task/entry tput ratio below
+            # entry_servt = (I - servtmatrix)^(-1) * [residt; callresidt]
+            size = lqn.nidx + lqn.ncalls
             combined_vec = np.zeros(size)
-            combined_vec[:lqn.nidx + 1] = self.servt
-            combined_vec[lqn.nidx + 1:lqn.nidx + lqn.ncalls + 1] = self.callservt[1:]
+            combined_vec[:lqn.nidx] = self.residt
+            combined_vec[lqn.nidx:lqn.nidx + lqn.ncalls] = self.callresidt
 
             identity = np.eye(size)
             system = identity - self.servtmatrix
@@ -4352,35 +5798,47 @@ class SolverLN(EnsembleSolver):
                 entry_servt = np.linalg.lstsq(system, combined_vec, rcond=None)[0]
 
             # Clear entries up to eshift
-            entry_servt[:lqn.eshift + 1] = 0
+            entry_servt[:lqn.eshift] = 0
 
-            # Propagate forwarding calls: add target entry's service time to source entry
-            # (MATLAB updateMetricsMomentBased.m lines 56-64)
-            for cidx in range(1, lqn.ncalls + 1):
-                if cidx < len(lqn.calltype) and int(lqn.calltype[cidx]) == CallType.FWD:
-                    source_eidx = int(lqn.callpair[cidx, 1])
-                    target_eidx = int(lqn.callpair[cidx, 2])
-                    fwd_prob = self._get_call_mean(cidx)
-                    if 0 < source_eidx < len(entry_servt) and 0 < target_eidx < len(entry_servt):
-                        entry_servt[source_eidx] += fwd_prob * entry_servt[target_eidx]
+            # NO forwarding propagation here. _lqn_fwd_rendezvous has already
+            # reconnected every forwarding chain reachable from a synchronous call
+            # to the client that issued the rendezvous (Franks 1999, Sec. 3.3.1),
+            # so the forwarded service is in the caller's chain before this runs;
+            # adding it again inflated the caller by exactly the forwarded entry's
+            # mean. An asynchronous call into a chain is left untouched there by
+            # design -- a send-no-reply does not block -- so it must not accumulate
+            # the forwarded service either. See BUGS.md BUG-91.
+
+            # A SetupTask's cold start is charged HERE, to the entry, and with the
+            # probability that the thread was actually found powered down. It is not
+            # host demand, so it does not belong to any activity's residence:
+            # reporting it there put RespT(A2) at 1.29479 on lqn_setup against the
+            # 0.333178 LDES measures, which is the bare demand. See _setup_charge.
+            for i in range(lqn.eshift, lqn.eshift + lqn.nentries):
+                entry_servt[i] += self._setup_charge(self._get_parent(i))
 
             # Update servt for entries
-            for i in range(lqn.eshift + 1, lqn.eshift + lqn.nentries + 1):
+            for i in range(lqn.eshift, lqn.eshift + lqn.nentries):
                 self.servt[i] = entry_servt[i]
 
             # Clear activities after ashift
-            for i in range(lqn.ashift + 1, len(entry_servt)):
+            for i in range(lqn.ashift, len(entry_servt)):
                 entry_servt[i] = 0
+
+            # Published for inspection, as MATLAB's SolverLN carries entry_servt
+            # on the object: a debug driver reads it back after an iteration and
+            # a local would leave it unreachable.
+            self.entry_servt = entry_servt.copy()
 
             # Compute entry-level residt using servtmatrix and activity residt
             combined_residt = np.zeros(size)
-            combined_residt[:lqn.nidx + 1] = self.residt
-            combined_residt[lqn.nidx + 1:lqn.nidx + lqn.ncalls + 1] = self.callresidt[1:]
+            combined_residt[:lqn.nidx] = self.residt
+            combined_residt[lqn.nidx:lqn.nidx + lqn.ncalls] = self.callresidt
             entry_residt_vec = self.servtmatrix @ combined_residt
-            entry_residt_vec[:lqn.eshift + 1] = 0
+            entry_residt_vec[:lqn.eshift] = 0
 
             # Scale entry residt/servt by task/entry throughput ratio
-            for e in range(1, lqn.nentries + 1):
+            for e in range(lqn.nentries):
                 eidx = lqn.eshift + e
                 tidx = self._get_parent(eidx)
                 hidx = self._get_parent(tidx) if tidx is not None else None
@@ -4439,12 +5897,12 @@ class SolverLN(EnsembleSolver):
             from ...api.butools.ph.canonical import APHFrom3Moments
             from ...distributions.markovian import APH
 
-            self.servtcdf = [None] * (lqn.nidx + 1)
+            self.servtcdf = [None] * lqn.nidx
             repo = {}
 
             # First obtain servt of activities at hostlayers
-            self.servt = np.zeros(lqn.nidx + 1)
-            self.residt = np.zeros(lqn.nidx + 1)
+            self.servt = np.zeros(lqn.nidx)
+            self.residt = np.zeros(lqn.nidx)
 
             if self.servt_classes_updmap is not None:
                 for r in range(len(self.servt_classes_updmap)):
@@ -4487,7 +5945,7 @@ class SolverLN(EnsembleSolver):
 
                             if (refstat_k is not None and refclass_c is not None and
                                     QN is not None and TN is not None and
-                                    refstat_k < TN.shape[0] and refclass_c < TN.shape[1]):
+                                    0 <= refstat_k < TN.shape[0] and 0 <= refclass_c < TN.shape[1]):
                                 TN_ref = TN[refstat_k, refclass_c]
                                 if TN_ref > 1e-8:
                                     self.residt[aidx] = QN[nodeidx_0, classidx_0] / TN_ref
@@ -4497,28 +5955,16 @@ class SolverLN(EnsembleSolver):
                                 self.residt[aidx] = WN[nodeidx_0, classidx_0] if WN is not None else 0
 
                     # Get CDFs - try SolverFluid first, fall back to layer solver
-                    submodelidx = layer_idx
-                    if submodelidx not in repo:
-                        try:
-                            from ..solver_fld import SolverFLD
-                            repo[submodelidx] = SolverFLD(self.ensemble[submodelidx]).getCdfRespT()
-                        except Exception:
-                            try:
-                                repo[submodelidx] = self.solvers[submodelidx].getCdfRespT()
-                            except Exception:
-                                repo[submodelidx] = None
-
-                    cdf_data = repo.get(submodelidx)
-                    if cdf_data is not None:
-                        # Handle nested list format: cdf_data[station][class] = 2D array [cdf, time]
-                        if isinstance(cdf_data, list) and len(cdf_data) > nodeidx_0:
-                            if isinstance(cdf_data[nodeidx_0], list) and len(cdf_data[nodeidx_0]) > classidx_0:
-                                self.servtcdf[aidx] = cdf_data[nodeidx_0][classidx_0]
+                    cdf_data = self._layer_respt_cdf(repo, layer_idx)
+                    if (cdf_data is not None and nodeidx_0 < len(cdf_data)
+                            and cdf_data[nodeidx_0] is not None
+                            and classidx_0 < len(cdf_data[nodeidx_0])):
+                        self.servtcdf[aidx] = cdf_data[nodeidx_0][classidx_0]
 
             # Initialize callservtcdf
-            self.callservtcdf = [None] * (lqn.ncalls + 1)
-            self.callservt = np.zeros(lqn.ncalls + 1)
-            self.callresidt = np.zeros(lqn.ncalls + 1)
+            self.callservtcdf = [None] * lqn.ncalls
+            self.callservt = np.zeros(lqn.ncalls)
+            self.callresidt = np.zeros(lqn.ncalls)
 
             if self.call_classes_updmap is not None:
                 for c in range(len(self.call_classes_updmap)):
@@ -4532,22 +5978,11 @@ class SolverLN(EnsembleSolver):
                         nodeidx_0 = nodeidx - 1 if nodeidx >= 1 else 0
                         classidx_0 = classidx - 1 if classidx >= 1 else 0
 
-                        submodelidx = layer_idx
-                        if submodelidx not in repo:
-                            try:
-                                from ..solver_fld import SolverFLD
-                                repo[submodelidx] = SolverFLD(self.ensemble[submodelidx]).getCdfRespT()
-                            except Exception:
-                                try:
-                                    repo[submodelidx] = self.solvers[submodelidx].getCdfRespT()
-                                except Exception:
-                                    repo[submodelidx] = None
-
-                        cdf_data = repo.get(submodelidx)
-                        if cdf_data is not None and isinstance(cdf_data, list):
-                            if len(cdf_data) > nodeidx_0:
-                                if isinstance(cdf_data[nodeidx_0], list) and len(cdf_data[nodeidx_0]) > classidx_0:
-                                    self.callservtcdf[cidx] = cdf_data[nodeidx_0][classidx_0]
+                        cdf_data = self._layer_respt_cdf(repo, layer_idx)
+                        if (cdf_data is not None and nodeidx_0 < len(cdf_data)
+                                and cdf_data[nodeidx_0] is not None
+                                and classidx_0 < len(cdf_data[nodeidx_0])):
+                            self.callservtcdf[cidx] = cdf_data[nodeidx_0][classidx_0]
 
                         # Also set callresidt from WN
                         if layer_idx >= 0 and len(self.results) > 0 and layer_idx < len(self.results[-1]):
@@ -4555,13 +5990,14 @@ class SolverLN(EnsembleSolver):
                             if result is not None and 'WN' in result:
                                 WN = result['WN']
                                 if WN is not None and nodeidx_0 < WN.shape[0] and classidx_0 < WN.shape[1]:
-                                    self.callresidt[cidx] = WN[nodeidx_0, classidx_0]
+                                    self.callresidt[cidx] = WN[nodeidx_0, classidx_0] \
+                                        + self._region_wait(layer_idx, nodeidx_0, classidx_0, result)
 
             # Build combined CDF list (servtcdf + callservtcdf)
-            cdf = self.servtcdf + self.callservtcdf[1:]  # Skip index 0
+            cdf = self.servtcdf + self.callservtcdf
 
             # Resolve entry service times using matrix inversion
-            size = lqn.nidx + lqn.ncalls + 1
+            size = lqn.nidx + lqn.ncalls
             identity = np.eye(size)
             system = identity - self.servtmatrix
             try:
@@ -4570,13 +6006,13 @@ class SolverLN(EnsembleSolver):
                 matrix = np.linalg.pinv(system)
 
             # Process each entry
-            for i in range(1, lqn.nentries + 1):
+            for i in range(lqn.nentries):
                 eidx = lqn.eshift + i
 
                 # Find contributing indices (where matrix[eidx,:] > 0)
                 convolidx = []
                 for j in range(matrix.shape[1]):
-                    if matrix[eidx, j] > 0 and (j > lqn.eshift + lqn.nentries):
+                    if matrix[eidx, j] > 0 and (j >= lqn.eshift + lqn.nentries):
                         convolidx.append(j)
 
                 # Build APH convolution list
@@ -4592,18 +6028,27 @@ class SolverLN(EnsembleSolver):
                     if isinstance(cdf_data, np.ndarray) and cdf_data.ndim == 2 and cdf_data.shape[1] >= 2:
                         cdf_vals = cdf_data[:, 0]
                         times = cdf_data[:, 1]
-                        # Compute PMF from CDF
-                        pmf = np.diff(np.concatenate([[0], cdf_vals]))
-                        pmf = np.maximum(pmf, 0)  # ensure non-negative
-                        pmf_sum = np.sum(pmf)
-                        if pmf_sum > 0:
-                            pmf = pmf / pmf_sum
-                        # Raw moments: E[X^k] = sum(t^k * pmf)
-                        m1 = np.sum(times * pmf)
-                        m2 = np.sum(times**2 * pmf)
-                        m3 = np.sum(times**3 * pmf)
+                        # bin midpoints weighted by the CDF increment, as EmpiricalCDF.getMoments
+                        x = times[:-1] + np.diff(times) / 2.0
+                        dF = np.diff(cdf_vals)
+                        m1 = np.sum(x * dF)
+                        m2 = np.sum(x**2 * dF)
+                        m3 = np.sum(x**3 * dF)
                     else:
                         continue
+
+                    # An activity think time is in series with the host demand,
+                    # so its raw moments convolve with the measured ones before
+                    # the APH fit, as MATLAB's lqn_act_thinktime block does
+                    if fitidx < lqn.nidx and self._act_thinktime(fitidx) > 0:
+                        ztd = self.actthinkproc[fitidx]
+                        t1 = ztd.getMean()
+                        sig2 = ztd.getSCV() * t1 ** 2
+                        t2 = sig2 + t1 ** 2
+                        t3 = ztd.getSkewness() * sig2 ** 1.5 + 3 * t1 * t2 - 2 * t1 ** 3
+                        m3 = m3 + 3 * m2 * t1 + 3 * m1 * t2 + t3
+                        m2 = m2 + 2 * m1 * t1 + t2
+                        m1 = m1 + t1
 
                     # Use CoarseTol to skip near-zero mean CDFs
                     if m1 > GlobalConstants.CoarseTol:
@@ -4614,7 +6059,12 @@ class SolverLN(EnsembleSolver):
 
                         # For call indices, multiply repetitions by mean number of calls
                         reps = matrix[eidx, fitidx]
-                        if fitidx > lqn.nidx:
+                        # The CALL block starts AT nidx in this 0-based index
+                        # space; MATLAB numbers from 1, so its `> nidx` becomes
+                        # `>= nidx` here. Dead code until the layer CDF repo
+                        # started supplying call terms, and wrong the moment it
+                        # was not: it credited call 0 to the last activity.
+                        if fitidx >= lqn.nidx:
                             cidx_local = fitidx - lqn.nidx
                             reps = reps * self._get_call_mean(cidx_local)
 
@@ -4646,7 +6096,10 @@ class SolverLN(EnsembleSolver):
                                 pass
 
                         # Update servtproc and callservtproc
-                        if fitidx <= lqn.nidx:
+                        # Same 0-based boundary: servtproc holds nidx entries,
+                        # so `fitidx == nidx` is the FIRST CALL, not the last
+                        # activity, and writing it here raised IndexError.
+                        if fitidx < lqn.nidx:
                             self.servtproc[fitidx] = Exp.fit_mean(m1)
                             self.servt[fitidx] = m1
                         else:
@@ -4657,32 +6110,37 @@ class SolverLN(EnsembleSolver):
                 if not param_list:
                     self.servt[eidx] = 0
                 else:
+                    entry_dist = None
                     try:
                         alpha_conv, T_conv = aph_convseq(param_list)
                         entry_dist = APH(alpha_conv, T_conv)
-                        entry_index = eidx - (lqn.nhosts + lqn.ntasks)
-                        if self.entryproc is None:
-                            self.entryproc = [None] * (lqn.nentries + 1)
-                        if 0 < entry_index <= lqn.nentries:
-                            self.entryproc[entry_index] = entry_dist
-                        self.servt[eidx] = entry_dist.getMean()
-                        self.servtproc[eidx] = Exp.fit_mean(self.servt[eidx])
-                        if self.entrycdfrespt is not None and 0 < entry_index <= lqn.nentries:
-                            try:
-                                self.entrycdfrespt[entry_index] = entry_dist.evalCDF()
-                            except Exception:
-                                pass
                     except Exception:
                         self.servt[eidx] = 0
+                    if entry_dist is not None:
+                        # ENTRY-LOCAL INDEX, 0-BASED. MATLAB numbers the entries
+                        # 1..nentries and guards `0 < e <= nentries`; this index
+                        # space runs 0..nentries-1, so carrying that guard over
+                        # verbatim silently dropped entry 0 -- its law was never
+                        # stored and getCdfRespT had nothing to return for it.
+                        entry_index = eidx - lqn.eshift
+                        if self.entryproc is None:
+                            self.entryproc = [None] * lqn.nentries
+                        self.entryproc[entry_index] = entry_dist
+                        self.servt[eidx] = entry_dist.getMean()
+                        self.servtproc[eidx] = Exp.fit_mean(self.servt[eidx])
+                        # Unguarded, as the reference is: a law that cannot be
+                        # tabulated is a defect to surface, not a service time
+                        # to quietly replace with zero.
+                        self.entrycdfrespt[entry_index] = entry_dist.evalCDF()
 
             # fallback linear-system entry servt when APH fitting fails (CDF unavailable), matching MATLAB's SolverFluid-always-succeeds assumption.
             any_zero_entry = any(
                 self.servt[lqn.eshift + i] == 0
-                for i in range(1, lqn.nentries + 1)
+                for i in range(lqn.nentries)
             )
             if any_zero_entry:
                 # Rebuild activity-level servt from results for the system solve
-                fallback_servt = np.zeros(lqn.nidx + 1)
+                fallback_servt = np.zeros(lqn.nidx)
                 if self.servt_classes_updmap is not None:
                     for r in range(len(self.servt_classes_updmap)):
                         idx = int(self.servt_classes_updmap[r, 0])
@@ -4699,7 +6157,7 @@ class SolverLN(EnsembleSolver):
                                 if nodeidx_0 < RN.shape[0] and classidx_0 < RN.shape[1]:
                                     fallback_servt[aidx] = RN[nodeidx_0, classidx_0]
 
-                fallback_callservt = np.zeros(lqn.ncalls + 1)
+                fallback_callservt = np.zeros(lqn.ncalls)
                 if self.call_classes_updmap is not None:
                     for c in range(len(self.call_classes_updmap)):
                         idx = int(self.call_classes_updmap[c, 0])
@@ -4716,45 +6174,37 @@ class SolverLN(EnsembleSolver):
                                     RN = result['RN']
                                     if nodeidx_0 < RN.shape[0] and classidx_0 < RN.shape[1]:
                                         call_mean = self._get_call_mean(cidx)
-                                        fallback_callservt[cidx] = RN[nodeidx_0, classidx_0] * call_mean
+                                        fallback_callservt[cidx] = (RN[nodeidx_0, classidx_0]
+                                            + self._region_wait(layer_idx, nodeidx_0, classidx_0, result)) * call_mean
 
                 # Solve (I - servtmatrix) * entry_servt = [servt; callservt]
                 combined_vec = np.zeros(size)
-                combined_vec[:lqn.nidx + 1] = fallback_servt
-                combined_vec[lqn.nidx + 1:lqn.nidx + lqn.ncalls + 1] = fallback_callservt[1:]
+                combined_vec[:lqn.nidx] = fallback_servt
+                combined_vec[lqn.nidx:lqn.nidx + lqn.ncalls] = fallback_callservt
                 try:
                     entry_servt_fb = np.linalg.solve(system, combined_vec)
                 except np.linalg.LinAlgError:
                     entry_servt_fb = np.linalg.lstsq(system, combined_vec, rcond=None)[0]
-                entry_servt_fb[:lqn.eshift + 1] = 0
+                entry_servt_fb[:lqn.eshift] = 0
 
-                for i in range(1, lqn.nentries + 1):
+                for i in range(lqn.nentries):
                     eidx = lqn.eshift + i
                     if self.servt[eidx] == 0 and entry_servt_fb[eidx] > 0:
                         self.servt[eidx] = entry_servt_fb[eidx]
                         self.servtproc[eidx] = Exp.fit_mean(self.servt[eidx])
 
-            # Propagate forwarding calls
-            for cidx in range(1, lqn.ncalls + 1):
-                calltype = lqn.calltype[cidx] if cidx < len(lqn.calltype) else 0
-                is_fwd = (calltype == CallType.FWD or
-                         (isinstance(calltype, (int, np.integer)) and int(calltype) == CallType.FWD.value))
-                if is_fwd:
-                    source_eidx = int(lqn.callpair[cidx, 1]) if cidx < len(lqn.callpair) else 0
-                    target_eidx = int(lqn.callpair[cidx, 2]) if cidx < len(lqn.callpair) else 0
-                    fwd_prob = self._get_call_mean(cidx)
-                    if source_eidx > 0 and target_eidx > 0:
-                        self.servt[source_eidx] += fwd_prob * self.servt[target_eidx]
-                        self.servtproc[source_eidx] = Exp.fit_mean(self.servt[source_eidx])
+            # NO forwarding propagation here, for the reason given at the
+            # entry_servt assembly above: _lqn_fwd_rendezvous has already charged
+            # the forwarded service to the caller. See BUGS.md BUG-91.
 
             # Compute entry-level residt
             combined_residt = np.zeros(size)
-            combined_residt[:lqn.nidx + 1] = self.residt
-            combined_residt[lqn.nidx + 1:lqn.nidx + lqn.ncalls + 1] = self.callresidt[1:]
+            combined_residt[:lqn.nidx] = self.residt
+            combined_residt[lqn.nidx:lqn.nidx + lqn.ncalls] = self.callresidt
             entry_residt_vec = self.servtmatrix @ combined_residt
-            entry_residt_vec[:lqn.eshift + 1] = 0
+            entry_residt_vec[:lqn.eshift] = 0
 
-            for e in range(1, lqn.nentries + 1):
+            for e in range(lqn.nentries):
                 eidx = lqn.eshift + e
                 tidx = self._get_parent(eidx)
                 hidx = self._get_parent(tidx) if tidx is not None else None
@@ -4792,13 +6242,23 @@ class SolverLN(EnsembleSolver):
                                 if eidx < len(self.servtproc) and self.servtproc[eidx] is not None:
                                     self.callservtproc[cidx] = Exp.fit_mean(self.servt[eidx])
 
+            # This pass IS the moment3 answer, and it is TERMINAL. Its entry laws
+            # are convolutions of the activities' own response distributions; the
+            # pre-convergence branch instead reads QN/TN_ref, a residence per
+            # REFERENCE cycle, which the entry assembly then treats as a
+            # per-entry-visit time. The two disagree by the entry's visit ratio
+            # whenever it is not 1, so letting the iteration fall back to that
+            # branch after this one has run DISCARDS the moment-based laws and
+            # reports the other quantity. See BUGS.md BUG-97.
+            self.moment_pass_done = True
+
     def _has_sync_callers_for_entry(self, eidx: int) -> bool:
         """Check if entry has sync callers."""
         lqn = self.lqn
         if hasattr(lqn, 'callpair') and lqn.callpair is not None and hasattr(lqn, 'calltype'):
-            for cidx in range(1, lqn.ncalls + 1):
+            for cidx in range(lqn.ncalls):
                 if cidx < len(lqn.callpair):
-                    tgt_eidx = int(lqn.callpair[cidx, 2]) if lqn.callpair[cidx, 2] > 0 else 0
+                    tgt_eidx = int(lqn.callpair[cidx, 1]) if lqn.callpair[cidx, 1] > 0 else 0
                     if tgt_eidx == eidx:
                         calltype = lqn.calltype[cidx] if cidx < len(lqn.calltype) else 0
                         is_sync = (calltype == CallType.SYNC or
@@ -4882,18 +6342,18 @@ class SolverLN(EnsembleSolver):
             else np.zeros(0)
 
         members = []
-        for tail in range(1, graph.shape[0]):
+        for tail in range(graph.shape[0]):
             if graph[tail, joinaidx] <= 0:
                 continue
-            if tail <= ashift or tail > ashift + nacts:
+            if tail < ashift or tail >= ashift + nacts:
                 continue  # not an activity
             chain = [tail]
             cur = tail
             for _ in range(nacts):
                 if 0 < cur < len(flat_posttype) and flat_posttype[cur] == post_and_value:
                     break  # branch head
-                prevs = [p for p in range(1, graph.shape[0])
-                         if p != cur and graph[p, cur] > 0 and ashift < p <= ashift + nacts]
+                prevs = [p for p in range(graph.shape[0])
+                         if p != cur and graph[p, cur] > 0 and ashift <= p < ashift + nacts]
                 if len(prevs) != 1:
                     break  # a merge or the start of the graph
                 cur = prevs[0]
@@ -4924,13 +6384,13 @@ class SolverLN(EnsembleSolver):
         flat_quorum = lqn.actquorum.flatten() if getattr(lqn, 'actquorum', None) is not None \
             else np.zeros(0)
 
-        self.joint = np.zeros(lqn.nidx + 1)
+        self.joint = np.zeros(lqn.nidx)
         # Restricted to activities: PRE_AND marks the branch tails, so the joins are the
         # activities whose predecessors carry that mark.
-        for aidx in range(lqn.ashift + 1, min(lqn.ashift + lqn.nacts + 1, lqn.graph.shape[0])):
+        for aidx in range(lqn.ashift, min(lqn.ashift + lqn.nacts, lqn.graph.shape[0])):
             # A join target is an activity whose predecessors are PRE_AND.
             is_join = False
-            for pred in range(1, lqn.graph.shape[0]):
+            for pred in range(lqn.graph.shape[0]):
                 if pred != aidx and lqn.graph[pred, aidx] > 0:
                     if 0 < pred < len(flat_pretype) and flat_pretype[pred] == pre_and_value:
                         is_join = True
@@ -4942,7 +6402,18 @@ class SolverLN(EnsembleSolver):
             n = len(branches)
             if n == 0:
                 continue
-            branch_times = [float(sum(self.residt[m] for m in b)) for b in branches]
+            # A branch time is residt PLUS the callresidt of every synchronous call
+            # its activities issue: a branch activity with an Immediate host demand
+            # does all its work in a rendezvous, and reading residt alone would make
+            # this whole correction vanish silently. See _kb/06-solver-catalog.md.
+            branch_times = []
+            for b in branches:
+                bt = float(sum(self.residt[m] for m in b))
+                for baidx in b:
+                    for cidx in self._calls_of(baidx):
+                        if int(lqn.calltype[cidx]) == CallType.SYNC and cidx < len(self.callresidt):
+                            bt += float(self.callresidt[cidx])
+                branch_times.append(bt)
             if n == 1:
                 self.joint[aidx] = branch_times[0]
                 continue
@@ -4963,8 +6434,8 @@ class SolverLN(EnsembleSolver):
         lqn = self.lqn
 
         # Update activity service times from layer results
-        self.servt = np.zeros(lqn.nidx + 1)
-        self.residt = np.zeros(lqn.nidx + 1)
+        self.servt = np.zeros(lqn.nidx)
+        self.residt = np.zeros(lqn.nidx)
 
         # Calculate iter_min for averaging window (matches MATLAB updateMetricsDefault line 16)
         # MATLAB: iter_min = min(30, ceil(self.options.iter_max/4))
@@ -5032,7 +6503,7 @@ class SolverLN(EnsembleSolver):
                                             # Compute residt from QN/TN_ref (matches MATLAB)
                                             if (refstat_k is not None and refclass_c is not None and
                                                     hist_QN is not None and hist_TN is not None and
-                                                    refstat_k < hist_TN.shape[0] and refclass_c < hist_TN.shape[1]):
+                                                    0 <= refstat_k < hist_TN.shape[0] and 0 <= refclass_c < hist_TN.shape[1]):
                                                 TN_ref_w = hist_TN[refstat_k, refclass_c]
                                                 if TN_ref_w > 1e-8:  # GlobalConstants.FineTol
                                                     self.residt[aidx] += hist_QN[nodeidx_0, classidx_0] / TN_ref_w
@@ -5097,11 +6568,15 @@ class SolverLN(EnsembleSolver):
                 max_servt = 1e10
                 if self.servt[aidx] > 0 and self.servt[aidx] <= max_servt:
                     self.servtproc[aidx] = Exp.fit_mean(self.servt[aidx])
+                # mirrors MATLAB updateMetricsDefault.m:124; an async call's Source reads it.
+                # Exp rejects rate 0 here where MATLAB admits it, so a null rate is Disabled.
+                self.tputproc[aidx] = Exp.fit_rate(self.tput[aidx]) \
+                    if self.tput[aidx] > 0 else Disabled()
 
-                # async-only entries use RN (response time per visit) for residt, not WN, since async arrivals don't share the closed chain's visit ratio; mirrors MATLAB updateMetricsDefault.m:33-54.
-                if aidx > lqn.ashift and aidx <= lqn.ashift + lqn.nacts:
+                # async-only entries use RN for residt, not WN, as async arrivals don't share closed chain's visit ratio; mirrors MATLAB updateMetricsDefault.m:33-54.
+                if lqn.ashift <= aidx < lqn.ashift + lqn.nacts:
                     # This is an activity - find its bound entry
-                    for eidx in range(lqn.eshift + 1, lqn.eshift + lqn.nentries + 1):
+                    for eidx in range(lqn.eshift, lqn.eshift + lqn.nentries):
                         # Check if activity is bound to this entry (edge from entry to activity in graph)
                         if hasattr(lqn, 'graph') and lqn.graph is not None:
                             if isinstance(lqn.graph, np.ndarray):
@@ -5127,9 +6602,49 @@ class SolverLN(EnsembleSolver):
                                             self.residt[aidx] = self.servt[aidx]  # servt already has RN
                                         break
 
+        # throughput of activities that appear only as client-side classes, so that an
+        # async call's Source has a rate; mirrors MATLAB updateMetricsDefault.m:161-183
+        if self.thinkt_classes_updmap is not None:
+            for r in range(len(self.thinkt_classes_updmap)):
+                idx = int(self.thinkt_classes_updmap[r, 0])
+                aidx = int(self.thinkt_classes_updmap[r, 1])
+                nodeidx_0 = int(self.thinkt_classes_updmap[r, 2]) - 1
+                classidx_0 = int(self.thinkt_classes_updmap[r, 3]) - 1
+                if aidx >= len(self.tputproc) or self.tputproc[aidx] is not None:
+                    continue
+                if np.isnan(self.idxhash[idx]):
+                    continue
+                layer_idx = int(self.idxhash[idx])
+                if layer_idx < 0 or not self.results or layer_idx >= len(self.results[-1]):
+                    continue
+                tp = 0.0
+                wnd_size = (it - self.averagingstart + 1) if self.averagingstart is not None else 1
+                if self.averagingstart is not None and it >= iter_min and wnd_size > 1 and len(self.results) > 1:
+                    seen = 0
+                    for w in range(0, wnd_size):
+                        result_idx = len(self.results) - 1 - w
+                        if result_idx < 0 or layer_idx >= len(self.results[result_idx]):
+                            continue
+                        hist = self.results[result_idx][layer_idx]
+                        if hist is None or 'TN' not in hist or hist['TN'] is None:
+                            continue
+                        hist_TN = hist['TN']
+                        if nodeidx_0 < hist_TN.shape[0] and classidx_0 < hist_TN.shape[1]:
+                            tp += hist_TN[nodeidx_0, classidx_0]
+                            seen += 1
+                    tp = tp / wnd_size if seen > 0 else 0.0
+                if tp == 0.0:
+                    latest = self.results[-1][layer_idx]
+                    if latest is not None and latest.get('TN') is not None:
+                        TNl = latest['TN']
+                        if nodeidx_0 < TNl.shape[0] and classidx_0 < TNl.shape[1]:
+                            tp = TNl[nodeidx_0, classidx_0]
+                self.tput[aidx] = tp
+                self.tputproc[aidx] = Exp.fit_rate(tp) if tp > 0 else Disabled()
+
         # Update call service times (matches MATLAB updateMetricsDefault lines 140-162)
-        self.callservt = np.zeros(lqn.ncalls + 1)
-        self.callresidt = np.zeros(lqn.ncalls + 1)
+        self.callservt = np.zeros(lqn.ncalls)
+        self.callresidt = np.zeros(lqn.ncalls)
 
         if self.call_classes_updmap is not None:
             for c in range(len(self.call_classes_updmap)):
@@ -5152,11 +6667,26 @@ class SolverLN(EnsembleSolver):
                                 classidx_0 = classidx - 1 if classidx >= 1 else 0
                                 if nodeidx_0 < RN.shape[0] and classidx_0 < RN.shape[1]:
                                     call_mean = self._get_call_mean(cidx)
+                                    fcr_wait = self._region_wait(layer_idx, nodeidx_0, classidx_0, result)
                                     # MATLAB line 152: callservt = RN * callproc.getMean
-                                    self.callservt[cidx] = RN[nodeidx_0, classidx_0] * call_mean
-                                    # MATLAB line 153: callresidt = WN (directly, not multiplied)
-                                    # WN already includes visits which incorporate call_mean
-                                    self.callresidt[cidx] = WN[nodeidx_0, classidx_0]
+                                    self.callservt[cidx] = (RN[nodeidx_0, classidx_0] + fcr_wait) * call_mean
+                                    # Normalise per chain-reference visit, as residt does.
+                                    # WN divides by the class's own reference rate when the
+                                    # layer is open (an INF client task), which is per-ENTRY
+                                    # visit, and the entry rescaling below would then count
+                                    # the call once per entry.
+                                    QNr = result.get('QN', None)
+                                    TNr = result.get('TN', None)
+                                    TN_ref = 0.0
+                                    if QNr is not None and TNr is not None:
+                                        refstat_k, refclass_c = self._chain_ref_indices(layer_idx, classidx_0)
+                                        if refstat_k is not None and refclass_c is not None \
+                                                and 0 <= refstat_k < TNr.shape[0] and 0 <= refclass_c < TNr.shape[1]:
+                                            TN_ref = TNr[refstat_k, refclass_c]
+                                    if TN_ref > GlobalConstants.FineTol:
+                                        self.callresidt[cidx] = QNr[nodeidx_0, classidx_0] / TN_ref + fcr_wait
+                                    else:
+                                        self.callresidt[cidx] = WN[nodeidx_0, classidx_0] + fcr_wait
 
                                     # Inf/NaN fallback: if layer MVA returned Inf/NaN, use previous value
                                     if (np.isinf(self.callservt[cidx]) or np.isnan(self.callservt[cidx])) and it > 1 and not np.isnan(self.callservt_prev[cidx]):
@@ -5176,13 +6706,13 @@ class SolverLN(EnsembleSolver):
         # entry_servt = servtmatrix * [residt; callresidt]; servtmatrix carries cache hit/miss weighting probabilities.
 
         # servtmatrix indices 0..nidx are LQN elements, nidx+1..nidx+ncalls are calls.
-        size = lqn.nidx + lqn.ncalls + 1
+        size = lqn.nidx + lqn.ncalls
 
         # Build combined vector
         combined_vec = np.zeros(size)
 
         # Fill activity residence times (indices are activity indices in LQN)
-        for aidx in range(lqn.ashift + 1, lqn.ashift + lqn.nacts + 1):
+        for aidx in range(lqn.ashift, lqn.ashift + lqn.nacts):
             if self.residt[aidx] > 0:
                 combined_vec[aidx] = self.residt[aidx]
             elif self.servtproc[aidx] is not None:
@@ -5193,25 +6723,25 @@ class SolverLN(EnsembleSolver):
                     combined_vec[aidx] = proc.mean
 
         # call residence times filled at index nidx+cidx; callresidt (=WN=RN*visits) already accounts for call_mean via the Aux class routing.
-        for cidx in range(1, lqn.ncalls + 1):
+        for cidx in range(lqn.ncalls):
             combined_vec[lqn.nidx + cidx] = self.callresidt[cidx]
 
         # Compute entry service times: entry_servt = servtmatrix @ combined_vec
         entry_servt_vec = self.servtmatrix @ combined_vec
-        entry_servt_vec[:lqn.eshift + 1] = 0
+        entry_servt_vec[:lqn.eshift] = 0
 
         # FWD calls carry no blocking: callservt/callresidt stay zero since forwarding is handled by caller-side pseudo rendezvous.
 
         # Recompute entry_servt with forwarding-adjusted callresidt
         # (MATLAB updateMetricsDefault.m lines 349-351)
-        for cidx in range(1, lqn.ncalls + 1):
+        for cidx in range(lqn.ncalls):
             combined_vec[lqn.nidx + cidx] = self.callresidt[cidx]
         entry_servt_vec = self.servtmatrix @ combined_vec
-        entry_servt_vec[:lqn.eshift + 1] = 0
+        entry_servt_vec[:lqn.eshift] = 0
 
         # AND-fork join correction; see _kb/06-solver-catalog.md LN Activity think time / AND-join concurrency section.
         joint_excess = self._update_join_delays()
-        for eidx in range(lqn.eshift + 1, lqn.eshift + lqn.nentries + 1):
+        for eidx in range(lqn.eshift, lqn.eshift + lqn.nentries):
             corrected = entry_servt_vec[eidx]
             for aidx, exc in joint_excess.items():
                 if exc != 0 and eidx < self.servtmatrix.shape[0] \
@@ -5220,8 +6750,16 @@ class SolverLN(EnsembleSolver):
                     corrected += exc
             entry_servt_vec[eidx] = max(corrected, 0.0)
 
+        # A SetupTask's cold start is charged HERE, to the entry, and with the
+        # probability that the thread was actually found powered down. It is not
+        # host demand, so it does not belong to any activity's residence:
+        # reporting it there put RespT(A2) at 1.29479 on lqn_setup against the
+        # 0.333178 LDES measures, which is the bare demand. See _setup_charge.
+        for eidx in range(lqn.eshift, lqn.eshift + lqn.nentries):
+            entry_servt_vec[eidx] += self._setup_charge(self._get_parent(eidx))
+
         # entry results scaled by throughput ratio so entries reach Ventry=1 while the task keeps Vtask=1; mirrors MATLAB lines 200-226.
-        for e in range(1, lqn.nentries + 1):
+        for e in range(lqn.nentries):
             eidx = lqn.eshift + e
             tidx = self._get_parent(eidx)  # task of entry
             hidx = self._get_parent(tidx) if tidx is not None else None  # host of entry
@@ -5239,10 +6777,10 @@ class SolverLN(EnsembleSolver):
             # Use callpair and calltype to detect sync calls targeting this entry
             has_sync_callers = False
             if hasattr(lqn, 'callpair') and lqn.callpair is not None and hasattr(lqn, 'calltype'):
-                for cidx in range(1, lqn.ncalls + 1):
+                for cidx in range(lqn.ncalls):
                     if cidx < len(lqn.callpair):
                         # callpair columns: [unused, src_aidx, tgt_eidx, mean_calls]
-                        tgt_eidx = int(lqn.callpair[cidx, 2]) if lqn.callpair[cidx, 2] > 0 else 0
+                        tgt_eidx = int(lqn.callpair[cidx, 1]) if lqn.callpair[cidx, 1] > 0 else 0
                         if tgt_eidx == eidx:
                             # Check if this is a SYNC call
                             calltype = lqn.calltype[cidx] if cidx < len(lqn.calltype) else 0
@@ -5330,11 +6868,11 @@ class SolverLN(EnsembleSolver):
         # Matches MATLAB updateMetricsDefault.m lines 105-330
         if self.hasPhase2:
             # Reset phase-specific arrays
-            self.servt_ph1 = np.zeros(lqn.nidx + 1)
-            self.servt_ph2 = np.zeros(lqn.nidx + 1)
+            self.servt_ph1 = np.zeros(lqn.nidx)
+            self.servt_ph2 = np.zeros(lqn.nidx)
 
             # Split activity service times by phase
-            for a in range(1, lqn.nacts + 1):
+            for a in range(lqn.nacts):
                 aidx = lqn.ashift + a
                 if lqn.actphase[a - 1] == 1:  # actphase is 0-indexed numpy array
                     self.servt_ph1[aidx] = self.servt[aidx]
@@ -5342,7 +6880,7 @@ class SolverLN(EnsembleSolver):
                     self.servt_ph2[aidx] = self.servt[aidx]
 
             # Aggregate phase service times to entry level
-            for e in range(1, lqn.nentries + 1):
+            for e in range(lqn.nentries):
                 eidx = lqn.eshift + e
                 acts = lqn.actsof.get(eidx, [])
                 for aidx in acts:
@@ -5354,7 +6892,7 @@ class SolverLN(EnsembleSolver):
                             self.servt_ph2[eidx] += self.servt_ph2[aidx]
 
             # overtaking probability response-time correction; see _kb/06-solver-catalog.md LN phase-2 overtaking section.
-            for e in range(1, lqn.nentries + 1):
+            for e in range(lqn.nentries):
                 eidx = lqn.eshift + e
                 if self.servt_ph2[eidx] > 1e-8:  # GlobalConstants.FineTol
                     tidx = self._get_parent(eidx)
@@ -5397,16 +6935,15 @@ class SolverLN(EnsembleSolver):
                 layer = self.ensemble[layer_idx]
                 if layer is None:
                     continue
-                server_idx = layer.attribute.get('serverIdx', 2) if hasattr(layer, 'attribute') else 2
-
-                # Only for SERVER calls (nodeidx == serverIdx), update servtproc[eidx]
-                if nodeidx == server_idx:
+                # any non-client node is a server station; under flat layering the callee
+                # station is not the layer's serverIdx, so test nodeidx > 1 as MATLAB does.
+                if nodeidx > 1:
                     eidx = self._get_call_target_entry(cidx)
                     if eidx is not None and eidx > 0 and eidx < len(self.servt):
                         if self.servt[eidx] > 0:
                             self.servtproc[eidx] = Exp.fit_mean(self.servt[eidx])
 
-        # callservtproc updated only for SERVER calls (nodeidx>1); CLIENT calls stay Immediate, response time propagates via think-time updates; mirrors MATLAB updateMetricsDefault.m:274-287.
+        # callservtproc only for SERVER calls (nodeidx>1); CLIENT calls stay Immediate, resp via think-time; mirrors MATLAB updateMetricsDefault.m:274-287.
         if self.call_classes_updmap is not None and len(self.call_classes_updmap) > 0:
             for row in self.call_classes_updmap:
                 idx = int(row[0])
@@ -5421,10 +6958,8 @@ class SolverLN(EnsembleSolver):
                 layer = self.ensemble[layer_idx]
                 if layer is None:
                     continue
-                server_idx = layer.attribute.get('serverIdx', 2) if hasattr(layer, 'attribute') else 2
-
                 # only SERVER-node calls update callservtproc, never CLIENT-node calls; mirrors MATLAB line 277.
-                if nodeidx == server_idx:
+                if nodeidx > 1:
                     eidx = self._get_call_target_entry(cidx)
                     if eidx is not None and eidx > 0:
                         if it == 1:
@@ -5508,10 +7043,10 @@ class SolverLN(EnsembleSolver):
         lqn = self.lqn
 
         # Reset ptaskcallers
-        self.ptaskcallers = np.zeros((lqn.nhosts + lqn.ntasks + 1, lqn.nhosts + lqn.ntasks + 1))
+        self.ptaskcallers = np.zeros((lqn.nhosts + lqn.ntasks, lqn.nhosts + lqn.ntasks))
 
         # Compute direct caller probabilities for tasks
-        for t in range(1, lqn.ntasks + 1):
+        for t in range(lqn.ntasks):
             tidx = lqn.tshift + t
             if self._is_ref_task(tidx):
                 continue
@@ -5564,15 +7099,15 @@ class SolverLN(EnsembleSolver):
                 if caller_class_idx is not None:
                     caller_class_idx_0 = caller_class_idx - 1 if caller_class_idx >= 1 else 0
                     if client_idx_0 < TN.shape[0] and caller_class_idx_0 < TN.shape[1]:
-                        caller_tput[caller_idx - lqn.tshift - 1] = TN[client_idx_0, caller_class_idx_0]
+                        caller_tput[caller_idx - lqn.tshift] = TN[client_idx_0, caller_class_idx_0]
 
             # Normalize to get probabilities
             total_tput = np.sum(caller_tput)
             if total_tput > GlobalConstants.Zero:
-                self.ptaskcallers[tidx, lqn.tshift + 1:lqn.tshift + lqn.ntasks + 1] = caller_tput / total_tput
+                self.ptaskcallers[tidx, lqn.tshift:lqn.tshift + lqn.ntasks] = caller_tput / total_tput
 
         # Compute direct caller probabilities for hosts
-        for hidx in range(1, lqn.nhosts + 1):
+        for hidx in range(lqn.nhosts):
             if np.isnan(self.idxhash[hidx]):
                 continue
 
@@ -5615,12 +7150,12 @@ class SolverLN(EnsembleSolver):
                 if caller_class_idx is not None:
                     caller_class_idx_0 = caller_class_idx - 1 if caller_class_idx >= 1 else 0
                     if client_idx_0 < TN.shape[0] and caller_class_idx_0 < TN.shape[1]:
-                        caller_tput[caller_idx - lqn.tshift - 1] += TN[client_idx_0, caller_class_idx_0]
+                        caller_tput[caller_idx - lqn.tshift] += TN[client_idx_0, caller_class_idx_0]
 
             # Normalize to get probabilities
             total_tput = np.sum(caller_tput)
             if total_tput > GlobalConstants.Zero:
-                self.ptaskcallers[hidx, lqn.tshift + 1:lqn.tshift + lqn.ntasks + 1] = caller_tput / total_tput
+                self.ptaskcallers[hidx, lqn.tshift:lqn.tshift + lqn.ntasks] = caller_tput / total_tput
 
         # Compute ptaskcallers_step using DTMC random walk
         P = self.ptaskcallers.copy()
@@ -5634,7 +7169,7 @@ class SolverLN(EnsembleSolver):
         self.ptaskcallers_step[0] = P.copy()
 
         # Walk backward through caller graph
-        for hidx in range(1, lqn.nhosts + 1):
+        for hidx in range(lqn.nhosts):
             if np.isnan(self.idxhash[hidx]):
                 continue
 
@@ -5656,7 +7191,7 @@ class SolverLN(EnsembleSolver):
 
                     # Check if all probability reached REF tasks
                     ref_prob = 0.0
-                    for t in range(1, lqn.ntasks + 1):
+                    for t in range(lqn.ntasks):
                         t_idx = lqn.tshift + t
                         if self._is_ref_task(t_idx):
                             ref_prob += x[t_idx]
@@ -5693,7 +7228,7 @@ class SolverLN(EnsembleSolver):
         if hasattr(lqn, 'callpair') and lqn.callpair is not None:
             if isinstance(lqn.callpair, np.ndarray):
                 if cidx < lqn.callpair.shape[0]:
-                    return float(lqn.callpair[cidx, 3])
+                    return float(lqn.callpair[cidx, 2])
 
         return 1.0
 
@@ -5711,14 +7246,14 @@ class SolverLN(EnsembleSolver):
         if not hasattr(lqn, 'callpair') or lqn.callpair is None:
             return 0.0
 
-        for cidx in range(1, lqn.ncalls + 1):
+        for cidx in range(lqn.ncalls):
             if cidx >= lqn.callpair.shape[0]:
                 continue
 
             # Get source activity (column 1) and target entry (column 2)
-            src_aidx = int(lqn.callpair[cidx, 1])
-            tgt_eidx = int(lqn.callpair[cidx, 2])
-            call_mean = float(lqn.callpair[cidx, 3]) if lqn.callpair.shape[1] > 3 else 1.0
+            src_aidx = int(lqn.callpair[cidx, 0])
+            tgt_eidx = int(lqn.callpair[cidx, 1])
+            call_mean = float(lqn.callpair[cidx, 2]) if lqn.callpair.shape[1] > 2 else 1.0
 
             if src_aidx == 0 or tgt_eidx == 0:
                 continue
@@ -5794,16 +7329,16 @@ class SolverLN(EnsembleSolver):
         if not hasattr(lqn, 'callpair') or lqn.callpair is None:
             return 0.0
 
-        for cidx in range(1, lqn.ncalls + 1):
+        for cidx in range(lqn.ncalls):
             if cidx >= lqn.callpair.shape[0]:
                 continue
 
-            tgt_eidx = int(lqn.callpair[cidx, 2])  # Target entry
+            tgt_eidx = int(lqn.callpair[cidx, 1])  # Target entry
             if tgt_eidx not in entries:
                 continue
 
             # This call targets our task - get caller's throughput
-            src_aidx = int(lqn.callpair[cidx, 1])  # Source activity
+            src_aidx = int(lqn.callpair[cidx, 0])  # Source activity
             if src_aidx <= 0:
                 continue
 
@@ -5820,23 +7355,93 @@ class SolverLN(EnsembleSolver):
 
         return total_tput
 
+    def _setup_dist_mean(self, procs, tidx: int) -> float:
+        """Mean of a setup or delay-off process of task TIDX, 0 when it declares none."""
+        if procs is None:
+            return 0.0
+        p = None
+        if isinstance(procs, dict):
+            p = procs.get(tidx)
+        else:
+            arr = np.asarray(procs).flatten()
+            if tidx < len(arr):
+                p = arr[tidx]
+        if p is None:
+            return 0.0
+        try:
+            m = float(p.getMean())
+        except (AttributeError, TypeError, ValueError):
+            return 0.0
+        return 0.0 if (np.isnan(m) or np.isinf(m)) else m
+
+    def _setup_charge(self, tidx: int) -> float:
+        """Mean cold start one request of task TIDX pays, 0 when it declares none.
+
+        A SetupTask powers a thread down when it goes idle and pays a setup before
+        it can serve again. The thread is released at a reply and starts a delay-off
+        countdown D of mean d; it powers off only if D expires before the next
+        request arrives, and a request arriving first cancels the countdown and pays
+        nothing. With the idle interval I seen by one thread and exponential D,
+
+            p = P(D < I) = E[I] / (E[I] + d),   and the charge is  p * s.
+
+        E[I] comes from the current iterate. Admission takes an ACTIVE idle thread
+        before it wakes a sleeping one, so the pool that actually cycles is only as
+        large as the load needs: with offered load b = X*S = rho*mult threads, about
+        max(1,b) stay hot, each seeing arrivals at rate X/max(1,b) and busy S per
+        arrival, so E[I] = (max(1,b) - b) / X. At mult = 1 this is (1-rho)/X and is
+        EXACT given p, returning p = a/(a+d) for the one-customer model the LDES
+        engine is checked against. Above one thread it is an approximation, the
+        exact answer for c servers with setup being matrix-analytic (Gandhi,
+        Harchol-Balter and Adan, Performance Evaluation 67(11), 2010). Twin of
+        MATLAB lqn_setup_charge.m and the JAR SolverLN.setupCharge.
+        """
+        lqn = self.lqn
+        hs = getattr(lqn, 'hassetup', None)
+        if hs is None:
+            return 0.0
+        hsf = np.asarray(hs).flatten()
+        if tidx < 0 or tidx >= len(hsf) or not hsf[tidx]:
+            return 0.0
+        s = self._setup_dist_mean(getattr(lqn, 'setuptime', None), tidx)
+        d = self._setup_dist_mean(getattr(lqn, 'delayofftime', None), tidx)
+        if not (s > GlobalConstants.FineTol) or not (d > GlobalConstants.FineTol):
+            return 0.0
+        mult = float(lqn.mult[0, tidx])
+        if not np.isfinite(mult) or mult <= 0:
+            return 0.0  # an infinite-server task holds no thread to power down
+        if self.tput is None or self.util is None or tidx >= len(self.tput) or tidx >= len(self.util):
+            return s  # nothing has arrived yet, so the thread is down when the first does
+        X = float(self.tput[tidx])
+        if not np.isfinite(X) or X <= GlobalConstants.FineTol:
+            return s
+        rho = float(self.util[tidx])
+        if not np.isfinite(rho) or rho < 0:
+            rho = 0.0
+        rho = min(rho, 1 - GlobalConstants.FineTol)
+        b = rho * mult                      # offered load, in threads
+        EI = (max(1.0, b) - b) / X          # idle interval of a thread in the hot pool
+        return s * EI / (EI + d)
+
     def update_think_times(self, it: int):
         """Update think times (matches MATLAB updateThinkTimes)."""
+        # Under 'srvn.ph' a caller reaches the server once per invocation, so the
+        # station rate is not the task's invocation rate -- see the PH twin
+        if self._is_ph_encoding():
+            self._update_think_times_ph(it)
+            return
         lqn = self.lqn
 
         if not hasattr(lqn, 'iscaller') or lqn.iscaller is None:
             return
 
-        for t in range(1, lqn.ntasks + 1):
+        for t in range(lqn.ntasks):
             tidx = lqn.tshift + t
 
-            # Get user-specified think time
-            tidx_thinktime = 0.0
-            if self.thinkproc[tidx] is not None:
-                if hasattr(self.thinkproc[tidx], 'getMean'):
-                    tidx_thinktime = self.thinkproc[tidx].getMean()
-                elif hasattr(self.thinkproc[tidx], 'mean'):
-                    tidx_thinktime = self.thinkproc[tidx].mean
+            # Only a REFERENCE task's think time separates one request from the
+            # next; on a served task it is not a per-request delay and charging
+            # it throttles the task -- see _ref_think_mean
+            tidx_thinktime = self._ref_think_mean(tidx)
 
             # Get call response time (time spent waiting for calls to complete)
             call_response_time = self._get_call_response_time(tidx)
@@ -5852,7 +7457,10 @@ class SolverLN(EnsembleSolver):
                         TN = result['TN']
                         UN = result.get('UN', np.zeros_like(TN))
 
-                        server_idx = self.ensemble[layer_idx].attribute.get('serverIdx', 1)
+                        # the station of TIDX inside its layer: under flat layering
+                        # every server shares one layer, so the scalar serverIdx
+                        # would point at the first processor instead
+                        server_idx = self._station_idx_of(self.ensemble[layer_idx], tidx)
                         if server_idx is not None:
                             # Convert to 0-based indexing for numpy
                             server_idx_0 = server_idx - 1 if server_idx >= 1 else 0
@@ -5878,6 +7486,15 @@ class SolverLN(EnsembleSolver):
                                 if self.tput[tidx] > GlobalConstants.Zero:
                                     self.thinkt[tidx] = max(GlobalConstants.Zero,
                                                            njobs * abs(1 - self.util[tidx]) / self.tput[tidx] - tidx_thinktime)
+
+                # A caller class cycles as delay plus station service, and the station
+                # serves only the host demand: a cold start is charged to the entry,
+                # not to any activity's demand, so the station never sees it and the
+                # delay has to carry it. Without this the callee layer cycled at
+                # 0.529412 against the 0.5 its callers drive on lqn_setup. Zero for
+                # every task without a setup.
+                self.thinkt[tidx] = max(GlobalConstants.Zero,
+                                        self.thinkt[tidx] + self._setup_charge(tidx))
 
                 # Recover from Inf/NaN: snap back to previous iteration's value
                 if it > 1 and not np.isnan(self.thinkt_prev[tidx]):
@@ -5930,7 +7547,32 @@ class SolverLN(EnsembleSolver):
                                                             self.tput[tidx] = tn_val
                                                 break
             else:
-                # Ref task or forwarding target (no task layer)
+                # Ref task, forwarding target or open-arrival target (no task layer).
+                # An entry arrival that is the only way in drives the thread pool
+                # directly: the layer builder dropped its open class precisely so the
+                # cycle can be closed on the known rate here. See _open_arrival_rate_of.
+                arvrate = self._open_arrival_rate_of(tidx)
+                if arvrate > GlobalConstants.FineTol:
+                    njobs_arv = max(self.njobs[tidx, :])
+                    if not njobs_arv > 0:
+                        njobs_arv = lqn.maxmult[tidx]
+                    self.tput[tidx] = arvrate
+                    host_residt = 0.0
+                    for eidx_arv in self._get_entries_of_task(tidx):
+                        if hasattr(lqn, 'actsof') and eidx_arv in lqn.actsof:
+                            for aidx_arv in lqn.actsof[eidx_arv]:
+                                if np.isfinite(self.residt[aidx_arv]):
+                                    host_residt += self.residt[aidx_arv]
+                    z_arv = max(GlobalConstants.Zero,
+                                njobs_arv / arvrate - host_residt - tidx_thinktime)
+                    omega = self.relax_omega
+                    if omega < 1.0 and it > 1 and not np.isnan(self.thinkt_prev[tidx]):
+                        z_arv = omega * z_arv + (1 - omega) * self.thinkt_prev[tidx]
+                    self.thinkt[tidx] = z_arv
+                    self.thinkt_prev[tidx] = z_arv
+                    self.thinktproc[tidx] = Exp.fit_mean(z_arv + tidx_thinktime)
+                    continue
+
                 # Check if this is a forwarding target task (MATLAB updateThinkTimes.m:54-104)
                 is_fwd_target = False
                 fwd_cidx_found = None
@@ -5938,12 +7580,12 @@ class SolverLN(EnsembleSolver):
                 fwd_prob = 0.0
                 if not self._is_ref_task(tidx) and hasattr(lqn, 'calltype') and lqn.calltype is not None:
                     for eidx_fwd in self._get_entries_of_task(tidx):
-                        for cidx_fwd in range(1, lqn.ncalls + 1):
+                        for cidx_fwd in range(lqn.ncalls):
                             if cidx_fwd < len(lqn.calltype) and int(lqn.calltype[cidx_fwd]) == CallType.FWD \
-                                    and int(lqn.callpair[cidx_fwd, 2]) == eidx_fwd:
+                                    and int(lqn.callpair[cidx_fwd, 1]) == eidx_fwd:
                                 is_fwd_target = True
                                 fwd_cidx_found = cidx_fwd
-                                source_eidx = int(lqn.callpair[cidx_fwd, 1])
+                                source_eidx = int(lqn.callpair[cidx_fwd, 0])
                                 source_tidx = self._get_parent(source_eidx)
                                 fwd_prob = self._get_call_mean(cidx_fwd)
                                 break
@@ -5957,7 +7599,7 @@ class SolverLN(EnsembleSolver):
                         self.tput[tidx] = arrival_rate
                         # Subtract the processor response time for the target's
                         # activities (already computed by _update_metrics_default)
-                        target_eidx = int(lqn.callpair[fwd_cidx_found, 2])
+                        target_eidx = int(lqn.callpair[fwd_cidx_found, 1])
                         host_residt = 0.0
                         if hasattr(lqn, 'actsof') and target_eidx in lqn.actsof:
                             for aidx_fwd in lqn.actsof[target_eidx]:
@@ -6007,12 +7649,21 @@ class SolverLN(EnsembleSolver):
                                         break
 
     def _init_interlock(self):
-        """Build interlock table and find common entries/sources (LQNS V5 static analysis).
+        """Build the interlock path table and locate the common parents.
 
-        Ported from MATLAB initInterlock.m:
-          Phase A: Build interlock reachability table (entry-to-entry)
-          Phase B: Find common parent entries (branch points) per server
-          Phase C: Find source tasks per server (for interlock flow computation)
+        Interlocking arises when requests issued by one client reach a common
+        lower-level server along two or more independent paths, so that
+        arrivals a layer decomposition treats as independent are in fact
+        correlated. Franks (1999), Ch. 4:
+          Phase A: the path table path(a,b) of Sec. 4.2, the calls to entry b
+                   caused by one invocation of entry a, with a unit diagonal;
+                   a second table restricts the count to the phase-1 flow
+          Phase B: the common-parent finder of Fig. 4.2, retaining only the
+                   entries at which the flow genuinely splits
+          Phase C: the source tasks and the source count n_s of Eq. (4.7)
+        The phase-aware tables, the branch-point test and the source count are
+        refinements beyond the published algorithm, which assumes one path
+        table and counts source tasks directly.
 
         The interlock table is built once at solver initialization and reused
         across iterations. Only the interlock flow computation (in update_populations)
@@ -6022,26 +7673,26 @@ class SolverLN(EnsembleSolver):
 
         # Phase A: Build interlock reachability table
         nentries = lqn.nentries
-        il_all = np.zeros((nentries + 1, nentries + 1))
-        il_ph1 = np.zeros((nentries + 1, nentries + 1))
+        il_all = np.zeros((nentries, nentries))
+        il_ph1 = np.zeros((nentries, nentries))
 
-        for e in range(1, nentries + 1):
+        for e in range(nentries):
             eidx = lqn.eshift + e
-            visited = np.zeros(nentries + 1, dtype=bool)
+            visited = np.zeros(nentries, dtype=bool)
             self._trace_interlock_paths(eidx, e, 1.0, 1.0, visited, il_all, il_ph1, 0)
 
         self.il_table_all = il_all
         self.il_table_ph1 = il_ph1
 
         # Phase B+C: Find common entries and sources per server entity
-        max_idx = lqn.tshift + lqn.ntasks + 1
+        max_idx = lqn.tshift + lqn.ntasks
         self.il_common_entries = [None] * max_idx
         self.il_source_tasks_all = [None] * max_idx
         self.il_source_tasks_ph2 = [None] * max_idx
         self.il_num_sources = np.zeros(max_idx)
 
         # Process task servers
-        for t in range(1, lqn.ntasks + 1):
+        for t in range(lqn.ntasks):
             tidx = lqn.tshift + t
             if self._is_ref_task(tidx) or self._get_sched(tidx) == SchedStrategy.INF:
                 continue
@@ -6052,7 +7703,7 @@ class SolverLN(EnsembleSolver):
             self.il_num_sources[tidx] = ns
 
         # Process host servers
-        for h in range(1, lqn.nhosts + 1):
+        for h in range(lqn.nhosts):
             hidx = h
             if self._get_sched(hidx) == SchedStrategy.INF:
                 continue
@@ -6081,7 +7732,7 @@ class SolverLN(EnsembleSolver):
         # Follow synchronous calls from activities of this entry
         acts = lqn.actsof.get(eidx, []) if isinstance(lqn.actsof, dict) else []
         for aidx in acts:
-            if aidx <= lqn.ashift or aidx > lqn.ashift + lqn.nacts:
+            if aidx < lqn.ashift or aidx >= lqn.ashift + lqn.nacts:
                 continue
             a = aidx - lqn.ashift
 
@@ -6097,7 +7748,7 @@ class SolverLN(EnsembleSolver):
             # Follow calls from this activity
             calls_from_act = lqn.callsof.get(aidx, []) if isinstance(lqn.callsof, dict) else []
             for cidx in calls_from_act:
-                if cidx < 1 or cidx > lqn.ncalls:
+                if cidx < 0 or cidx >= lqn.ncalls:
                     continue
                 # Check SYNC call
                 if isinstance(lqn.calltype, np.ndarray):
@@ -6113,7 +7764,7 @@ class SolverLN(EnsembleSolver):
                 if call_mean <= 0:
                     continue
 
-                dst_eidx = int(lqn.callpair[cidx, 2])
+                dst_eidx = int(lqn.callpair[cidx, 1])
                 dst_e = dst_eidx - lqn.eshift
                 if dst_e < 1 or dst_e > lqn.nentries:
                     continue
@@ -6157,7 +7808,7 @@ class SolverLN(EnsembleSolver):
                     if se < lqn.iscaller.shape[1]:
                         calling_idx = np.where(lqn.iscaller[:, se] > 0)[0]
                         for ci in calling_idx:
-                            if lqn.tshift < ci <= lqn.tshift + lqn.ntasks:
+                            if lqn.tshift <= ci < lqn.tshift + lqn.ntasks:
                                 if ci not in client_tasks:
                                     client_tasks.append(ci)
             return client_tasks
@@ -6211,11 +7862,11 @@ class SolverLN(EnsembleSolver):
         dst_tasks = []
         acts = lqn.actsof.get(src_eidx, []) if isinstance(lqn.actsof, dict) else []
         for aidx in acts:
-            if aidx <= lqn.ashift or aidx > lqn.ashift + lqn.nacts:
+            if aidx < lqn.ashift or aidx >= lqn.ashift + lqn.nacts:
                 continue
             calls = lqn.callsof.get(aidx, []) if isinstance(lqn.callsof, dict) else []
             for cidx in calls:
-                if cidx < 1 or cidx > lqn.ncalls:
+                if cidx < 0 or cidx >= lqn.ncalls:
                     continue
                 if isinstance(lqn.calltype, np.ndarray):
                     ct = int(lqn.calltype.flatten()[cidx]) if cidx < len(lqn.calltype.flatten()) else 0
@@ -6225,7 +7876,7 @@ class SolverLN(EnsembleSolver):
                     ct = 0
                 if ct != CallType.SYNC:
                     continue
-                dst_eidx = int(lqn.callpair[cidx, 2])
+                dst_eidx = int(lqn.callpair[cidx, 1])
                 dst_e = dst_eidx - lqn.eshift
                 if 1 <= dst_e <= lqn.nentries and il_all[dst_e, target_e_num] > 0:
                     parent = self._get_parent(dst_eidx)
@@ -6237,7 +7888,7 @@ class SolverLN(EnsembleSolver):
                                 il_all: np.ndarray) -> List[int]:
         """Get interlocked tasks on paths from an entry to a server."""
         lqn = self.lqn
-        visited = np.zeros(lqn.nentries + 1, dtype=bool)
+        visited = np.zeros(lqn.nentries, dtype=bool)
         return self._trace_to_server_rec(src_eidx, server_idx, il_all, visited, [], True)
 
     def _trace_to_server_rec(self, eidx: int, server_idx: int,
@@ -6267,11 +7918,11 @@ class SolverLN(EnsembleSolver):
         acts = lqn.actsof.get(eidx, []) if isinstance(lqn.actsof, dict) else []
         found = False
         for aidx in acts:
-            if aidx <= lqn.ashift or aidx > lqn.ashift + lqn.nacts:
+            if aidx < lqn.ashift or aidx >= lqn.ashift + lqn.nacts:
                 continue
             calls = lqn.callsof.get(aidx, []) if isinstance(lqn.callsof, dict) else []
             for cidx in calls:
-                if cidx < 1 or cidx > lqn.ncalls:
+                if cidx < 0 or cidx >= lqn.ncalls:
                     continue
                 if isinstance(lqn.calltype, np.ndarray):
                     ct = int(lqn.calltype.flatten()[cidx]) if cidx < len(lqn.calltype.flatten()) else 0
@@ -6282,7 +7933,7 @@ class SolverLN(EnsembleSolver):
                 if ct != CallType.SYNC:
                     continue
 
-                dst_eidx = int(lqn.callpair[cidx, 2])
+                dst_eidx = int(lqn.callpair[cidx, 1])
                 dst_task = self._get_parent(dst_eidx)
 
                 # Check if destination reaches server
@@ -6356,7 +8007,7 @@ class SolverLN(EnsembleSolver):
                 entry_c_num = client_entry_pairs[j][1]
 
                 # Search all tasks for common parents
-                for t in range(1, lqn.ntasks + 1):
+                for t in range(lqn.ntasks):
                     tidx = lqn.tshift + t
                     entries_of_task = lqn.entriesof.get(tidx, []) if isinstance(lqn.entriesof, dict) else []
                     for ex in entries_of_task:
@@ -6419,7 +8070,7 @@ class SolverLN(EnsembleSolver):
                     if ie < lqn.iscaller.shape[1]:
                         calling_idx = np.where(lqn.iscaller[:, ie] > 0)[0]
                         for ci in calling_idx:
-                            if lqn.tshift < ci <= lqn.tshift + lqn.ntasks:
+                            if lqn.tshift <= ci < lqn.tshift + lqn.ntasks:
                                 if ci not in interlocked_tasks and ci not in all_src_tasks:
                                     all_src_tasks.append(ci)
 
@@ -6497,28 +8148,49 @@ class SolverLN(EnsembleSolver):
                 tput_val += et
         return float(tput_val)
 
-    def _compute_interlock_prob(self, client_tidx: int, server_idx: int) -> float:
-        """Compute interlock probability for a (client, server) pair."""
+    def _compute_interlock_prob(self, client_tidx: int, server_idx: int,
+                                is_processor_host: bool = False):
+        """Interlock probability for one (client, server) pair, as (IR, Pr(IL)).
+
+        Li and Franks, "An improved interlocking correction for decomposition of layered
+        queueing networks", CCECE 2015, Eqs. (3) and (4). ``is_processor_host`` selects the
+        m' rule of lqns ``Interlock::ilrate_pril_flow``: at a PROCESSOR the common-source
+        population is doubled above 3 customers and squared at or below it, which is what
+        turns m = 4 into the pril = 1/8 its trace reports. The two factors are multiplied
+        into the Eq. (5) rate by ``_build_layer_interlock``, so neither carries the source
+        count on its own -- that lives in m'. This replaces the superseded (n_s-1)/n_s
+        discount of Franks (1999), Eq. (4.7).
+        """
         lqn = self.lqn
 
         if server_idx >= len(self.il_common_entries) or self.il_common_entries[server_idx] is None:
-            return 0.0
+            return 0.0, 0.0
         common_entries = self.il_common_entries[server_idx]
         num_sources = self.il_num_sources[server_idx]
         all_src_tasks = self.il_source_tasks_all[server_idx]
         ph2_src_tasks = self.il_source_tasks_ph2[server_idx]
 
         if num_sources == 0 or not common_entries:
-            return 0.0
+            return 0.0, 0.0
 
         # Get client entries
         client_entries = lqn.entriesof.get(client_tidx, []) if isinstance(lqn.entriesof, dict) else []
 
-        # Compute interlocked flow (LQNS interlockedFlow formula)
+        # Interlocked flow lambda^IL of Eq. (4), and alongside it the flow weighted by 1/m',
+        # which gives Pr(IL) of Eq. (3).
         sum_flow = 0.0
+        sum_pril = 0.0
         for ce_eidx in common_entries:
             src_task = self._get_parent(ce_eidx)
             ce_num = ce_eidx - lqn.eshift
+            # population of this common source, in customer copies
+            m_src = self._get_mult(src_task)
+            if not np.isfinite(m_src) or m_src < 1:
+                m_src = 1.0
+            if is_processor_host:
+                m_eff = (m_src + m_src) if m_src > 3 else (m_src * m_src)
+            else:
+                m_eff = m_src
 
             for dst_a_eidx in client_entries:
                 dst_a_num = dst_a_eidx - lqn.eshift
@@ -6532,43 +8204,53 @@ class SolverLN(EnsembleSolver):
                 if ce_tput <= GlobalConstants.FineTol:
                     continue
 
-                # Check maxPhase for the source entry
+                # Deferred flow is scored separately from the phase-1 flow
                 has_p2 = self._has_phase2_activities(ce_eidx)
 
                 if not has_p2 and src_task in all_src_tasks:
-                    sum_flow += ce_tput * self.il_table_all[ce_num, dst_a_num]
+                    contrib = ce_tput * self.il_table_all[ce_num, dst_a_num]
+                    sum_flow += contrib
+                    sum_pril += contrib / m_eff
                 elif has_p2 and src_task in all_src_tasks:
-                    sum_flow += ce_tput * self.il_table_ph1[ce_num, dst_a_num]
+                    contrib = ce_tput * self.il_table_ph1[ce_num, dst_a_num]
+                    sum_flow += contrib
+                    sum_pril += contrib / m_eff
 
                 ph2 = self.il_table_all[ce_num, dst_a_num] - self.il_table_ph1[ce_num, dst_a_num]
                 if ph2 > 0 and src_task in ph2_src_tasks:
-                    sum_flow += ce_tput * ph2
+                    contrib = ce_tput * ph2
+                    sum_flow += contrib
+                    sum_pril += contrib / m_eff
 
         # Get client throughput
         client_tput = self._get_task_tput(client_tidx)
         if client_tput <= GlobalConstants.FineTol:
-            return 0.0
+            return 0.0, 0.0
 
-        client_threads = self._get_mult(client_tidx)
-        il_val = min(sum_flow, client_tput) / (client_tput * client_threads * num_sources)
-        pr_il = il_val / self._get_mult(server_idx)
-        return min(pr_il, 1.0)
+        ir = min(sum_flow, client_tput) / client_tput
+        ir = min(1.0, max(0.0, ir))
+        pr_il = 0.0 if sum_flow <= GlobalConstants.FineTol else sum_pril / sum_flow
+        pr_il = min(1.0, max(0.0, pr_il))
+        return float(ir), float(pr_il)
 
     def update_populations(self, it: int):
-        """Apply LQNS V5-style interlock correction to call residence times.
+        """Apply the interlock correction to call residence times.
 
-        Uses interlock probability for each (client, server) pair and reduces
-        the waiting time component of call residence times proportionally.
+        The path tables built by _init_interlock are combined with the current
+        iterate to obtain, for each (client, server) pair, the interlocked flow
+        of Eq. (4.3) of Franks (1999), and from it the interlock probability,
+        the share of that flow that the layer decomposition would otherwise
+        count twice. Eq. (4.7) removes one source in n_s from the queue length
+        inside MVA; the equivalent correction is applied here to the residence
+        times returned by the layer::
 
-        LQNS applies interlock as arrival-rate scaling inside MVA:
-          L_k = (1 - prIL_k) * X_k * R_k
-        affecting only waiting time, not utilization. LINE approximates this
-        by adjusting callresidt post-MVA to remove interlocked waiting:
-          R_adj = S + (1 - prIL) * W
-        where S = service time, W = waiting time = R - S.
+          R_adj = S + (1 - prIL) * W,   W = R - S,
 
-        This function is called AFTER update_metrics (which computes raw
-        callresidt from layer MVA results) and BEFORE update_think_times.
+        which leaves service and utilization untouched and removes only the
+        interlocked share of the waiting time.
+
+        Called after update_metrics, which produces the raw callresidt from the
+        layer solutions, and before update_think_times.
         """
         lqn = self.lqn
 
@@ -6581,11 +8263,11 @@ class SolverLN(EnsembleSolver):
         adjusted = False
 
         # Pass 1: For each sync call, check if destination server has interlock
-        for cidx in range(1, lqn.ncalls + 1):
+        for cidx in range(lqn.ncalls):
             if self._get_calltype(cidx) != CallType.SYNC:
                 continue
 
-            dst_eidx = int(lqn.callpair[cidx, 2])
+            dst_eidx = int(lqn.callpair[cidx, 1])
             server_tidx = self._get_parent(dst_eidx)
             if server_tidx is None:
                 continue
@@ -6598,9 +8280,9 @@ class SolverLN(EnsembleSolver):
                 server_for_il = server_tidx
             else:
                 # Check host server
-                if server_tidx > lqn.tshift:
+                if server_tidx >= lqn.tshift:
                     host_idx = self._get_parent(server_tidx)
-                    if (host_idx is not None and 1 <= host_idx < len(self.il_common_entries)
+                    if (host_idx is not None and 0 <= host_idx < len(self.il_common_entries)
                             and self.il_common_entries[host_idx] is not None
                             and len(self.il_common_entries[host_idx]) > 0):
                         server_for_il = host_idx
@@ -6609,13 +8291,16 @@ class SolverLN(EnsembleSolver):
                 continue
 
             # Get client task (activity -> task via parent)
-            src_aidx = int(lqn.callpair[cidx, 1])
+            src_aidx = int(lqn.callpair[cidx, 0])
             client_tidx = self._get_parent(src_aidx)
             if client_tidx is None:
                 continue
 
-            # Compute prIL using interlockedFlow formula
-            pr_il = self._compute_interlock_prob(client_tidx, server_for_il)
+            # Interlock probability for this client and server. This path serves a TASK, not a
+            # processor, so the m' rule of Li/lqns leaves the source population alone; the
+            # product IR*Pr(IL) reproduces the scalar this branch used before.
+            ir_c, pr_il_c = self._compute_interlock_prob(client_tidx, server_for_il, False)
+            pr_il = ir_c * pr_il_c
 
             if pr_il <= GlobalConstants.FineTol:
                 continue
@@ -6639,18 +8324,29 @@ class SolverLN(EnsembleSolver):
                     self.callservtproc[cidx] = Exp.fit_mean(self.callservt[cidx])
                 adjusted = True
 
-        # Pass 2: Host-level interlock — reduce processor queueing in residt
-        for h in range(1, lqn.nhosts + 1):
+        # Pass 2: Host-level interlock — reduce processor queueing in residt.
+        # Every layer starts the pass without a matrix, so a host that stops being
+        # interlocked does not keep the previous iteration's correction alive.
+        for e in range(len(self.ensemble)):
+            slv = self.solvers[e] if e < len(self.solvers) else None
+            cfg = getattr(getattr(slv, 'options', None), 'config', None)
+            if isinstance(cfg, dict):
+                cfg['interlock'] = None
+            elif cfg is not None and hasattr(cfg, 'interlock'):
+                cfg.interlock = None
+        for h in range(lqn.nhosts):
             hidx = h
             if self.il_common_entries[hidx] is None or len(self.il_common_entries[hidx]) == 0:
                 continue
 
             # Compute prIL and processor utilization for each task on this host
             host_tasks = lqn.tasksof.get(hidx, []) if isinstance(lqn.tasksof, dict) else []
-            task_pr_il = np.zeros(len(host_tasks))
+            task_pr_il = np.zeros(len(host_tasks))   # IR, Eq. (4)
+            task_PrIL = np.zeros(len(host_tasks))    # Pr(IL), Eq. (3)
             task_util = np.zeros(len(host_tasks))
             for ti, tidx in enumerate(host_tasks):
-                task_pr_il[ti] = self._compute_interlock_prob(tidx, hidx)
+                # The host of a task layer is a PROCESSOR, which is what selects the m' rule.
+                task_pr_il[ti], task_PrIL[ti] = self._compute_interlock_prob(tidx, hidx, True)
                 # Compute task's processor utilization
                 entries = lqn.entriesof.get(tidx, []) if isinstance(lqn.entriesof, dict) else []
                 for eidx in entries:
@@ -6665,11 +8361,35 @@ class SolverLN(EnsembleSolver):
                 continue
             il_fraction = U_interlocked / U_total
 
+            # When the layer solver carries Eq. (4.7) inside its own MVA, the interlock goes
+            # to the layer as a class-level matrix and the residence times are left untouched.
+            # Scaling them here as well would remove the same waiting twice, and would still
+            # leave the layer's own THROUGHPUT uncorrected, which is what breaks flow balance
+            # across a call: the reported task rate then comes from a cycle time the correction
+            # has already shortened elsewhere.
+            layer_of_host = self._layer_index_of(hidx)
+            if layer_of_host is not None and self._layer_takes_interlock(layer_of_host):
+                il_mat = self._build_layer_interlock(layer_of_host, host_tasks, task_pr_il, task_PrIL)
+                opts = self.solvers[layer_of_host].options
+                cfg = getattr(opts, 'config', None)
+                if cfg is None:
+                    opts.config = {'interlock': il_mat}
+                elif isinstance(cfg, dict):
+                    cfg['interlock'] = il_mat
+                else:
+                    cfg.interlock = il_mat
+                continue
+
             for ti, tidx in enumerate(host_tasks):
                 if task_pr_il[ti] <= GlobalConstants.FineTol:
                     continue
-                # Scale prIL by fraction of utilization that is interlocked
-                effective_pr_il = task_pr_il[ti] * il_fraction
+                # Weight by the share of host utilization that is interlocked. The rate is the
+                # SAME Eq. (5) product IR*Pr(IL) that pass 1 applies to a call and that
+                # _build_layer_interlock puts in the layer matrix -- IR alone is a flow SHARE,
+                # ~1 whenever a layer has a single common source, and using it here removed the
+                # whole processor queueing rather than the interlocked part of it, which broke
+                # flow balance across a call.
+                effective_pr_il = task_pr_il[ti] * task_PrIL[ti] * il_fraction
                 entries = lqn.entriesof.get(tidx, []) if isinstance(lqn.entriesof, dict) else []
                 for eidx in entries:
                     acts = lqn.actsof.get(eidx, []) if isinstance(lqn.actsof, dict) else []
@@ -6690,6 +8410,10 @@ class SolverLN(EnsembleSolver):
         residt_orig_vec = residt_orig.flatten()
         callresidt_orig_vec = callresidt_orig.flatten()
 
+        # The servtmatrix column space is [element 0..nidx-1, call nidx..nidx+ncalls-1]
+        # and callresidt is ncalls long with no leading pad, so the two concatenate
+        # directly. Dropping a leading entry here would shift every call one column
+        # to the left, crediting each entry with its NEXT call's residence.
         concat_old = np.concatenate([residt_orig_vec, callresidt_orig_vec])
         concat_new = np.concatenate([residt_vec, callresidt_vec])
 
@@ -6706,23 +8430,39 @@ class SolverLN(EnsembleSolver):
             entry_servt_old = self.servtmatrix @ concat_old
             entry_servt_new = self.servtmatrix @ concat_new
 
-            for eidx in range(lqn.eshift + 1, lqn.eshift + lqn.nentries + 1):
+            # The entry servt is rescaled only when it was itself assembled from
+            # these residence times, which is the default path. After the moment3
+            # pass it is the MEAN OF AN APH CONVOLUTION of the activities' own
+            # response laws, and a ratio of residence-time sums is not a
+            # correction to it: applying it multiplies the entry law by the
+            # entry's visit ratio and reports a service time BELOW that of the
+            # single activity the entry contains. The residence times keep their
+            # correction either way. See BUGS.md BUG-97.
+            moment_laws = self.lnmethod == 'moment3' and self.moment_pass_done
+
+            for eidx in range(lqn.eshift, lqn.eshift + lqn.nentries):
                 if eidx < len(entry_servt_old) and entry_servt_old[eidx] > GlobalConstants.FineTol:
                     ratio = entry_servt_new[eidx] / entry_servt_old[eidx]
-                    if eidx < len(self.servt):
-                        self.servt[eidx] = self.servt[eidx] * ratio
+                    if not moment_laws:
+                        if eidx < len(self.servt):
+                            self.servt[eidx] = self.servt[eidx] * ratio
+                        if eidx < len(self.servt) and self.servt[eidx] > 0:
+                            self.servtproc[eidx] = Exp.fit_mean(self.servt[eidx])
                     if eidx < len(self.residt):
                         self.residt[eidx] = self.residt[eidx] * ratio
-                    if eidx < len(self.servt) and self.servt[eidx] > 0:
-                        self.servtproc[eidx] = Exp.fit_mean(self.servt[eidx])
 
     def update_layers(self, it: int):
         """Update layer parameters (matches MATLAB updateLayers)."""
+        # Under 'srvn.ph' the layer classes are one per caller task and their laws
+        # are composed, not read off the update maps -- see _kb/06-solver-catalog.md
+        if self._is_ph_encoding():
+            self._update_layers_ph(it)
+            return
         lqn = self.lqn
 
         # Update REF task think times in host layers
         # REF tasks' think times = base_think + call_response_time
-        for hidx in range(1, lqn.nhosts + 1):
+        for hidx in range(lqn.nhosts):
             if np.isnan(self.idxhash[hidx]):
                 continue
             layer_idx = int(self.idxhash[hidx])
@@ -6870,11 +8610,23 @@ class SolverLN(EnsembleSolver):
                         node.set_service(cls, proc if hasattr(proc, 'getMean') else Exp.fit_mean(float(proc)))
                 else:
                     # CALL at server replica (any of them): use servtproc[eidx] (entry service time)
-                    eidx_raw = self.lqn.callpair[cidx, 2] if cidx < len(self.lqn.callpair) else None
+                    eidx_raw = self.lqn.callpair[cidx, 1] if cidx < len(self.lqn.callpair) else None
                     eidx = int(eidx_raw) if eidx_raw is not None and not np.isnan(eidx_raw) else None
                     if eidx is not None and eidx < len(self.servtproc) and self.servtproc[eidx] is not None:
                         proc = self.servtproc[eidx]
                         dist = proc if hasattr(proc, 'getMean') else Exp.fit_mean(float(proc))
+                        # A phase-2 entry replies before phase 2 runs, so the caller is
+                        # held for residt, not servt. Charging it servt here while its
+                        # own layer charges residt makes the two layers settle at
+                        # different rates and breaks flow conservation across the call.
+                        # Under flat layering both live in one model, where the
+                        # correction would be applied twice.
+                        if (self.hasPhase2 and not self._is_flat_layering()
+                                and self.servt_ph2 is not None and eidx < len(self.servt_ph2)
+                                and self.servt_ph2[eidx] > 1e-8
+                                and self.residt is not None and eidx < len(self.residt)
+                                and self.residt[eidx] > 0):
+                            dist = Exp.fit_mean(float(self.residt[eidx]))
                         node.set_service(cls, dist)
                         # Propagate to replicas
                         nrep = layer.attribute.get('nreplicas', 1) if hasattr(layer, 'attribute') else 1
@@ -6883,7 +8635,7 @@ class SolverLN(EnsembleSolver):
                             for replica_ss in all_ss[1:]:
                                 replica_ss.set_service(cls, dist)
 
-        # Source arrival rates reassigned per iteration from lqn.arrival (entry-level) or tputproc (async-call); mirrors MATLAB updateLayers.m:66-74/JAR SolverLN.java:2702-2724.
+        # Source arrival rates per iter from lqn.arrival (entry-level) or tputproc (async-call); mirrors updateLayers.m:66-74/JAR SolverLN.java:2702-2724.
         if self.arvproc_classes_updmap is not None and len(self.arvproc_classes_updmap) > 0:
             for r in range(len(self.arvproc_classes_updmap)):
                 if it % 2 == 1:
@@ -6925,7 +8677,7 @@ class SolverLN(EnsembleSolver):
                 else:
                     # Async-call open arrival: use tputproc at caller activity.
                     cidx = eidx_or_cidx
-                    caller_aidx = int(self.lqn.callpair[cidx, 1]) if cidx < len(self.lqn.callpair) else 0
+                    caller_aidx = int(self.lqn.callpair[cidx, 0]) if cidx < len(self.lqn.callpair) else 0
                     if caller_aidx > 0 and caller_aidx < len(self.tputproc) \
                             and self.tputproc[caller_aidx] is not None:
                         try:
@@ -7042,16 +8794,16 @@ class SolverLN(EnsembleSolver):
                 return lqn.type.get(idx, 0)
             elif isinstance(lqn.type, np.ndarray):
                 if idx < len(lqn.type):
-                    return int(lqn.type[idx])  # type array is 1-indexed (idx 0 is unused)
+                    return int(lqn.type[idx])  # type array is 0-indexed over elements
 
         # Compute type from index ranges
-        if 1 <= idx <= lqn.nhosts:
+        if lqn.hshift <= idx < lqn.hshift + lqn.nhosts:
             return LayeredNetworkElement.PROCESSOR
-        elif lqn.tshift < idx <= lqn.tshift + lqn.ntasks:
+        elif lqn.tshift <= idx < lqn.tshift + lqn.ntasks:
             return LayeredNetworkElement.TASK
-        elif lqn.eshift < idx <= lqn.eshift + lqn.nentries:
+        elif lqn.eshift <= idx < lqn.eshift + lqn.nentries:
             return LayeredNetworkElement.ENTRY
-        elif lqn.ashift < idx <= lqn.ashift + lqn.nacts:
+        elif lqn.ashift <= idx < lqn.ashift + lqn.nacts:
             return LayeredNetworkElement.ACTIVITY
         return 0
 
@@ -7130,7 +8882,7 @@ class SolverLN(EnsembleSolver):
                     if host_layer is None:
                         continue
 
-                    server_idx = host_layer.attribute.get('serverIdx', 2)
+                    server_idx = self._station_idx_of(host_layer, host)
                     server_idx_0 = server_idx - 1 if server_idx >= 1 else 0
 
                     TN = host_result['TN']
@@ -7155,7 +8907,7 @@ class SolverLN(EnsembleSolver):
                     # Non-cache layer: use entry throughput
 
                     # Get server index from caller layer
-                    server_idx = caller_layer.attribute.get('serverIdx', 2)
+                    server_idx = self._station_idx_of(caller_layer, tidx_caller)
                     server_idx_0 = server_idx - 1 if server_idx >= 1 else 0
 
                     TN = result['TN']
@@ -7242,6 +8994,12 @@ class SolverLN(EnsembleSolver):
                            "switching to Robbins-Monro iteration")
             if self.stochiter_mode == 'rm':
                 return self.converged_stoch(it)
+
+        # The moment3 pass is terminal: it runs once hasconverged is set, and its
+        # own output perturbs the error test below. See BUG-97 and the note where
+        # moment_pass_done is set.
+        if self.lnmethod == 'moment3' and self.moment_pass_done:
+            return True
 
         if it < 2:
             return False
@@ -7489,6 +9247,16 @@ class SolverLN(EnsembleSolver):
 
     def iterate(self):
         """Run iteration (matches MATLAB EnsembleSolver iterate)."""
+        # Solver console: SolverLN drives an ensemble of layer models and does
+        # not pass through the NetworkSolver entry point, so it opens its own
+        # run here, at the method every caller reaches.
+        from line_solver.api.io import console as _console
+        with _console.run_scope(self, self.options):
+            _console.loop('solving the layered fixed point over %d layers', self.nlayers)
+            return self._iterate_body()
+
+    def _iterate_body(self):
+        from line_solver.api.io import console as _console
         line_debug("LN solver iterate starting: method=%s, nlayers=%d",
                    self.options.method if hasattr(self.options, 'method') else 'default', self.nlayers)
         it = 0
@@ -7526,18 +9294,35 @@ class SolverLN(EnsembleSolver):
             from ..jar_dispatch import ln_ensemble_avg_via_jar
             return ln_ensemble_avg_via_jar(self)
 
+        # lang=cpp solves the whole ensemble in one line-cli run and likewise never
+        # enters iterate(). An absent binary is the ONLY automatic fallback: a
+        # construct or option the C++ layered path refuses propagates, since
+        # answering it natively would report a python number under lang='cpp'.
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            from ..cpp_dispatch import LineCliNotAvailable, ln_ensemble_avg_via_cpp
+            try:
+                return ln_ensemble_avg_via_cpp(self)
+            except LineCliNotAvailable as e:
+                line_warning("SolverLN", "lang='cpp' requested but the C++ solver is "
+                             "unavailable (%s); falling back to lang='python'." % e)
+
         self.iterate()
 
+        # the layers of method 'srvn.ph' carry one class per caller task, so the
+        # per-element results are rebuilt analytically -- see its get_ensemble_avg
+        if self._is_ph_encoding():
+            return self._get_ensemble_avg_ph()
+
         lqn = self.lqn
-        QN = np.full(lqn.nidx + 1, np.nan)  # Queue lengths (will become utilization)
-        UN = np.full(lqn.nidx + 1, np.nan)
-        RN = np.full(lqn.nidx + 1, np.nan)
-        TN = np.full(lqn.nidx + 1, np.nan)
-        PN = np.full(lqn.nidx + 1, np.nan)  # Utilization stored here first
-        SN = np.full(lqn.nidx + 1, np.nan)  # Response time stored here first
-        WN = np.full(lqn.nidx + 1, np.nan)  # Residence time
-        WN_processed = np.zeros(lqn.nidx + 1, dtype=bool)  # Track activities already accumulated into task WN
-        AN = np.full(lqn.nidx + 1, np.nan)  # Not available yet
+        QN = np.full(lqn.nidx, np.nan)  # Queue lengths (will become utilization)
+        UN = np.full(lqn.nidx, np.nan)
+        RN = np.full(lqn.nidx, np.nan)
+        TN = np.full(lqn.nidx, np.nan)
+        PN = np.full(lqn.nidx, np.nan)  # Utilization stored here first
+        SN = np.full(lqn.nidx, np.nan)  # Response time stored here first
+        WN = np.full(lqn.nidx, np.nan)  # Residence time
+        WN_processed = np.zeros(lqn.nidx, dtype=bool)  # Track activities already accumulated into task WN
+        AN = np.full(lqn.nidx, np.nan)  # Not available yet
 
         E = self.nlayers
 
@@ -7587,8 +9372,17 @@ class SolverLN(EnsembleSolver):
                 is_host = server_station.attribute.get('ishost', False)
                 hidx = server_station.attribute.get('idx')
 
-            # For host layers, determine processor metrics
-            if is_host and hidx is not None:
+            # For host layers, determine processor metrics, one processor at a
+            # time: under flat layering the layer carries every processor.
+            host_station_idx = layer.attribute.get('hostStations') or ([server_idx] if is_host else [])
+            for hs in host_station_idx:
+                hs0 = hs - 1 if hs >= 1 else 0
+                if hs0 >= len(stations):
+                    continue
+                h_station = stations[hs0]
+                hidx = h_station.attribute.get('idx') if hasattr(h_station, 'attribute') else None
+                if hidx is None or not h_station.attribute.get('ishost', False):
+                    continue
                 # Aggregate metrics across all classes for processor
                 if np.isnan(QN[hidx]): QN[hidx] = 0.0
                 if np.isnan(PN[hidx]): PN[hidx] = 0.0
@@ -7597,8 +9391,8 @@ class SolverLN(EnsembleSolver):
                 for c_idx, cls in enumerate(classes):
                     # Add queue length and utilization from server node
                     # Add queue length (for ALL classes)
-                    if server_idx_0 < result_QN.shape[0] and c_idx < result_QN.shape[1]:
-                        QN[hidx] = QN[hidx] + result_QN[server_idx_0, c_idx]
+                    if hs0 < result_QN.shape[0] and c_idx < result_QN.shape[1]:
+                        QN[hidx] = QN[hidx] + result_QN[hs0, c_idx]
 
                     # activity index extracted from the class attribute tuple.
                     if hasattr(cls, 'attribute') and cls.attribute is not None:
@@ -7606,19 +9400,23 @@ class SolverLN(EnsembleSolver):
                         if elem_type == LayeredNetworkElement.ACTIVITY:
                             aidx = cls.attribute[1] if len(cls.attribute) > 1 else None
                             if aidx is not None:
+                                # only the activities that run on this processor
+                                if self._station_idx_of(layer, self._get_parent(self._get_parent(aidx))) != hs:
+                                    continue
                                 tidx = self._get_parent(aidx)  # Get parent task
                                 if np.isnan(PN[aidx]): PN[aidx] = 0.0
                                 if tidx is not None and np.isnan(PN[tidx]): PN[tidx] = 0.0
-                                if server_idx_0 < result_UN.shape[0] and c_idx < result_UN.shape[1]:
+                                if hs0 < result_UN.shape[0] and c_idx < result_UN.shape[1]:
                                     # MATLAB does NOT apply fork_fanout correction here
                                     # (matches MATLAB getEnsembleAvg lines 55-59)
-                                    util = result_UN[server_idx_0, c_idx]
+                                    util = result_UN[hs0, c_idx]
                                     PN[aidx] = PN[aidx] + util
                                     if tidx is not None:
                                         PN[tidx] = PN[tidx] + util
                                     PN[hidx] = PN[hidx] + util  # Processor utilization from ACTIVITY only
 
                 TN[hidx] = np.nan  # Added for consistency with LQNS
+            is_host = is_host or bool(layer.attribute.get('hostStations'))
 
             # Determine remaining metrics for all classes
             classes = layer.get_classes()
@@ -7627,6 +9425,9 @@ class SolverLN(EnsembleSolver):
                     continue
 
                 elem_type = cls.attribute[0] if len(cls.attribute) > 0 else 0
+                # under flat layering each class is served at its own station, so
+                # read the layer result there rather than at the layer's serverIdx
+                server_idx_0 = self._station_idx_of_class(layer, cls) - 1
 
                 if elem_type == LayeredNetworkElement.TASK:
                     tidx = cls.attribute[1] if len(cls.attribute) > 1 else None
@@ -7745,12 +9546,12 @@ class SolverLN(EnsembleSolver):
                 elif elem_type == LayeredNetworkElement.CALL:
                     # Handle CALL classes (matches MATLAB getEnsembleAvg lines 99-107)
                     cidx = cls.attribute[1] if len(cls.attribute) > 1 else None
-                    if cidx is not None and cidx > 0:
+                    if cidx is not None and cidx >= 0:
                         # Get source activity from callpair
                         if hasattr(lqn, 'callpair') and lqn.callpair is not None:
                             if cidx < lqn.callpair.shape[0]:
                                 # callpair column 1 is the source activity (0-indexed in the array)
-                                aidx = int(lqn.callpair[cidx, 1])
+                                aidx = int(lqn.callpair[cidx, 0])
                                 if aidx > 0:
                                     # Check if this is a SYNC call
                                     calltype = CallType.SYNC
@@ -7784,7 +9585,7 @@ class SolverLN(EnsembleSolver):
                                         QN[aidx] = QN[aidx] + result_QN[server_idx_0, c_idx]
 
         # entry/task throughput fallback when layer results leave them unset; mirrors MATLAB getEnsembleAvg.
-        for t in range(1, lqn.ntasks + 1):
+        for t in range(lqn.ntasks):
             tidx = lqn.tshift + t
             entries = self._get_entries_of_task(tidx)
 
@@ -7801,7 +9602,7 @@ class SolverLN(EnsembleSolver):
                     SN[eidx] = self.servt[eidx]
 
         # iterate activities of the task for response-time aggregation.
-        for t in range(1, lqn.ntasks + 1):
+        for t in range(lqn.ntasks):
             tidx = lqn.tshift + t
             activities = self._get_activities_of_task(tidx)
 
@@ -7828,7 +9629,7 @@ class SolverLN(EnsembleSolver):
 
         # Calculate entry utilization from throughput and service times
         # (matches MATLAB getEnsembleAvg lines 175-197)
-        for e in range(1, lqn.nentries + 1):
+        for e in range(lqn.nentries):
             eidx = lqn.eshift + e
             tidx = self._get_parent(eidx)
             if tidx is not None and np.isnan(UN[tidx]):
@@ -7862,7 +9663,7 @@ class SolverLN(EnsembleSolver):
 
         # CacheTask: find each entry's bound activity to attribute cache metrics.
         if hasattr(lqn, 'iscache') and lqn.iscache is not None:
-            for t in range(1, lqn.ntasks + 1):
+            for t in range(lqn.ntasks):
                 tidx = lqn.tshift + t
                 if lqn.iscache[tidx, 0] > 0:
                     # This is a CacheTask - find the bound activity of each entry
@@ -7880,17 +9681,30 @@ class SolverLN(EnsembleSolver):
                                 SN[aidx] = 0.0
                                 WN[aidx] = 0.0
 
-        # Zero out ignored elements (MATLAB getEnsembleAvg.m lines 211-220)
-        for idx in range(1, lqn.nidx + 1):
+        # AN IGNORED ELEMENT IS IDLE, NOT UNDEFINED, and the two are different
+        # cells. Its component holds no reference task, so nothing reaches it and
+        # every measure it HAS is zero -- but the measures its kind never has stay
+        # NaN, exactly as they do for a reachable element. A flat zero over all six
+        # columns broke the table's NaN mask (a processor with a queue length of 0,
+        # an arrival rate reported where no solver reports one), and the mask is
+        # part of the answer: see _kb/06-solver-catalog.md. Reported columns are
+        # QLen=UN, Util=PN, RespT=SN, ResidT=WN, ArvR=AN, Tput=TN, so the pre-swap
+        # QN and RN are discarded below and are not written here.
+        for idx in range(lqn.nidx):
             if self.ignore[idx]:
-                QN[idx] = 0.0
-                UN[idx] = 0.0
-                RN[idx] = 0.0
-                TN[idx] = 0.0
-                PN[idx] = 0.0
-                SN[idx] = 0.0
-                WN[idx] = 0.0
-                AN[idx] = 0.0
+                PN[idx] = 0.0        # every kind reports a utilization
+                AN[idx] = np.nan     # nothing reports an arrival rate on an LQN
+                kind = self._get_type(idx)
+                if kind == LayeredNetworkElement.PROCESSOR:
+                    UN[idx] = SN[idx] = WN[idx] = TN[idx] = np.nan
+                elif kind == LayeredNetworkElement.TASK:
+                    UN[idx] = WN[idx] = TN[idx] = 0.0
+                    SN[idx] = np.nan
+                elif kind == LayeredNetworkElement.ENTRY:
+                    UN[idx] = SN[idx] = TN[idx] = 0.0
+                    WN[idx] = np.nan
+                elif kind == LayeredNetworkElement.ACTIVITY:
+                    UN[idx] = SN[idx] = WN[idx] = TN[idx] = 0.0
 
         # UN=PN, RN=SN by convention (processor utilization, response time).
         final_QN = UN.copy()  # MATLAB: QN = UN (utilization in jobs)
@@ -7902,6 +9716,53 @@ class SolverLN(EnsembleSolver):
     def get_avg(self) -> Tuple[np.ndarray, ...]:
         """Get average metrics (alias for get_ensemble_avg)."""
         return self.get_ensemble_avg()
+
+    def getCdfRespT(self) -> List[Optional[np.ndarray]]:
+        """Response time distribution of every entry of the layered network.
+
+        Mirrors MATLAB ``@SolverLN/getCdfRespT.m``. The distribution is formed
+        by the ``moment3`` pass alone -- the mean-based update builds no law at
+        all -- so a solver constructed with any other method re-runs the
+        ensemble under ``moment3`` here and restores the caller's method
+        afterwards. The routing layers already built serve ``moment3``
+        unchanged, so only the update pass changes.
+
+        Returns:
+            A list of ``nentries`` items, one per entry in the entry-local index
+            space (``lqn.eshift + i``). Each is an ``(n, 2)`` array whose
+            columns are ``[F(t), t]``, the column order every CDF getter in LINE
+            uses, or None for an entry the pass fitted no law to.
+
+        Raises:
+            ValueError: if the layers were built for a phase-type encoding,
+                which carries no activity-graph routing to re-run over.
+        """
+        if not self.entrycdfrespt or self.entrycdfrespt[0] is None:
+            # The distribution pass reads the routing encoding of the activity
+            # graph, which the srvn.ph / flat.ph layers do not carry: re-running
+            # get_avg over them would reconstruct the wrong topology rather than
+            # a coarser answer. Refuse by name.
+            if self._is_ph_encoding():
+                raise ValueError(
+                    "getCdfRespT needs the routing encoding of the activity graph, which "
+                    "method='%s' does not build. Rebuild the solver with method='srvn.cs' "
+                    "or method='moment3'." % self.lnmethod)
+            cur_method = getattr(self.options, 'method', None)
+            cur_lnmethod = self.lnmethod
+            # BOTH the option and the RESOLVED method have to move: update_metrics
+            # dispatches on self.lnmethod, which _build_layers resolved once, so
+            # setting options.method alone leaves the mean-based update in place
+            # and returns an EMPTY table.
+            self.options.method = 'moment3'
+            self.lnmethod = 'moment3'
+            try:
+                self.get_avg()
+            finally:
+                self.options.method = cur_method
+                self.lnmethod = cur_lnmethod
+        return self.entrycdfrespt
+
+    get_cdf_resp_t = getCdfRespT
 
     def getTranAvg(self, *args):
         """Transient average station metrics of the layered network.
@@ -7919,6 +9780,14 @@ class SolverLN(EnsembleSolver):
         coupled relaxation is exactly the decoupled result. Mirrors MATLAB
         SolverLN.getTranAvg.
         """
+        # The C++ layered path serves -a avg only, and the transient below is a
+        # native computation: returning it under lang='cpp' would label python
+        # numbers as C++ ones, which is what that option exists to rule out.
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            raise RuntimeError(
+                "lang='cpp' delegates the steady-state layered solve only (the C++ layered "
+                "path implements -a avg); the layered transient is native. Use lang='python' "
+                "for getTranAvg.")
         cfg = getattr(self.options, 'config', None)
         mode = None
         if cfg is not None:
@@ -8229,7 +10098,7 @@ class SolverLN(EnsembleSolver):
         callservt = {}
 
         # Task think times: from the task's own server-layer utilization/throughput.
-        for t in range(1, lqn.ntasks + 1):
+        for t in range(lqn.ntasks):
             tidx = lqn.tshift + t
             if np.isnan(self.idxhash[tidx]) or self._is_ref_task(tidx):
                 continue
@@ -8250,10 +10119,10 @@ class SolverLN(EnsembleSolver):
             thinkt[tidx] = np.maximum(GlobalConstants.Zero, tk) + userthink
 
         # Synchronous-call service demands: callee entry response time * call mean.
-        for cidx in range(1, lqn.ncalls + 1):
+        for cidx in range(lqn.ncalls):
             if self._get_calltype(cidx) != CallType.SYNC:
                 continue
-            eidx = int(lqn.callpair[cidx, 2])   # callee entry
+            eidx = int(lqn.callpair[cidx, 1])   # callee entry
             tidx = self._get_parent(eidx)       # callee task
             if tidx is None or np.isnan(self.idxhash[tidx]):
                 continue
@@ -8371,7 +10240,1748 @@ class SolverLN(EnsembleSolver):
 
     # ---- Majumdar-Woodside robust box bounds for the LQN --------------------
 
+    # =================================================================
+    # Method 'srvn.ph': the activity graph of an entry as a phase-type
+    # server law.
+    #
+    # Each layer is a two-station cycle, Delay('Clients') + Queue(server),
+    # with one closed class per caller task. The sequencing the default
+    # method encodes as routing -- a class per entry, per activity and per
+    # call, plus Fork, Join, Router and ClassSwitch nodes -- is composed
+    # instead into a single phase-type service law per (layer, caller), by
+    # the exact series-parallel reduction of Workflow.
+    #
+    # Twin of the MATLAB @SolverLN/buildLayersPH.m and its siblings, of the
+    # JAR SolverLN *PH methods and of the C++ *_ph members of
+    # solvers/ln/solver_ln.h. See _kb/06-solver-catalog.md (LN section).
+    # =================================================================
+    def _ph_init_state(self):
+        """Allocate the per-entry law tables of method 'srvn.ph'."""
+        n = self.lqn.nidx
+        self._ph_wf: List[Any] = [None] * n
+        self._ph_wfhost: List[Any] = [None] * n
+        self._ph_execs: List[Optional[Dict[int, float]]] = [None] * n
+        self._ph_callexecs: List[Optional[Dict[int, float]]] = [None] * n
+        self._ph_hostalpha: List[Any] = [None] * n
+        self._ph_hostT: List[Any] = [None] * n
+        self._ph_hostmean = np.zeros(n)
+        self._ph_entryalpha: List[Any] = [None] * n
+        self._ph_entryT: List[Any] = [None] * n
+        self._ph_entrymean = np.zeros(n)
+        self._ph_entryscv = np.ones(n)
+        self._ph_share = np.zeros(n)
+        self._ph_overlap = np.ones(n)
+        self._ph_setupshare = np.zeros(n)
+        self._ph_xdemand = np.zeros(n)
+        self._ph_ncalls = np.zeros((n, n))
+        self._ph_calltime = np.zeros((n, n))
+        self._ph_procresid = np.zeros(n)
+        self._ph_actthinkt = np.zeros(n)
+        self._ph_calltotal = np.zeros(n)
+        self._ph_layer: List[Optional[PHLayer]] = [None] * (self.lqn.nhosts + self.lqn.ntasks)
+
+    # =================================================================
+    # Layer construction
+    # =================================================================
+
+    def _build_layers_ph(self, flat: bool = False):
+        """Build the ensemble of a PH encoding.
+
+        FLAT False is method 'srvn.ph': one layer per served element, each a
+        two-station cycle Delay('Clients') + Queue(server), with one closed class
+        per caller task. FLAT True is method 'flat.ph': ONE layer holding a
+        station for every processor and every called task, with the same one
+        closed class per caller task, which now visits each of the servers it
+        uses once per invocation instead of meeting them through surrogate
+        delays.
+        """
+        lqn = self.lqn
+        nelem = lqn.nhosts + lqn.ntasks
+        if not getattr(self, '_ph_laws_ready', False):
+            self._assert_srvn_ph_supported(flat)
+
+        # The interlock correction rewrites the populations of the call classes,
+        # which this method does not create: its callers reach the server in one
+        # class each. The setting is turned off on a COPY: options.config is the
+        # very dict the caller passed to the constructor, so writing into it
+        # rewrote the caller's own object, and a config reused across solvers
+        # carried the ph decision into models that never took this method.
+        try:
+            if self.options.config.get('interlocking', False):
+                cfg = type(self.options.config)(self.options.config)
+                cfg['interlocking'] = False
+                self.options.config = cfg
+        except (AttributeError, TypeError):
+            pass
+
+        # A preceding probe has already composed the per-entry workflows; they do
+        # not depend on the iterate, so they are not rebuilt here.
+        if not getattr(self, '_ph_laws_ready', False):
+            self._ph_init_laws()
+
+        # Seed the fixed point with the static demands, then compose the entry laws
+        self.residt = np.zeros(lqn.nidx)
+        self.servt = np.zeros(lqn.nidx)
+        self.callservt = np.zeros(lqn.ncalls)
+        self.callresidt = np.zeros(lqn.ncalls)
+        self.tput = np.zeros(lqn.nidx)
+        self.util = np.zeros(lqn.nidx)
+        self.thinkt = np.zeros(lqn.nidx)
+        for aidx in range(lqn.ashift, lqn.ashift + lqn.nacts):
+            self.residt[aidx] = self._ph_hostdem_mean(aidx)
+        for cidx in range(lqn.ncalls):
+            ct = self._ph_call_type(cidx)
+            if ct in (_SYNC, _ASYNC):
+                eidx = int(lqn.callpair[cidx, 1])
+                v = self._ph_call_mean(cidx) * self._ph_hostmean[eidx]
+                self.callservt[cidx] = v
+                self.callresidt[cidx] = v
+        self._ph_compose_entry_laws()
+
+        self.ensemble = [None] * nelem
+        self.solvers = [None] * nelem
+
+        if flat:
+            # ONE subnetwork holding every processor and every called task
+            servers = self._build_ph_flat_layer()
+            self.ensemble = [self.ensemble[0]]
+            self.solvers = [self.solvers[0]]
+            self.idxhash = np.full(nelem, np.nan)
+            for idx in servers:
+                self.idxhash[idx] = 0
+            self.nlayers = 1
+            self.layer_has_region = [False]
+            self.layer_chains = [None]
+            # every server resolves to the single flat layer, which is at once
+            # the host layer and the task layer
+            self.hostLayerIndices = [0]
+            self.taskLayerIndices = [0]
+            self._update_layers_ph(0)
+            self.servt_classes_updmap = self._flatten_map(self._ph_servt_map)
+            self.thinkt_classes_updmap = self._flatten_map(self._ph_thinkt_map)
+            self.actthinkt_classes_updmap = self._flatten_map([[]])
+            self.arvproc_classes_updmap = self._flatten_map(self._ph_arvproc_map)
+            self.call_classes_updmap = self._flatten_map(self._ph_call_map)
+            self.route_prob_updmap = self._flatten_map([[]])
+            self.unique_route_prob_updmap = np.array([])
+            return
+
+        # One subnetwork per processor
+        for hidx in range(lqn.nhosts):
+            if self.ignore[hidx]:
+                continue
+            callers = self._ph_host_layer_callers(hidx)
+            if not callers:
+                continue
+            self._build_ph_layer(hidx, callers, True)
+
+        # One subnetwork per called task
+        for t in range(lqn.ntasks):
+            tidx = lqn.tshift + t
+            if self.ignore[tidx] or self._is_ref_task(tidx):
+                continue
+            callers = self._ph_task_layer_callers(tidx)
+            if not callers and not self._ph_async_calls_into(tidx):
+                continue
+            self._build_ph_layer(tidx, callers, False)
+
+        # Compact the ensemble and index it
+        empty = [i for i, e in enumerate(self.ensemble) if e is None]
+        self.solvers = [sv for i, sv in enumerate(self.solvers) if i not in empty]
+        self.ensemble = [e for e in self.ensemble if e is not None]
+        self.idxhash = np.full(nelem, np.nan)
+        layer_idx = 0
+        for orig in range(nelem):
+            if orig not in empty:
+                self.idxhash[orig] = layer_idx
+                layer_idx += 1
+        self.nlayers = len(self.ensemble)
+        self.layer_has_region = [False] * self.nlayers
+        self.layer_chains = [None] * self.nlayers
+        self.hostLayerIndices = [int(self.idxhash[h]) for h in range(lqn.nhosts)
+                              if not np.isnan(self.idxhash[h])]
+        self.taskLayerIndices = [int(self.idxhash[lqn.tshift + t]) for t in range(lqn.ntasks)
+                              if not np.isnan(self.idxhash[lqn.tshift + t])]
+
+        # install the initial laws, so that iteration 1 sees the seeded demands
+        # rather than the placeholders the stations were created with
+        self._update_layers_ph(0)
+
+        # The maps carry no law of this method -- update_layers composes them
+        # instead -- but post() resets the layers they name, so they are filled
+        self.servt_classes_updmap = self._flatten_map(self._ph_servt_map)
+        self.thinkt_classes_updmap = self._flatten_map(self._ph_thinkt_map)
+        self.actthinkt_classes_updmap = self._flatten_map([[]])
+        self.arvproc_classes_updmap = self._flatten_map(self._ph_arvproc_map)
+        self.call_classes_updmap = self._flatten_map(self._ph_call_map)
+        self.route_prob_updmap = self._flatten_map([[]])
+        self.unique_route_prob_updmap = np.array([])
+
+    def _build_ph_flat_layer(self) -> List[int]:
+        """
+        Build the ONE layer of method 'flat.ph': a client delay plus a station for
+        every processor and every called task.
+
+        A caller task is one closed class, and it visits each server it uses ONCE
+        per invocation, carrying there the composed law of the demand it places on
+        that server -- the same law method 'srvn.ph' installs in the server's own
+        layer. What changes is that the servers now contend inside one network
+        instead of seeing each other through surrogate delays, so the client delay
+        keeps only the think times and whatever of the cycle this model does not
+        hold. That is the whole difference between the two encodings of the PH
+        composition, and it is why the reconstruction passes are shared verbatim.
+        """
+        from ...lang.classes import ClosedClass, OpenClass
+        from ...lang.network import Network
+        from ...lang.nodes import Delay, Queue, Sink, Source
+        from .solver_ln import OptionsDict
+
+        lqn = self.lqn
+        servers = self._ph_flat_server_set()
+
+        model = Network('FlatPH')
+        try:
+            model.setChecks(False)
+        except AttributeError:
+            pass
+        model.attribute = OptionsDict({
+            'hosts': [], 'tasks': [], 'entries': [], 'activities': [], 'calls': [],
+            'clientIdx': 1, 'serverIdx': 2, 'sourceIdx': None,
+            'cacheIdx': None, 'iscachelayer': False,
+        })
+
+        client_delay = Delay(model, 'Clients')
+
+        srv = []
+        station_of = {}
+        model.attribute['hostStations'] = []
+        model.attribute['taskStations'] = []
+        server_idx_of = {}
+        for idx in servers:
+            ishost = idx <= lqn.nhosts
+            st = Queue(model, self._get_hashname(idx), self._get_sched(idx))
+            st.set_number_of_servers(self._get_nservers(idx))
+            st.attribute = OptionsDict({'ishost': ishost, 'idx': idx})
+            srv.append(st)
+            stn = len(model.get_nodes())
+            station_of[idx] = stn
+            server_idx_of[idx] = stn
+            if ishost:
+                model.attribute['hostStations'].append(stn)
+                model.attribute['hosts'].append([None, stn])
+            else:
+                model.attribute['taskStations'].append(stn)
+                model.attribute['tasks'].append([None, stn])
+        model.attribute['serverIdxOf'] = server_idx_of
+        model.attribute['server_stations'] = srv
+        model.attribute['nreplicas'] = 1
+        # the scalar fallback of the station lookup, which no served element reaches
+        model.attribute['serverIdx'] = station_of[servers[0]]
+
+        # Callers of each server, and the union of them, which becomes the class set
+        callers_of = {}
+        all_callers = []
+        for idx in servers:
+            cs = (self._ph_host_layer_callers(idx) if idx <= lqn.nhosts
+                  else self._ph_task_layer_callers(idx))
+            callers_of[idx] = list(cs)
+            for c in cs:
+                if c not in all_callers:
+                    all_callers.append(c)
+        all_callers.sort()
+
+        # One closed class per caller task
+        class_of_caller = {}
+        npop = 0.0
+        for c in all_callers:
+            # _ph_flat_server_set has refused every replicated element, so the
+            # per-replica reduction the srvn builder makes is the identity here
+            njobs = self._ph_layer_population(servers[0], c, 1)
+            cls = ClosedClass(model, self._get_hashname(c), int(njobs), client_delay)
+            cls.setReferenceClass(True)
+            cls.attribute = [LayeredNetworkElement.TASK, c]
+            class_of_caller[c] = cls.get_index()
+            model.attribute['tasks'].append([cls.get_index(), c])
+            npop += njobs
+            client_delay.set_service(cls, Exp.fitMean(max(GlobalConstants.FineTol,
+                                                          self._ref_think_mean(c))))
+            # A station this caller never reaches must say so with Disabled, NOT
+            # with a tiny placeholder law. An FCFS station carries ONE service law
+            # across its classes, so a placeholder is not inert there: it is mixed
+            # into the multiserver correction and invents waiting where there is
+            # none. Under 'srvn.ph' the question never arises, since every class of
+            # a layer visits that layer's single server.
+            for st in srv:
+                st.set_service(cls, Disabled())
+            for si, idx in enumerate(servers):
+                if c not in callers_of[idx]:
+                    continue
+                srv[si].set_service(cls, Exp.fitMean(GlobalConstants.FineTol))
+                self.njobs[c, idx] = njobs
+                self._ph_thinkt_map[idx].append([idx, c, 1, cls.get_index()])
+                self._ph_servt_map[idx].append([idx, c, station_of[idx], cls.get_index()])
+
+        # Open classes: entry arrivals on a processor station, async calls on a task one
+        open_arrivals_of = {idx: [] for idx in servers}
+        source_station = None
+        sink_station = None
+        for si, hidx in enumerate(servers):
+            # 0-based: anything at or past nhosts is a TASK, not a host. The
+            # MATLAB twin (buildLayersPH.m:476) is 1-based, where `>` is right.
+            if hidx >= lqn.nhosts:
+                continue
+            for c in callers_of[hidx]:
+                # A task no other task calls has no task station, so the think-time
+                # closure never gives its caller class a surrogate delay: the class
+                # cycles against an Immediate one and an open stream on top of it
+                # doubles the load. The chain is the representation that honours the
+                # thread pool, so it is kept and closed on the arrival rate instead.
+                if self._ph_open_arrival_only(c):
+                    continue
+                for eidx in self._ph_entries_of(c):
+                    if not self._ph_has_open_arrival(eidx):
+                        continue
+                    if source_station is None:
+                        model.attribute['sourceIdx'] = len(model.get_nodes()) + 1
+                        source_station = Source(model, 'Source')
+                        sink_station = Sink(model, 'Sink')
+                    ocls = OpenClass(model, self._get_hashname(eidx) + '.Open', 0)
+                    ocls.attribute = [LayeredNetworkElement.ENTRY, eidx]
+                    source_station.set_arrival(ocls, lqn.arrival[eidx])
+                    client_delay.set_service(ocls, Disabled())
+                    # Disabled, not a placeholder, at every station this stream misses
+                    for st in srv:
+                        st.set_service(ocls, Disabled())
+                    srv[si].set_service(ocls, Exp.fitMean(max(GlobalConstants.FineTol,
+                                                              self._ph_hostmean[eidx])))
+                    open_arrivals_of[hidx].append((ocls.get_index(), eidx))
+                    model.attribute['entries'].append([ocls.get_index(), eidx])
+                    self._ph_arvproc_map[hidx].append([hidx, -eidx,
+                                                       model.attribute['sourceIdx'],
+                                                       ocls.get_index()])
+        for si, tidx in enumerate(servers):
+            if tidx <= lqn.nhosts:
+                continue
+            for cidx in self._ph_async_calls_into(tidx):
+                if source_station is None:
+                    model.attribute['sourceIdx'] = len(model.get_nodes()) + 1
+                    source_station = Source(model, 'Source')
+                    sink_station = Sink(model, 'Sink')
+                ocls = OpenClass(model, call_hashname(lqn, cidx), 0)
+                ocls.attribute = [LayeredNetworkElement.CALL, cidx]
+                source_station.set_arrival(ocls, Immediate())
+                client_delay.set_service(ocls, Disabled())
+                # Disabled, not a placeholder, at every station this stream misses
+                for st in srv:
+                    st.set_service(ocls, Disabled())
+                eidx = int(lqn.callpair[cidx, 1])
+                srv[si].set_service(ocls, Exp.fitMean(max(GlobalConstants.FineTol,
+                                                          self._ph_entrymean[eidx])))
+                open_arrivals_of[tidx].append((ocls.get_index(), -cidx))
+                model.attribute['calls'].append([ocls.get_index(), cidx,
+                                                 int(lqn.callpair[cidx, 0]), eidx])
+                self._ph_arvproc_map[tidx].append([tidx, cidx, model.attribute['sourceIdx'],
+                                                   ocls.get_index()])
+                self._ph_call_map[tidx].append([tidx, cidx, station_of[tidx],
+                                                ocls.get_index()])
+
+        if source_station is not None:
+            for jc in model.classes:
+                if isinstance(jc, ClosedClass):
+                    source_station.set_arrival(jc, Disabled())
+
+        # Routing: one visit per server the caller uses, in server order. The number
+        # of calls is carried by the service law, not by a visit ratio, so no arc
+        # ever moves.
+        P = model.init_routing_matrix()
+        for c in all_callers:
+            cls = model.classes[class_of_caller[c] - 1]
+            prev = client_delay
+            visited = False
+            for si, idx in enumerate(servers):
+                if c not in callers_of[idx]:
+                    continue
+                P.set(cls, cls, prev, srv[si], 1.0)
+                prev = srv[si]
+                visited = True
+            if visited:
+                P.set(cls, cls, prev, client_delay, 1.0)
+        for si, idx in enumerate(servers):
+            for (k, _tag) in open_arrivals_of[idx]:
+                cls = model.classes[k - 1]
+                P.set(cls, cls, source_station, srv[si], 1.0)
+                P.set(cls, cls, srv[si], sink_station, 1.0)
+        model.link(P)
+
+        for idx in servers:
+            L = PHLayer()
+            L.idx = idx
+            L.ishost = idx <= lqn.nhosts
+            L.callers = list(callers_of[idx])
+            L.class_of_caller = class_of_caller
+            L.nreplicas = 1
+            L.qstations = [station_of[idx]]
+            L.svcmean_by_class = {}
+            L.open_arrivals = list(open_arrivals_of[idx])
+            L.npop = max(npop, 1.0)
+            self._ph_layer[idx] = L
+
+        self.ensemble[0] = model
+        solver = self.solver_factory(model)
+        self._assert_layer_solver_supports_model(solver, model, servers[0])
+        self._detach_layer_config(solver)
+        self._silence_layer_solver(solver)
+        self.solvers[0] = solver
+        return servers
+
+    def _ph_flat_server_set(self) -> List[int]:
+        """
+        Processors and called tasks that become stations of the flat layer.
+
+        The set is the elements the srvn builder would have given a layer of their
+        own, so 'flat.ph' and 'srvn.ph' place the SAME stations and differ only in
+        how many networks hold them. The refusals are those of _flat_server_set,
+        since they are properties of the squashing and not of the encoding: each of
+        these carries per-layer state that one submodel cannot hold.
+        """
+        lqn = self.lqn
+        nelem = lqn.nhosts + lqn.ntasks
+        for i in range(nelem):
+            if float(lqn.repl[0, i]) > 1:
+                raise ValueError("method='flat.ph' does not support replicated processors or "
+                                 "tasks, whose replicas need a submodel each. Use "
+                                 "method='srvn.ph'.")
+        iscache = getattr(lqn, 'iscache', None)
+        if iscache is not None and np.any(np.asarray(iscache).ravel()[:nelem]):
+            raise ValueError("method='flat.ph' does not support cache tasks. Use "
+                             "method='default'.")
+        hs = getattr(lqn, 'hassetup', None)
+        if hs is not None and np.any(np.asarray(hs).ravel()[:nelem]):
+            raise ValueError("method='flat.ph' does not support setup tasks, whose powered-down "
+                             "threads are per-layer state. Use method='srvn.ph'.")
+
+        servers = []
+        for hidx in range(lqn.nhosts):
+            if self.ignore[hidx]:
+                continue
+            if not self._get_tasks_of_host(hidx):
+                continue
+            if not self._ph_host_layer_callers(hidx):
+                continue
+            servers.append(hidx)
+        for t in range(lqn.ntasks):
+            tidx = lqn.tshift + t
+            if self.ignore[tidx] or self._is_ref_task(tidx):
+                continue
+            if not self._ph_task_layer_callers(tidx) and not self._ph_async_calls_into(tidx):
+                continue
+            servers.append(tidx)
+        if not servers:
+            raise ValueError("method='flat.ph' found no server: the model has no processor "
+                             "with tasks.")
+        return servers
+
+    def _build_ph_layer(self, idx: int, callers: List[int], ishost: bool):
+        """Build the two-station layer of server element IDX."""
+        from ...lang.classes import ClosedClass, OpenClass
+        from ...lang.network import Network
+        from ...lang.nodes import Delay, Queue, Sink, Source
+        from .solver_ln import OptionsDict
+
+        lqn = self.lqn
+        model = Network(self._get_hashname(idx))
+        try:
+            model.setChecks(False)
+        except AttributeError:
+            pass
+        model.attribute = OptionsDict({
+            'hosts': [], 'tasks': [], 'entries': [], 'activities': [], 'calls': [],
+            'clientIdx': 1, 'serverIdx': 2, 'sourceIdx': None,
+            'cacheIdx': None, 'iscachelayer': False,
+        })
+
+        client_delay = Delay(model, 'Clients')
+        nreplicas = self._ph_replica_count(idx, callers, ishost)
+        srv = []
+        for m in range(1, nreplicas + 1):
+            nm = self._get_hashname(idx) if m == 1 else (self._get_hashname(idx) + '.' + str(m))
+            st = Queue(model, nm, self._get_sched(idx))
+            st.set_number_of_servers(self._get_nservers(idx))
+            st.attribute = OptionsDict({'ishost': ishost, 'idx': idx})
+            srv.append(st)
+        server_station_idx = len(model.get_nodes()) - nreplicas + 1
+        model.attribute['serverIdxOf'] = {idx: server_station_idx}
+        model.attribute['server_stations'] = srv
+        model.attribute['nreplicas'] = nreplicas
+        if ishost:
+            model.attribute['hostStations'] = [server_station_idx]
+            model.attribute['taskStations'] = []
+            model.attribute['hosts'].append([None, server_station_idx])
+        else:
+            model.attribute['hostStations'] = []
+            model.attribute['taskStations'] = [server_station_idx]
+            model.attribute['tasks'].append([None, server_station_idx])
+
+        # --- closed class per caller task
+        L = PHLayer()
+        L.idx, L.ishost, L.callers, L.nreplicas = idx, ishost, list(callers), nreplicas
+        L.qstations = [1 + m for m in range(1, nreplicas + 1)]
+        for c in callers:
+            njobs = self._ph_layer_population(idx, c, nreplicas)
+            self.njobs[c, idx] = njobs
+            cls = ClosedClass(model, self._get_hashname(c), int(njobs), client_delay)
+            cls.setReferenceClass(True)
+            cls.attribute = [LayeredNetworkElement.TASK, c]
+            L.class_of_caller[c] = cls.get_index()
+            model.attribute['tasks'].append([cls.get_index(), c])
+            client_delay.set_service(cls, Exp.fitMean(max(GlobalConstants.FineTol,
+                                                          self._ref_think_mean(c))))
+            for st in srv:
+                st.set_service(cls, Exp.fitMean(GlobalConstants.FineTol))
+            # every layer must be refreshed after a law change: post() resets the
+            # layers named by the think-time map
+            self._ph_thinkt_map[idx].append([idx, c, 1, cls.get_index()])
+            self._ph_servt_map[idx].append([idx, c, server_station_idx, cls.get_index()])
+
+        # --- open classes: entry arrivals on a host layer, async calls on a task layer
+        source_station = None
+        sink_station = None
+        if ishost:
+            for c in callers:
+                # A task no other task calls has no task layer, so update_think_times
+                # never gives its caller class a surrogate delay: the class cycles
+                # against an Immediate one and an open stream on top of it doubles the
+                # load. The chain is the representation that honours the thread pool,
+                # so it is kept and closed on the arrival rate instead.
+                if self._ph_open_arrival_only(c):
+                    continue
+                for eidx in self._ph_entries_of(c):
+                    if not self._ph_has_open_arrival(eidx):
+                        continue
+                    if source_station is None:
+                        model.attribute['sourceIdx'] = len(model.get_nodes()) + 1
+                        source_station = Source(model, 'Source')
+                        sink_station = Sink(model, 'Sink')
+                    ocls = OpenClass(model, self._get_hashname(eidx) + '.Open', 0)
+                    ocls.attribute = [LayeredNetworkElement.ENTRY, eidx]
+                    source_station.set_arrival(ocls, lqn.arrival[eidx])
+                    client_delay.set_service(ocls, Disabled())
+                    for st in srv:
+                        st.set_service(ocls, Exp.fitMean(max(GlobalConstants.FineTol,
+                                                             self._ph_hostmean[eidx])))
+                    L.open_arrivals.append((ocls.get_index(), eidx))
+                    model.attribute['entries'].append([ocls.get_index(), eidx])
+                    self._ph_arvproc_map[idx].append([idx, -eidx,
+                                                   model.attribute['sourceIdx'], ocls.get_index()])
+        else:
+            for cidx in self._ph_async_calls_into(idx):
+                if source_station is None:
+                    model.attribute['sourceIdx'] = len(model.get_nodes()) + 1
+                    source_station = Source(model, 'Source')
+                    sink_station = Sink(model, 'Sink')
+                ocls = OpenClass(model, call_hashname(lqn, cidx), 0)
+                ocls.attribute = [LayeredNetworkElement.CALL, cidx]
+                source_station.set_arrival(ocls, Immediate())
+                client_delay.set_service(ocls, Disabled())
+                eidx = int(lqn.callpair[cidx, 1])
+                for st in srv:
+                    st.set_service(ocls, Exp.fitMean(max(GlobalConstants.FineTol,
+                                                         self._ph_entrymean[eidx])))
+                L.open_arrivals.append((ocls.get_index(), -cidx))
+                model.attribute['calls'].append([ocls.get_index(), cidx,
+                                                 int(lqn.callpair[cidx, 0]), eidx])
+                self._ph_arvproc_map[idx].append([idx, cidx, model.attribute['sourceIdx'],
+                                               ocls.get_index()])
+                self._ph_call_map[idx].append([idx, cidx, server_station_idx, ocls.get_index()])
+
+        if source_station is not None:
+            for jc in model.classes:
+                if isinstance(jc, ClosedClass):
+                    source_station.set_arrival(jc, Disabled())
+
+        # Routing: one visit to the server per client cycle. The number of calls is
+        # carried by the service law, not by a visit ratio, so no arc ever changes
+        P = model.init_routing_matrix()
+        for c in callers:
+            cls = model.classes[L.class_of_caller[c] - 1]
+            for st in srv:
+                P.set(cls, cls, client_delay, st, 1.0 / nreplicas)
+                P.set(cls, cls, st, client_delay, 1.0)
+        for (k, _tag) in L.open_arrivals:
+            cls = model.classes[k - 1]
+            for st in srv:
+                P.set(cls, cls, source_station, st, 1.0 / nreplicas)
+                P.set(cls, cls, st, sink_station, 1.0)
+        model.link(P)
+
+        L.svcmean_by_class = {}
+        np_pop = 0.0
+        for c in callers:
+            v = self.njobs[c, idx]
+            if np.isfinite(v) and v > 0:
+                np_pop += v
+        L.npop = max(np_pop, 1.0)
+        self._ph_layer[idx] = L
+        self.ensemble[idx] = model
+        solver = self.solver_factory(model)
+        self._assert_layer_solver_supports_model(solver, model, idx)
+        self._detach_layer_config(solver)
+        self._silence_layer_solver(solver)
+        self.solvers[idx] = solver
+
+    # =================================================================
+    # Composition of the entry laws
+    # =================================================================
+
+    def _ph_init_laws(self):
+        """Build the per-entry workflows and the iteration-invariant processor law."""
+        lqn = self.lqn
+        nelem = lqn.nhosts + lqn.ntasks
+        self._ph_servt_map = [[] for _ in range(nelem)]
+        self._ph_thinkt_map = [[] for _ in range(nelem)]
+        self._ph_arvproc_map = [[] for _ in range(nelem)]
+        self._ph_call_map = [[] for _ in range(nelem)]
+
+        for e in range(lqn.nentries):
+            eidx = lqn.eshift + e
+            tidx = int(lqn.parent[eidx, 0])
+            if self.ignore[tidx]:
+                continue
+            ew = entry_workflow(self.model, lqn, eidx, True)
+            self._ph_wf[eidx] = ew.wf
+            self._ph_execs[eidx] = ew.execs
+            self._ph_callexecs[eidx] = ew.callexecs
+            eh = entry_workflow(self.model, lqn, eidx, False)
+            self._ph_wfhost[eidx] = eh.wf
+            # the processor sees the WORK of concurrent branches, not their elapsed
+            # time, so the host law serialises an AND fork -- see serial_law
+            alpha, T = serial_law(self._ph_wfhost[eidx])
+            self._ph_hostalpha[eidx] = alpha
+            self._ph_hostT[eidx] = T
+            self._ph_hostmean[eidx] = ph_moments(alpha, T)[0]
+
+        # until the first iteration reports throughputs, a task splits its
+        # requests evenly over its entries
+        for t in range(lqn.ntasks):
+            tidx = lqn.tshift + t
+            entries = self._ph_entries_of(tidx)
+            for eidx in entries:
+                self._ph_share[eidx] = 1.0 / len(entries)
+
+    def _ph_compose_entry_laws(self):
+        """
+        Recompose the entry service laws from the current fixed-point iterate.
+
+        The composed mean is NOT the sum of the leaf means when the graph forks:
+        the branches of an AND fork overlap, and the entry finishes with the last
+        of them. The ratio of the two, the overlap factor, is what the
+        caller-side aggregates are scaled by, so that the pieces of a cycle still
+        add up to the cycle.
+        """
+        lqn = self.lqn
+        entry_setup_share = np.zeros(lqn.nidx)
+        self._ph_overlap[:] = 1.0
+
+        for e in range(lqn.nentries):
+            eidx = lqn.eshift + e
+            if self._ph_wf[eidx] is None:
+                continue
+            w = self._ph_wf[eidx]
+            ex = self._ph_execs[eidx]
+            entrysum = 0.0
+            procsum = 0.0
+            for aidx in self._ph_acts_of(eidx):
+                m = self.residt[aidx] + self._ph_act_think_mean(aidx)
+                procsum += ex[aidx] * m
+                w.setActivityDemandMean(self._ph_name(aidx), max(m, GlobalConstants.FineTol))
+                for cidx in lqn.callsof.get(aidx, []):
+                    if self._ph_call_type(cidx) != _SYNC:
+                        continue
+                    w.setActivityDemand(call_hashname(lqn, cidx), self._ph_call_burst_law(cidx))
+                    m += self.callservt[cidx]
+                entrysum += ex[aidx] * m
+            alpha, T = w.refreshPH()
+            alpha = np.asarray(alpha, dtype=float).reshape(1, -1)
+            T = np.asarray(T, dtype=float)
+            m1, scv = ph_moments(alpha, T)
+            # All activities of an entry run on ONE processor, so the branches of an
+            # AND fork cannot overlap the processor residence they request: the
+            # composed maximum is a lower bound on the entry service time only above
+            # that total. Where it falls below, the law is rescaled in time to it,
+            # which keeps its shape, its SCV and its order.
+            if procsum > m1 + GlobalConstants.FineTol:
+                T = T * (m1 / procsum)
+                m1 = procsum
+            # A SetupTask powers a thread down when it goes idle, so a request may
+            # find it off and pay a cold start before the entry runs at all. The
+            # setup is not part of the activity graph and never enters the
+            # series-parallel reduction: it is prefixed to the composed law
+            # afterwards, as the mixture p*(setup THEN entry) + (1-p)*entry, which
+            # is again phase-type. See _setup_prob for p.
+            p = self._ph_setup_prob(eidx)
+            if p > GlobalConstants.FineTol:
+                sl = self._ph_setup_law(int(lqn.parent[eidx, 0]))
+                if sl is not None:
+                    ac, Tc = Workflow._composeSerial(sl[0], sl[1], alpha, T)
+                    alpha, T = Workflow._composeMixture([ac, alpha], [Tc, T],
+                                                        np.array([p, 1 - p]))
+                    alpha = np.asarray(alpha, dtype=float).reshape(1, -1)
+                    T = np.asarray(T, dtype=float)
+                    m1, scv = ph_moments(alpha, T)
+                    # The share of the entry law that is cold start and not work. The
+                    # surrogate-delay closure measures a thread's cycle in WORK, so it
+                    # must not read a station utilization that this has inflated --
+                    # see update_think_times.
+                    entry_setup_share[eidx] = (
+                        p * self._setup_dist_mean(getattr(lqn, 'setuptime', None),
+                                               int(lqn.parent[eidx, 0]))
+                        / max(m1, GlobalConstants.FineTol))
+            self._ph_entryalpha[eidx] = alpha
+            self._ph_entryT[eidx] = T
+            self._ph_entrymean[eidx] = m1
+            self._ph_entryscv[eidx] = scv
+            if entrysum > GlobalConstants.FineTol:
+                self._ph_overlap[eidx] = min(1.0, m1 / entrysum)
+
+        # Per task, the share-weighted fraction of its station service that is
+        # cold start rather than work.
+        self._ph_setupshare[:] = 0.0
+        for t in range(lqn.ntasks):
+            tidx = lqn.tshift + t
+            if self.ignore[tidx]:
+                continue
+            for eidx in self._ph_entries_of(tidx):
+                self._ph_setupshare[tidx] += self._ph_share[eidx] * entry_setup_share[eidx]
+
+        # Expected number of calls per invocation, and the caller-side aggregates
+        self._ph_ncalls[:] = 0.0
+        self._ph_calltime[:] = 0.0
+        self._ph_procresid[:] = 0.0
+        self._ph_actthinkt[:] = 0.0
+        self._ph_calltotal[:] = 0.0
+        for t in range(lqn.ntasks):
+            tidx = lqn.tshift + t
+            if self.ignore[tidx]:
+                continue
+            for eidx in self._ph_entries_of(tidx):
+                w = self._ph_share[eidx]
+                if w <= 0 or self._ph_execs[eidx] is None:
+                    continue
+                ex = self._ph_execs[eidx]
+                r = self._ph_overlap[eidx]
+                for aidx in self._ph_acts_of(eidx):
+                    self._ph_procresid[tidx] += w * r * ex[aidx] * self.residt[aidx]
+                    self._ph_actthinkt[tidx] += w * r * ex[aidx] * self._ph_act_think_mean(aidx)
+                    for cidx in lqn.callsof.get(aidx, []):
+                        if self._ph_call_type(cidx) != _SYNC:
+                            continue
+                        tgte = int(lqn.callpair[cidx, 1])
+                        tgtt = int(lqn.parent[tgte, 0])
+                        # the COUNT of calls does not change with the overlap, only
+                        # the time the caller is held by them
+                        self._ph_ncalls[tidx, tgte] += w * ex[aidx] * self._ph_call_mean(cidx)
+                        self._ph_calltime[tidx, tgtt] += w * r * ex[aidx] * self.callservt[cidx]
+                        self._ph_calltotal[tidx] += w * r * ex[aidx] * self.callservt[cidx]
+
+    def _ph_call_burst_law(self, cidx: int):
+        """
+        Law of the total time one execution of the issuing activity spends in call
+        CIDX: the geometric compound, of mean callproc_mean, of the response law of
+        the called entry. The response law is fitted to the response time reported
+        by the callee's layer and to the SCV of the callee's own composed law, so
+        no extra solver output is needed.
+        """
+        m = self._ph_call_mean(cidx)
+        eidx = int(self.lqn.callpair[cidx, 1])
+        if m <= GlobalConstants.FineTol:
+            return Immediate()
+        R = self.callservt[cidx] / m
+        scv = self._ph_entryscv[eidx]
+        if not np.isfinite(scv) or scv <= GlobalConstants.FineTol:
+            scv = 1.0
+        base = APH.fitMeanAndSCV(max(R, GlobalConstants.FineTol), scv)
+        alpha, T = Workflow._composeLoopGeometric(_alpha_of(base), _subgen_of(base), m)
+        if Workflow.isAcyclicGenerator(T):
+            return APH(alpha, T)
+        return PH(alpha, T)
+
+    # =================================================================
+    # Pushing the composed laws into the layers
+    # =================================================================
+
+    def _update_layers_ph(self, it: int):
+        """
+        Push the composed laws into the layers.
+
+        A layer of this method carries no routing that depends on the iterate: the
+        number of calls a caller makes is folded into its service law rather than
+        into a visit ratio, so only two laws move per (layer, class) -- the
+        phase-type service law at the server and the mean of the surrogate delay
+        at the client.
+        """
+        lqn = self.lqn
+        for idx in range(lqn.nhosts + lqn.ntasks):
+            if np.isnan(self.idxhash[idx]) or self._ph_layer[idx] is None:
+                continue
+            L = self._ph_layer[idx]
+            model = self.ensemble[int(self.idxhash[idx])]
+            stations = model.get_stations()
+            client_delay = stations[0]
+
+            for c in L.callers:
+                k = L.class_of_caller[c]
+                cls = model.classes[k - 1]
+                alpha, T = self._ph_service_law(idx, L.ishost, c)
+                L.svcmean_by_class[k] = ph_moments(alpha, T)[0]
+                law = self._ph_station_law(alpha, T)
+                for st in L.qstations:
+                    stations[st - 1].set_service(cls, law)
+                client_delay.set_service(cls, Exp.fitMean(
+                    max(GlobalConstants.FineTol, self._ph_delay_mean(idx, c))))
+
+            for (k, tag) in L.open_arrivals:
+                cls = model.classes[k - 1]
+                if tag > 0:
+                    # entry arrival: the processor demand law of the entry is static
+                    L.svcmean_by_class[k] = self._ph_hostmean[tag]
+                    continue
+                cidx = -tag
+                eidx = int(lqn.callpair[cidx, 1])
+                L.svcmean_by_class[k] = self._ph_entrymean[eidx]
+                law = self._ph_station_law(self._ph_entryalpha[eidx], self._ph_entryT[eidx])
+                for st in L.qstations:
+                    stations[st - 1].set_service(cls, law)
+                aidx = int(lqn.callpair[cidx, 0])
+                rate = self.tput[aidx] * self._ph_call_mean(cidx)
+                if not np.isfinite(rate) or rate <= GlobalConstants.FineTol:
+                    rate = GlobalConstants.FineTol
+                model.get_nodes()[model.attribute['sourceIdx'] - 1].set_arrival(
+                    cls, Exp.fitRate(rate))
+
+    def _ph_service_law(self, idx: int, ishost: bool, c: int):
+        """Law of the demand caller C places on the server of layer IDX per invocation."""
+        lqn = self.lqn
+        if ishost:
+            # mixture over the entries of C, weighted by their share of its requests
+            alphas, Ts, probs = [], [], []
+            for eidx in self._ph_entries_of(c):
+                if self._ph_hostT[eidx] is None or self._ph_share[eidx] <= 0:
+                    continue
+                alphas.append(self._ph_hostalpha[eidx])
+                Ts.append(self._ph_hostT[eidx])
+                probs.append(self._ph_share[eidx])
+            if not alphas:
+                return self._ph_immediate_law()
+            probs = np.asarray(probs, dtype=float)
+            probs = probs / probs.sum()
+            return Workflow._composeMixture(alphas, Ts, probs)
+
+        # task layer: the total demand is the sum, over the entries of the server, of
+        # a geometric compound of the entry law of mean equal to the number of calls
+        alpha = None
+        T = None
+        for eidx in self._ph_entries_of(idx):
+            n = self._ph_ncalls[c, eidx]
+            if n <= GlobalConstants.FineTol or self._ph_entryT[eidx] is None:
+                continue
+            a2, T2 = Workflow._composeLoopGeometric(self._ph_entryalpha[eidx], self._ph_entryT[eidx], n)
+            if alpha is None:
+                alpha, T = a2, T2
+            else:
+                alpha, T = Workflow._composeSerial(alpha, T, a2, T2)
+        if alpha is None:
+            return self._ph_immediate_law()
+        return alpha, T
+
+    @staticmethod
+    def _ph_immediate_law():
+        return np.array([[1.0]]), np.array([[-GlobalConstants.Immediate]])
+
+    def _ph_delay_mean(self, idx: int, c: int) -> float:
+        """
+        Mean time a thread of caller C spends away from the stations of the model
+        that holds server IDX, per invocation: idle, plus whatever of its cycle
+        that model does not hold as a station of its own.
+
+        This is ONE closure for both layerings. Under 'srvn.ph' the model holds a
+        single server, so a host layer charges the whole call burst to the delay
+        and a task layer charges the caller's processor plus every other callee.
+        Under 'flat.ph' the model holds every server, and only the think times
+        are left.
+
+        Every term is SUMMED in rather than obtained by subtracting from a total.
+        That subtraction cancels catastrophically once a call time is large: a
+        caller whose only callee is this server has the two terms equal, and
+        7 + 1.4e47 - 1.4e47 is 0, not 7, because the think time falls below the
+        ULP of the call time. The layer then sees a client delay of zero,
+        saturates, reports a residence time that inflates the very call time that
+        caused the cancellation, and the fixed point runs away -- lqn_sockshop
+        reached RespT 1.4e47 this way.
+        """
+        lqn = self.lqn
+        z = self.thinkt[c] + self._ref_think_mean(c)
+        if not np.isfinite(z) or z < 0:
+            z = 0.0
+        z += self._ph_actthinkt[c]
+        # the caller's own processor residence, unless this model holds it
+        hidx = int(lqn.parent[c, 0]) if c < len(lqn.parent) else -1
+        if not self._ph_served_here(idx, hidx):
+            z += self._ph_procresid[c]
+        # and the time spent at every callee this model does not hold
+        for t in range(lqn.ntasks):
+            tidx = lqn.tshift + t
+            if self._ph_served_here(idx, tidx):
+                continue
+            z += float(self._ph_calltime[c][tidx])
+        if not np.isfinite(z) or z < 0:
+            z = GlobalConstants.FineTol
+        return float(z)
+
+    def _ph_served_here(self, idx: int, elem: int) -> bool:
+        """
+        True when LQN element ELEM is a station of the same model that holds
+        server IDX. Under 'srvn.ph' that is ELEM == IDX, since each server has a
+        layer of its own; under 'flat.ph' it is every server of the one network.
+        """
+        if elem is None or elem < 0 or elem >= len(self.idxhash):
+            return False
+        if idx < 0 or idx >= len(self.idxhash):
+            return False
+        a, b = self.idxhash[elem], self.idxhash[idx]
+        return bool(np.isfinite(a) and np.isfinite(b) and a == b)
+
+    def _ph_station_law(self, alpha, T):
+        """
+        Station law of a composed workflow. A geometric loop over a body of two or
+        more phases closes a cycle in the phase graph, and a cyclic generator is a
+        PH and not an APH: no layer solver declares PH, so such a law is reduced to
+        the APH with the SAME first two moments. AMVA and NC read exactly those
+        two, so the reduction is lossless for them and is a two-moment fit for the
+        phase-aware layer solvers.
+        """
+        if Workflow.isAcyclicGenerator(T):
+            return APH(alpha, T)
+        m1, scv = ph_moments(alpha, T)
+        return APH.fitMeanAndSCV(m1, scv)
+
+    # =================================================================
+    # Metric reconstruction
+    # =================================================================
+
+    def _update_metrics_ph(self, it: int):
+        """
+        Reconstruct the LQN metrics.
+
+        A layer of this method reports one row per caller task, not one per entry,
+        activity and call, so the per-element quantities the rest of SolverLN reads
+        -- servt, residt, callservt, callresidt, tput -- are recovered analytically
+        from the series-parallel weights of the entry workflows.
+
+        The split is conservative by construction. A station reports a residence
+        time R per visit against a service law of mean S, so the queueing inflation
+        R/S is attributed to every leaf of that visit in proportion to its own
+        mean: the pieces sum back to R exactly.
+        """
+        lqn = self.lqn
+        n = lqn.nidx
+        self.servt = np.zeros(n)
+        self.residt = np.zeros(n)
+        self.callservt = np.zeros(lqn.ncalls)
+        self.callresidt = np.zeros(lqn.ncalls)
+
+        infl_num = np.zeros(n)
+        infl_den = np.zeros(n)
+        task_tput = np.zeros(n)
+        open_tput = np.zeros(n)
+
+        # Host layers: the queueing inflation of the processor demand
+        for hidx in range(lqn.nhosts):
+            if np.isnan(self.idxhash[hidx]) or self._ph_layer[hidx] is None:
+                continue
+            L = self._ph_layer[hidx]
+            res = self.results[-1][int(self.idxhash[hidx])]
+            if not res:
+                continue
+            npop = self._ph_layer_pop(L, hidx)
+            for c in L.callers:
+                k = L.class_of_caller[c]
+                kc = k - 1  # result matrices index classes from zero
+                X = self._ph_sum_over(res['TN'], L.qstations, kc)
+                R = self._ph_residence(self._ph_sum_over(res['QN'], L.qstations, kc), X,
+                                    res['RN'][L.qstations[0] - 1, kc])
+                f = self._ph_inflation_of(R, L.svcmean_by_class.get(k, 0.0), npop)
+                if not np.isfinite(X) or X < 0:
+                    X = 0.0
+                # TOTAL over the replicas. The processor layer of a replicated element
+                # models ONE representative replica, so X is one replica's rate and the
+                # element's own rate is REPL times it. The matching per replica quantity
+                # is xdemand, which the think-time closure divides down for the same reason.
+                task_tput[c] += self._ph_repl(c) * X
+                for eidx in self._ph_entries_of(c):
+                    w = max(self._ph_share[eidx], 0.0) * X
+                    infl_num[eidx] += w * f
+                    infl_den[eidx] += w
+            for (k, tag) in L.open_arrivals:
+                if tag <= 0:
+                    continue  # an async call is served in the task layer, not here
+                eidx = tag
+                kc = k - 1
+                X = self._ph_sum_over(res['TN'], L.qstations, kc)
+                if not np.isfinite(X) or X <= 0:
+                    continue
+                f = self._ph_inflation_of(
+                    self._ph_residence(self._ph_sum_over(res['QN'], L.qstations, kc), X,
+                                    res['RN'][L.qstations[0] - 1, kc]),
+                    L.svcmean_by_class.get(k, 0.0), npop)
+                infl_num[eidx] += X * f
+                infl_den[eidx] += X
+                open_tput[eidx] += X
+                task_tput[int(lqn.parent[eidx, 0])] += X
+
+        for e in range(lqn.nentries):
+            eidx = lqn.eshift + e
+            f = 1.0
+            if infl_den[eidx] > GlobalConstants.FineTol:
+                f = infl_num[eidx] / infl_den[eidx]
+            if not np.isfinite(f) or f < 1:
+                f = 1.0  # a residence time cannot fall below the demand it contains
+            for aidx in self._ph_acts_of(eidx):
+                self.residt[aidx] = f * self._ph_hostdem_mean(aidx)
+
+        # Task layers: the response time of every call
+        relw = np.zeros(n)
+        for t in range(lqn.ntasks):
+            tidx = lqn.tshift + t
+            if np.isnan(self.idxhash[tidx]) or self._ph_layer[tidx] is None:
+                continue
+            L = self._ph_layer[tidx]
+            res = self.results[-1][int(self.idxhash[tidx])]
+            if not res:
+                continue
+            npop = self._ph_layer_pop(L, tidx)
+            for c in L.callers:
+                k = L.class_of_caller[c]
+                kc = k - 1
+                X = self._ph_sum_over(res['TN'], L.qstations, kc)
+                if not np.isfinite(X) or X < 0:
+                    X = 0.0
+                g = self._ph_inflation_of(
+                    self._ph_residence(self._ph_sum_over(res['QN'], L.qstations, kc), X,
+                                    res['RN'][L.qstations[0] - 1, kc]),
+                    L.svcmean_by_class.get(k, 0.0), npop)
+                for cidx in self._ph_sync_calls_between(c, tidx):
+                    eidx = int(lqn.callpair[cidx, 1])
+                    v = self._ph_call_mean(cidx) * g * self._ph_entrymean[eidx]
+                    self.callservt[cidx] = v
+                    self.callresidt[cidx] = v
+                for eidx in self._ph_entries_of(tidx):
+                    relw[eidx] += X * self._ph_ncalls[c, eidx]
+            for (k, tag) in L.open_arrivals:
+                if tag >= 0:
+                    continue
+                cidx = -tag
+                eidx = int(lqn.callpair[cidx, 1])
+                X = self._ph_sum_over(res['TN'], L.qstations, k - 1)
+                R = res['RN'][L.qstations[0] - 1, k - 1]
+                if np.isfinite(R) and R > 0:
+                    v = R * self._ph_call_mean(cidx)
+                    self.callservt[cidx] = v
+                    self.callresidt[cidx] = v
+                if np.isfinite(X) and X > 0:
+                    relw[eidx] += X
+
+        # Entry shares and throughputs
+        for t in range(lqn.ntasks):
+            tidx = lqn.tshift + t
+            entries = self._ph_entries_of(tidx)
+            if not entries:
+                continue
+            # How the requests SPLIT over the entries is a flow-balance question, and
+            # is answered at the task layer: a caller class reaches that server once
+            # per invocation of the caller, carrying its whole call burst in its
+            # service law, so the station rate counts caller cycles and the per-entry
+            # rate is that rate times the calls the caller makes.
+            tot = sum(relw[eidx] + open_tput[eidx] for eidx in entries)
+            if tot > GlobalConstants.FineTol:
+                for eidx in entries:
+                    self._ph_share[eidx] = (relw[eidx] + open_tput[eidx]) / tot
+            else:
+                for eidx in entries:
+                    self._ph_share[eidx] = 1.0 / len(entries)
+            # HOW MANY requests the task completes is a different question, and the
+            # flow-balance total does not answer it: that total is what the callers
+            # DEMAND, not what the task's threads can deliver. A thread cycles through
+            # its host demand AND then through the task think time, and only the
+            # processor layer of the task carries both, so the rate is read there.
+            if task_tput[tidx] > GlobalConstants.FineTol:
+                self.tput[tidx] = task_tput[tidx]
+            else:
+                self.tput[tidx] = tot  # no processor layer of its own
+            for eidx in entries:
+                self.tput[eidx] = self.tput[tidx] * self._ph_share[eidx]
+            # The DEMAND is kept apart because it, and not the rate just reported, is
+            # what closes the surrogate delay: normalising the think time by a rate the
+            # same think time produced makes the processor layer self-referential and it
+            # settles wherever it started -- see update_think_times. PER REPLICA,
+            # because the thread count it is paired with there is per replica.
+            nrep = max(1.0, self._ph_repl(tidx))
+            self._ph_xdemand[tidx] = (tot / nrep) if tot > GlobalConstants.FineTol \
+                else (self.tput[tidx] / nrep)
+
+        # Recovery, under-relaxation, and the derived per-element quantities
+        omega = self.relax_omega
+        for aidx in range(lqn.ashift, lqn.ashift + lqn.nacts):
+            v = self.residt[aidx]
+            if (not np.isfinite(v)) and it > 1 and np.isfinite(self.residt_prev[aidx]):
+                v = self.residt_prev[aidx]
+            if omega < 1.0 and it > 1 and not np.isnan(self.residt_prev[aidx]):
+                v = omega * v + (1 - omega) * self.residt_prev[aidx]
+            self.residt[aidx] = v
+            self.residt_prev[aidx] = v
+        for cidx in range(lqn.ncalls):
+            v = self.callservt[cidx]
+            if not np.isfinite(v):
+                v = self.callservt_prev[cidx] if (it > 1 and np.isfinite(self.callservt_prev[cidx])) else 0.0
+            if omega < 1.0 and it > 1 and not np.isnan(self.callservt_prev[cidx]):
+                v = omega * v + (1 - omega) * self.callservt_prev[cidx]
+            self.callservt[cidx] = v
+            self.callresidt[cidx] = v
+            self.callservt_prev[cidx] = v
+            self.callresidt_prev[cidx] = v
+            if v > 0:
+                self.callservtproc[cidx] = Exp.fitMean(v)
+
+        # Recompose the entry laws from the iterate just computed. The entry service
+        # time is then the mean of the COMPOSED law and not the sum of the parts: the
+        # branches of an AND fork overlap, so an entry that forks finishes with the
+        # last of its branches and is not charged their sum.
+        self._ph_compose_entry_laws()
+
+        for e in range(lqn.nentries):
+            eidx = lqn.eshift + e
+            if self._ph_execs[eidx] is None:
+                continue
+            ex = self._ph_execs[eidx]
+            for aidx in self._ph_acts_of(eidx):
+                sa = self.residt[aidx] + self._ph_act_think_mean(aidx)
+                for cidx in lqn.callsof.get(aidx, []):
+                    if self._ph_call_type(cidx) == _SYNC:
+                        sa += self.callservt[cidx]
+                self.servt[aidx] = sa
+                self.servt_prev[aidx] = sa
+                self.tput[aidx] = self.tput[eidx] * ex[aidx]
+                self.tput_prev[aidx] = self.tput[aidx]
+                # Exp rejects rate 0 here where MATLAB admits it and the JAR clamps it; a null rate is Disabled, as in the default path.
+                self.tputproc[aidx] = Exp.fitRate(self.tput[aidx]) \
+                    if self.tput[aidx] > 0 else Disabled()
+                if sa > 0:
+                    self.servtproc[aidx] = Exp.fitMean(sa)
+            self.servt[eidx] = self._ph_entrymean[eidx]
+            self.residt[eidx] = self._ph_entrymean[eidx]
+            if self.servt[eidx] > 0:
+                self.servtproc[eidx] = Exp.fitMean(self.servt[eidx])
+            # published for inspection, as MATLAB's SolverLN carries entry_servt
+            # on the object; this encoding resolves it entry by entry rather
+            # than by one servtmatrix solve, so it is filled in here
+            if self.entry_servt is None or len(self.entry_servt) < lqn.nidx:
+                self.entry_servt = np.zeros(lqn.nidx)
+            self.entry_servt[eidx] = self.servt[eidx]
+
+    # =================================================================
+    # Surrogate delays
+    # =================================================================
+
+    def _update_think_times_ph(self, it: int):
+        """
+        Surrogate delay of every caller.
+
+        Same closure as update_think_times -- a thread of the task is idle for
+        whatever of its cycle the task's own station does not hold -- but the rate
+        it is normalised by is the INVOCATION rate of the task and not the
+        throughput of its station. Under this method a caller class reaches the
+        server once per invocation of the caller, carrying its whole call burst in
+        its service law, so the station rate counts caller cycles rather than calls
+        and the two differ by the mean number of calls.
+        """
+        lqn = self.lqn
+        for t in range(lqn.ntasks):
+            tidx = lqn.tshift + t
+            if self.ignore[tidx]:
+                continue
+            # only a reference task's think time separates one request from the next;
+            # on a served task it is not a per-request delay -- see _ref_think_mean
+            ztask = self._ref_think_mean(tidx)
+            if np.isnan(self.idxhash[tidx]):
+                # A task no other task calls but whose entries carry an arrival still
+                # has a cycle: its threads are driven by the stream. build_layers drops
+                # the open class for it precisely so this closure can set the rate.
+                arvrate = self._ph_arrival_rate(tidx)
+                if arvrate > GlobalConstants.FineTol:
+                    njobs = self._ph_maxmult(tidx)
+                    if not np.isfinite(njobs) or njobs <= 0:
+                        njobs = float(np.max(self.njobs[tidx, :]))
+                    z = max(GlobalConstants.Zero,
+                            njobs / arvrate - self._ph_host_resid(tidx) - ztask)
+                    om = self.relax_omega
+                    if om < 1.0 and it > 1 and not np.isnan(self.thinkt_prev[tidx]):
+                        z = om * z + (1 - om) * self.thinkt_prev[tidx]
+                    self.tput[tidx] = arvrate
+                    self.thinkt[tidx] = z
+                    self.thinkt_prev[tidx] = z
+                    self.thinktproc[tidx] = Exp.fitMean(z + ztask)
+                    continue
+                # a reference task, or one no other task calls: it has no station of
+                # its own, so its only delay is the think time the user declared
+                self.thinkt[tidx] = GlobalConstants.FineTol
+                self.thinktproc[tidx] = Immediate()
+                continue
+            L = self._ph_layer[tidx]
+            res = self.results[-1][int(self.idxhash[tidx])]
+            U = float(np.nansum(res['UN'][L.qstations[0] - 1, :])) if res else 0.0
+            self.util[tidx] = U
+            # The closure below measures a thread's cycle in WORK: it is idle for
+            # whatever of the cycle its station does not hold it working. A SetupTask's
+            # station service also carries a cold start, which is time the thread is
+            # unavailable but is not work, so it is taken back out of U before the
+            # closure reads it. Zero for every task without a setup.
+            if self._ph_setupshare[tidx] > 0:
+                U = U * (1 - self._ph_setupshare[tidx])
+            # the rate the CALLERS ask of the task, not the rate its processor layer
+            # reported: the latter is itself a function of this think time
+            X = self._ph_xdemand[tidx]
+            if not (X > GlobalConstants.FineTol):
+                X = self.tput[tidx]
+            # The thread pool of ONE replica, the convention xdemand is kept in.
+            njobs = self._ph_maxmult(tidx)
+            if not np.isfinite(njobs) or njobs <= 0:
+                njobs = float(np.max(self.njobs[tidx, :]))
+            if X > GlobalConstants.FineTol:
+                if self._get_sched(tidx) == SchedStrategy.INF:
+                    # an infinite server reports a mean number of busy threads
+                    z = (njobs - U) / X - ztask
+                else:
+                    z = njobs * abs(1 - U) / X - ztask
+            else:
+                z = self.thinkt[tidx]
+            z = max(GlobalConstants.Zero, z)
+            if it > 1 and not np.isnan(self.thinkt_prev[tidx]) and not np.isfinite(z):
+                z = self.thinkt_prev[tidx]
+            omega = self.relax_omega
+            if omega < 1.0 and it > 1 and not np.isnan(self.thinkt_prev[tidx]):
+                z = omega * z + (1 - omega) * self.thinkt_prev[tidx]
+            self.thinkt[tidx] = z
+            self.thinkt_prev[tidx] = z
+            self.thinktproc[tidx] = Exp.fitMean(z + ztask)
+
+    def _ph_arrival_rate(self, tidx: int) -> float:
+        """
+        Total exogenous rate into the entries of task TIDX, zero unless the arrival
+        is the only way in -- the predicate build_layers drops the open class on.
+        """
+        lqn = self.lqn
+        if self._is_ref_task(tidx):
+            return 0.0
+        for eidx in self._ph_entries_of(tidx):
+            if self._ph_any_caller_of(eidx):
+                return 0.0
+        rate = 0.0
+        for eidx in self._ph_entries_of(tidx):
+            d = lqn.arrival.get(eidx) if isinstance(lqn.arrival, dict) else None
+            if d is None:
+                continue
+            try:
+                m = float(d.getMean())
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if np.isfinite(m) and m > GlobalConstants.FineTol:
+                rate += 1.0 / m
+        return rate
+
+    def _ph_host_resid(self, tidx: int) -> float:
+        """Response time the caller class of task TIDX sees at its processor layer."""
+        lqn = self.lqn
+        hidx = int(lqn.parent[tidx, 0])
+        if hidx < 0 or hidx >= len(self.idxhash) or np.isnan(self.idxhash[hidx]):
+            return 0.0
+        L = self._ph_layer[hidx]
+        if L is None or tidx not in L.class_of_caller:
+            return 0.0
+        res = self.results[-1][int(self.idxhash[hidx])]
+        if not res:
+            return 0.0
+        r = res['RN'][L.qstations[0] - 1, L.class_of_caller[tidx] - 1]
+        return 0.0 if np.isnan(r) else float(r)
+
+    # =================================================================
+    # Result reconstruction
+    # =================================================================
+
+    def _get_ensemble_avg_ph(self):
+        """
+        LQN-level results. The layers report per caller task, so every entry,
+        activity and call figure is rebuilt from the converged fixed point rather
+        than read off a class row, in the same layout get_ensemble_avg returns.
+
+        Returns:
+            (QN, UN, RN, TN, AN, WN), each indexed by absolute element index
+        """
+        lqn = self.lqn
+        n = lqn.nidx
+        QN = np.full(n, np.nan)
+        UN = np.full(n, np.nan)
+        RN = np.full(n, np.nan)
+        TN = np.full(n, np.nan)
+        AN = np.full(n, np.nan)
+        WN = np.full(n, np.nan)
+        PN = np.full(n, np.nan)  # processor utilization
+        UT = np.full(n, np.nan)  # task and entry utilization
+
+        for a in range(lqn.nacts):
+            aidx = lqn.ashift + a
+            tidx = int(lqn.parent[aidx, 0])
+            if self.ignore[tidx]:
+                continue
+            hidx = int(lqn.parent[tidx, 0])
+            TN[aidx] = self.tput[aidx]
+            RN[aidx] = self.servt[aidx]
+            UT[aidx] = self.tput[aidx] * self.servt[aidx]
+            # LINE scales the utilization of a queueing station into [0,1] whatever its
+            # multiplicity, and reports a mean number of busy servers at an infinite
+            # server: the processor share of an activity follows the same convention
+            PN[aidx] = self.tput[aidx] * self._ph_hostdem_mean(aidx) / self._ph_host_servers(hidx)
+            if np.isnan(PN[hidx]):
+                PN[hidx] = 0.0
+            PN[hidx] += PN[aidx]
+
+        for e in range(lqn.nentries):
+            eidx = lqn.eshift + e
+            tidx = int(lqn.parent[eidx, 0])
+            if self.ignore[tidx]:
+                continue
+            TN[eidx] = self.tput[eidx]
+            RN[eidx] = self.servt[eidx]
+            UT[eidx] = self.tput[eidx] * self.servt[eidx]
+            acts = self._ph_acts_of(eidx)
+            if acts:
+                PN[eidx] = float(np.nansum([PN[a] for a in acts]))
+            # ResidT is reported per visit to the TASK, not per execution of the
+            # activity: an activity of this entry runs EXECS times per invocation, and
+            # the entry takes SHARE of the task's invocations. RespT stays per
+            # execution.
+            if self._ph_execs[eidx] is not None:
+                ex = self._ph_execs[eidx]
+                w = self._ph_share[eidx]
+                for aidx in acts:
+                    WN[aidx] = w * ex[aidx] * self.residt[aidx]
+            if np.isnan(UT[tidx]):
+                UT[tidx] = 0.0
+            UT[tidx] += UT[eidx]
+
+        for t in range(lqn.ntasks):
+            tidx = lqn.tshift + t
+            if self.ignore[tidx]:
+                continue
+            TN[tidx] = self.tput[tidx]
+            acts = self._ph_acts_of(tidx)
+            if acts:
+                PN[tidx] = float(np.nansum([PN[a] for a in acts]))
+                WN[tidx] = float(np.nansum([WN[a] for a in acts]))
+
+        for hidx in range(lqn.nhosts):
+            TN[hidx] = np.nan  # kept NaN for consistency with LQNS
+
+        # Idle, not undefined -- the same rule getEnsembleAvg applies, and for the
+        # same reason: an unreachable element reports zero for the measures its kind
+        # HAS and NaN for the ones it never has, so that the table's NaN mask
+        # survives a disconnected component. Reported columns here are QLen=UT,
+        # Util=PN, RespT=RN, ResidT=WN, ArvR=AN, Tput=TN; the pre-swap QN and UN are
+        # discarded below and are not written.
+        for idx in range(n):
+            if self.ignore[idx]:
+                PN[idx] = 0.0        # every kind reports a utilization
+                AN[idx] = np.nan     # nothing reports an arrival rate on an LQN
+                kind = self._get_type(idx)
+                if kind == LayeredNetworkElement.PROCESSOR:
+                    UT[idx] = RN[idx] = WN[idx] = TN[idx] = np.nan
+                elif kind == LayeredNetworkElement.TASK:
+                    UT[idx] = WN[idx] = TN[idx] = 0.0
+                    RN[idx] = np.nan
+                elif kind == LayeredNetworkElement.ENTRY:
+                    UT[idx] = RN[idx] = TN[idx] = 0.0
+                    WN[idx] = np.nan
+                elif kind == LayeredNetworkElement.ACTIVITY:
+                    UT[idx] = RN[idx] = WN[idx] = TN[idx] = 0.0
+
+        return UT, PN, RN, TN, AN, WN
+
+    # =================================================================
+    # Feature gate
+    # =================================================================
+
+    def _assert_srvn_ph_supported(self, flat: bool = False):
+        """
+        Features the composed law cannot represent are refused by name rather
+        than silently degraded -- see _kb/06-solver-catalog.md (LN section). The
+        list is a property of the ENCODING, so it is the same under either
+        layering; what the squashing adds on top is refused in
+        _ph_flat_server_set.
+        """
+        lqn = self.lqn
+        mname = 'flat.ph' if flat else 'srvn.ph'
+        if getattr(self, 'hasPhase2', False):
+            raise ValueError("method='%s' does not support second-phase activities: the "
+                             "composed entry law has no reply point. Use method='default'." % mname)
+        for cidx in range(lqn.ncalls):
+            if self._ph_call_type(cidx) == _FWD:
+                raise ValueError("method='%s' does not support forwarding calls, whose target "
+                                 "is not part of the caller's activity graph. Use method='default'." % mname)
+        iscache = getattr(lqn, 'iscache', None)
+        if iscache is not None and np.any(np.asarray(iscache).ravel()):
+            raise ValueError("method='%s' does not support cache tasks. Use method='default'." % mname)
+        # A SetupTask IS supported: the setup is not part of the activity graph, so it
+        # never enters the series-parallel reduction and is prefixed to the composed
+        # entry law afterwards as the phase-type mixture. An INF task is the exception,
+        # as in LDES: it holds no thread to power down, so the cycle has no meaning.
+        hs = getattr(lqn, 'hassetup', None)
+        if hs is not None:
+            hsf = np.asarray(hs).ravel()
+            for i in range(len(hsf)):
+                if not hsf[i]:
+                    continue
+                if self._get_sched(i) == SchedStrategy.INF or not np.isfinite(float(lqn.mult[0, i])):
+                    raise ValueError("method='%s': task '%s' declares a setup time on an "
+                                     "infinite-server task, which holds no thread to power down; "
+                                     "give it a finite multiplicity." % (mname, self._ph_name(i)))
+        if getattr(lqn, 'callgroups', None):
+            # The group states the ORDER in which one caller visits several
+            # callees, and the composed law folds every call into one visit, so
+            # the order has nowhere to be expressed. Squashing does not recover
+            # it: 'flat.cs' is the only encoding that dispatches a group.
+            raise ValueError("method='%s' does not support routed call groups, whose dispatch "
+                             "order is a routing property. Use method='flat.cs'." % mname)
+        if getattr(lqn, 'lincon', None):
+            raise ValueError("method='%s' does not support admission constraints on a layer "
+                             "station. Use method='default'." % mname)
+        # A queue-dependent service rate is a property of the layer STATION, and
+        # the composed law replaces that station by an entry law, so the scaling
+        # has nowhere to attach. Only _add_layer_rate_dependence emits it; this
+        # encoding used to DROP it in silence, which reads as a solved model
+        # rather than a refused one.
+        for fndep in ('lldscaling', 'cdscaling', 'jdscaling', 'pools'):
+            dep = getattr(lqn, fndep, None) or {}
+            if dep:
+                sidxdep = sorted(dep.keys())[0]
+                what = 'server pools' if fndep == 'pools' else fndep
+                raise ValueError("method='%s' does not support queue-dependent service rates on "
+                                 "a layer station ('%s' declares %s). Use method='srvn.cs'."
+                                 % (mname, self._ph_name(sidxdep), what))
+
+    # =================================================================
+    # Small helpers
+    # =================================================================
+
+    def _ph_host_layer_callers(self, hidx: int) -> List[int]:
+        """Tasks that run on processor HIDX and reach it with requests."""
+        out = []
+        for tidx in self._get_tasks_of_host(hidx):
+            if self.ignore[tidx]:
+                continue
+            if self._is_ref_task(tidx):
+                out.append(tidx)
+                continue
+            for eidx in self._ph_entries_of(tidx):
+                if self._ph_any_caller_of(eidx) or self._ph_has_open_arrival(eidx):
+                    out.append(tidx)
+                    break
+        return out
+
+    def _ph_task_layer_callers(self, tidx: int) -> List[int]:
+        """Tasks issuing a synchronous call to an entry of TIDX."""
+        lqn = self.lqn
+        out = []
+        for c in range(lqn.tshift, lqn.tshift + lqn.ntasks):
+            if c == tidx or self.ignore[c]:
+                continue
+            for eidx in self._ph_entries_of(tidx):
+                if lqn.issynccaller[c, eidx]:
+                    out.append(c)
+                    break
+        return out
+
+    def _ph_async_calls_into(self, tidx: int) -> List[int]:
+        """Asynchronous calls whose target entry belongs to TIDX."""
+        lqn = self.lqn
+        targets = set(self._ph_entries_of(tidx))
+        return [cidx for cidx in range(lqn.ncalls)
+                if self._ph_call_type(cidx) == _ASYNC and int(lqn.callpair[cidx, 1]) in targets]
+
+    def _ph_open_arrival_only(self, tidx: int) -> bool:
+        """
+        True when an entry arrival is the ONLY way requests reach task TIDX.
+        'srvn.ph' refuses forwarding calls outright, so sync/async callers are the
+        whole test.
+        """
+        if self._is_ref_task(tidx):
+            return False
+        for eidx in self._ph_entries_of(tidx):
+            if self._ph_any_caller_of(eidx):
+                return False
+        return any(self._ph_has_open_arrival(eidx) for eidx in self._ph_entries_of(tidx))
+
+    def _ph_any_caller_of(self, eidx: int) -> bool:
+        lqn = self.lqn
+        return bool(np.any(lqn.issynccaller[:, eidx])) or bool(np.any(lqn.isasynccaller[:, eidx]))
+
+    def _ph_has_open_arrival(self, eidx: int) -> bool:
+        arr = getattr(self.lqn, 'arrival', None)
+        return isinstance(arr, dict) and arr.get(eidx) is not None
+
+    def _ph_replica_count(self, idx: int, callers: List[int], ishost: bool) -> int:
+        """
+        Replicas of the server station, with the same fan-out reduction as the
+        default builder: a caller that reaches every replica sees one representative.
+        """
+        lqn = self.lqn
+        raw = int(self._ph_repl(idx))
+        if raw <= 1 or not callers:
+            return max(1, raw)
+        reduce = False
+        if not ishost and getattr(lqn, 'fanout', None) is not None:
+            reduce = all(lqn.fanout[c, idx] >= raw for c in callers)
+        elif ishost:
+            reduce = all(int(self._ph_repl(c)) == raw for c in callers)
+        if reduce:
+            if not ishost:
+                self.single_replica_tasks.append(idx)
+            return 1
+        return raw
+
+    def _ph_layer_population(self, idx: int, c: int, nreplicas: int) -> float:
+        """Threads of caller C present in the layer of IDX."""
+        single = (nreplicas == 1 and self._ph_repl(idx) > 1) or (c in self.single_replica_tasks)
+        mc = self._ph_maxmult(c)
+        njobs = mc if single else mc * self._ph_repl(c)
+        if not np.isfinite(njobs):
+            njobs = sum(self._ph_maxmult(i) for i in self._get_callers_of_task(c))
+            if not np.isfinite(njobs) or njobs == 0:
+                tot = 0.0
+                for i in range(self.lqn.nidx):
+                    m = self._ph_maxmult(i)
+                    if np.isfinite(m):
+                        tot += m * self._ph_repl(i)
+                njobs = min(tot, 1000.0)
+        return float(njobs)
+
+    def _ph_layer_pop(self, L: PHLayer, idx: int) -> float:
+        """Closed population of the MODEL the server sits in, i.e. how many jobs a
+        job can queue behind. Under 'flat.ph' that is every caller of the single
+        network and not only the callers of this one station, which is why it is
+        taken from the layer record rather than recomputed from the callers."""
+        if getattr(L, 'npop', 0.0) >= 1.0:
+            return float(L.npop)
+        n = 0.0
+        for c in L.callers:
+            v = self.njobs[c, idx]
+            if np.isfinite(v) and v > 0:
+                n += v
+        return max(n, 1.0)
+
+    @staticmethod
+    def _ph_residence(Q: float, X: float, RN: float) -> float:
+        """
+        Residence time per visit, by Little from the queue length rather than from
+        the reported RN. A layer that saturates can come back from AMVA with an RN
+        that no closed model can produce, and a reconstruction that trusts it feeds
+        the impossible value straight back into the call response times.
+        """
+        if np.isfinite(Q) and Q >= 0 and np.isfinite(X) and X > GlobalConstants.FineTol:
+            return Q / X
+        return RN
+
+    @staticmethod
+    def _ph_inflation_of(R: float, S: float, npop: float) -> float:
+        """
+        Ratio of a residence time to the mean of the law it was measured against,
+        bounded above by the layer population: a job can wait behind at most every
+        other job in a closed layer.
+        """
+        f = 1.0
+        if S > GlobalConstants.FineTol and np.isfinite(R) and R > 0:
+            f = R / S
+        if not np.isfinite(f) or f < 1:
+            f = 1.0
+        if np.isfinite(npop) and npop >= 1 and f > npop:
+            f = npop
+        return f
+
+    def _ph_sync_calls_between(self, c: int, tidx: int) -> List[int]:
+        """Synchronous calls issued by task C to an entry of task TIDX."""
+        lqn = self.lqn
+        out = []
+        for cidx in range(lqn.ncalls):
+            if self._ph_call_type(cidx) != _SYNC:
+                continue
+            if int(lqn.parent[int(lqn.callpair[cidx, 0]), 0]) == c \
+                    and int(lqn.parent[int(lqn.callpair[cidx, 1]), 0]) == tidx:
+                out.append(cidx)
+        return out
+
+    def _ph_setup_prob(self, eidx: int) -> float:
+        """
+        Probability that a request for entry EIDX finds its task's thread powered
+        off. ONE closure for both methods: _setup_charge returns p*s, so p is that
+        over self. It also answers p = 1 during construction, before the first solve
+        has sized tput or util.
+        """
+        lqn = self.lqn
+        tidx = int(lqn.parent[eidx, 0])
+        hs = getattr(lqn, 'hassetup', None)
+        if hs is None:
+            return 0.0
+        hsf = np.asarray(hs).ravel()
+        if tidx >= len(hsf) or not hsf[tidx]:
+            return 0.0
+        d = self._setup_dist_mean(getattr(lqn, 'delayofftime', None), tidx)
+        st = self._setup_dist_mean(getattr(lqn, 'setuptime', None), tidx)
+        if not (d > GlobalConstants.FineTol) or not (st > GlobalConstants.FineTol):
+            return 0.0
+        return min(1.0, max(0.0, self._setup_charge(tidx) / st))
+
+    def _ph_setup_law(self, tidx: int):
+        """Phase-type law of task TIDX's setup time, None when it declares none."""
+        procs = getattr(self.lqn, 'setuptime', None)
+        if not isinstance(procs, dict):
+            return None
+        proc = procs.get(tidx)
+        if proc is None:
+            return None
+        try:
+            m = float(proc.getMean())
+            scv = float(proc.getSCV())
+        except (AttributeError, TypeError, ValueError):
+            return None
+        if not np.isfinite(m) or m <= GlobalConstants.FineTol:
+            return None
+        if not np.isfinite(scv) or scv <= GlobalConstants.FineTol:
+            scv = 1.0
+        law = APH.fitMeanAndSCV(m, scv)
+        return _alpha_of(law), _subgen_of(law)
+
+    def _ph_host_servers(self, hidx: int) -> float:
+        """
+        Divisor that scales a processor utilization into [0,1]. An infinite server
+        reports a mean number of busy servers instead, so it divides by one.
+        """
+        if self._get_sched(hidx) == SchedStrategy.INF:
+            return 1.0
+        m = self._ph_maxmult(hidx)
+        return m if (np.isfinite(m) and m > 0) else 1.0
+
+    @staticmethod
+    def _ph_sum_over(M, stations: List[int], col: int) -> float:
+        s = 0.0
+        for st in stations:
+            v = M[st - 1, col]
+            if not np.isnan(v):
+                s += v
+        return s
+
+    def _ph_entries_of(self, idx: int) -> List[int]:
+        return list(self.lqn.entriesof.get(idx, []))
+
+    def _ph_acts_of(self, idx: int) -> List[int]:
+        return list(self.lqn.actsof.get(idx, []))
+
+    def _ph_name(self, idx: int) -> str:
+        v = self.lqn.names
+        return v.get(idx, 'Node_%d' % idx) if isinstance(v, dict) else str(v[idx])
+
+    def _ph_call_type(self, cidx: int) -> int:
+        ct = getattr(self.lqn, 'calltype', None)
+        if ct is None:
+            return _SYNC
+        arr = np.asarray(ct).ravel()
+        return int(arr[cidx]) if cidx < len(arr) else _SYNC
+
+    def _ph_call_mean(self, cidx: int) -> float:
+        return float(self.lqn.callpair[cidx, 2])
+
+    def _ph_hostdem_mean(self, aidx: int) -> float:
+        hd = self.lqn.hostdem
+        if isinstance(hd, dict):
+            return float(hd.get(aidx, 0.0))
+        return float(np.asarray(hd).ravel()[aidx])
+
+    def _ph_act_think_mean(self, aidx: int) -> float:
+        at = getattr(self.lqn, 'actthink', None)
+        if not isinstance(at, dict):
+            return 0.0
+        d = at.get(aidx)
+        if d is None:
+            return 0.0
+        if isinstance(d, (int, float)):
+            return float(d) if float(d) > GlobalConstants.FineTol else 0.0
+        try:
+            m = float(d.getMean())
+        except (AttributeError, TypeError, ValueError):
+            return 0.0
+        return m if (np.isfinite(m) and m > GlobalConstants.FineTol) else 0.0
+
+    def _ph_maxmult(self, idx: int) -> float:
+        return float(np.asarray(self.lqn.maxmult).ravel()[idx])
+
+    def _ph_repl(self, idx: int) -> float:
+        r = getattr(self.lqn, 'repl', None)
+        if r is None:
+            return 1.0
+        v = float(np.asarray(r).ravel()[idx])
+        return v if v > 0 else 1.0
+
+    def _ref_think_mean(self, tidx: int) -> float:
+        """Declared think time of a task as it enters the thread cycle: the value
+        for a REFERENCE task, zero for any other.
+
+        A think time is an attribute of the closed customer population a
+        reference task stands for, and it is what separates one request of that
+        population from the next. On a served task it has no such meaning, and
+        charging it per request throttles the task: lqn_basic's T3 has 25 threads
+        and a declared think time of 4, and reading it as a per-request delay
+        caps it at 25/(4+0.02) = 6.219 completions per second. Three independent
+        oracles put the rate at five calls per caller request instead -- lqsim
+        66.5, LDES 66.955, lqns 75.6. See _kb/06-solver-catalog.md (LN section).
+        """
+        if not self._is_ref_task(tidx):
+            return 0.0
+        lqn = self.lqn
+        # lqn.think is keyed by ABSOLUTE element index and is a dict whenever the
+        # struct was built sparsely, so its length is the number of tasks that
+        # declare a think time and not an index bound: a positional guard here
+        # read a reference task's think time as absent and dropped it.
+        think = getattr(lqn, 'think', None)
+        if isinstance(think, dict):
+            tp = think.get(tidx)
+        elif think is not None and tidx < len(think):
+            tp = think[tidx]
+        else:
+            tp = None
+        if tp is None:
+            return 0.0
+        for attr in ('getMean', 'get_mean'):
+            if hasattr(tp, attr):
+                v = getattr(tp, attr)()
+                return float(v) if np.isfinite(v) and v > 0 else 0.0
+        if isinstance(tp, (int, float, np.integer, np.floating)):
+            return float(tp) if np.isfinite(tp) and tp > 0 else 0.0
+        if hasattr(tp, 'mean'):
+            v = tp.mean
+            return float(v) if np.isfinite(v) and v > 0 else 0.0
+        return 0.0
+
     def _mwrbb_think_mean(self, tidx: int) -> float:
+        # same closure as update_think_times, so the same gate -- see
+        # _ref_think_mean
+        if not self._is_ref_task(tidx):
+            return 0.0
         tp = self.thinkproc[tidx] if (self.thinkproc is not None
                                       and tidx < len(self.thinkproc)) else None
         if tp is None:
@@ -8414,7 +12024,7 @@ class SolverLN(EnsembleSolver):
         hidx = self._get_parent(tidx) if tidx is not None else None
         dem = self._get_hostdem_mean(aidx)
         if hidx is not None:
-            hrow = hidx - 1                      # hshift=0 -> host row 0-based
+            hrow = hidx - self.lqn.hshift        # host rows are 0-based
             if 0 <= hrow < D.shape[0]:
                 D[hrow, r] += mult * dem
         calls = self.lqn.callsof.get(aidx, []) if isinstance(self.lqn.callsof, dict) else []
@@ -8430,11 +12040,11 @@ class SolverLN(EnsembleSolver):
         lqn = self.lqn
         nH = lqn.nhosts
         nidx = lqn.nidx
-        refs = [lqn.tshift + t for t in range(1, lqn.ntasks + 1)
+        refs = [lqn.tshift + t for t in range(lqn.ntasks)
                 if self._is_ref_task(lqn.tshift + t)]
         R = len(refs)
         D = np.zeros((nH, R))
-        Vis = np.zeros((nidx + 1, R))
+        Vis = np.zeros((nidx, R))
         N = np.zeros(R)
         Z = np.zeros(R)
         for r, tidx in enumerate(refs):
@@ -8447,24 +12057,24 @@ class SolverLN(EnsembleSolver):
         S = D
         sched = np.zeros(nH)
         for h in range(nH):
-            sched[h] = self._mwrbb_disc_code(self._get_sched(h + 1))
+            sched[h] = self._mwrbb_disc_code(self._get_sched(lqn.hshift + h))
         prio = np.zeros(R)
         Xlo, Xup, _ = pfqn_mwrbb(V, S, N, Z, sched, prio)
         X = Xup if upper else Xlo
-        TN = np.full(nidx + 1, np.nan)
-        UN = np.full(nidx + 1, np.nan)
-        for i in range(1, nidx + 1):
+        TN = np.full(nidx, np.nan)
+        UN = np.full(nidx, np.nan)
+        for i in range(nidx):
             if np.any(Vis[i] > 0):
                 TN[i] = float(np.sum(X * Vis[i]))
         for h in range(nH):
-            UN[h + 1] = float(np.sum(X * D[h]))
+            UN[lqn.hshift + h] = float(np.sum(X * D[h]))
         return TN, UN
 
     def _box_bounds_table(self, upper: bool) -> pd.DataFrame:
         TN, UN = self._box_bounds(upper)
         lqn = self.lqn
         rows = []
-        for idx in range(1, lqn.nidx + 1):
+        for idx in range(lqn.nidx):
             t = TN[idx]
             u = UN[idx]
             rows.append({
@@ -8503,6 +12113,22 @@ class SolverLN(EnsembleSolver):
 
     def get_avg_table(self) -> pd.DataFrame:
         """Get average metrics as a table (matches MATLAB getAvgTable)."""
+        # lang=cpp is tested BEFORE the mwba branch below: those bounds are
+        # computed natively, so serving them here would report python numbers
+        # under a C++ label. The dispatch refuses the method by name instead.
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            from ..cpp_dispatch import LineCliNotAvailable, ln_avg_table_via_cpp
+            try:
+                df = ln_avg_table_via_cpp(self)
+            except LineCliNotAvailable as e:
+                line_warning("SolverLN", "lang='cpp' requested but the C++ solver is "
+                             "unavailable (%s); falling back to lang='python'." % e)
+            else:
+                if not self._table_silent and len(df) > 0:
+                    print(df.to_string(index=False))
+                from line_solver.indexed_table import IndexedTable
+                return IndexedTable(df)
+
         # Majumdar-Woodside robust box bounds for the LQN (processor-contention)
         _bmethod = getattr(self.options, 'method', None)
         if _bmethod in ('mwba.upper', 'mwba.lower'):
@@ -8526,7 +12152,7 @@ class SolverLN(EnsembleSolver):
 
         # Build table
         rows = []
-        for idx in range(1, lqn.nidx + 1):
+        for idx in range(lqn.nidx):
             name = self._get_hashname(idx)
             node_type = self._get_type_name(idx)
 
@@ -8581,6 +12207,7 @@ class SolverLN(EnsembleSolver):
     def reset(self):
         """Reset solver state."""
         self.hasconverged = False
+        self.moment_pass_done = False
         self.results = []
         self.maxitererr = []
 
@@ -8619,7 +12246,68 @@ class SolverLN(EnsembleSolver):
         for e in range(self.nlayers):
             solver = solver_factory(self.ensemble[e])
             self._assert_layer_solver_supports_model(solver, self.ensemble[e], e)
+            self._detach_layer_config(solver)
+            self._silence_layer_solver(solver)
             self.solvers[e] = solver
+
+    def _layer_options(self):
+        """The LN options as a LAYER solver may read them.
+
+        An LN method name states the LAYERING and the ENCODING of the ensemble,
+        not the algorithm a single layer is solved with, and the two vocabularies
+        do not overlap. The default factory hands the LN options straight to
+        SolverMVA, so naming any LN method -- 'srvn.ph', 'flat.cs', 'flat.ph',
+        even the 'srvn' alias -- reached the layer solver as its own method. It
+        refused the unknown token outright, or, worse, resolved it to something
+        else and answered: LN(model, method='srvn') returned Tput 0.694282 on the
+        two-task probe where the identical LN(model) returns 1.402605, both having
+        resolved lnmethod to 'srvn.ph'. MATLAB keeps the two apart by giving each
+        layer an options struct of its own.
+        """
+        import copy as _copy
+        opts = self.options
+        m = getattr(opts, 'method', None)
+        if isinstance(m, str) and m.lower() in _LN_LEVEL_METHODS:
+            opts = _copy.copy(opts)
+            opts.method = 'default'
+        return opts
+
+    def _detach_layer_config(self, layer_solver):
+        """Give the layer solver a config dict of its own.
+
+        MATLAB hands each layer an options STRUCT, copied by value; in Python every layer
+        solver built from the LN options aliases one config dict, so a per-layer write such
+        as the interlock matrix of Eq. (4.7) would reach every other layer, whose classes are
+        neither the same in number nor in meaning.
+        """
+        opts = getattr(layer_solver, 'options', None)
+        cfg = getattr(opts, 'config', None) if opts is not None else None
+        if isinstance(cfg, dict):
+            opts.config = type(cfg)(cfg)
+
+    def _silence_layer_solver(self, layer_solver):
+        """Set a layer solver to VerboseLevel.SILENT (spelled False here).
+
+        A LAYER SOLVER NEVER NARRATES. The fixed point runs every layer once per
+        iteration, so a layer left at the caller's verbosity prints its own
+        banner nlayers*iter_max times and buries the layered narration the caller
+        actually asked for. The level is stamped HERE rather than in the factory
+        because a factory the USER supplied -- SolverLN(model, lambda m:
+        SolverNC(m)) -- never sees the LN options at all, and stamping it in the
+        default factory alone left exactly that case loud.
+
+        SolverLN's own reporting is unaffected: it reads self.options.verbose,
+        not the layer's.
+
+        A NATIVE SOLVER OPTION SPELLS ITS VERBOSITY AS A BOOL, not as a
+        VerboseLevel (see constants.default_verbose), and an Enum member is
+        truthy: assigning VerboseLevel.SILENT here would read as VERBOSE at
+        every `if options.verbose:` in the tree. False is the same level in the
+        type this field actually carries, and is what console._is_silent reads.
+        """
+        opts = getattr(layer_solver, 'options', None)
+        if opts is not None and hasattr(opts, 'verbose'):
+            opts.verbose = False
 
     def _assert_layer_solver_supports_model(self, layer_solver, layer_model, idx):
         """Reject a layer solver that cannot represent its layer model, upfront
@@ -8703,7 +12391,15 @@ class SolverLN(EnsembleSolver):
         """
         import pandas as pd
 
-        # lang=java dispatch never runs iterate(); gate accessors on self.results, not on the ensemble table; see _kb/11-conventions-and-gotchas.md lang=java SolverLN skips iterate().
+        # The layered CLI has no sensitivity analysis, so the derivatives below are
+        # native; refuse rather than label them as C++ numbers.
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            raise RuntimeError(
+                "lang='cpp' delegates the steady-state layered solve only; the per-layer "
+                "sensitivities are computed natively. Use lang='python' for "
+                "getSensitivityTable.")
+
+        # gate accessors on self.results, not the ensemble table; see _kb/11-conventions-and-gotchas.md lang=java SolverLN skips iterate().
         if not self.results:
             self.iterate()
 

@@ -17,10 +17,13 @@ if ~self.hasconverged
         % Compute residt from QN/TN_ref (matching updateMetricsDefault)
         layerIdx = self.idxhash(idx);
         layerSn = ensemble{layerIdx}.getStruct();
-        c = find(layerSn.chains(:, classidx), 1);
-        refclass_c = layerSn.refclass(c);
-        refstat_k = layerSn.refstat(classidx);
-        TN_ref = self.results{end,layerIdx}.TN(refstat_k, refclass_c);
+        % refclass is 0 on a chain with no reference class (open chain)
+        [hasRef, refstat_k, refclass_c] = ln_layer_refcell(layerSn, classidx);
+        if hasRef
+            TN_ref = self.results{end,layerIdx}.TN(refstat_k, refclass_c);
+        else
+            TN_ref = 0;
+        end
         if TN_ref > GlobalConstants.FineTol
             self.residt(aidx) = self.results{end,layerIdx}.QN(nodeidx,classidx) / TN_ref;
         else
@@ -33,6 +36,18 @@ if ~self.hasconverged
             self.servt(aidx) = self.servt(aidx) + zt_act;
             self.residt(aidx) = self.residt(aidx) + zt_act;
             self.servtproc{aidx} = Exp.fitMean(self.servt(aidx));
+        end
+
+        % async-only targets carry no visit-ratio scaling (matching updateMetricsDefault)
+        if aidx > lqn.ashift && aidx <= lqn.ashift + lqn.nacts
+            for eidx = (lqn.eshift+1):(lqn.eshift+lqn.nentries)
+                if full(lqn.graph(eidx, aidx)) > 0
+                    if full(any(lqn.isasynccaller(:, eidx))) && ~full(any(lqn.issynccaller(:, eidx)))
+                        self.residt(aidx) = self.servt(aidx);
+                    end
+                    break;
+                end
+            end
         end
     end
 
@@ -57,19 +72,18 @@ if ~self.hasconverged
         end
     end
 
-    % then resolve the entry servt summing up these contributions
-    entry_servt = (eye(lqn.nidx+lqn.ncalls)-self.servtmatrix)\[self.servt;self.callservt];
+    % then resolve the entry servt summing up these contributions; the terms are
+    % residence times (Vtask=1), which the task/entry tput ratio below rescales to Ventry=1
+    entry_servt = (eye(lqn.nidx+lqn.ncalls)-self.servtmatrix)\[self.residt;self.callresidt];
     entry_servt(1:lqn.eshift) = 0;
 
-    % Propagate forwarding calls: add target entry's service time to source entry
-    for cidx = 1:lqn.ncalls
-        if lqn.calltype(cidx) == CallType.FWD
-            source_eidx = lqn.callpair(cidx, 1);
-            target_eidx = lqn.callpair(cidx, 2);
-            fwd_prob = lqn.callproc{cidx}.getMean();
-            entry_servt(source_eidx) = entry_servt(source_eidx) + fwd_prob * entry_servt(target_eidx);
-        end
-    end
+    % NO forwarding propagation here. lqn_fwd_rendezvous has already reconnected
+    % every forwarding chain reachable from a synchronous call to the client that
+    % issued the rendezvous (Franks 1999, Sec. 3.3.1), so the forwarded service is
+    % in the caller's chain before this runs; adding it again inflated the caller
+    % by exactly the forwarded entry's mean. An asynchronous call into a chain is
+    % left untouched there by design -- a send-no-reply does not block -- so it
+    % must not accumulate the forwarded service either. See BUGS.md BUG-91.
 
     self.servt(lqn.eshift+1:lqn.eshift+lqn.nentries) = entry_servt(lqn.eshift+1:lqn.eshift+lqn.nentries);
     entry_servt((lqn.ashift+1):end) = 0;
@@ -137,10 +151,13 @@ else
         % Compute residt from QN/TN_ref (matching updateMetricsDefault)
         layerIdx = self.idxhash(idx);
         layerSn = ensemble{layerIdx}.getStruct();
-        c = find(layerSn.chains(:, classidx), 1);
-        refclass_c = layerSn.refclass(c);
-        refstat_k = layerSn.refstat(classidx);
-        TN_ref = self.results{end,layerIdx}.TN(refstat_k, refclass_c);
+        % refclass is 0 on a chain with no reference class (open chain)
+        [hasRef, refstat_k, refclass_c] = ln_layer_refcell(layerSn, classidx);
+        if hasRef
+            TN_ref = self.results{end,layerIdx}.TN(refstat_k, refclass_c);
+        else
+            TN_ref = 0;
+        end
         if TN_ref > GlobalConstants.FineTol
             self.residt(aidx) = self.results{end,layerIdx}.QN(nodeidx,classidx) / TN_ref;
         else
@@ -274,16 +291,9 @@ else
         end
     end
 
-    % Propagate forwarding calls: add target entry's service time to source entry
-    for cidx = 1:lqn.ncalls
-        if lqn.calltype(cidx) == CallType.FWD
-            source_eidx = lqn.callpair(cidx, 1);
-            target_eidx = lqn.callpair(cidx, 2);
-            fwd_prob = lqn.callproc{cidx}.getMean();
-            self.servt(source_eidx) = self.servt(source_eidx) + fwd_prob * self.servt(target_eidx);
-            self.servtproc{source_eidx} = Exp.fitMean(self.servt(source_eidx));
-        end
-    end
+    % NO forwarding propagation here, for the reason given at the entry_servt
+    % assembly above: lqn_fwd_rendezvous has already charged the forwarded
+    % service to the caller. See BUGS.md BUG-91.
 
     % Compute entry-level residt using servtmatrix and activity residt
     % callresidt uses WN which already includes visit multiplicity
@@ -317,6 +327,15 @@ else
             end
         end
     end
+
+    % This pass IS the moment3 answer, and it is TERMINAL. Its entry laws are
+    % convolutions of the activities' own response distributions; the branch
+    % above instead reads QN/TN_ref, a residence per REFERENCE cycle, which the
+    % entry assembly then treats as a per-entry-visit time. The two disagree by
+    % the entry's visit ratio whenever it is not 1, so letting the iteration
+    % fall back to that branch after this one has run DISCARDS the moment-based
+    % laws and reports the other quantity. See BUGS.md BUG-97.
+    self.momentPassDone = true;
 end
 self.ensemble = ensemble;
 end

@@ -15,7 +15,7 @@ Features:
 - Supports both open and closed networks
 - Reuses handler's W matrix construction and ODE function for accurate dynamics
 - Adaptive refinement for large CDF jumps
-- Automatic time extension when CDF(0) > 0.01
+- Automatic horizon extension while the tail misses the law, CDF(end) < 0.99
 - Compatible with all SolverFLD methods (matrix, softmin, etc.)
 
 Reference: Solver_Fluid_Passage_Time.m from MATLAB LINE implementation
@@ -27,6 +27,7 @@ from typing import Optional, Tuple, Dict, Any, List
 import warnings
 
 from ..options import SolverFLDOptions
+from ..utils.closures import capacity_closure
 from ....api.sn import SchedStrategy
 
 
@@ -36,7 +37,8 @@ def compute_passage_time_cdf(
     job_class: int,
     options: SolverFLDOptions,
     steady_state_vec: Optional[np.ndarray] = None,
-    t_span: Optional[Tuple[float, float]] = None
+    t_span: Optional[Tuple[float, float]] = None,
+    sigma2: Optional[np.ndarray] = None
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Compute response time CDF for a station using transient fluid analysis.
@@ -63,6 +65,13 @@ def compute_passage_time_cdf(
         ODE state vector from steady-state solution
     t_span : tuple, optional
         Time interval for integration (t_min, t_max)
+    sigma2 : np.ndarray, optional
+        Per-station population variance the mean solve closed its drift at, i.e.
+        the moment-closure `sigma2Drift`. The passage time is a SECOND solve on
+        that fixed point, so it has to be driven by the same drift: closing
+        min(n_i,c_i) at zero variance drains a station the mean solve holds below
+        capacity at full rate, and the distribution then contradicts the mean the
+        same solver reports. None or all-zero gives the first-order min().
 
     Returns
     -------
@@ -114,47 +123,11 @@ def compute_passage_time_cdf(
     rates = np.asarray(rates)
     service_rate = rates[station_idx, job_class] if rates[station_idx, job_class] > 0 else 1.0
 
-    # Get process structures from sn - convert dict-based to matrix-based if needed
-    pie = sn.pie if hasattr(sn, 'pie') and sn.pie else {}
-
-    # Build proper proc structure with phase-type matrices
-    proc = {}
-    if hasattr(sn, 'proc') and sn.proc is not None:
-        for i in range(min(M, len(sn.proc))):
-            proc[i] = {}
-            if sn.proc[i] is not None:
-                for r in range(min(K, len(sn.proc[i]))):
-                    proc_ir = sn.proc[i][r]
-                    if isinstance(proc_ir, dict):
-                        # Convert dict-based to matrix-based
-                        n_phases = phases[i, r]
-                        if 'k' in proc_ir and 'mu' in proc_ir:
-                            # Erlang(k, mu): D0 = -mu*I + mu*(superdiag), D1 = last row
-                            k = proc_ir['k']
-                            mu = proc_ir['mu']
-                            D0 = np.zeros((k, k))
-                            for p in range(k):
-                                D0[p, p] = -mu
-                                if p < k - 1:
-                                    D0[p, p + 1] = mu
-                            D1 = np.zeros((k, 1))
-                            D1[k - 1, 0] = mu
-                            proc[i][r] = [D0, D1]
-                        elif 'rate' in proc_ir:
-                            # Exponential
-                            rate = proc_ir['rate']
-                            proc[i][r] = [np.array([[-rate]]), np.array([[rate]])]
-                        else:
-                            # Default exponential fallback
-                            rate = rates[i, r] if rates[i, r] > 0 else 1.0
-                            proc[i][r] = [np.array([[-rate]]), np.array([[rate]])]
-                    elif isinstance(proc_ir, (list, tuple)) and len(proc_ir) >= 2:
-                        # Already matrix-based
-                        proc[i][r] = proc_ir
-                    else:
-                        # Default exponential
-                        rate = rates[i, r] if rates[i, r] > 0 else 1.0
-                        proc[i][r] = [np.array([[-rate]]), np.array([[rate]])]
+    # proc AND pie must come from the same derivation: the native struct leaves
+    # sn.pie None, and a pie shorter than its phase count silently truncates the
+    # phase structure (see _kb/06-solver-catalog.md, Fluid passage time)
+    from ..utils.phase_type import prepare_phase_type_structures
+    proc, pie, _ = prepare_phase_type_structures(sn)
     rt = sn.rt if sn.rt is not None else None
     nservers = sn.nservers.flatten() if sn.nservers is not None else np.ones(M)
 
@@ -414,15 +387,26 @@ def compute_passage_time_cdf(
                     other_indices = list(range(first_idx + 1, first_idx + n_ph))
                     ext_class_ranges[(i, r)] = (first_idx, other_indices)
 
+    # The closure the mean solve finished at, per station. Only the per-STATION
+    # variance transfers to the augmented model: the transient class only
+    # relabels a station population, whereas the coordinate covariance is indexed
+    # by a state layout that class changes, so the class share stays the plug-in
+    # ratio (as in SolverFluid.passageTimeOptions and getCdfRespT.m).
+    sigma2_drift = np.zeros(M)
+    if sigma2 is not None:
+        s2arr = np.asarray(sigma2, dtype=float).ravel()
+        sigma2_drift[:min(M, s2arr.size)] = s2arr[:min(M, s2arr.size)]
+
     # Define ODE function using closing method (matches MATLAB's ode_rates_closing)
     # - EXT: Mass conservation (total mass per class = 1, source doesn't evolve)
     # - INF: No scaling (all jobs get full service rate, infinite servers)
     # - PS/FCFS: Scale by min(ni, ci) / ni when ni > ci
     def ode_rhs(t, x):
-        x = np.maximum(x, 0)
-
+        # x is NOT projected here: MATLAB leaves nonnegativity to
+        # odeset('NonNegative'), which acts on the accepted step, so projecting the
+        # drift's argument would make it discontinuous at x=0 (see closing.py)
         # Build rates vector (same as MATLAB: rates = x, then modify per strategy)
-        rates = x.copy()
+        rates = np.array(x, dtype=float, copy=True)
 
         # Compute total queue at each station
         station_queues = np.zeros(M)
@@ -447,17 +431,29 @@ def compute_passage_time_cdf(
                 # INF: rates = x (no scaling needed, already set)
                 pass
             elif sched_i in (SchedStrategy.PS, SchedStrategy.FCFS, SchedStrategy.DPS):
-                # PS/FCFS/DPS: scale by c/n when queue exceeds capacity
+                # PS/FCFS/DPS: scale by psi(n)/n, psi = min(n,c) closed at s2
                 ni = station_queues[i]
                 ci = nservers_aug[i]
-                if ni > ci:
+                s2i = sigma2_drift[i]
+                if s2i > 0:
+                    if ni > 0:
+                        h = capacity_closure(ni, ci, s2i)[0]
+                        idx_start, idx_end = station_idx_ranges[i]
+                        rates[idx_start:idx_end] = x[idx_start:idx_end] / ni * h
+                elif ni > ci:
                     idx_start, idx_end = station_idx_ranges[i]
                     rates[idx_start:idx_end] = x[idx_start:idx_end] / ni * ci
             else:
                 # Default: treat like PS
                 ni = station_queues[i]
                 ci = nservers_aug[i]
-                if ni > ci:
+                s2i = sigma2_drift[i]
+                if s2i > 0:
+                    if ni > 0:
+                        h = capacity_closure(ni, ci, s2i)[0]
+                        idx_start, idx_end = station_idx_ranges[i]
+                        rates[idx_start:idx_end] = x[idx_start:idx_end] / ni * h
+                elif ni > ci:
                     idx_start, idx_end = station_idx_ranges[i]
                     rates[idx_start:idx_end] = x[idx_start:idx_end] / ni * ci
 
@@ -499,13 +495,15 @@ def compute_passage_time_cdf(
             t_iter = sol.t
             y_iter = sol.y.T
             if not sol.success or not np.all(np.isfinite(y_iter)):
-                # Stiff failure: bail out and let the caller fall back.
+                # Stiff failure: no valid distribution, the caller falls back on the mean
                 if len(fullt) == 0:
-                    return _exponential_cdf_fallback(service_rate, t_span)
+                    raise RuntimeError('passage-time integration failed (stiff augmented system)')
                 break
+        except RuntimeError:
+            raise
         except Exception:
             if len(fullt) == 0:
-                return _exponential_cdf_fallback(service_rate, t_span)
+                raise RuntimeError('passage-time integration failed (stiff augmented system)')
             break
 
         iter_count += 1
@@ -524,74 +522,102 @@ def compute_passage_time_cdf(
         y_current = y_iter[-1]
 
     if len(fullt) == 0:
-        return _exponential_cdf_fallback(service_rate, t_span)
+        raise RuntimeError('passage-time integration produced no trajectory')
 
     # Compute CDF: F(t) = 1 - transient_fluid(t) / initial_fluid
     transient_over_time = np.sum(np.maximum(fully[:, transient_indices], 0), axis=1)
     cdf = 1.0 - transient_over_time / fluid_c
 
-    # Adaptive CDF Refinement - match MATLAB: re-solve ODE for refined points
+    # Adaptive CDF Refinement, the rule of MATLAB solver_fluid_passage_time.m,
+    # the C++ fluid_passage_time and the JAR SolverFluid.passageTime: while some
+    # adjacent pair of CDF values differs by more than max_cdf_jump, split EVERY
+    # offending interval and re-integrate the whole curve on the new grid in one
+    # call. Refining ONE interval per round instead spends the round cap on five
+    # intervals and leaves the jump target unmet, and the curve is read back by
+    # quadrature: on cdf_respt_closed_threeclasses a 130-point grid over [0,200]
+    # made the right-endpoint mean read 1.1366 for an exactly Exp(1) response
+    # time. Both caps bound WORK, not accuracy.
     if fluid_c > 0:
         max_cdf_jump = 0.0005
-        max_refinement_iterations = 5
-        refinement_iter = 0
+        max_refinement_rounds = 5
+        max_points = 20001
+        n_refined = 20
 
-        keep_refining = True
-        while keep_refining and refinement_iter < max_refinement_iterations:
-            keep_refining = False
-            for row in range(1, len(cdf)):
-                cdf_jump = cdf[row] - cdf[row - 1]
-                if cdf_jump > max_cdf_jump:
-                    refinement_iter += 1
-                    t1 = fullt[row - 1]
-                    t2 = fullt[row]
-                    n_refined = 20
-                    refined_t = np.linspace(t1, t2, n_refined)
-                    refined_states = np.zeros((n_refined, fully.shape[1]))
-                    start_state = fully[row - 1]
-
-                    for rp in range(n_refined):
-                        try:
-                            if refined_t[rp] > t1:
-                                sol_ref = solve_ivp(
-                                    ode_rhs, [t1, refined_t[rp]], start_state,
-                                    method=ode_method, rtol=tol, atol=tol,
-                                )
-                                refined_states[rp] = np.maximum(0, sol_ref.y[:, -1])
-                            else:
-                                refined_states[rp] = start_state
-                        except Exception:
-                            alpha = (refined_t[rp] - t1) / (t2 - t1) if t2 > t1 else 0.0
-                            refined_states[rp] = fully[row - 1] + alpha * (fully[row] - fully[row - 1])
-
-                    # Merge refined points
-                    fullt = np.concatenate([fullt[:row], refined_t[1:], fullt[row + 1:]])
-                    fully = np.vstack([fully[:row], refined_states[1:], fully[row + 1:]])
-
-                    # Recompute CDF
-                    transient_over_time = np.sum(np.maximum(fully[:, transient_indices], 0), axis=1)
-                    cdf = 1.0 - transient_over_time / fluid_c
-
-                    keep_refining = True
-                    break  # Restart inner loop with updated arrays
-
-        # Extended Time Interval Logic - match MATLAB: re-solve if first CDF > 1%
-        max_extend_iterations = 10
-        extend_iter = 0
-        while cdf[0] > 0.01 and extend_iter < max_extend_iterations:
-            extend_iter += 1
-            extended_T = T * (1 + extend_iter)
+        for _round in range(max_refinement_rounds):
+            if len(fullt) >= max_points:
+                break
+            dcdf = np.diff(cdf)
+            dt = np.diff(fullt)
+            # a jump at equal times is an ATOM of the law, not a resolution
+            # failure: its linspace points would all be the same instant
+            offending = np.where((dcdf > max_cdf_jump) & (dt > 0))[0]
+            if offending.size == 0:
+                break
+            pieces = []
+            for j in range(len(fullt) - 1):
+                pieces.append(np.array([fullt[j]]))
+                if j in offending:
+                    extra = np.linspace(fullt[j], fullt[j + 1], n_refined)
+                    pieces.append(extra[1:-1])
+            pieces.append(np.array([fullt[-1]]))
+            new_t = np.unique(np.concatenate(pieces))
+            if new_t.size > max_points or new_t.size < 2:
+                break
             try:
-                sol_ext = solve_ivp(
-                    ode_rhs, [0.0, extended_T], y0_c,
+                sol_ref = solve_ivp(
+                    ode_rhs, [new_t[0], new_t[-1]], y0_c, t_eval=new_t,
                     method=ode_method, rtol=tol, atol=tol,
                 )
-                fullt = sol_ext.t
-                fully = sol_ext.y.T
-                transient_over_time = np.sum(np.maximum(fully[:, transient_indices], 0), axis=1)
-                cdf = 1.0 - transient_over_time / fluid_c
+                if not sol_ref.success or sol_ref.t.size != new_t.size:
+                    break
             except Exception:
                 break
+            fullt = sol_ref.t
+            fully = np.maximum(sol_ref.y.T, 0.0)
+            transient_over_time = np.sum(np.maximum(fully[:, transient_indices], 0), axis=1)
+            cdf = 1.0 - transient_over_time / fluid_c
+
+        # Horizon extension - extend while the TAIL misses the law.
+        # The test is on the LAST grid point. It used to read the FIRST,
+        # cdf[0], which is the CDF at the start of the horizon: the marked
+        # class holds all of fluid_c at t=0 by construction, so that value is 0
+        # whatever the horizon is, and lengthening the horizon cannot move it.
+        # The loop it guarded was unreachable, and reachable only into harm --
+        # its body REPLACED the refined curve with a fresh solve over a new
+        # horizon, discarding the grid the refinement rounds above had just
+        # paid for. Same fix as MATLAB solver_fluid_passage_time.m and the JAR
+        # SolverFluid.
+        max_extend_iterations = 10
+        extend_iter = 0
+        while cdf[-1] < 0.99 and extend_iter < max_extend_iterations:
+            extend_iter += 1
+            # CONTINUE the same trajectory from where it stopped and APPEND, as
+            # the window loop above does: y_current is the end state and tref
+            # the elapsed time, and ode_rhs is autonomous, so [0, extended_T]
+            # from it is the next stretch of the SAME passage. Doubling each
+            # round reaches a 1024x horizon within the cap instead of 11x.
+            extended_T = T * (2 ** extend_iter)
+            try:
+                sol_ext = solve_ivp(
+                    ode_rhs, [0.0, extended_T], y_current,
+                    method=ode_method, rtol=tol, atol=tol,
+                )
+                if not sol_ext.success:
+                    break
+            except Exception:
+                break
+            t_ext = sol_ext.t
+            y_ext = sol_ext.y.T
+            if t_ext.size < 2 or not np.all(np.isfinite(y_ext)):
+                break
+            # drop the duplicated first row: it repeats the instant the curve
+            # already ends on
+            fullt = np.concatenate([fullt, t_ext[1:] + tref])
+            fully = np.vstack([fully, np.maximum(y_ext[1:], 0.0)])
+            tref += t_ext[-1]
+            y_current = y_ext[-1]
+            transient_over_time = np.sum(np.maximum(fully[:, transient_indices], 0), axis=1)
+            cdf = 1.0 - transient_over_time / fluid_c
 
     return fullt, cdf
 
@@ -748,20 +774,6 @@ def _build_augmented_W(
                                 W[dst_base + k_dst, src_base + k_src] += rate_out * pie_dst[k_dst]
 
     return W, q_indices
-
-
-def _exponential_cdf_fallback(
-    service_rate: float,
-    t_span: Tuple[float, float]
-) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Fallback exponential CDF approximation.
-
-    Used when augmented system construction fails.
-    """
-    t = np.linspace(t_span[0], t_span[1], 100)
-    cdf = 1.0 - np.exp(-service_rate * t)
-    return t, cdf
 
 
 class PassageTimeMethod:

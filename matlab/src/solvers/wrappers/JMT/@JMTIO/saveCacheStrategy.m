@@ -193,11 +193,12 @@ for r = 1:K
         distrib = [];
         if isprop(cacheNode, 'popularity') && ~isempty(cacheNode.popularity)
             % Find the distribution for this class
-            for iItem = 1:size(cacheNode.popularity, 1)
-                if size(cacheNode.popularity, 2) >= r && ~isempty(cacheNode.popularity{iItem, r})
-                    distrib = cacheNode.popularity{iItem, r};
-                    break;
-                end
+            % popularity is keyed (itemSetIndex, class): take THIS cache's row,
+            % since with more than one cache the other rows are another item set's
+            iItem = cacheNode.items.index;
+            if iItem <= size(cacheNode.popularity, 1) && size(cacheNode.popularity, 2) >= r ...
+                    && ~isempty(cacheNode.popularity{iItem, r})
+                distrib = cacheNode.popularity{iItem, r};
             end
         end
 
@@ -230,8 +231,23 @@ for r = 1:K
             numElemNode.appendChild(valNode);
             subParNode.appendChild(numElemNode);
         elseif ~isempty(distrib) && isa(distrib, 'DiscreteSampler')
-            % Use JMT's Uniform distribution for DiscreteSampler
-            % This maps the discrete sampler to a uniform distribution over its support
+            % JMT's Cache section takes a PARAMETRIC popularity and has no empirical
+            % discrete form, so the only faithful DiscreteSampler is a uniform one.
+            % Anything else -- a measured pmf, or the point mass that
+            % Cache.setItemReadClasses gives each per-item class of a cache network --
+            % would export as a uniform draw over ALL items and silently answer a
+            % different model. Refuse by name instead.
+            pmfr = distrib.evalPMF(1:cacheNode.items.nitems);
+            if any(abs(pmfr(:)' - 1/numel(pmfr)) > GlobalConstants.CoarseTol)
+                line_error(mfilename, sprintf(['Cache "%s" gives class "%s" a non-uniform ' ...
+                    'DiscreteSampler popularity, which JMT cannot express: its Cache section ' ...
+                    'takes a parametric popularity (Zipf or uniform) and has no empirical ' ...
+                    'discrete form, so this would be exported as a uniform draw over all %d ' ...
+                    'items and solved as a different model. Use Zipf, a uniform popularity, ' ...
+                    'or a solver other than JMT (SSA, LDES, CTMC, MVA, NC all take it).'], ...
+                    cacheNode.name, sn.classnames{r}, cacheNode.items.nitems));
+            end
+            % Uniform is the one DiscreteSampler JMT reproduces exactly
             subParNode.setAttribute('classPath', 'jmt.engine.random.discrete.Uniform');
             subParNode.setAttribute('name', 'popularity');
 

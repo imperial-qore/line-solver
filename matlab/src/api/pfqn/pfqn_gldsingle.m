@@ -30,8 +30,17 @@ if R>1
 end
 Nscal = N(1); % codegen: ensure scalar loop bound
 
+% SYMBOLIC INPUT takes the linear recursion, which is +, * and / throughout and
+% so is field-agnostic. The log branch cannot serve it: that branch is a range
+% device for IEEE double, and its own guard all(L(:)>=0) raises "Unable to prove
+% the statement" on a sym rather than returning a logical, so isa() has to
+% short-circuit ahead of it. This routine is the one that carries symbolic rates
+% because it never COMPARES a rate: pfqn_lldsingle has to locate the threshold
+% past which the row is constant, and that comparison is undecidable on a sym.
+isSym = isa(L,'sym') || isa(mu,'sym');
+
 % see _kb/03-api-layer.md (pfqn/ family: scaling, log-domain switches, dispatch gates)
-useLog = isreal(L) && isreal(mu) && all(L(:)>=0) && all(mu(:)>0);
+useLog = ~isSym && isreal(L) && isreal(mu) && all(L(:)>=0) && all(mu(:)>0);
 
 if useLog
     % see _kb/03-api-layer.md (pfqn/ family: scaling, log-domain switches, dispatch gates)
@@ -67,7 +76,13 @@ if useLog
     lG = lg(M +1,Nscal +1,1 +1);
     G = exp(lG);
 else
-    g = zeros(M+1, Nscal+1, Nscal+2);
+    if isSym
+        % a double accumulator rejects a sym on assignment, so the array has to
+        % be allocated in the input's own class
+        g = zeros(M+1, Nscal+1, Nscal+2, 'like', sym(0));
+    else
+        g = zeros(M+1, Nscal+1, Nscal+2);
+    end
     for n=1:Nscal
         g(0 +1,n +1, 1 +1)=0;
     end

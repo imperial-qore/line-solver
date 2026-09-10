@@ -113,35 +113,32 @@ while ~isempty(stateQueue)
             scalingTable{k}(idx) = 0;
         end
     else
-        % Solve with pfqn_mva
-        try
-            if M_queue > 0
-                % Call MVA with Queue stations and think times
-                [XN, ~, ~, ~] = pfqn_mva(L_queue, nvec, Z, mi_queue);
-            else
-                % Only Delay stations - throughput is N(k) / Z(k) for each class
-                XN = zeros(1, K);
-                for k = 1:K
-                    if nvec(k) > 0 && Z(k) > 0
-                        XN(k) = nvec(k) / Z(k);
-                    end
+        % PFQN_MVA's MI is NOT a server count -- it enters only as the additive
+        % term of C(i,s)=L(i,s)*(mi(i)+Qarv), so passing the real multiplicity
+        % INFLATES the residence time instead of adding servers. Route through
+        % PFQN_MVAMS, which forwards to PFQN_MVA when every station is a single
+        % server and to the load-dependent recursion with mu(i,n)=min(n,S(i))
+        % when one is not. See _kb/03-api-layer.md (pfqn_mva: mi is not S).
+        if M_queue > 0
+            [XN, ~, ~, ~] = pfqn_mvams(zeros(1,K), L_queue, nvec, Z, ...
+                ones(M_queue,1), mi_queue(:));
+        else
+            % Only Delay stations - throughput is N(k) / Z(k) for each class
+            XN = zeros(1, K);
+            for k = 1:K
+                if nvec(k) > 0 && Z(k) > 0
+                    XN(k) = nvec(k) / Z(k);
                 end
             end
+        end
 
-            % Store throughputs
-            for k = 1:K
-                if nvec(k) > 0
-                    scalingTable{k}(idx) = XN(k);
-                else
-                    scalingTable{k}(idx) = 0;
-                end
-            end
-        catch ME
-            % If solver fails, set throughput to 0
-            if options.verbose
-                fprintf('Warning: MVA failed for state %s: %s\n', mat2str(nvec), ME.message);
-            end
-            for k = 1:K
+        % Store throughputs. A failure here is NOT caught: an FES table silently
+        % filled with zeros is a wrong aggregate, not a degraded one, and every
+        % downstream beta_r(n) reads it as "the subnetwork serves nothing".
+        for k = 1:K
+            if nvec(k) > 0
+                scalingTable{k}(idx) = XN(k);
+            else
                 scalingTable{k}(idx) = 0;
             end
         end

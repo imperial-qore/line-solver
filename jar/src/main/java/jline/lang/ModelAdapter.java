@@ -24,6 +24,8 @@ import java.util.*;
 import static jline.io.InputOutput.*;
 import static jline.api.sn.SnGetDemandsChain.snGetDemandsChain;
 
+import jline.api.fj.FJ_ordstat_exp;
+import jline.api.sn.SnJoinQuorum;
 import jline.api.fes.FESAggregator;
 import jline.api.fes.FESResult;
 import jline.api.fes.FESOptions;
@@ -99,6 +101,29 @@ public class ModelAdapter {
      * @param suffix The suffix to add to tagged class names (optional, defaults to ".tagged")
      * @return TaggedChainResult containing the tagged model and tagged job class
      */
+    /**
+     * Build a tagged copy of {@code model}: one job of {@code jobclass} is moved
+     * out of its own class into a new class of population 1, so that a solver
+     * can follow that single job.
+     *
+     * <p>Port of matlab/src/io/@ModelAdapter/tagChain.m, which is the reference.
+     *
+     * <p>THIS REPLACED A STUB. The previous body created the tagged class and
+     * stopped: it gave the class NO SERVICE at any station and NO ROUTING, so
+     * the tagged model had a job that could neither be served nor move, and
+     * SolverCTMC produced an EMPTY (0x0) generator from it. It also called
+     * {@code addJobClass} on top of the ClosedClass constructor, which already
+     * registers the class, and its population decrement was guarded by
+     * {@code > 1} so a two-job class kept both jobs and the tagged model carried
+     * one more job than the original. Everything downstream degraded silently
+     * because {@code getCdfRespT} wrapped the lot in a catch that returned
+     * zeros.
+     *
+     * <p>The three things that make a tagged class real, and that the stub
+     * omitted: a service process at EVERY station cloned from the source class,
+     * the source class's routing replicated for the new class over the linked
+     * routing matrix, and one job actually MOVED rather than added.
+     */
     public static TaggedChainResult tagChain(Network model, Chain chain, JobClass jobclass, String suffix) {
         if (suffix == null || suffix.isEmpty()) {
             suffix = ".tagged";
@@ -106,67 +131,114 @@ public class ModelAdapter {
         if (jobclass == null && !chain.getClasses().isEmpty()) {
             jobclass = chain.getClasses().get(0);
         }
-        
-        // Create a copy of the model
+        if (jobclass == null) {
+            throw new RuntimeException("tagChain: the chain carries no class to tag");
+        }
+
         Network taggedModel = model.copy();
-        
-        // For simplicity, create a new tagged job class based on the original
-        // This is a simplified implementation that focuses on the core functionality
-        JobClass taggedJob = null;
-        
-        try {
-            // Find the original job class in the tagged model
-            JobClass originalInTagged = null;
+
+        // Resolve the chain's classes inside the COPY: the Chain object holds
+        // references into the original model, which the copy does not share.
+        List<JobClass> chainInTagged = new ArrayList<JobClass>();
+        for (JobClass src : chain.getClasses()) {
             for (JobClass cls : taggedModel.getClasses()) {
-                if (cls.getName().equals(jobclass.getName())) {
-                    originalInTagged = cls;
+                if (cls.getName().equals(src.getName())) {
+                    chainInTagged.add(cls);
                     break;
                 }
             }
-            
-            if (originalInTagged != null) {
-                // Create a tagged version of the job class
-                if (originalInTagged instanceof ClosedClass) {
-                    ClosedClass original = (ClosedClass) originalInTagged;
-                    ClosedClass tagged = new ClosedClass(taggedModel, 
-                        original.getName() + suffix, 
-                        1, // Tagged job has population 1
-                        original.getReferenceStation(), 
-                        original.getPriority());
-                    
-                    taggedModel.addJobClass(tagged);
-                    taggedJob = tagged;
-                    
-                    // Reduce original population by 1
-                    if (original.getPopulation() > 1) {
-                        original.setPopulation(original.getPopulation() - 1);
+        }
+        JobClass sourceInTagged = null;
+        for (JobClass cls : taggedModel.getClasses()) {
+            if (cls.getName().equals(jobclass.getName())) {
+                sourceInTagged = cls;
+                break;
+            }
+        }
+        if (sourceInTagged == null || chainInTagged.isEmpty()) {
+            throw new RuntimeException("tagChain: the class to tag is not present in the model copy");
+        }
+
+        // The linked routing matrix must be read BEFORE the new classes exist,
+        // so that it is the original class-pair map and not a half-extended one.
+        Map<JobClass, Map<JobClass, Matrix>> P = taggedModel.getLinkedRoutingMatrix();
+        if (P == null) {
+            throw new RuntimeException("tagChain: the model has no linked routing matrix; "
+                    + "link() it before asking for a tagged copy");
+        }
+
+        int nnodes = taggedModel.getNumberOfNodes();
+        List<JobClass> taggedClasses = new ArrayList<JobClass>();
+        for (JobClass src : chainInTagged) {
+            double pop = (src == sourceInTagged) ? 1.0 : 0.0;
+            Station refstat = (src instanceof ClosedClass)
+                    ? ((ClosedClass) src).getReferenceStation() : null;
+            if (refstat == null && !taggedModel.getStations().isEmpty()) {
+                refstat = taggedModel.getStations().get(0);
+            }
+            // The constructor registers the class with the model; calling
+            // addJobClass on top of it adds the same class twice.
+            ClosedClass tagged = new ClosedClass(taggedModel, src.getName() + suffix, pop,
+                    refstat, src.getPriority());
+
+            // A class with no service process is not served anywhere, and the
+            // state-space generator then has no transition to build.
+            for (Station st : taggedModel.getStations()) {
+                if (st instanceof ServiceStation) {
+                    ServiceStation ss = (ServiceStation) st;
+                    Distribution d = ss.getServiceProcess(src);
+                    if (d != null) {
+                        ss.setService(tagged, d);
                     }
-                } else if (originalInTagged instanceof OpenClass) {
-                    // For open classes, create a closed tagged version with population 1
-                    OpenClass original = (OpenClass) originalInTagged;
-                    ClosedClass tagged = new ClosedClass(taggedModel,
-                        original.getName() + suffix,
-                        1, // Tagged job has population 1
-                        null, // No specific reference station
-                        original.getPriority());
-                    
-                    taggedModel.addJobClass(tagged);
-                    taggedJob = tagged;
                 }
             }
-            
-            // Reset and refresh the model
-            taggedModel.reset(true);
-            taggedModel.refreshStruct(true);
-            
-        } catch (Exception e) {
-            // If tagging fails, return a simple copy with the original job
-            taggedJob = jobclass;
+            taggedClasses.add(tagged);
         }
-        
-        return new TaggedChainResult(taggedModel, taggedJob);
+
+        // MOVE the job: the tagged class gained one, so the source loses one.
+        if (sourceInTagged instanceof ClosedClass) {
+            ClosedClass src = (ClosedClass) sourceInTagged;
+            src.setPopulation(src.getPopulation() - 1);
+        }
+
+        // Replicate the chain's routing for the tagged classes, pair by pair.
+        for (int ir = 0; ir < chainInTagged.size(); ir++) {
+            JobClass fromOld = chainInTagged.get(ir);
+            JobClass fromNew = taggedClasses.get(ir);
+            Map<JobClass, Matrix> rowOld = P.get(fromOld);
+            Map<JobClass, Matrix> rowNew = P.get(fromNew);
+            if (rowNew == null) {
+                rowNew = new HashMap<JobClass, Matrix>();
+                P.put(fromNew, rowNew);
+            }
+            for (int is = 0; is < chainInTagged.size(); is++) {
+                JobClass toOld = chainInTagged.get(is);
+                JobClass toNew = taggedClasses.get(is);
+                Matrix block = (rowOld == null) ? null : rowOld.get(toOld);
+                rowNew.put(toNew, block == null ? new Matrix(nnodes, nnodes) : block.copy());
+            }
+        }
+        // Every remaining class pair needs a block, or the relink sees a hole.
+        for (JobClass r : taggedModel.getClasses()) {
+            Map<JobClass, Matrix> row = P.get(r);
+            if (row == null) {
+                row = new HashMap<JobClass, Matrix>();
+                P.put(r, row);
+            }
+            for (JobClass sCls : taggedModel.getClasses()) {
+                if (!row.containsKey(sCls) || row.get(sCls) == null) {
+                    row.put(sCls, new Matrix(nnodes, nnodes));
+                }
+            }
+        }
+
+        taggedModel.relinkFromRtorig(P);
+        taggedModel.refreshStruct(true);
+
+        return new TaggedChainResult(taggedModel,
+                taggedClasses.isEmpty() ? jobclass : taggedClasses.get(taggedClasses.size() - 1));
     }
-    
+
     /**
      * Convenience method with default parameters
      */
@@ -189,6 +261,14 @@ public class ModelAdapter {
     public static Matrix findPaths(NetworkStruct sn, Matrix P, int startNode, int endNode, int r, ArrayList<Integer> toMerge,
                                    Matrix QN, Matrix TN, double currentTime, Matrix fjclassmap, Matrix fjforkmap,
                                    Network nonfjmodel) {
+        return findPaths(sn, P, startNode, endNode, r, toMerge, QN, TN, currentTime, fjclassmap, fjforkmap,
+                nonfjmodel, new java.util.HashSet<Integer>());
+    }
+
+    /** Simple paths only; see the ONPATH note on findPathsCS. */
+    public static Matrix findPaths(NetworkStruct sn, Matrix P, int startNode, int endNode, int r, ArrayList<Integer> toMerge,
+                                   Matrix QN, Matrix TN, double currentTime, Matrix fjclassmap, Matrix fjforkmap,
+                                   Network nonfjmodel, java.util.Set<Integer> onPath) {
         if (startNode == endNode) {
             double qLen = 0;
             double tput = 0;
@@ -201,8 +281,12 @@ public class ModelAdapter {
             return ri;
         }
         Matrix ri = new Matrix(1, 0);
+        onPath.add(startNode);
         for (int i = 0; i < P.getNumCols(); i++) {
             if (P.get(startNode, i) == 0) {
+                continue;
+            }
+            if (i != endNode && onPath.contains(i)) {
                 continue;
             }
             double qLen = 0;
@@ -232,28 +316,25 @@ public class ModelAdapter {
                 }
                 toMerge.add(s);
                 Matrix paths = findPaths(sn, P, i, joinIdx, r, toMerge, QN,
-                        TN, 0, fjclassmap, fjforkmap, nonfjmodel);
-                Matrix lambdai = Matrix.ones(paths.getNumRows(), paths.getNumCols()).elementDiv(paths);
-                double d0 = 0;
-                int parallel_branches = paths.length();
-                for (int pow = 0; pow < parallel_branches; pow++) {
-                    Matrix nk = Maths.nCk(lambdai, pow + 1);
-                    nk = nk.sumRows();
-                    double currentSum = Matrix.ones(nk.getNumRows(), 1).elementDiv(nk).elementSum();
-                    d0 += FastMath.pow(-1, pow) * currentSum;
-                }
+                        TN, 0, fjclassmap, fjforkmap, nonfjmodel, new java.util.HashSet<Integer>(onPath));
+                // The inner join fires on the k-th branch completion, k = the branch
+                // count on a standard join and the declared quorum on a PARTIAL one.
+                int kreq = SnJoinQuorum.snJoinQuorum(sn, nonfjmodel.getNodes().get(joinIdx),
+                        nonfjmodel.getJobClasses().get(r), paths.length());
+                double d0 = FJ_ordstat_exp.fj_ordstat_exp(paths, kreq);
+                double innerSync = Math.max(d0 - paths.elementSum() / paths.length(), 0);
                 for (int cls : toMerge) {
                     ((Delay) nonfjmodel.getNodes().get(joinIdx)).setService(nonfjmodel.getJobClasses().get(cls),
-                            Exp.fitMean(d0 - paths.elementSum() / paths.length()));
+                            Exp.fitMean(innerSync));
                 }
                 toMerge.remove(toMerge.size() - 1);
                 ri = ri.concatCols(findPaths(sn, P, joinIdx, endNode, r,
                         toMerge, QN, TN, currentTime + d0, fjclassmap,
-                        fjforkmap, nonfjmodel));
+                        fjforkmap, nonfjmodel, new java.util.HashSet<Integer>(onPath)));
             } else {
                 ri = ri.concatCols(findPaths(sn, P, i, endNode, r, toMerge,
                         QN, TN, currentTime + qLen / tput, fjclassmap, fjforkmap,
-                        nonfjmodel));
+                        nonfjmodel, new java.util.HashSet<Integer>(onPath)));
             }
         }
         return ri;
@@ -266,6 +347,20 @@ public class ModelAdapter {
     public static Matrix findPathsCS(NetworkStruct sn, Matrix P, int curNode, int endNode, int curClass, ArrayList<Integer> toMerge,
                                      Matrix QN, Matrix TN, double currentTime, Matrix fjclassmap, Matrix fjforkmap,
                                      Network nonfjmodel) {
+        return findPathsCS(sn, P, curNode, endNode, curClass, toMerge, QN, TN, currentTime, fjclassmap, fjforkmap,
+                nonfjmodel, new java.util.HashSet<Long>());
+    }
+
+    /**
+     * Enumerates the SIMPLE paths only: the call classes carry a geometric loop
+     * (server -> Aux -> server) whenever a call mean exceeds one, so the routing
+     * graph between a fork and its join is cyclic and the path set would be
+     * infinite without ONPATH. A repeated visit adds no new branch, its residence
+     * time is already carried by QN/TN at the station.
+     */
+    public static Matrix findPathsCS(NetworkStruct sn, Matrix P, int curNode, int endNode, int curClass, ArrayList<Integer> toMerge,
+                                     Matrix QN, Matrix TN, double currentTime, Matrix fjclassmap, Matrix fjforkmap,
+                                     Network nonfjmodel, java.util.Set<Long> onPath) {
         if (curNode == endNode) {
             double qLen = 0;
             double tput = 0;
@@ -279,6 +374,8 @@ public class ModelAdapter {
         }
         int orignodes = nonfjmodel.getStruct(false).rtorig.get(nonfjmodel.getClasses().get(0)).get(nonfjmodel.getClasses().get(0)).getNumCols();
         Matrix ri = new Matrix(1, 0);
+        long here = (long) curClass * orignodes + curNode;
+        onPath.add(here);
         for (int transition = 0; transition < P.getNumCols(); transition++) {
             if (P.get(curClass * orignodes + curNode, transition) == 0) {
                 continue;
@@ -286,6 +383,9 @@ public class ModelAdapter {
             ArrayList<Integer> curMerge = new ArrayList<>(toMerge);
             int nextClass = (int) FastMath.floor((transition) / (double) orignodes);
             int nextNode = transition - (nextClass) * orignodes;
+            if (nextNode != endNode && onPath.contains((long) transition)) {
+                continue;
+            }
             curMerge.set(0, nextClass);
             double qLen = 0;
             double tput = 1;
@@ -314,31 +414,28 @@ public class ModelAdapter {
                 }
                 toMerge.add(s);
                 Matrix paths = findPathsCS(sn, P, nextNode, joinIdx, curClass, toMerge, QN,
-                        TN, 0, fjclassmap, fjforkmap, nonfjmodel);
-                Matrix lambdai = Matrix.ones(paths.getNumRows(), paths.getNumCols()).elementDiv(paths);
-                double d0 = 0;
-                int parallel_branches = paths.length();
-                for (int pow = 0; pow < parallel_branches; pow++) {
-                    Matrix nk = Maths.nCk(lambdai, pow + 1);
-                    nk = nk.sumRows();
-                    double currentSum = Matrix.ones(nk.getNumRows(), 1).elementDiv(nk).elementSum();
-                    d0 += FastMath.pow(-1, pow) * currentSum;
-                }
+                        TN, 0, fjclassmap, fjforkmap, nonfjmodel, new java.util.HashSet<Long>(onPath));
+                // The inner join fires on the k-th branch completion, k = the branch
+                // count on a standard join and the declared quorum on a PARTIAL one.
+                int kreq = SnJoinQuorum.snJoinQuorum(sn, nonfjmodel.getNodes().get(joinIdx),
+                        nonfjmodel.getJobClasses().get(curClass), paths.length());
+                double d0 = FJ_ordstat_exp.fj_ordstat_exp(paths, kreq);
+                double innerSync = Math.max(d0 - paths.elementSum() / paths.length(), 0);
                 // Match MATLAB: loop over [curMerge, s] to include inner auxiliary class
                 ArrayList<Integer> mergeWithS = new ArrayList<>(curMerge);
                 mergeWithS.add(s);
                 for (int cls : mergeWithS) {
                     ((Delay) nonfjmodel.getNodes().get(joinIdx)).setService(nonfjmodel.getJobClasses().get(cls),
-                            Exp.fitMean(d0 - paths.elementSum() / paths.length()));
+                            Exp.fitMean(innerSync));
                 }
                 toMerge.remove(toMerge.size() - 1);
                 ri = ri.concatCols(findPathsCS(sn, P, joinIdx, endNode, nextClass,
                         curMerge, QN, TN, currentTime + d0, fjclassmap,
-                        fjforkmap, nonfjmodel));
+                        fjforkmap, nonfjmodel, new java.util.HashSet<Long>(onPath)));
             } else {
                 ri = ri.concatCols(findPathsCS(sn, P, nextNode, endNode, nextClass, curMerge,
                         QN, TN, currentTime + qLen / tput, fjclassmap, fjforkmap,
-                        nonfjmodel));
+                        nonfjmodel, new java.util.HashSet<Long>(onPath)));
             }
         }
         return ri;
@@ -864,10 +961,11 @@ public class ModelAdapter {
                         fjforkmapSize = oclass.get(oclass.size() - 1).getIndex();
                     }
                     int s = fjclassmap.get(oclass.get(oclass.size() - 1).getIndex() - 1);
-                    if (((Forker) model.getNodes().get(f).getOutput()).tasksPerLink > 1) {
-                        line_warning(mfilename(new Object() {
-                        }), "There are no synchronisation delays implemented in MMT for multiple tasks per link. Results may be inaccurate.");
-                    }
+                    // fanout is the SIBLING count, links times tasksPerLink, which is what
+                    // the auxiliary open class's rate (fanout-1)*forkLambda must carry: one
+                    // sibling is the closed token's own, the other fanout-1 are open
+                    // traffic. FJFixedPoint synchronises on the same count by replicating
+                    // each branch time tasksPerLink times.
                     int fanoutValue = (int) (origfanout.get(f, r) * ((Forker) model.getNodes().get(f).getOutput()).tasksPerLink);
                     fanout.put(oclass.get(oclass.size() - 1).getIndex() - 1, fanoutValue);
                     allAuxClassIndices.add(oclass.get(oclass.size() - 1).getIndex() - 1); // 0-based
@@ -1096,6 +1194,18 @@ public class ModelAdapter {
         for (int r : fjforkmap.keySet()) {
             fjforkmapMatrix.set(r, fjforkmap.get(r));
         }
+        // The transformed model's nodes were copied from a model with FEWER
+        // classes, so each carries a state row of the old width. Network.initDefault
+        // PRESERVES an existing state, so that stale row would survive and decode
+        // to a population of zero: the fluid inner solve then integrates an empty
+        // network and every metric comes back 0. Clear the states here, where the
+        // class count changes, rather than in each consumer.
+        for (jline.lang.nodes.Node nd : nonfjmodel.getNodes()) {
+            if (nd.isStateful()) {
+                ((jline.lang.nodes.StatefulNode) nd).setState(new Matrix(0, 0));
+            }
+        }
+
         Ret.FJApprox mmtReturn = new Ret.FJApprox(nonfjmodel, fjclassmapMatrix, fjforkmapMatrix, null, fanout);
         mmtReturn.serviceSrc = serviceSrc;
         mmtReturn.serviceSrcObj = serviceSrcObj;
@@ -1797,6 +1907,56 @@ public class ModelAdapter {
      * non-nested fork-join pairs, standard join strategy, integer
      * tasksPerLink. Mirrors matlab/src/api/fj/sn_fj_validate.m.
      */
+    /**
+     * Can the exact fork-join construction be asked for this model?
+     *
+     * <p>The fork-join model class {@link #fjValidate} admits, asked as a
+     * predicate rather than thrown. {@code SolverCTMC.supportsModelMethod} and
+     * {@code SolverSSA.supportsModelMethod} call it so that a caller (help,
+     * findSolver, SolverAUTO) sees the verdict before paying for a run, and BOTH
+     * analyzers reach the SAME rules through {@link #fjtag}. The sentence the
+     * validator throws names "the native CTMC/SSA fork-join implementation",
+     * which is why this predicate lives beside it rather than in either
+     * solver.</p>
+     *
+     * <p>IT WRAPS THE VALIDATOR RATHER THAN RESTATING IT, and that is the point:
+     * the rules are eight and they move (pairing, join strategy,
+     * tasks-per-link, branch probability, open classes through a fork), so a
+     * second copy would be a second thing to keep in step. There is exactly one
+     * body of rules and two ways in -- one that throws, for the run, and this
+     * one, which answers.</p>
+     *
+     * <p>WHAT IT REFUSES AND WHY THE ANALYZER IS RIGHT TO. The fork-join PAIRING
+     * is a declaration carried by the Join ({@code new Join(model, name, fork)}
+     * in all four codebases), not a derivation from the routing: a nested model
+     * such as fj_basic_nesting has two forks and two joins whose pairing the
+     * routing alone does not determine. So a Join built without naming its fork
+     * leaves {@code sn.fj} empty, and "Fork nodes without a matched Join" is the
+     * honest answer to a model that declares none.</p>
+     *
+     * @param sn the network structure
+     * @return empty string when the fork-join construction may run, else the refusal
+     */
+    public static String fjSupportsReason(NetworkStruct sn) {
+        boolean anyFJ = false;
+        for (NodeType nt : sn.nodetype) {
+            if (nt == NodeType.Fork || nt == NodeType.Join) {
+                anyFJ = true;
+                break;
+            }
+        }
+        if (!anyFJ) {
+            return "";
+        }
+        try {
+            fjValidate(sn);
+        } catch (RuntimeException e) {
+            // the validator's own refusal, turned into an answer
+            return e.getMessage() == null ? "This fork-join model is not supported." : e.getMessage();
+        }
+        return "";
+    }
+
     public static void fjValidate(NetworkStruct sn) {
         Matrix Vnodes = Matrix.cellsum(sn.nodevisits);
         for (int f = 0; f < sn.nodetype.size(); f++) {

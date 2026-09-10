@@ -132,7 +132,8 @@ class _Smap:
     the flat arithmetic no longer identifies the node.
     """
 
-    __slots__ = ('node', 'cls', 'phase', 'ph_off', 'nph', 'R', 'NS', 'expanded')
+    __slots__ = ('node', 'cls', 'phase', 'ph_off', 'nph', 'R', 'NS', 'expanded',
+                 '_cls_slice', '_node_slice')
 
     def __init__(self, sn, I: int, R: int):
         nph = np.ones((I, R), dtype=int)
@@ -161,6 +162,15 @@ class _Smap:
                     self.node[ph_off[ind, r] + kk] = ind
                     self.cls[ph_off[ind, r] + kk] = r
                     self.phase[ph_off[ind, r] + kk] = kk
+        # The slices are fixed once the phase layout is: they are read once per
+        # class per enabled transition per step, which made rebuilding a slice
+        # object the third hottest line in the engine. Built once here instead.
+        self._cls_slice = [[slice(int(ph_off[ind, r]), int(ph_off[ind, r] + nph[ind, r]))
+                            for r in range(R)] for ind in range(I)]
+        r_last = R - 1
+        self._node_slice = [slice(int(ph_off[ind, 0]),
+                                  int(ph_off[ind, r_last] + nph[ind, r_last]))
+                            for ind in range(I)]
 
     def node_slots(self, ind: int) -> slice:
         """
@@ -168,14 +178,11 @@ class _Smap:
         construction (the offsets run node-major, then class, then phase), so
         the whole node is one slice.
         """
-        r_last = self.R - 1
-        return slice(int(self.ph_off[ind, 0]),
-                     int(self.ph_off[ind, r_last] + self.nph[ind, r_last]))
+        return self._node_slice[ind]
 
     def class_slots(self, ind: int, r: int) -> slice:
         """The state slots holding the phases of class r at node ind."""
-        return slice(int(self.ph_off[ind, r]),
-                     int(self.ph_off[ind, r] + self.nph[ind, r]))
+        return self._cls_slice[ind][r]
 
 
 def _class_counts(X, smap: _Smap, ind: int) -> np.ndarray:
@@ -186,14 +193,21 @@ def _class_counts(X, smap: _Smap, ind: int) -> np.ndarray:
     """
     R = smap.R
     npop = np.zeros(R)
+    slots = smap._cls_slice[ind]
     for r in range(R):
-        npop[r] = float(np.sum(X[smap.class_slots(ind, r)]))
+        sl = slots[r]
+        # an exponential class owns one slot; np.sum over it costs more than
+        # the read itself, and this runs once per class per transition
+        npop[r] = float(X[sl.start]) if sl.stop - sl.start == 1 else float(X[sl].sum())
     return npop
 
 
 def _class_pop(X, smap: _Smap, ind: int, r: int) -> float:
     """Population of class r at node ind, summed over its phases."""
-    return float(np.sum(X[smap.class_slots(ind, r)]))
+    sl = smap._cls_slice[ind][r]
+    if sl.stop - sl.start == 1:
+        return float(X[sl.start])
+    return float(X[sl].sum())
 
 
 def _kir_frac(X, slot: int, smap: _Smap, ind: int, r: int) -> float:
@@ -205,7 +219,8 @@ def _kir_frac(X, slot: int, smap: _Smap, ind: int, r: int) -> float:
     (e.g. DPS uses (kir/nir) * [class share]). For a single-phase class this is
     1 whenever the class is present, so an exponential model is unaffected.
     """
-    nir = float(np.sum(X[smap.class_slots(ind, r)]))
+    sl = smap._cls_slice[ind][r]
+    nir = float(X[sl.start]) if sl.stop - sl.start == 1 else float(X[sl].sum())
     if nir <= 0:
         return 0.0
     return float(X[slot]) / nir
@@ -232,7 +247,7 @@ def _entry_probs(sn, jnd: int, s: int, nphjs: int) -> np.ndarray:
     return pentry / float(np.sum(pentry))
 
 
-# ordered-buffer policies share the departure rate law and differ only in promotion rule / arrival rule (LCFSPR); see _pick_from_buffer and _is_preemptive.
+# ordered-buffer policies share the departure rate law; differ only in promotion / arrival rule (LCFSPR); see _pick_from_buffer, _is_preemptive.
 _BUFFERED_SCHED = (SchedStrategy.FCFS, SchedStrategy.LCFS, SchedStrategy.SIRO,
                    SchedStrategy.HOL, SchedStrategy.SEPT, SchedStrategy.LEPT,
                    SchedStrategy.LCFSPR)
@@ -277,8 +292,60 @@ def _nrm_eligible(sn) -> bool:
     from ...sn import sn_has_fork_join
     if sn_has_fork_join(sn):
         return False
-    return (_fcr_nrm_ok(sn) and _routing_nrm_ok(sn) and _impatience_nrm_ok(sn)
-            and _phase_nrm_ok(sn) and _cache_nrm_ok(sn))
+    return (_fcr_nrm_ok(sn) and _impatience_nrm_ok(sn)
+            and _phase_nrm_ok(sn) and _cache_nrm_ok(sn) and _gd_nrm_ok(sn))
+
+
+def nrm_supports(sn):
+    """The same tests as ``_nrm_eligible``, read as a sentence.
+
+    ONE PREDICATE, TWO CALLERS. ``_nrm_eligible`` answers the dispatch's
+    question (may I PREFER the NRM?), and nothing answered the gate's (may I
+    OFFER the name at all?), so ``findSolver`` reported ``ssa.nrm`` runnable on
+    every model and an explicit ``SolverSSA(model,'nrm')`` then raised from the
+    analyzer on the very models this test already excluded.
+
+    Returns ``(True, '')`` when the NRM can run the model, else ``(False,
+    reason)`` naming the offending construct.
+    """
+    def _sched(ist):
+        return sn.sched.get(ist) if isinstance(sn.sched, dict) else sn.sched[ist]
+    for ist in range(sn.nstations):
+        if _sched(ist) not in _ALLOWED_SCHED:
+            return False, ("The 'nrm' engine has no reaction form for the %s discipline at "
+                           "station %d. Use method='serial'." % (_sched(ist), ist))
+    from ...sn import sn_has_fork_join
+    if sn_has_fork_join(sn):
+        return False, ("The 'nrm' engine has no Fork/Join node handling. "
+                       "Use method='serial'.")
+    if not _gd_nrm_ok(sn):
+        return False, ("The 'nrm' engine builds each reaction propensity from one station's "
+                       "population slice, so it cannot evaluate a global (Whittle) scaling "
+                       "handle. Use method='serial'.")
+    if not _fcr_nrm_ok(sn):
+        return False, ("The 'nrm' engine cannot evaluate this finite capacity region rule. "
+                       "Use method='serial'.")
+    if not _impatience_nrm_ok(sn):
+        return False, ("The 'nrm' engine abandons at the aggregate rate (waiting count)*mu, "
+                       "exact only for memoryless patience, and evaluates only QUEUE_LENGTH "
+                       "balking. Use method='serial'.")
+    if not _phase_nrm_ok(sn):
+        return False, ("The 'nrm' engine expands non-exponential service exactly only where "
+                       "every job present is in service; this model buffers it under a "
+                       "discipline whose in-service phase multiset it does not record. "
+                       "Use method='serial'.")
+    if not _cache_nrm_ok(sn):
+        return False, ("The 'nrm' engine cannot reproduce this cache configuration. "
+                       "Use method='serial'.")
+    return True, ''
+
+
+def _gd_nrm_ok(sn) -> bool:
+    """True when no global (Whittle) dependence is declared. The NRM builds one
+    propensity closure per reaction from the per-station population slice; a
+    global handle reads the whole population matrix, which that closure does not
+    receive. The serial engine carries the factor, so the model runs there."""
+    return getattr(sn, 'gdscaling', None) is None
 
 
 # =============================================================================
@@ -311,13 +378,14 @@ def _draw_from_dist(w):
 def _cache_access(sn, ind, read_class, contents):
     """Simulate one cache READ at cache node IND by a class-READ_CLASS job over the
     cache state CONTENTS (totalCacheCapacity content slots followed, when a
-    retrieval system is present, by a per-item retrieval-occupancy bitmap).
-    Returns (out_class, new_contents, category): out_class is the class the job
-    leaves in -- out_class == -1 means the request was absorbed as a delayed hit
-    and produces nothing -- and category is 1 hit, 2 miss/retrieval-complete, 3
-    delayed-hit, 4 begin-retrieval. A faithful sample-path port of
-    State.afterEventCache (READ, is_simulation): non-retrieval hit/miss with all
-    replacement policies, plus the retrieval (delayed-hit) system."""
+    retrieval system is present, by a per-item retrieval-occupancy bitmap and by
+    block B, the per-retrieval-class count of requests merged onto an in-flight
+    fetch). Returns (out_class, new_contents, category, released): out_class is
+    the class the job leaves in -- out_class == -1 means the request merged onto
+    a pending fetch and produces nothing yet -- category is 1 hit, 2
+    miss/retrieval-complete, 3 delayed-hit, 4 begin-retrieval, and released is
+    the list of (hit_class, count) freed by a completing fetch. A faithful
+    sample-path port of State.afterEventCache (READ, is_simulation)."""
     from ...state.after_event_cache import _cpos, _get_ac
     npm = sn.nodeparam[ind]
     m = np.atleast_1d(_np_get(npm, 'itemcap', [0])).astype(int)
@@ -342,6 +410,12 @@ def _cache_access(sn, ind, read_class, contents):
     rsc = _np_get(npm, 'retrieval_system_capacity', 0)
     has_retr = bool(np.any(np.atleast_1d(rsc).astype(float) > 0)) if rsc is not None else False
     is_from_retrieval = int(read_class) in set(int(x) for x in rci.tolist())
+    nitems = int(_np_get(npm, 'nitems', 0) or 0)
+    # block B (merged secondary requests) sits after the contents and the occupancy bitmap
+    from ...state.ctmc_ssg import cache_retrieval_class_map
+    rc_list, rc_items, rc_orig_class = cache_retrieval_class_map(sn, ind) if has_retr else ([], [], [])
+    block_b_off = tcc + nitems
+    released = []
     var = list(contents)        # read-only original
     varp = list(contents)       # working copy (returned)
 
@@ -411,7 +485,7 @@ def _cache_access(sn, ind, read_class, contents):
                 if j_pos > 0:
                     varp[hh + 1:hh + j_pos + 1] = var[hh:hh + j_pos]
                 varp[hh] = moved
-        return out_class, varp, category
+        return out_class, varp, category, released
 
     # ===================== CACHE MISS / retrieval =====================
     if has_retr and not is_from_retrieval:
@@ -423,16 +497,32 @@ def _cache_access(sn, ind, read_class, contents):
         if rclass != -1:
             in_retrieval = (tcc + k < len(var)) and var[tcc + k] != 0
             if in_retrieval:
-                # DELAYED HIT: served by the in-flight retrieval and absorbed.
-                return -1, varp, 3
+                # DELAYED HIT: merges onto the in-flight fetch, held in block B
+                # until it completes, then released in its own hit class.
+                if rclass in rc_list:
+                    bcol = block_b_off + rc_list.index(rclass)
+                    if bcol < len(varp):
+                        varp[bcol] += 1
+                return -1, varp, 3, released
             # BEGIN retrieval: switch to the item's retrieval class, mark item.
             varp[tcc + k] = 1
-            return rclass, varp, 4
+            return rclass, varp, 4, released
 
     # COMPLETE the miss (retrieval return, or a plain miss): clear the bit and
     # admit item k+1 per the replacement policy.
     if is_from_retrieval and (tcc + k < len(varp)):
         varp[tcc + k] = 0
+        # every request merged onto this fetch is released now as a delayed hit,
+        # in the hit class of the job class that issued it
+        for bslot in range(len(rc_list)):
+            if rc_items[bslot] != k + 1:
+                continue
+            bcol = block_b_off + bslot
+            if bcol < len(varp) and varp[bcol] > 0:
+                hc = int(hitcl[rc_orig_class[bslot]])
+                if hc >= 0:
+                    released.append((hc, int(varp[bcol])))
+                varp[bcol] = 0
     out_class = int(misscl[read_class])
     category = 2
     listidx = l - 1
@@ -451,7 +541,7 @@ def _cache_access(sn, ind, read_class, contents):
                 if m[listidx] > 1:
                     varp[head + 1:tail + 1] = var[head:tail]
                 varp[head] = k + 1
-    return out_class, varp, category
+    return out_class, varp, category, released
 
 
 def _poll_serve_gate(ctrl, r):
@@ -860,7 +950,7 @@ def _sig_apply(sig, nvec, buffers, dest_pos, R, mi, smap: _Smap):
         buffers[jnd].clear()
         return
 
-    # eligible victim classes: forJobClass restricts to that class, else every non-signal class (Gelenbe negative customer); sn.signaltarget is 0-based (-1=none).
+    # eligible victims: forJobClass restricts to that class, else every non-signal class (Gelenbe negative customer); sn.signaltarget 0-based (-1=none).
     tgt = -1
     st = getattr(sn, 'signaltarget', None)
     if st is not None and cls < len(st):
@@ -1059,6 +1149,116 @@ def _capacity_loss(sn, nvec, dest_pos, R, smap: _Smap) -> bool:
     return False
 
 
+# A firing has THREE outcomes, not two. _fire_reaction returns the destination
+# state row when the job moves, -1 when it moves nowhere (self-loop, or lost:
+# the source departs and the job is discarded), and _BLOCKED when the departure
+# does not happen at all -- the source keeps the job and no slot changes.
+_BLOCKED = -2
+
+
+class _Block:
+    """Destination-side BLOCKING: a refused arrival that may NOT be dropped.
+
+    ``_capacity_loss`` above answers the OPEN half of the same question, and
+    returns False for a closed class precisely because a closed network's
+    population is an invariant. Nothing then stopped the reaction, so the NRM
+    fired into the full station anyway and reported the UNCONSTRAINED answer
+    (BUG-81): on a closed 3-queue tandem, N=6, Q2 capped at 2, it gave QLen
+    [1.96 2.07 1.97] against the exact [3.609 0.971 1.420] -- a mean of 2.07 at
+    a station that holds 2 -- while the serial engine, whose producer already
+    implements the contract, gave the exact answer.
+
+    Blocking is the THIRD outcome of a firing. The departure does not occur, the
+    source is not decremented, no buffer moves; only the reaction's own clock is
+    redrawn, which is exact by memorylessness (the residual of an exponential,
+    or of the current PH phase, is that same exponential). It is what SolverCTMC
+    does when ``matchrow`` cannot find the over-capacity target and drops the
+    arc, which is why the two now agree.
+
+    The gate is deliberately NARROWER than State.afterEventStation's: it fires
+    only for a CLOSED class, so every open-class drop path -- M/M/1/K included --
+    keeps the sample path it had. A station whose cap cannot bind (the usual
+    cap = N default) never enters ``can``, so ``on`` stays False and the whole
+    mechanism costs nothing on models that do not need it.
+    """
+
+    __slots__ = ('on', 'can', 'cap', 'ccap', 'node2st')
+
+    def __init__(self, sn, R: int):
+        self.on = False
+        M = int(sn.nstations)
+        self.node2st = np.asarray(sn.nodeToStation).flatten().astype(int)
+        cap = np.asarray(sn.cap, dtype=float).flatten() if getattr(sn, 'cap', None) is not None \
+            else np.full(M, np.inf)
+        if cap.size < M:
+            cap = np.concatenate([cap, np.full(M - cap.size, np.inf)])
+        ccap = np.asarray(getattr(sn, 'classcap', None), dtype=float) \
+            if getattr(sn, 'classcap', None) is not None else np.full((M, R), np.inf)
+        ccap = np.atleast_2d(ccap)
+        # a non-positive class cap is "unset", not "holds nothing"
+        ccap = np.where(ccap > 0, ccap, np.inf)
+        njobs = np.asarray(sn.njobs, dtype=float).flatten()
+        # A cap that CANNOT BIND is not a blocking site. Every closed model
+        # carries cap[ist] = N by default, and a station that can hold the whole
+        # population never refuses one: the arriving job is itself one of the N,
+        # so the pre-arrival count is at most N-1. Excluding those is what keeps
+        # `on` False -- and the per-firing test unpaid -- on ordinary models.
+        # An open class present anywhere makes a finite station cap binding
+        # again, since its jobs are not counted in N.
+        closed_total = float(np.sum(njobs[np.isfinite(njobs)]))
+        any_open = bool(np.any(np.isinf(njobs)))
+        can = np.zeros((M, R), dtype=bool)
+        for ist in range(M):
+            for r in range(R):
+                if r >= njobs.size or np.isinf(njobs[r]):
+                    continue                      # open class: refusal LOSES, handled above
+                lim_st = cap[ist] if ist < cap.size else np.inf
+                lim_cl = ccap[ist, r] if (ist < ccap.shape[0] and r < ccap.shape[1]) else np.inf
+                binds_st = np.isfinite(lim_st) and (any_open or lim_st < closed_total)
+                binds_cl = np.isfinite(lim_cl) and lim_cl < njobs[r]
+                if binds_st or binds_cl:
+                    can[ist, r] = True
+        self.can = can
+        self.cap = cap
+        self.ccap = ccap
+        self.on = bool(can.any())
+
+    def is_blocked(self, nvec, dest_pos: int, src_row: int, R: int, smap: _Smap) -> bool:
+        """True when a class-r job routed to state slot ``dest_pos`` cannot be
+        admitted and the firing must be cancelled.
+
+        The population read is the PRE-arrival one, minus the departing job when
+        it currently sits at the destination node: a self-loop or a feedback arc
+        at a station already at cap would otherwise block itself forever, while
+        the reference producer sees the state AFTER the departure half. The FCR
+        gate discounts its source in the same region for the same reason.
+        """
+        if not self.on:
+            return False
+        jnd = int(smap.node[dest_pos])
+        if jnd >= self.node2st.size:
+            return False
+        ist = int(self.node2st[jnd])
+        r = int(smap.cls[dest_pos])
+        if ist < 0 or ist >= self.can.shape[0] or r >= self.can.shape[1] or not self.can[ist, r]:
+            return False
+        same_node = 0 <= src_row < smap.node.size and int(smap.node[src_row]) == jnd
+        if np.isfinite(self.cap[ist]):
+            total = sum(_class_pop(nvec, smap, jnd, k) for k in range(R))
+            if same_node:
+                total -= 1.0
+            if total >= self.cap[ist]:
+                return True
+        lim = self.ccap[ist, r]
+        if np.isfinite(lim):
+            pop = _class_pop(nvec, smap, jnd, r)
+            if same_node and int(smap.cls[src_row]) == r:
+                pop -= 1.0
+            if pop >= lim:
+                return True
+        return False
+
+
 # =============================================================================
 # Finite capacity regions (DROP rule)
 #
@@ -1212,7 +1412,8 @@ def _draw_from_dist(p) -> int:
 
 
 def _fcr_release_cascade(fcr, nvec, buffers, fcr_buf, mi, R, sn, smap: _Smap,
-                         svcph=None, bufph_node=None):
+                         svcph=None, bufph_node=None,
+                         start_count=None, preempt_count=None):
     """
     Strict-FIFO head-of-line release of parked WAITQ tokens: admit each region's
     FIFO head while the admission constraints permit, applying the arrival to
@@ -1246,7 +1447,7 @@ def _fcr_release_cascade(fcr, nvec, buffers, fcr_buf, mi, R, sn, smap: _Smap,
                 dslot = int(smap.ph_off[dst_node, dst_class]) + ke
                 nvec[dslot] += 1.0
             if _apply_arrival_buffer(dst_node, dst_class, nvec, buffers, mi, R, sn, smap,
-                                     svcph, bufph_node):
+                                     svcph, bufph_node, start_count, preempt_count):
                 svc_changed = True
             del fcr_buf[f][0]
             released += 1
@@ -1349,32 +1550,6 @@ def _cache_nrm_ok(sn) -> bool:
     is routed to the fetch queue and returns to complete the miss), and a
     concurrent request for an item already being fetched is absorbed as a delayed
     hit -- matching the serial engine's sample-path semantics."""
-    return True
-
-
-def _routing_nrm_ok(sn) -> bool:
-    """
-    True when every routing strategy in the model is one the NRM resolves at
-    firing time off the state vector. JSQ and SQ both select from the
-    candidate queue lengths, so both are native. RROBIN/WRROBIN need a rotation
-    pointer, which no rate reads, so the NRM carries it as auxiliary state
-    alongside the buffers rather than as a reaction-network dimension (see _Rr).
-    RL needs an external policy and still requires the serial engine.
-    """
-    from ....constants import RoutingStrategy
-    if getattr(sn, 'routing', None) is None:
-        return True
-    statedep = {int(RoutingStrategy.RL.value)}
-    kch = int(RoutingStrategy.SQ.value)
-    arr = np.asarray(sn.routing, dtype=object)
-    for ind in range(arr.shape[0]):
-        for r in range(arr.shape[1]):
-            v = arr[ind, r]
-            if v is None:
-                continue
-            v = int(v.value) if hasattr(v, 'value') else int(v)
-            if v in statedep:
-                return False
     return True
 
 
@@ -1556,6 +1731,24 @@ class _Rr:
                 cand = np.atleast_1d(ol[r])
                 if len(cand) > 0:
                     return [int(x) for x in cand]
+        # The class-aware routing table is the authority: connmatrix aggregates
+        # over classes, so on a node whose classes have different destinations it
+        # offers nodes this class cannot reach and the pointer lands off its own
+        # candidate set. Where every class shares the node's connections the two
+        # agree, so this only narrows the cycle where connmatrix was wrong.
+        rtn = getattr(sn, 'rtnodes', None)
+        if rtn is not None:
+            rtn = np.asarray(rtn)
+            R = sn.nclasses
+            row_off = ind * R + r
+            if 0 <= row_off < rtn.shape[0]:
+                dests = []
+                for jnd in range(sn.nnodes):
+                    lo, hi = jnd * R, (jnd + 1) * R
+                    if hi <= rtn.shape[1] and float(np.sum(rtn[row_off, lo:hi])) > 0:
+                        dests.append(int(jnd))
+                if dests:
+                    return dests
         cm = getattr(sn, 'connmatrix', None)
         if cm is not None:
             cm = np.asarray(cm)
@@ -1679,7 +1872,7 @@ def _build_nrm_problem(sn):
                     s = dslot % R
                     cache_retr_dest[ind, rc] = int(ph_off[jnd, s])
 
-    # polling controllers track only the controller state, not per-job phase, so phase-type service at a polling station is rejected rather than mis-modeled.
+    # polling controllers track only controller state, not per-job phase, so phase-type service at a polling station is rejected, not mis-modeled.
     poll_info = {}
     is_poll = np.zeros(I, dtype=bool)
     poll_on = False
@@ -1743,7 +1936,7 @@ def _build_nrm_problem(sn):
                 is_cache_rx.append(False)
                 cache_hit_slot.append(0)
                 cache_miss_slot.append(0)
-                # buffered-PH source departure: only in-service jobs carry a phase (tracked in svcph); nvec's total slot is decremented regardless of which phase completed.
+                # buffered-PH source departure: only in-service jobs carry a phase (tracked in svcph); nvec's total slot is decremented whichever phase completed.
                 if bufph_class[ind, r]:
                     fromIdx.append(int(ph_off[ind, r]))
                     is_buf_svc.append(True)
@@ -1832,7 +2025,7 @@ def _build_nrm_problem(sn):
         phase_from[rx] = ka
         phase_to[rx] = kb
 
-    # reneging: waiting jobs abandon at rate impatienceMu; modeled as an extra all-zero-column reaction (a bare -1 at the source slot), excluded from throughput; source slot is the class's one phase since only INF/PS admit non-exponential service.
+    # reneging: waiting jobs abandon at impatienceMu; all-zero-column (-1 at source slot), not a throughput event; single-phase (non-exp only at INF/PS).
     n_dep = k               # departure + phase-transition reactions
     renege_rx = []          # (reaction index, node, class, mu)
     ic = getattr(sn, 'impatienceClass', None)
@@ -1858,7 +2051,7 @@ def _build_nrm_problem(sn):
         if extra:
             Srows = np.vstack([Srows, np.asarray(extra)])
 
-    # retrial: orbiting job retries at retrialMu, succeeding only if a server is free; a no-op otherwise, so the reaction has an all-zero stoichiometry column and its dependency set is supplied explicitly.
+    # retrial: orbit retries at retrialMu, succeeds only if a server is free, else no-op; all-zero stoichiometry column, dependency set given explicitly.
     retry_rx = []           # (reaction index, node, class, mu)
     rproc = getattr(sn, 'retrialProc', None)
     if rproc is not None:
@@ -1880,7 +2073,7 @@ def _build_nrm_problem(sn):
         if extra:
             Srows = np.vstack([Srows, np.asarray(extra)])
 
-    # polling switchover is appended as a zero-stoichiometry reaction per node with a timed switchover; immediate switchovers fold into the enclosing event.
+    # polling switchover appended as a zero-stoichiometry reaction per node with a timed switchover; immediate switchovers fold into the enclosing event.
     poll_sw_node_of = {}     # reaction index -> polling node
     if poll_on:
         extra = []
@@ -1941,14 +2134,16 @@ def _build_nrm_problem(sn):
             tcc = int(_np_get(npm, 'total_cache_capacity', 0) or 0)
             if tcc <= 0:
                 tcc = int(np.sum(np.atleast_1d(_np_get(npm, 'itemcap', [0]))))
-            # with a retrieval system the contents are followed by a per-item occupancy bitmap (State.spaceCache), started empty.
+            # with retrieval, contents, a per-item occupancy bitmap then block B (per-retrieval-class merged-request counts, State.spaceCache); both start empty.
             rsc = _np_get(npm, 'retrieval_system_capacity', 0)
             if rsc is not None and np.any(np.atleast_1d(np.asarray(rsc, dtype=float)) > 0):
                 nitems = int(_np_get(npm, 'nitems', 0) or 0)
-                buffers0[ind] = list(range(1, tcc + 1)) + [0] * nitems
+                from ...state.ctmc_ssg import cache_retrieval_class_map
+                nrc = len(cache_retrieval_class_map(sn, ind)[0])
+                buffers0[ind] = list(range(1, tcc + 1)) + [0] * (nitems + nrc)
             else:
                 buffers0[ind] = list(range(1, tcc + 1))
-    # svcph0[ind][r,k]: in-service phase multiset of each buffered-PH node, filled after the waiting buffer is known; see _kb/06-solver-catalog.md SSA svcph section.
+    # svcph0[ind][r,k]: in-service phase multiset per buffered-PH node, filled once the waiting buffer is known; see _kb/06-solver-catalog.md SSA svcph.
     svcph0: List[Optional[np.ndarray]] = [
         (np.zeros((R, maxnph)) if bufph_node[ind] else None) for ind in range(I)]
     for ind in range(I):
@@ -1974,7 +2169,7 @@ def _build_nrm_problem(sn):
                         v = 1.0
                     else:
                         raise RuntimeError("Infinite population error.")
-                # class population spread across phases via the entry distribution pie (the phase a job starts service in); buffered-PH keeps its total in slot 0, detail lives in svcph0.
+                # class population spread over phases via entry pie (phase a job starts service in); buffered-PH keeps its total in slot 0, detail in svcph0.
                 if int(nph[ind, r]) <= 1 or bufph_class[ind, r]:
                     nvec0[int(ph_off[ind, r])] = v
                 else:
@@ -1988,12 +2183,12 @@ def _build_nrm_problem(sn):
                         nvec0[int(ph_off[ind, r]) + ke] = take
                         left -= take
 
-            # buffers populated from the raw state vector where the full layout carries it; native representation starts buffers empty (standard init places jobs at reference stations).
+            # buffers filled from the raw state vector where the full layout carries them; native repr starts them empty (init places jobs at reference stations).
             ist = int(sn.nodeToStation[ind])
             # Only stations have FCFS/LCFS scheduling; skip non-station stateful
             # nodes such as RROBIN dispatchers/Routers and Caches (ist == -1).
             if ist >= 0 and not full_state and _sched_of(sn, ist) in _LIST_SCHED:
-                # a list station's rate law needs len(buf)==total; the native aggregate state seeds it class-ascending (one of several equivalent uniqueperms rows of the same ergodic chain, so the choice only affects the initial transient).
+                # a list station rate law needs len(buf)==total; native seed is class-ascending, one equivalent multiset_perms row (affects only the initial transient).
                 for r2 in range(R):
                     buffers0[ind].extend(
                         [r2 + 1] * int(round(_class_pop(nvec0, smap, ind, r2))))
@@ -2097,7 +2292,7 @@ def _build_nrm_problem(sn):
     # Normalized per-class weights of the DPS/GPS-family stations.
     wnorm = _build_sched_weights(sn, R)
 
-    # service-process event rate: mu(k)*phi(k) for a departure, D0(k,k') for a phase change; reduces to the plain exponential rate for a single-phase class.
+    # service-process event rate: mu(k)*phi(k) for a departure, D0(k,k') for a phase change; reduces to the exponential rate for a single-phase class.
     rate_of = np.zeros(len(fromIdx))
     for j in range(len(fromIdx)):
         ind, r = fromIR[j]
@@ -2272,14 +2467,14 @@ def _build_nrm_problem(sn):
         else:
             a.append(make_renege(j))
 
-    # FCR under DROP destroys the refused job at firing (never scales the propensity, which would wrongly keep it at the source); see _kb/06-solver-catalog.md SSA FCR update note.
+    # FCR DROP destroys refused job at firing (never scales the propensity, which would keep it at source); see _kb/06-solver-catalog.md SSA FCR update.
     fcr = _Fcr(sn)
 
     # --- Propensity dependencies D[k] ----------------------------------------
     D: List[List[int]] = [list() for _ in range(S.shape[1])]
     for kk in range(S.shape[1]):
         if is_retry[kk]:
-            # a retry has an all-zero stoichiometry column, so its dependency set (every reaction at the affected node) is supplied explicitly rather than derived.
+            # a retry has an all-zero stoichiometry column, so its dependency set (every reaction at the affected node) is supplied explicitly, not derived.
             node_k = fromIR[kk][0]
             D[kk] = [j for j in range(len(fromIdx))
                      if int(smap.node[fromIdx[j]]) == node_k]
@@ -2304,7 +2499,7 @@ def _build_nrm_problem(sn):
                         vecs.append(kk2)
             D[kk] = vecs
 
-    # a retry's all-zero stoichiometry column excludes it from the sign-based dependency derivation, so it must be refreshed by hand whenever its node changes.
+    # retry's all-zero stoichiometry column excludes it from sign-based dependency derivation, so it must be refreshed by hand whenever its node changes.
     for j in np.flatnonzero(is_retry):
         indj = fromIR[j][0]
         slots = smap.node_slots(indj)
@@ -2425,7 +2620,7 @@ def _build_jsq_flags(sn, fromIR, routing):
 def _fire_reaction(kfire, nvec, S, routing, src_row, jsq_flags=None, R=1,
                    fcr=None, fromIR=None, sq_k=None, balk=None,
                    sig=None, buffers=None, mi=None, rr=None, smap=None,
-                   fcr_buf=None, sn=None):
+                   fcr_buf=None, sn=None, is_phase=None, block=None):
     """Apply one firing; sample a single destination when there are several.
 
     JSQ-routed reactions join the candidate whose destination node holds the
@@ -2437,7 +2632,9 @@ def _fire_reaction(kfire, nvec, S, routing, src_row, jsq_flags=None, R=1,
     the destination first and the region decides admission at the destination's
     entry afterwards, dropping the job on refusal.
 
-    Returns the destination state-row index (-1 for self-loop / no move).
+    Returns the destination state-row index, -1 for self-loop / no move (the
+    source departs either way), or _BLOCKED when the firing is cancelled because
+    a closed-class job found no room and may not be dropped -- see _Block.
     """
     nnzP, dest_row, cdf = routing
     if nnzP[kfire] > 1:
@@ -2453,7 +2650,7 @@ def _fire_reaction(kfire, nvec, S, routing, src_row, jsq_flags=None, R=1,
             # round-robin: advance the pointer, then take the destination it lands on.
             src_node, src_class = fromIR[kfire]
             jnd = _rr_next(rr, src_node, src_class)
-            # a phase-type destination needs its entry phase drawn from pentry among the pointer-fixed node's candidates (RUN-10: fixing phase 0 biases the service time).
+            # a phase-type destination draws its entry phase from pentry among the pointer-fixed node's candidates (RUN-10: fixing phase 0 biases service time).
             cd = cdf[kfire]
             matches = [x for x in range(len(cand))
                        if int(smap.node[int(cand[x])]) == jnd]
@@ -2502,11 +2699,16 @@ def _fire_reaction(kfire, nvec, S, routing, src_row, jsq_flags=None, R=1,
                     break
         # balking is decided on the pre-arrival population; a balked job is lost (source still releases it).
         dest = int(dest_row[kfire][sel])
+        # A closed job that finds no room BLOCKS: the firing is cancelled before
+        # any gate that would consume it, because a job that cannot leave its
+        # station never gets the chance to balk or to be dropped.
+        if block is not None and block.is_blocked(nvec, dest, src_row, R, smap):
+            return _BLOCKED
         lost = balk is not None and balk.on and _balk_draw(balk, nvec, dest, R, smap)
         # an open arrival at a full physically-capped destination is lost like a balk; mirrors State.afterEventStation's finite-capacity gate.
         if not lost and _capacity_loss(sn, nvec, dest, R, smap):
             lost = True
-        # region refusal is decided on the pre-arrival population: DROP loses the job, WAITQ parks it head-of-line in the region FIFO; the source still departs either way.
+        # region refusal uses the pre-arrival population: DROP loses the job, WAITQ parks it head-of-line in the region FIFO; the source departs either way.
         if not lost and fcr is not None and fcr.on:
             dst_n = int(smap.node[dest])
             dst_c = int(smap.cls[dest])
@@ -2528,13 +2730,32 @@ def _fire_reaction(kfire, nvec, S, routing, src_row, jsq_flags=None, R=1,
         return dest
     if nnzP[kfire] == 1:
         dest = int(dest_row[kfire][0])
-        lost = balk is not None and balk.on and _balk_draw(balk, nvec, dest, R, smap)
+        # A PHASE change is not an arrival -- its destination is another phase
+        # slot of the SAME job at the SAME station -- so none of the arrival-side
+        # gates below may see it. Balking and the capacity gate both LOSE the job
+        # when they do; the region gate is inert on a phase change
+        # (_fcr_refusing_region discounts the source in the same region, so
+        # src==dst cancels and it can never refuse -- measured at 0 refusals in
+        # 49998 consultations), and is excluded here to state that invariant
+        # rather than to fix a defect. What makes the other two bite HERE and not
+        # in the multi-destination branch is the ORDER: there the gates run
+        # BEFORE the source decrement and see a true pre-arrival population,
+        # while here they run before the update below, so the firing job is
+        # still counted at its own station and a phase change at exactly cap
+        # reads cap >= cap.
+        phase_fire = is_phase is not None and is_phase[kfire]
+        # Same closed-class block as above; a phase change is not an arrival.
+        if (not phase_fire and block is not None
+                and block.is_blocked(nvec, dest, src_row, R, smap)):
+            return _BLOCKED
+        lost = (not phase_fire and balk is not None and balk.on
+                and _balk_draw(balk, nvec, dest, R, smap))
         # An open arrival at a full physically-capped destination is lost, as a
         # balked one is (renege/retry carry no destination and never reach here).
-        if not lost and _capacity_loss(sn, nvec, dest, R, smap):
+        if not lost and not phase_fire and _capacity_loss(sn, nvec, dest, R, smap):
             lost = True
         # region gate applies to single-destination departures too; renege/retry columns have no destination and never reach this check.
-        if not lost and fcr is not None and fcr.on:
+        if not lost and not phase_fire and fcr is not None and fcr.on:
             dst_n = int(smap.node[dest])
             dst_c = int(smap.cls[dest])
             fref = _fcr_refusing_region(fcr, nvec, fromIR[kfire][0], fromIR[kfire][1], dst_n, dst_c, R, smap)
@@ -2564,7 +2785,8 @@ def _draw_entry_phase(sn, jnd, s, nphjs):
 
 
 def _update_buffers(kfire, nvec, buffers, fromIR, destPos, mi, R, sn, smap: _Smap,
-                    svcph=None, bufph_node=None, is_buf_svc=None, dep_phase=None):
+                    svcph=None, bufph_node=None, is_buf_svc=None, dep_phase=None,
+                    start_count=None, preempt_count=None):
     """Maintain the ordered per-node buffers after reaction kfire fires. At a
     buffered-PH node the same events also move jobs in and out of the in-service
     phase multiset svcph; the returned flag says whether svcph changed so the
@@ -2581,15 +2803,23 @@ def _update_buffers(kfire, nvec, buffers, fromIR, destPos, mi, R, sn, smap: _Sma
 
     # an order-independent departure is a pass-and-swap rewrite (chain shift + slot removal), not a promotion.
     if _is_list_sched(ind, sn) and buffers[ind]:
+        old_list = list(buffers[ind])
         buffers[ind] = _oi_depart(sn, ind, buffers[ind], fromIR[kfire][1])
+        # An order-independent station serves every position whose rate
+        # increment Delta_mu is positive, so a departure starts whichever
+        # positions cross from a zero increment to a positive one -- the same
+        # rule State.afterEventStationPAS tags.
+        _add_oi_started(sn, ind, old_list, list(buffers[ind]), R, start_count)
         return svc_changed
 
-    # departure from a buffered station promotes the discipline's chosen waiting job; a retrial station is the exception (orbit re-enters only via RETRY, never on departure).
+    # departure from a buffered station promotes the discipline's chosen job; except a retrial station (orbit re-enters only via RETRY, not on departure).
     if (_is_buffered(ind, sn) and buffers[ind]
             and not _is_retrial_station(ind, sn)):
         pos = _pick_from_buffer(buffers[ind], sn, int(sn.nodeToStation[ind]))
         promoted = int(buffers[ind][pos])   # class id (1-based)
         del buffers[ind][pos]
+        if start_count is not None and 0 < promoted <= R:
+            start_count[ind, promoted - 1] += 1.0  # takes the freed server
         if bufph_node is not None and bufph_node[ind]:
             # The promoted waiting job starts service now, entering a phase drawn
             # from its entry distribution pie (the same allocation the init uses).
@@ -2601,12 +2831,49 @@ def _update_buffers(kfire, nvec, buffers, fromIR, destPos, mi, R, sn, smap: _Sma
     if destPos < 0:
         return svc_changed
     arr_changed = _apply_arrival_buffer(int(smap.node[destPos]), int(smap.cls[destPos]),
-                                        nvec, buffers, mi, R, sn, smap, svcph, bufph_node)
+                                        nvec, buffers, mi, R, sn, smap, svcph, bufph_node,
+                                        start_count, preempt_count)
     return svc_changed or arr_changed
 
 
+def _add_oi_started(sn, ind, cold, cnew, R, start_count):
+    """Add the START counts of a pass-and-swap rewrite: the positions of CNEW
+    that are served (Delta_mu > 0) and were not served in COLD."""
+    if start_count is None:
+        return
+    np_ = sn.nodeparam[ind] if sn.nodeparam is not None and ind in sn.nodeparam else None
+    mu_fun = None
+    if np_ is not None:
+        mu_fun = np_.get('svcRateFun', None) if isinstance(np_, dict) else getattr(np_, 'svcRateFun', None)
+    if mu_fun is None:
+        return
+    inc_new = _oi_increments(mu_fun, cnew)
+    inc_old = _oi_increments(mu_fun, cold)
+    for p in range(len(inc_new)):
+        if inc_new[p] <= 0:
+            continue
+        if p < len(inc_old) and inc_old[p] > 0:
+            continue
+        cls = int(cnew[p]) - 1
+        if 0 <= cls < R:
+            start_count[ind, cls] += 1.0
+
+
+def _oi_increments(mu_fun, c):
+    """Per-position increments Delta_mu(c1..cp) = mu(c1..cp) - mu(c1..c_{p-1})."""
+    inc = []
+    mu_prev = 0.0
+    for p in range(len(c)):
+        prefix = np.asarray([int(x) - 1 for x in c[:p + 1]], dtype=float).reshape(1, -1)
+        mu_cur = float(mu_fun(prefix))
+        inc.append(mu_cur - mu_prev)
+        mu_prev = mu_cur
+    return inc
+
+
 def _apply_arrival_buffer(jnd, r, nvec, buffers, mi, R, sn, smap: _Smap,
-                          svcph=None, bufph_node=None):
+                          svcph=None, bufph_node=None,
+                          start_count=None, preempt_count=None):
     """Join a just-arrived class-r job to the ordered buffer of destination node
     jnd, if that node is buffered. nvec already includes the arrival. Shared by
     :func:`_update_buffers` (routed arrivals) and :func:`_fcr_release_cascade`
@@ -2617,7 +2884,9 @@ def _apply_arrival_buffer(jnd, r, nvec, buffers, mi, R, sn, smap: _Smap,
     if _is_list_sched(jnd, sn):
         # PAS/OI arrival joins the back of the ordered list; capacity is the station's own cap, not a server/buffer split.
         if len(buffers[jnd]) < sn.cap[int(sn.nodeToStation[jnd])]:
+            old_list = list(buffers[jnd])
             buffers[jnd].append(r + 1)      # newest last
+            _add_oi_started(sn, jnd, old_list, list(buffers[jnd]), R, start_count)
         return False
 
     # Arrival at a buffered destination node
@@ -2637,6 +2906,8 @@ def _apply_arrival_buffer(jnd, r, nvec, buffers, mi, R, sn, smap: _Smap,
                 c = _pick_preempted(nvec, buffers[jnd], jnd, r, R, smap)
                 if c > 0:
                     buffers[jnd].appendleft(c)   # addFirst
+                    if preempt_count is not None and c <= R:
+                        preempt_count[jnd, c - 1] += 1.0  # displaced incumbent
                 entered_service = True
             else:
                 # All servers busy - arriving job joins back of buffer
@@ -2644,6 +2915,8 @@ def _apply_arrival_buffer(jnd, r, nvec, buffers, mi, R, sn, smap: _Smap,
         else:
             # A server is free: the job goes straight into service.
             entered_service = True
+        if entered_service and start_count is not None:
+            start_count[jnd, r] += 1.0  # the arrival took a server
         if entered_service and bufph_node is not None and bufph_node[jnd]:
             ke = _draw_entry_phase(sn, jnd, r, int(smap.nph[jnd, r]))
             svcph[jnd][r, ke] += 1.0
@@ -2661,7 +2934,7 @@ def solver_ssa_nrm(sn, options: Optional[SolverSSAOptions] = None) -> SolverSSAR
     if options.seed and options.seed > 0:
         np.random.seed(options.seed)
 
-    # immediate feedback (sn.immfeed) is not modeled by the NRM; self-loops are treated as ordinary re-queueing class-switching, so an immfeed model warns (use method='serial').
+    # immediate feedback (sn.immfeed) not modeled by NRM; self-loops become re-queueing class-switching, so an immfeed model warns (use method='serial').
     _immfeed = getattr(sn, 'immfeed', None)
     if _immfeed is not None and np.any(_immfeed):
         import warnings
@@ -2684,7 +2957,7 @@ def solver_ssa_nrm(sn, options: Optional[SolverSSAOptions] = None) -> SolverSSAR
 
 def _solver_ssa_nrm_run(sn, options, samples) -> SolverSSAReturn:
     """Body of :func:`solver_ssa_nrm`, run with sn's phase fields populated."""
-    # a model with Transition nodes is an SPN, not a queueing network, and is routed to the dedicated SPN runner (shares NRM clocks, own firing/vanishing-marking logic).
+    # a model with Transition nodes is an SPN, not a queueing network, routed to the SPN runner (shares NRM clocks, own firing/vanishing-marking logic).
     for ind in range(sn.nnodes):
         if sn.nodetype[ind] == NodeType.TRANSITION:
             return _solver_ssa_nrm_spn(sn, options, samples)
@@ -2725,6 +2998,9 @@ def _solver_ssa_nrm_run(sn, options, samples) -> SolverSSAReturn:
     # Per-region WAITQ FIFO of parked (dst_node, dst_class) tokens, encoded as
     # dst_node*R + dst_class. Empty and untouched unless a region uses WAITQ.
     fcr_buf = [deque() for _ in range(fcr.F)] if fcr.on else []
+    # Closed-class destination blocking; inert (on == False) unless some station
+    # carries a cap a closed class can actually reach. See _Block.
+    block = _Block(sn, R)
     servers = np.asarray(sn.nservers).flatten()
     # Same normalized weights the propensities use, so the PS-family
     # utilization accumulator applies identical sharing factors.
@@ -2732,6 +3008,7 @@ def _solver_ssa_nrm_run(sn, options, samples) -> SolverSSAReturn:
     # Per (cache node, read class) hit/miss event counts, used to reconstruct the
     # measured hit probability (State.afterEventCache convention).
     cache_prod = np.zeros((sn.nnodes, R))   # per (cache node, PRODUCED class) count
+    cache_dly = np.zeros((sn.nnodes, R))    # per (cache node, READ class) delayed hits
 
     numReactions = S.shape[1]
     Ak = np.array([a[i](nvec, buffers, svcph) for i in range(numReactions)])
@@ -2747,8 +3024,30 @@ def _solver_ssa_nrm_run(sn, options, samples) -> SolverSSAReturn:
 
     sim_time = 0.0
     total_time = 0.0
+    # Derived START/PREEMPT tallies. The NRM fires one reaction at a time and
+    # knows exactly which job takes a server and which is displaced, so these are
+    # COUNTS of events; dividing by the simulated time at the end gives the same
+    # rate the serial engine estimates from the enabled-transition rates.
+    start_count = np.zeros((sn.nnodes, R))
+    preempt_count = np.zeros((sn.nnodes, R))
+    # Departures that were BLOCKED, per (node, class). TN above integrates the
+    # PROPENSITY, which counts a departure the station never makes once its
+    # successor is full (0.744 against the exact 0.652 on the BUG-81 tandem), so
+    # the blocked firings are subtracted from that integral before it is
+    # normalized. In expectation the count IS the integral of the blocked share
+    # of the rate, so the difference is unbiased -- and unlike recomputing that
+    # share it needs no second evaluation of a state-dependent dispatcher, whose
+    # draw would otherwise have to be replayed.
+    block_count = np.zeros((sn.nnodes, R))
     n = 0
+    from line_solver.api.io import console as _console
+    _console.loop('drawing the sample path: %d samples requested', samples)
+    _console_every = max(1, samples // 20)
     while n < samples:
+        if (n + 1) % _console_every == 0:
+            _console.iter_line((n + 1) // _console_every,
+                               'simulated %d of %d samples (%.0f%%), simulated time %.4g',
+                               n + 1, samples, 100.0 * (n + 1) / samples, float(sim_time))
         kfire = pq.peek_min()
         tau_fire = pq.peek_min_key()
         if np.isinf(tau_fire):
@@ -2800,9 +3099,9 @@ def _solver_ssa_nrm_run(sn, options, samples) -> SolverSSAReturn:
         sim_time = tau_fire
         cache_changed = False
         if is_cache_rx[kfire]:
-            # cache access: read-class job draws an item, hit/miss decided against buffers[cacheNode] and replacement policy applied; mirrors State.afterEventCache.
+            # cache access: read-class job draws an item, hit/miss decided vs buffers[cacheNode], replacement applied; mirrors State.afterEventCache.
             cn, rdc = fromIR[kfire]
-            out_class, new_contents, cache_cat = _cache_access(sn, cn, rdc, buffers[cn])
+            out_class, new_contents, cache_cat, cache_rel = _cache_access(sn, cn, rdc, buffers[cn])
             buffers[cn] = new_contents
             nvec[fromIdx[kfire]] -= 1.0            # consume the read-class job
             dest_pos = None
@@ -2815,13 +3114,35 @@ def _solver_ssa_nrm_run(sn, options, samples) -> SolverSSAReturn:
                     dest_pos = int(smap.ph_off[cn, out_class])
                     cache_prod[cn, out_class] += 1.0
                 nvec[dest_pos] += 1.0
-            # out_class < 0 is a delayed hit: absorbed (produces nothing).
+            # out_class < 0 is a delayed hit merged onto a pending fetch: it produces nothing now.
+            # It is released later in the hit class, so counting it here is the only way to tell
+            # a delayed hit from a true hit in cache_prod.
+            if out_class < 0:
+                cache_dly[cn, rdc] += 1.0
+            for hc, cnt in cache_rel:
+                # a completing fetch also releases its merged requests, each as a delayed hit in its own hit class.
+                nvec[int(smap.ph_off[cn, hc])] += float(cnt)
+                cache_prod[cn, hc] += float(cnt)
             cache_changed = True
         else:
             src_row = fromIdx[kfire]
-            dest_pos = _fire_reaction(kfire, nvec, S, routing, src_row, jsq_flags, R, fcr, fromIR, sq_k, balk, sig, buffers, mi, rr, smap, fcr_buf, sn=sn)
+            dest_pos = _fire_reaction(kfire, nvec, S, routing, src_row, jsq_flags, R, fcr, fromIR, sq_k, balk, sig, buffers, mi, rr, smap, fcr_buf, sn=sn, is_phase=is_phase, block=block)
 
-            # a self-looping class re-enters the same node/class; at a buffered station point dest_pos at the source slot so _update_buffers rejoins the ordered buffer.
+            if dest_pos == _BLOCKED:
+                # The departure did not happen: no slot, no buffer and no
+                # controller moved, so every propensity is what it was and only
+                # this reaction's clock is redrawn. Exact by memorylessness, and
+                # the same null event the CTMC represents by dropping the arc.
+                # It still consumes a sample because the estimators integrate
+                # over TIME, which advanced, so charging it costs nothing.
+                a_new = Ak[kfire]
+                pq.update(kfire, (sim_time - np.log(np.random.random()) / a_new)
+                          if a_new > 0.0 else float('inf'))
+                block_count[fromIR[kfire][0], fromIR[kfire][1]] += 1.0
+                n += 1
+                continue
+
+            # a self-looping class re-enters the same node/class; at a buffered station point dest_pos at the source slot so _update_buffers rejoins the buffer.
             if (dest_pos < 0 and not is_renege[kfire] and not is_retry[kfire]
                     and not is_poll_sw[kfire] and _isslc[fromIR[kfire][1]]):
                 dest_pos = src_row
@@ -2853,7 +3174,8 @@ def _solver_ssa_nrm_run(sn, options, samples) -> SolverSSAReturn:
             pass
         else:
             svc_changed = _update_buffers(kfire, nvec, buffers, fromIR, dest_pos, mi, R,
-                                          sn, smap, svcph, bufph_node, is_buf_svc, dep_phase)
+                                          sn, smap, svcph, bufph_node, is_buf_svc, dep_phase,
+                                          start_count, preempt_count)
 
         # polling controller advance (DEP/SWITCH/parked-arrival) mirrors State.afterEventStation and forces a full propensity refresh.
         poll_changed = False
@@ -2915,10 +3237,11 @@ def _solver_ssa_nrm_run(sn, options, samples) -> SolverSSAReturn:
         n_released = 0
         if fcr.on and fcr.any_waitq:
             n_released, rel_changed = _fcr_release_cascade(fcr, nvec, buffers, fcr_buf,
-                                                           mi, R, sn, smap, svcph, bufph_node)
+                                                           mi, R, sn, smap, svcph, bufph_node,
+                                                           start_count, preempt_count)
             svc_changed = svc_changed or rel_changed
 
-        # a polling move, WAITQ release, or svcph update changes rates outside the fired reaction's static dependency set, so any of them forces a full refresh.
+        # a polling move, WAITQ release, or svcph update changes rates outside the fired reaction's static dependency set, so any forces a full refresh.
         refresh_set = range(numReactions) if (poll_changed or n_released > 0 or svc_changed or cache_changed) else D[kfire]
         for i in refresh_set:
             a_old = Ak[i]
@@ -2937,10 +3260,21 @@ def _solver_ssa_nrm_run(sn, options, samples) -> SolverSSAReturn:
 
         n += 1
 
+    StartN = np.zeros((M, R))
+    PreemptN = np.zeros((M, R))
     if total_time > 0:
         QN /= total_time
         UN /= total_time
+        for _ist in range(M):
+            _ind = int(sn.stationToNode[_ist])
+            # net the blocked firings out of the departure-rate integral
+            TN[_ist, :] -= block_count[_ind, :]
         TN /= total_time
+        for _ist in range(M):
+            _ind = int(sn.stationToNode[_ist])
+            # counts of events over the simulated time: a rate, like TN
+            StartN[_ist, :] = start_count[_ind, :] / total_time
+            PreemptN[_ist, :] = preempt_count[_ind, :] / total_time
 
     # class-dependent stations report utilization as T*S/peak against the declared per-class peak rate, matching the analytic solvers and serial SSA.
     cd_cell = getattr(sn, 'cdscaling', None)
@@ -2966,6 +3300,33 @@ def _solver_ssa_nrm_run(sn, options, samples) -> SolverSSAReturn:
                 else:
                     UN[ist, kk] = 0.0
 
+    # Load-dependent stations report the same work-based utilization, T*S/peak
+    # against peak = max(c, max(alpha)). The accumulator above integrates BUSY
+    # TIME, which is a different quantity once alpha(n) != 1: a server running
+    # alpha(n) times faster does the same work in less time, so busy time reads
+    # it as no busier than one at its nominal rate. That put NRM at 0.9587 on a
+    # 4-job closed model with alpha = [1 1.5 2 2.5] where CTMC, MVA, NC and
+    # serial SSA all report 0.6612 -- and left the two SSA engines disagreeing
+    # with each other. INF keeps U = Q, as everywhere else.
+    _lld_all = getattr(sn, 'lldscaling', None)
+    if _lld_all is not None:
+        _lld_all = np.atleast_2d(np.asarray(_lld_all, dtype=float))
+        for ist in range(M):
+            if ist >= _lld_all.shape[0] or _lld_all.shape[1] == 0:
+                continue
+            _row = _lld_all[ist, :]
+            if np.allclose(_row, 1.0):
+                continue
+            if _sched_of(sn, ist) in (SchedStrategy.INF, SchedStrategy.EXT):
+                continue
+            peak = max(float(servers[ist]), float(np.max(_row)))
+            for kk in range(K):
+                rate = sn.rates[ist, kk]
+                if np.isfinite(rate) and rate > 0 and peak > 0:
+                    UN[ist, kk] = TN[ist, kk] / rate / peak
+                else:
+                    UN[ist, kk] = 0.0
+
     for kk in range(K):
         XN[kk] = TN[int(sn.refstat[kk]), kk]
         for ist in range(M):
@@ -2976,12 +3337,14 @@ def _solver_ssa_nrm_run(sn, options, samples) -> SolverSSAReturn:
     for arr in (QN, UN, RN, XN, TN, CN):
         np.nan_to_num(arr, copy=False, nan=0.0)
 
-    # measured hit/miss probabilities are written onto each Cache node's nodeparam for getAvgNode reconstruction; arrays are sized to nclasses to also cover internal retrieval classes.
+    # measured hit/miss probs written to each Cache nodeparam for getAvgNode reconstruction; arrays sized to nclasses to cover internal retrieval classes.
     for ind in range(sn.nnodes):
         if is_cache_node[ind]:
             npm = sn.nodeparam[ind]
             ahp = np.full(R, np.nan)
             amp = np.full(R, np.nan)
+            adhp = np.zeros(R)
+            has_delayed = False
             hitcl = np.atleast_1d(_np_get(npm, 'hitclass', [])).astype(int)
             misscl = np.atleast_1d(_np_get(npm, 'missclass', [])).astype(int)
             for r in range(R):
@@ -2989,14 +3352,24 @@ def _solver_ssa_nrm_run(sn, options, samples) -> SolverSSAReturn:
                     hc = int(hitcl[r]); mc = int(misscl[r])
                     tot = cache_prod[ind, hc] + cache_prod[ind, mc]
                     if tot > 0:
-                        ahp[r] = cache_prod[ind, hc] / tot
+                        # cache_prod[hc] already contains the released delayed hits,
+                        # so carve them out rather than adding a fourth share.
+                        dly = cache_dly[ind, r]
+                        ahp[r] = max(cache_prod[ind, hc] - dly, 0.0) / tot
                         amp[r] = cache_prod[ind, mc] / tot
+                        adhp[r] = dly / tot
+                        if dly > 0:
+                            has_delayed = True
             if isinstance(npm, dict):
                 npm['actualhitprob'] = ahp
                 npm['actualmissprob'] = amp
+                if has_delayed:
+                    npm['actualdelayedhitprob'] = adhp
             else:
                 npm.actualhitprob = ahp
                 npm.actualmissprob = amp
+                if has_delayed:
+                    npm.actualdelayedhitprob = adhp
 
     ret = SolverSSAReturn()
     ret.Q = QN
@@ -3006,6 +3379,9 @@ def _solver_ssa_nrm_run(sn, options, samples) -> SolverSSAReturn:
     ret.C = CN.reshape(1, K)
     ret.X = XN.reshape(1, K)
     ret.A = _arvr_from_tput(sn, TN)
+    # derived START/PREEMPT rates, counted by the engine itself
+    ret.startRate = StartN
+    ret.preemptRate = PreemptN
     ret.total_time = total_time
     ret.samples = n
     ret.method = 'nrm'
@@ -3022,7 +3398,7 @@ def _solver_ssa_nrm_run(sn, options, samples) -> SolverSSAReturn:
 # every inhibitor place strictly below its threshold); a single-server mode
 # fires at its exponential rate, an infinite/k-server mode at that rate times
 # its enabling degree. Each firing applies the mode's stoichiometry once, the
-# atomic GSPN firing shared by the exact CTMC (single server), JMT and GreatSPN.
+# atomic GSPN firing shared by the exact CTMC (single server), JMT and standard GSPN tools.
 # IMMEDIATE modes fire in zero time and are resolved by vanishing-marking
 # elimination (see _spn_collapse). A non-exponential firing distribution needs
 # per-mode in-flight phase state the reaction network does not carry and is
@@ -3208,7 +3584,7 @@ def _solver_ssa_nrm_spn(sn, options, samples) -> SolverSSAReturn:
                     p = int(smap.node[rec.en_slot[a]])
                     c = int(smap.cls[rec.en_slot[a]])
                     consumers.setdefault((p, c), []).append(ridx)
-    # Source arrivals get their own reaction (Poisson thinning per routed Place-class edge) since a Source is not a Transition; producers[(node,class)] indexes these for the Source's throughput report.
+    # Source arrivals get reactions (Poisson thinning per routed Place-class edge; not a Transition); producers[(node,class)] indexes them for throughput.
     from ....constants import ProcessType
     exp_id = int(ProcessType.EXP.value)
     rtnodes = np.asarray(sn.rtnodes, dtype=float)
@@ -3266,7 +3642,7 @@ def _solver_ssa_nrm_spn(sn, options, samples) -> SolverSSAReturn:
         raise RuntimeError(
             "Stochastic Petri net has no timed reaction; nothing to simulate.")
 
-    # finite-capacity Place DROP: precompute per-slot/per-place caps and each reaction's deposited slots so the run-loop clamp only touches what just grew (JMT/CTMC loss semantics).
+    # finite-capacity Place DROP: precompute per-slot/per-place caps and each reaction's deposits so the clamp touches only what grew (JMT/CTMC loss).
     pcap_slot = np.full(NS, np.inf)          # per-(place,class) slot cap
     place_total_caps = []                    # (total_cap, [slots]) per capped place
     for ind in range(I):
@@ -3339,7 +3715,14 @@ def _solver_ssa_nrm_spn(sn, options, samples) -> SolverSSAReturn:
     total_time = 0.0
 
     n = 0
+    from line_solver.api.io import console as _console
+    _console.loop('drawing the sample path: %d samples requested', samples)
+    _console_every = max(1, samples // 20)
     while n < samples:
+        if (n + 1) % _console_every == 0:
+            _console.iter_line((n + 1) // _console_every,
+                               'simulated %d of %d samples (%.0f%%), simulated time %.4g',
+                               n + 1, samples, 100.0 * (n + 1) / samples, float(total_time))
         kfire = int(np.argmin(tau))
         dt = tau[kfire]
         if np.isinf(dt):
@@ -3363,7 +3746,7 @@ def _solver_ssa_nrm_spn(sn, options, samples) -> SolverSSAReturn:
                     depr += Ak[ridx]
                 TN[ist, c] += depr * dt
 
-        # fire the selected timed mode, then collapse any immediate transitions the new marking enabled, applying the DROP clamp before the immediate cascade sees it.
+        # fire the selected timed mode, then collapse immediate transitions the new marking enabled, applying the DROP clamp before the cascade sees it.
         nvec += rx[kfire].Svec
         if _has_place_caps:
             _apply_place_caps(nvec, dep_slots[kfire])
@@ -3486,13 +3869,24 @@ def _solver_ssa_nrm_space_run(sn, options, samples, R, I, _isslc_sp):
     times = [0.0]
     states = []
     buffer_states = [[deque(b) for b in buffers]]
+    # (step, node, class) of every BLOCKED firing, folded into a per-state count
+    # once the unique-state map exists; see the depRates correction below.
+    block_events = []
 
     routing = _build_routing(S)
     jsq_flags = _build_jsq_flags(sn, fromIR, routing)
     sq_k = _build_sq_k(sn, fromIR, routing)
+    block = _Block(sn, R)
 
     n = 0
+    from line_solver.api.io import console as _console
+    _console.loop('drawing the sample path: %d samples requested', samples)
+    _console_every = max(1, samples // 20)
     while n < samples:
+        if (n + 1) % _console_every == 0:
+            _console.iter_line((n + 1) // _console_every,
+                               'simulated %d of %d samples (%.0f%%), simulated time %.4g',
+                               n + 1, samples, 100.0 * (n + 1) / samples, float(total_time))
         kfire = int(np.argmin(tau))
         dt = tau[kfire]
         if np.isinf(dt):
@@ -3500,13 +3894,22 @@ def _solver_ssa_nrm_space_run(sn, options, samples, R, I, _isslc_sp):
         times.append(times[-1] + dt)
 
         src_row = fromIdx[kfire]
-        dest_pos = _fire_reaction(kfire, nvec, S, routing, src_row, jsq_flags, R, fcr, fromIR, sq_k, balk, sig, buffers, mi, rr, smap, sn=sn)
+        dest_pos = _fire_reaction(kfire, nvec, S, routing, src_row, jsq_flags, R, fcr, fromIR, sq_k, balk, sig, buffers, mi, rr, smap, sn=sn, is_phase=is_phase, block=block)
+        # A blocked firing changes nothing (see _Block): time still advances and
+        # this reaction's clock is still redrawn below, but no branch may move a
+        # job or a buffer, and the repeated state merges into its own unique row.
+        blocked = dest_pos == _BLOCKED
+        if blocked:
+            dest_pos = -1
+            block_events.append((n, fromIR[kfire][0], fromIR[kfire][1]))
         # Self-looping class re-enters the same node/class (see solver_ssa_nrm).
-        if (dest_pos < 0 and not is_renege[kfire] and not is_retry[kfire]
+        if (not blocked and dest_pos < 0 and not is_renege[kfire] and not is_retry[kfire]
                 and _isslc_sp[fromIR[kfire][1]]):
             dest_pos = src_row
         svc_changed = False
-        if is_retry[kfire]:
+        if blocked:
+            pass
+        elif is_retry[kfire]:
             # A successful retry moves one orbiting job into the free server;
             # the population is unchanged, so only the orbit shrinks.
             _ind, _r = fromIR[kfire]
@@ -3534,7 +3937,8 @@ def _solver_ssa_nrm_space_run(sn, options, samples, R, I, _isslc_sp):
             pass
         else:
             svc_changed = _update_buffers(kfire, nvec, buffers, fromIR, dest_pos, mi, R,
-                                          sn, smap, svcph, bufph_node, is_buf_svc, dep_phase)
+                                          sn, smap, svcph, bufph_node, is_buf_svc, dep_phase,
+                                          start_count, preempt_count)
 
         Tk += Ak * dt
         # an svcph move sits outside the static stoichiometry (like a polling move), so it forces a full propensity refresh.
@@ -3578,8 +3982,12 @@ def _solver_ssa_nrm_space_run(sn, options, samples, R, I, _isslc_sp):
         time_accum[ic[i]] += dt_arr[i]
     pi = time_accum / np.sum(time_accum)
 
-    # depRates stays keyed by flat (node,class): phase-expanded departure reactions of one class are summed back into that column; phase transitions are excluded.
+    # depRates stays keyed by flat (node,class): phase-expanded departure reactions of one class sum back into that column; phase transitions excluded.
     num_states = outspace.shape[0]
+    block_count_state = np.zeros((num_states, I * R))
+    for _step, _ind, _r in block_events:
+        if _step < num_intervals:
+            block_count_state[ic[_step], _ind * R + _r] += 1.0
     depRates = np.zeros((num_states, I * R))
     for st in range(num_states):
         a_state = react_cache.get(_hash_state(outspace[st], outspace_buffers[st]))
@@ -3590,6 +3998,17 @@ def _solver_ssa_nrm_space_run(sn, options, samples, R, I, _isslc_sp):
                 continue
             ind, r = fromIR[j]
             depRates[st, ind * R + r] += a_state[j]
+    # Net the BLOCKED firings out, state by state: the propensity counts a
+    # departure the station never makes once its successor is full. Dividing the
+    # count by the time spent in the state turns it into the rate to subtract,
+    # which is what the integral form does in the other engine.
+    if block.on:
+        for st in range(num_states):
+            if time_accum[st] <= 0.0:
+                continue
+            for col in range(I * R):
+                if block_count_state[st, col] > 0.0:
+                    depRates[st, col] -= block_count_state[st, col] / time_accum[st]
 
     return pi, outspace, depRates
 

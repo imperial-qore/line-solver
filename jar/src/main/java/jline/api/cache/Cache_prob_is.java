@@ -19,6 +19,24 @@ public final class Cache_prob_is {
      * Computes cache hit probabilities using Monte Carlo importance sampling.
      */
     public static Matrix cache_prob_is(Matrix gamma, Matrix m, int samples) {
+        return cache_prob_is(gamma, m, samples, null, null);
+    }
+
+    /**
+     * Computes cache hit probabilities by importance sampling, discarding
+     * states that breach a per-list storage cost cap (the feasibility
+     * indicator of Casale-Gast, IEEE/ACM Trans. Networking 29(2), 2021,
+     * Sec. IX-B).
+     *
+     * @param gamma Cache access factors (n x h).
+     * @param m Cache capacity vector (1 x h).
+     * @param samples Number of Monte Carlo samples.
+     * @param sigma Item storage costs (sizes); null or empty for none.
+     * @param k Per-list storage cost caps; null or empty for none.
+     * @return per-item, per-level occupancy with column 0 the miss probability.
+     */
+    public static Matrix cache_prob_is(Matrix gamma, Matrix m, int samples, Matrix sigma, Matrix k) {
+        boolean capped = sigma != null && k != null && !sigma.isEmpty() && !k.isEmpty();
         int n = gamma.getNumRows();
         int h = gamma.getNumCols();
         int mt = (int) m.elementSum();
@@ -42,7 +60,7 @@ public final class Cache_prob_is {
         }
 
         if (n == mt) {
-            return Cache_prob_erec.cache_prob_erec(gamma, m);
+            return Cache_prob_erec.cache_prob_erec(gamma, m, sigma, k);
         }
 
         Matrix logGamma = new Matrix(n, h);
@@ -71,10 +89,24 @@ public final class Cache_prob_is {
             int[][] assignment = Cache_is.assignItemsToLevels(m, selected, random);
 
             double logStateProb = logMFact;
+            boolean feasible = true;
             for (int j = 0; j < h; j++) {
+                if (capped) {
+                    double listCost = 0.0;
+                    for (int item : assignment[j]) {
+                        listCost += sigma.get(item);
+                    }
+                    if (listCost > k.get(j)) {
+                        feasible = false;
+                        break;
+                    }
+                }
                 for (int item : assignment[j]) {
                     logStateProb += logGamma.get(item, j);
                 }
+            }
+            if (!feasible) {
+                continue; // I{S_v in O} = 0
             }
 
             double logProposal = -logCombinations - logMultinomial;

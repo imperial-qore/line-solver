@@ -27,6 +27,13 @@ public class ServiceSection extends Section implements Serializable {
         this.serviceProcesses = new HashMap<JobClass, ServiceBinding>();
     }
 
+    @Override
+    public ServiceSection copyElement() {
+        ServiceSection clone = (ServiceSection) super.copyElement();
+        clone.serviceProcesses = new HashMap<JobClass, ServiceBinding>(this.serviceProcesses);
+        return clone;
+    }
+
     public boolean containsJobClass(JobClass jobClass) {
         // Use index comparison to handle Signal resolution (Signal -> OpenSignal/ClosedSignal)
         for (JobClass key : this.serviceProcesses.keySet()) {

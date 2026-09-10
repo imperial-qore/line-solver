@@ -67,8 +67,17 @@ class TestEtaResidual:
         assert _eta_residual(np.array([0.3, 1.0]), np.array([0.3, 0.0])) == np.inf
 
 
-def _count_nonexp_calls(monkeypatch, solve):
-    """Run solve() and return how many times npfqn_nonexp_approx was called."""
+def _count_nonexp_calls(monkeypatch, solve, force_zero_eta=False):
+    """Run solve() and return how many times npfqn_nonexp_approx was called.
+
+    force_zero_eta pins the last station's eta to zero on every call, which is
+    the iterate pair the residual has to treat as NaN. LQN layers used to
+    produce such a station on their own, through the Immediate placeholders
+    that pad absent classes: those reported SCV = 0, which fired the FCFS
+    correction branch and set eta = rho = 0 at an idle station. Immediate now
+    reports SCV = 1 as in MATLAB and the JAR, so the branch no longer fires and
+    the condition has to be injected rather than waited for.
+    """
     import line_solver.api.npfqn as npfqn_pkg
     import line_solver.api.npfqn.nonexp as nonexp_mod
 
@@ -78,6 +87,10 @@ def _count_nonexp_calls(monkeypatch, solve):
     def counting(*args, **kwargs):
         calls['n'] += 1
         result = original(*args, **kwargs)
+        if force_zero_eta:
+            eta = np.asarray(result.eta, dtype=float).copy()
+            eta[-1] = 0.0
+            result.eta = eta
         if np.any(np.asarray(result.eta) == 0.0):
             calls['saw_zero_eta'] = True
         return result
@@ -125,7 +138,8 @@ class TestNonexpLoopIterationCount:
         GlobalConstants.set_verbose(VerboseLevel.SILENT)
         model = _mini_lqn()
         calls = _count_nonexp_calls(
-            monkeypatch, lambda: LN(model, lambda x: NC(x)).get_avg_table())
+            monkeypatch, lambda: LN(model, lambda x: NC(x)).get_avg_table(),
+            force_zero_eta=True)
 
         # Guards the premise: without a zero eta entry this model would not
         # exercise the defect at all and the count below would prove nothing.
@@ -133,7 +147,7 @@ class TestNonexpLoopIterationCount:
             "no layer produced a zero eta entry; the model no longer exercises "
             "the NaN path and this test has stopped being a regression test")
 
-        # Measured 160 with the correct residual and 1158 with the regularized
+        # Measured 212 with the correct residual and 53106 with the regularized
         # one. The threshold sits between the two with wide margin, so ordinary
         # drift in layer count or LN iterations cannot trip it.
         assert calls['n'] < 400, (

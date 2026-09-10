@@ -855,6 +855,43 @@ class Replayer(DiscreteDistribution):
             samples[i] = self.next_value()
         return samples
 
+    def isNHPP(self, **kwargs):
+        """
+        Test whether the trace is a sample path of a NON-HOMOGENEOUS POISSON
+        process, by the conditional-uniform KS test with the Lewis refinement
+        (:func:`infer_nhpp_ks`).
+
+        WHY THE QUESTION IS WORTH ASKING. A Replayer is used wherever a measured
+        stream is fed to a solver, and every analytical method that consumes it
+        as an arrival process assumes SOMETHING about its dependence structure.
+        This test says whether the Poisson assumption -- independent increments,
+        whatever the rate does with time -- survives contact with the data, which
+        is the assumption a time-varying analysis (SolverFLD's ``mtginf``,
+        ``mol``, ``tvms``) rests on. A small p-value says the stream is not
+        Poisson at any rate function, so those methods are answering a different
+        process.
+
+        The trace holds INTER-ARRIVAL times, so the arrival epochs are their
+        cumulative sum and the horizon is the last of them.
+
+        Returns:
+            The dict of :func:`infer_nhpp_ks`: ``statistic``, ``pvalue``, ``n``,
+            ``uniforms`` and ``transformed``.
+
+        References:
+            S.-H. Kim, W. Whitt (2014). Are call center and hospital arrivals
+            well modeled by nonhomogeneous Poisson processes? Manufacturing &
+            Service Operations Management 16(3), 464-480.
+        """
+        from ..api.infer import infer_nhpp_ks
+        ia = np.asarray(self.trace, dtype=float).ravel()
+        if ia.size < 2:
+            raise RuntimeError('the trace needs at least two inter-arrival times to test')
+        epochs = np.cumsum(ia)
+        return infer_nhpp_ks(epochs, float(epochs[-1]), **kwargs)
+
+    is_nhpp = isNHPP
+
     def fit_exp(self):
         """
         Fit an exponential to the trace mean (MATLAB Replayer.fitExp).

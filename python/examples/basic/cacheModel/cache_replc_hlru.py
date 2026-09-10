@@ -8,12 +8,6 @@ approximation of Gast and Van Houdt (SIGMETRICS 2015), which reduces to the
 Che approximation for h=1.
 """
 
-import sys
-import os
-_native_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
-if _native_path not in sys.path:
-    sys.path.insert(0, _native_path)
-
 from line_solver import *
 import numpy as np
 

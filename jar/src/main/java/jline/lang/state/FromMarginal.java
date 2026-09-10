@@ -417,7 +417,7 @@ public class FromMarginal implements Serializable {
                             }
                         }
                         // gen permutation of their positions in the waiting buffer
-                        mi = Maths.uniquePerms(vi);
+                        mi = Maths.multisetPerms(vi);
                         Matrix mi_buf = new Matrix(0, 0);
                         // now generate server states
                         if (mi.isEmpty()) {
@@ -605,7 +605,7 @@ public class FromMarginal implements Serializable {
                             }
                         }
                         // gen permutation of their positions in the waiting buffer
-                        mi_lpr = Maths.uniquePerms(vi_lpr);
+                        mi_lpr = Maths.multisetPerms(vi_lpr);
                         // now generate server states
                         if (mi_lpr.isEmpty()) {
                             Matrix mi_buf_lpr = new Matrix(1, (int) Maths.max(0, n.elementSum() - S.get(ist)));
@@ -741,7 +741,7 @@ public class FromMarginal implements Serializable {
                                     viPas = newVi.copy();
                                 }
                             }
-                            Matrix miPas = Maths.uniquePerms(viPas);
+                            Matrix miPas = Maths.multisetPerms(viPas);
                             space = new Matrix(miPas.getNumRows(), Wpas);
                             space.zero();
                             for (int row = 0; row < miPas.getNumRows(); row++)
@@ -1038,7 +1038,7 @@ public class FromMarginal implements Serializable {
                     }
 
                     // gen permutation of their positions in the fcfs buffer
-                    Matrix mi = Maths.uniquePerms(inbuf);
+                    Matrix mi = Maths.multisetPerms(inbuf);
                     if (mi.isEmpty()) {
                         Matrix mi_buf = new Matrix(1, (int) Maths.max(0, n.elementSum() - S.get(ist)));
                         state = new Matrix(1, R);
@@ -1125,7 +1125,7 @@ public class FromMarginal implements Serializable {
                     }
 
                     // gen permutation of their positions in the FCFS buffer
-                    Matrix miLpr = Maths.uniquePerms(inbufLpr);
+                    Matrix miLpr = Maths.multisetPerms(inbufLpr);
                     if (miLpr.isEmpty()) {
                         Matrix mi_buf = new Matrix(1, (int) FastMath.max(0, n.elementSum() - S.get(ist)));
                         mi_buf.zero();
@@ -1215,7 +1215,8 @@ public class FromMarginal implements Serializable {
                 case LJF:
                     // in these policies the state space includes continuous random variables
                     // for the service times
-                    System.err.format("The scheduling policy does not admit a discrete state space");
+                    InputOutput.line_warning(mfilename(new Object() {
+                    }), "The scheduling policy does not admit a discrete state space.\n");
 
             }
 
@@ -1278,6 +1279,156 @@ public class FromMarginal implements Serializable {
         }
 
         return newSpace;
+    }
+
+    /**
+     * Every detailed local state of node IND whose CLASS TOTAL is ntot.
+     *
+     * <p>The class-summed counterpart of fromMarginal: where fromMarginal fixes
+     * how many jobs of EACH class the node holds, fromMarg fixes only how many
+     * it holds altogether, and returns the union of fromMarginal over every
+     * class split of ntot the node can hold.</p>
+     *
+     * <p>A class disabled at the station has classcap 0 and is excluded from the
+     * split enumeration up front rather than after the fact. Asking fromMarginal
+     * for a job of such a class yields an EMPTY local space, and an empty factor
+     * is absorbed by the cartesian product instead of annihilating it, so the
+     * job would silently disappear.</p>
+     *
+     * @param sn   network structure
+     * @param ind  node index
+     * @param ntot total number of jobs at the node, all classes summed
+     * @return the local state space rows
+     */
+    public static Matrix fromMarg(NetworkStruct sn, int ind, int ntot) {
+        int R = sn.nclasses;
+        if (ntot < 0) {
+            return new Matrix(0, 0);
+        }
+        Matrix nset = classSplits(sn, ind, ntot, R);
+
+        // The buffer is RIGHT-aligned, so sub-spaces of different width must be
+        // padded on the left before they are stacked.
+        List<Matrix> subspaces = new LinkedList<Matrix>();
+        int maxw = 0;
+        for (int j = 0; j < nset.getNumRows(); j++) {
+            Matrix nj = Matrix.extractRows(nset, j, j + 1, null);
+            Matrix sj = fromMarginal(sn, ind, nj);
+            if (sj == null || sj.getNumRows() == 0) {
+                continue;
+            }
+            subspaces.add(sj);
+            maxw = Math.max(maxw, sj.getNumCols());
+        }
+        return stackLeftPadded(subspaces, maxw);
+    }
+
+    /**
+     * Every detailed local state of node IND whose CLASS TOTAL is ntot and whose
+     * total number of started jobs is stot.
+     *
+     * @param sn   network structure
+     * @param ind  node index
+     * @param ntot total number of jobs at the node
+     * @param stot total number of jobs that have started service
+     * @return the local state space rows
+     */
+    public static Matrix fromMargAndStarted(NetworkStruct sn, int ind, int ntot, int stot) {
+        int R = sn.nclasses;
+        if (ntot < 0 || stot < 0 || stot > ntot) {
+            return new Matrix(0, 0);
+        }
+        Matrix nset = classSplits(sn, ind, ntot, R);
+
+        List<Matrix> subspaces = new LinkedList<Matrix>();
+        int maxw = 0;
+        for (int j = 0; j < nset.getNumRows(); j++) {
+            Matrix nj = Matrix.extractRows(nset, j, j + 1, null);
+            Matrix sset;
+            if (stot == 0) {
+                sset = new Matrix(1, R);
+                sset.zero();
+            } else {
+                // s must be drawn from the jobs actually present, which is what
+                // multichoosecon expresses.
+                sset = Maths.multichoosecon(nj, stot);
+            }
+            for (int k = 0; k < sset.getNumRows(); k++) {
+                Matrix sk = Matrix.extractRows(sset, k, k + 1, null);
+                Matrix sjk = fromMarginalAndStarted(sn, ind, nj, sk);
+                if (sjk == null || sjk.getNumRows() == 0) {
+                    continue;
+                }
+                subspaces.add(sjk);
+                maxw = Math.max(maxw, sjk.getNumCols());
+            }
+        }
+        return stackLeftPadded(subspaces, maxw);
+    }
+
+    /** Class splits of NTOT the node can hold, honouring classcap. */
+    private static Matrix classSplits(NetworkStruct sn, int ind, int ntot, int R) {
+        if (ntot == 0) {
+            // The empty split is the one the per-discipline empty-state branches
+            // of fromMarginal already answer; do not re-derive their widths here.
+            Matrix z = new Matrix(1, R);
+            z.zero();
+            return z;
+        }
+        Matrix all = Maths.multichoose(R, ntot);
+        double[] ccap = new double[R];
+        boolean isStation = sn.isstation.get(ind) == 1;
+        int ist = isStation ? (int) sn.nodeToStation.get(ind) : -1;
+        for (int r = 0; r < R; r++) {
+            ccap[r] = (isStation && sn.classcap != null && sn.classcap.getNumRows() > ist)
+                    ? sn.classcap.get(ist, r) : Double.POSITIVE_INFINITY;
+        }
+        List<Integer> keep = new LinkedList<Integer>();
+        for (int j = 0; j < all.getNumRows(); j++) {
+            boolean ok = true;
+            for (int r = 0; r < R; r++) {
+                if (all.get(j, r) > ccap[r]) {
+                    ok = false;
+                    break;
+                }
+            }
+            if (ok) {
+                keep.add(Integer.valueOf(j));
+            }
+        }
+        Matrix out = new Matrix(keep.size(), R);
+        int row = 0;
+        for (Integer j : keep) {
+            for (int r = 0; r < R; r++) {
+                out.set(row, r, all.get(j.intValue(), r));
+            }
+            row++;
+        }
+        return out;
+    }
+
+    /** Stack sub-spaces of different width, padding the narrow ones on the left. */
+    private static Matrix stackLeftPadded(List<Matrix> subspaces, int maxw) {
+        if (subspaces.isEmpty()) {
+            return new Matrix(0, 0);
+        }
+        int rows = 0;
+        for (Matrix m : subspaces) {
+            rows += m.getNumRows();
+        }
+        Matrix space = new Matrix(rows, maxw);
+        space.zero();
+        int at = 0;
+        for (Matrix m : subspaces) {
+            int shift = maxw - m.getNumCols();
+            for (int i = 0; i < m.getNumRows(); i++) {
+                for (int j = 0; j < m.getNumCols(); j++) {
+                    space.set(at, shift + j, m.get(i, j));
+                }
+                at++;
+            }
+        }
+        return reverseRows(Maths.uniqueAndSort(space));
     }
 
     public static Matrix fromMarginalAndStarted(NetworkStruct sn, int ind, Matrix n, Matrix s) {
@@ -1498,84 +1649,28 @@ public class FromMarginal implements Serializable {
                         }
                     }
 
-                    sizeEstimator = Maths.multinomialln(n);
-                    sizeEstimator = FastMath.round(sizeEstimator / FastMath.log(10));
-                    if (sizeEstimator > 2) {
-                        if (!optionsForce) {
-                            if (GlobalConstants.Verbose == VerboseLevel.DEBUG) {
-                                System.err.format("State space size is large: 1e%d states. Cannot generate valid state space. Initializing station %d from a default state.\n", (int) sizeEstimator, ind);
-                            }
-                            state = inbuf.copy();
-                            return state;
-                        }
-                    }
-
-                    // Gen permutation of their positions in the FCFS buffer
-                    mi = Maths.uniquePerms(inbuf);
+                    // One buffer ordering is enough: this is an INITIAL state and the
+                    // dedup/reverse at the end of the method keeps only the lexicographic
+                    // maximum, i.e. the descending-sorted buffer. Enumerating every
+                    // permutation first was factorial in the buffer content.
                     double sumN = n.sumSubMatrix(0, n.getNumRows(), 0, n.getNumCols());
                     double sumS = s.sumSubMatrix(0, s.getNumRows(), 0, s.getNumCols());
-                    if (mi.isEmpty()) {
-                        mi_buf = new Matrix(1, (int) FastMath.max(1, sumN - S.get(ist, 0)));
+                    if (sumN > sumS) {
+                        // inbuf is built in ascending class order, so its reversal is the
+                        // descending sort
+                        mi_buf = reverseCols(inbuf);
+                    } else { // set an empty buffer
+                        mi_buf = new Matrix(1, 1);
                         mi_buf.zero();
-                        state = new Matrix(1, (int) K.sumSubMatrix(0, K.getNumRows(), 0, K.getNumCols()));
-                        state.zero();
-                        Matrix newState = new Matrix(1, mi_buf.getNumCols() + state.getNumCols());
-                        for (int i = 0; i < mi_buf.getNumCols(); i++) {
-                            newState.set(0, i, mi_buf.get(0, i));
-                        }
-                        for (int i = mi_buf.getNumCols(); i < newState.getNumCols(); i++) {
-                            newState.set(0, i, state.get(0, i - mi_buf.getNumCols()));
-                        }
-                        state = newState.copy();
-                    } else {
-                        // mi_buf: class of job in buffer position i (0 = empty)
-                        if (sumN > sumS) {
-                            mi_buf = new Matrix(mi.getNumRows(), (int) sumN - (int) sumS);
-                            for (int row = 0; row < mi_buf.getNumRows(); row++) {
-                                for (int col = 0; col < sumN - sumS; col++) {
-                                    mi_buf.set(row, col, mi.get(row, col));
-                                }
-                            }
-                        } else {
-                            mi_buf = new Matrix(1, 1);
-                            mi_buf.set(0, 0, 0);
-                        }
                     }
-
-                    // mi_srv: class of jobs running in the server of i
-                    mi_srv = new Matrix(0, 0);
+                    // kState: number of class r jobs running in each service phase
+                    Matrix kState = new Matrix(0, 0);
                     for (int r = 0; r < R; r++) {
-                        Matrix new_mi_srv = new Matrix(1, mi_srv.getNumCols() + (int) s.get(0, r));
-                        for (int i = 0; i < mi_srv.getNumCols(); i++) {
-                            new_mi_srv.set(0, i, mi_srv.get(0, i));
-                        }
-                        for (int i = mi_srv.getNumCols(); i < new_mi_srv.getNumCols(); i++) {
-                            new_mi_srv.set(0, i, r);
-                        }
-                        mi_srv = new_mi_srv.copy();
+                        Matrix init = spaceClosedSingle(K.get(0, r), 0);
+                        init.set(0, 0, s.get(0, r));
+                        kState = Matrix.cartesian(kState, init);
                     }
-
-                    // si: number of class r jobs that are running
-                    Matrix si = s.copy();
-                    for (int b = 0; b < mi_buf.getNumRows(); b++) {
-                        for (int k = 0; k < si.getNumRows(); k++) {
-                            Matrix kState = new Matrix(0, 0);
-                            for (int r = 0; r < R; r++) {
-                                Matrix init = spaceClosedSingle(K.get(0, r), 0);
-                                init.set(0, 0, si.get(k, r));
-                                kState = Matrix.cartesian(kState, init);
-                            }
-                            Matrix miBufRep = Matrix.extractRows(mi_buf, b, b + 1, null).repmat(kState.getNumRows(), 1);
-                            miBufRep = miBufRep.concatCols(kState);
-                            if (state.isEmpty()) {
-                                state = miBufRep;
-                            } else {
-                                state = Matrix.concatRows(state, miBufRep, null);
-                            }
-
-                        }
-                    }
-                    space = state;
+                    space = mi_buf.concatCols(kState);
                     break;
                 case FCFSPR:
                 case FCFSPI:
@@ -1617,116 +1712,36 @@ public class FromMarginal implements Serializable {
                             inbuf_lpr = newInBuf.copy();
                         }
                     }
-                    sizeEstimator_lpr = Maths.multinomialln(n);
-                    sizeEstimator_lpr = FastMath.round(sizeEstimator_lpr / FastMath.log(10));
-                    if (sizeEstimator_lpr > 2) {
-                        if (!optionsForce) {
-                            System.err.format("State space size is very large: 1e%f states. Cannot generate valid state space. Initializing station %d from a default state.\n", sizeEstimator_lpr, ind);
-                            state = inbuf_lpr.copy();
-                            return state;
-                        }
+                    // As in the FCFS branch, only the lexicographic maximum survives the
+                    // dedup/reverse at the end of the method, so it is built directly:
+                    // buffer classes in descending order (inbuf is assembled in ascending
+                    // class order, hence the reversal), each buffered job in its last
+                    // service phase.
+                    if (n.elementSum() > s.elementSum()) {
+                        mi_buf_lpr = reverseCols(inbuf_lpr);
+                    } else { // set an empty buffer
+                        mi_buf_lpr = new Matrix(1, 1);
+                        mi_buf_lpr.zero();
                     }
-
-                    // gen permutation of their positions in the buffer
-                    mi_lpr = Maths.uniquePerms(inbuf_lpr);
-                    mi_buf_lpr = new Matrix(0, 0);
-                    if (mi_lpr.isEmpty()) {
-                        mi_buf_lpr = new Matrix(1, (int) Maths.max(1, n.elementSum() - S.get(ist)));
-                        state = new Matrix(1, (int) K.elementSum());
-                        state.zero();
-                        state = mi_buf_lpr.concatCols(state);
-                    } else {
-                        // mi_buf: class of job in buffer position i (0 = empty)
-                        if (n.elementSum() > s.elementSum()) {
-                            mi_buf_lpr = new Matrix(mi_lpr.getNumRows(), (int) (n.elementSum() - s.elementSum()));
-                            for (int row = 0; row < mi_buf_lpr.getNumRows(); row++) {
-                                for (int col = 0; col < mi_buf_lpr.getNumCols(); col++) {
-                                    mi_buf_lpr.set(row, col, mi_lpr.get(row, col));
-                                }
-                            }
-                        } else {
-                            mi_buf_lpr = new Matrix(1, 1);
-                            mi_buf_lpr.zero();
-                        }
-                    }
-
-                    // mi_srv: class of jobs running in the server of i
-                    mi_srv_lpr = new Matrix(0, 0);
+                    // kStateLpr: number of class r jobs running in each service phase
+                    Matrix kStateLpr = new Matrix(0, 0);
                     for (int r = 0; r < R; r++) {
-                        if (n.get(0, r) > 0) {
-                            Matrix newMiSrv = new Matrix(1, mi_srv_lpr.getNumCols() + (int) s.get(0, r));
-                            for (int i = 0; i < mi_srv_lpr.getNumCols(); i++) {
-                                newMiSrv.set(0, i, mi_srv_lpr.get(0, i));
-                            }
-                            for (int i = mi_srv_lpr.getNumCols(); i < newMiSrv.getNumCols(); i++) {
-                                newMiSrv.set(0, i, r + 1);
-                            }
-                            mi_srv_lpr = newMiSrv.copy();
+                        Matrix init = spaceClosedSingle(K.get(r), 0);
+                        init.set(0, 0, s.get(0, r));
+                        kStateLpr = Matrix.cartesian(kStateLpr, init);
+                    }
+                    // buffer slots interleave (class, phase); an empty slot carries phase 0
+                    int nbufLpr = mi_buf_lpr.getNumCols();
+                    Matrix bufState = new Matrix(1, 2 * nbufLpr);
+                    bufState.zero();
+                    for (int j = 0; j < nbufLpr; j++) {
+                        double job = mi_buf_lpr.get(0, j);
+                        bufState.set(0, 2 * j, job);
+                        if (job > 0) {
+                            bufState.set(0, 2 * j + 1, K.get((int) job - 1));
                         }
                     }
-
-
-                    // si: number of class r jobs that are running
-                    Matrix si_lpr = s.copy();
-
-                    for (int b = 0; b < mi_buf_lpr.getNumRows(); b++) {
-                        for (int k = 0; k < si_lpr.getNumRows(); k++) {
-                            Matrix kState = new Matrix(0, 0);
-                            for (int r = 0; r < R; r++) {
-                                Matrix init = spaceClosedSingle(K.get(r), 0);
-                                init.set(0, 0, si_lpr.get(k, r));
-                                kState = Matrix.cartesian(kState, init);
-                            }
-                            Matrix bkState = new Matrix(0, 0);
-                            Matrix jobsInBuffer = Matrix.extractRows(mi_buf_lpr, b, b + 1, null);
-                            for (int j = 0; j < jobsInBuffer.length(); j++) {
-                                double job = jobsInBuffer.get(j);
-                                if (job > 0) {
-                                    List<Double> phasesJRange = new ArrayList<Double>();
-                                    for (double i = 1; i <= K.get((int) job - 1); i++) {
-                                        phasesJRange.add(i);
-                                    }
-                                    // no transpose as constructor makes column vector
-                                    bkState = Matrix.cartesian(bkState, new Matrix(phasesJRange));
-                                } else {
-                                    bkState = new Matrix(1, 1);
-                                    bkState.zero();
-                                }
-                            }
-                            Matrix bufStateTmp = Matrix.cartesian(Matrix.extractRows(mi_buf_lpr, b, b + 1, null), bkState);
-                            // here we interleave positions of class and phases in buffer
-                            Matrix bufState = new Matrix(bufStateTmp.getNumRows(), bufStateTmp.getNumCols());
-                            bufState.zero();
-
-                            // bufstateTmp has classses followrd by phases. here we interleave the classes and phases
-                            int colForBufStateTmp = 0;
-                            for (int row = 0; row < bufState.getNumRows(); row++) {
-                                for (int col = 0; col < bufState.getNumCols(); col += 2) {
-                                    if (colForBufStateTmp < mi_buf_lpr.getNumCols()) {
-                                        bufState.set(row, col, bufStateTmp.get(row, colForBufStateTmp));
-                                        colForBufStateTmp++;
-                                    }
-                                }
-                                colForBufStateTmp = 0;
-                            }
-                            colForBufStateTmp = mi_buf_lpr.getNumCols();
-                            for (int row = 0; row < bufState.getNumRows(); row++) {
-                                for (int col = 1; col < bufState.getNumCols(); col += 2) {
-                                    if (colForBufStateTmp < bufStateTmp.getNumCols()) {
-                                        bufState.set(row, col, bufStateTmp.get(row, colForBufStateTmp));
-                                        colForBufStateTmp++;
-                                    }
-                                }
-                                colForBufStateTmp = mi_buf_lpr.getNumCols();
-                            }
-                            if (state.isEmpty()) {
-                                state = Matrix.cartesian(bufState, kState);
-                            } else {
-                                state = Matrix.concatRows(state, Matrix.cartesian(bufState, kState), null);
-                            }
-                        }
-                    }
-                    space = state;
+                    space = bufState.concatCols(kStateLpr);
                     break;
                 case OI:
                 case PAS: {
@@ -1753,7 +1768,7 @@ public class FromMarginal implements Serializable {
                                 viPas = newVi.copy();
                             }
                         }
-                        Matrix miPas = Maths.uniquePerms(viPas);
+                        Matrix miPas = Maths.multisetPerms(viPas);
                         space = new Matrix(miPas.getNumRows(), Wpas);
                         space.zero();
                         for (int row = 0; row < miPas.getNumRows(); row++)
@@ -1772,7 +1787,8 @@ public class FromMarginal implements Serializable {
                         state = Matrix.cartesian(state, init);
                     }
                     space = Matrix.cartesian(space, state);
-                    System.err.format("The scheduling policy does not admit a discrete state space");
+                    InputOutput.line_warning(mfilename(new Object() {
+                    }), "The scheduling policy does not admit a discrete state space.\n");
                     break;
             }
 
@@ -2112,6 +2128,16 @@ public class FromMarginal implements Serializable {
             for (int j = 0; j < m.getNumCols(); j++) {
                 out.set(i, j, m.get(m.getNumRows() - 1 - i, j));
             }
+        }
+        return out;
+    }
+
+    /** Reverses the columns of a single-row matrix. */
+    private static Matrix reverseCols(Matrix m) {
+        int c = m.getNumCols();
+        Matrix out = new Matrix(1, c);
+        for (int j = 0; j < c; j++) {
+            out.set(0, j, m.get(0, c - 1 - j));
         }
         return out;
     }

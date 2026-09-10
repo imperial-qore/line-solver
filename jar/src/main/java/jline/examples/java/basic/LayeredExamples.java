@@ -17,10 +17,10 @@ import jline.solvers.SolverOptions;
 import java.util.Scanner;
 
 /**
- * Layered network examples mirroring the Kotlin notebooks in layeredModel.
+ * Layered network examples mirroring the example notebooks in layeredModel.
  * <p>
- * This class contains Java implementations that mirror the Kotlin notebook examples
- * found in jar/src/main/kotlin/jline/examples/kotlin/basic/layeredModel/. Each method 
+ * This class contains Java implementations that mirror the example notebooks
+ * found in jar/src/main/java/jline/examples/java/basic/layeredModel/. Each method
  * demonstrates a specific layered network concept using models from the basic package.
  * <p>
  * The examples cover:
@@ -55,13 +55,34 @@ public class LayeredExamples {
      * Demonstrates fundamental layered network concepts with
      * processors, tasks, and activity precedence.
      */
+    /**
+     * A processor whose servers are not interchangeable (lqn_server_pools).
+     * <p>
+     * Prints the fully-compatible pool, which is the neutral declaration, and
+     * then the compatibility graph, under which neither task reaches more than
+     * two of the three servers.
+     */
+    public static void lqn_server_pools() throws Exception {
+        SolverOptions opt = LN.defaultOptions();
+        // a compatibility declaration is a station rate law, which only the
+        // class-switching layerings can carry
+        opt.method = "srvn.cs";
+
+        System.out.println("--- homogeneous pool on P1 ---");
+        new LN(LayeredModel.lqn_server_pools(false), opt).getAvgTable().print();
+
+        System.out.println("--- compatibility pool on P1 ---");
+        new LN(LayeredModel.lqn_server_pools(true), opt).getAvgTable().print();
+
+        pauseForUser();
+    }
+
     public static void lqn_basic() throws Exception {
-        LayeredNetwork model = LayeredModel.lqn_serial();
-        
-        LQNS solver = new LQNS(model);
-        AvgTable avgTable = solver.getAvgTable();
-        avgTable.print();
-        
+        LayeredNetwork model = LayeredModel.lqn_basic();
+
+        // The reference solves this with the layered solver on its default layers.
+        new LN(model).getAvgTable().print();
+
         pauseForUser();
     }
     
@@ -141,11 +162,16 @@ public class LayeredExamples {
      */
     public static void lqn_twotasks() throws Exception {
         LayeredNetwork model = LayeredModel.lqn_twotasks();
-        
-        LQNS solver = new LQNS(model);
-        AvgTable avgTable = solver.getAvgTable();
-        avgTable.print();
-        
+
+        try {
+            new LQNS(model).getAvgTable().print();
+        } catch (Exception e) {
+            System.out.println("LQNS failed: " + e.getMessage());
+        }
+        // NC LAYERS, NOT THE DEFAULT: MVA layers and NC layers are different fixed
+        // points, so the layer solver the reference pins is part of the golden.
+        new LN(model, (subModel) -> new NC(subModel, "verbose", false)).getAvgTable().print();
+
         pauseForUser();
     }
     
@@ -166,18 +192,17 @@ public class LayeredExamples {
     }
     
     /**
-     * Function-oriented layered network (lqn_function.ipynb).
+     * Layered network with a setup / delay-off task (lqn_setup.ipynb).
      * <p>
-     * Complex enterprise application modeling with
-     * multiple user types and request handlers.
+     * The servers of task F2 switch off when idle and pay a setup
+     * time when a request reactivates them.
      */
-    public static void lqn_function() throws Exception {
-        LayeredNetwork model = LayeredModel.lqn_function();
-        
-        LQNS solver = new LQNS(model);
-        AvgTable avgTable = solver.getAvgTable();
-        avgTable.print();
-        
+    public static void lqn_setup() throws Exception {
+        LayeredNetwork model = LayeredModel.lqn_setup();
+
+        // The reference drives MVA layers, which is what its golden holds.
+        new LN(model, SolverType.MVA).getAvgTable().print();
+
         pauseForUser();
     }
     
@@ -189,11 +214,14 @@ public class LayeredExamples {
      */
     public static void lqn_workflows() throws Exception {
         LayeredNetwork model = LayeredModel.lqn_workflows();
-        
-        LQNS solver = new LQNS(model);
-        AvgTable avgTable = solver.getAvgTable();
-        avgTable.print();
-        
+
+        try {
+            new LQNS(model).getAvgTable().print();
+        } catch (Exception e) {
+            System.out.println("LQNS failed: " + e.getMessage());
+        }
+        new LN(model).getAvgTable().print();
+
         pauseForUser();
     }
     
@@ -205,11 +233,15 @@ public class LayeredExamples {
      */
     public static void lqn_ofbiz() throws Exception {
         LayeredNetwork model = LayeredModel.lqn_ofbiz();
-        
-        LQNS solver = new LQNS(model);
-        AvgTable avgTable = solver.getAvgTable();
-        avgTable.print();
-        
+
+        try {
+            new LQNS(model).getAvgTable().print();
+        } catch (Exception e) {
+            System.out.println("LQNS failed: " + e.getMessage());
+        }
+        // NC layers: the golden keys this row LN(NC).
+        new LN(model, (subModel) -> new NC(subModel, "verbose", false)).getAvgTable().print();
+
         pauseForUser();
     }
 
@@ -269,9 +301,9 @@ public class LayeredExamples {
         }
         
         try {
-            lqn_function();
+            lqn_setup();
         } catch (Exception e) {
-            System.err.println("lqn_function failed: " + e.getMessage());
+            System.err.println("lqn_setup failed: " + e.getMessage());
             e.printStackTrace();
         }
         

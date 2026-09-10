@@ -163,9 +163,20 @@ def fj_tail_forktail(ET, VT, K=1, p=99, P=None):
 
         xlo = -b * np.log(1.0 - p**(1.0/(Kv.min()*a)))
         xhi = -b * np.log(1.0 - p**(1.0/(Kv.max()*a)))
-        if xlo == xhi:
-            return float(xlo), a, b
-        xp = brentq(mixres, min(xlo, xhi), max(xlo, xhi), xtol=1e-14, rtol=1e-14)
+        lo, hi = min(xlo, xhi), max(xlo, xhi)
+        if lo == hi:
+            return float(lo), a, b
+        # G(x)^(K*a) decreases in K, so the mixture obeys mixres(lo) <= 0 <=
+        # mixres(hi) exactly -- with EQUALITY when P puts all its mass on Kmin
+        # or on Kmax. There the root sits ON an endpoint, the residual there is
+        # roundoff of either sign rather than the strict straddle brentq
+        # demands, and the endpoint is already the answer.
+        flo, fhi = mixres(lo), mixres(hi)
+        if flo >= 0.0:
+            return float(lo), a, b
+        if fhi <= 0.0:
+            return float(hi), a, b
+        xp = brentq(mixres, lo, hi, xtol=1e-14, rtol=1e-14)
         return float(xp), a, b
 
     if ET.size == 1:
@@ -287,11 +298,20 @@ def forktail_percentiles(solver, percentiles, jobclass=None):
             warnings.warn(
                 "ForkTail is a heavy-traffic approximation; the busiest branch is at utilization "
                 f"{rho.max():.2f}, so the tail is likely under-predicted.")
-        values = np.array([fj_tail_forktail(ET, VT, None, p)[0] for p in pcts])
+        # The request completes on the kreq-th branch, not on the last one: a
+        # quorum join fires early and the stragglers are discarded. Reading the
+        # maximum there returns the AND-join tail under a quorum's name, which
+        # is the same number for every k. see fj_tail_ordstat
+        from .fj_tail_ordstat import fj_tail_ordstat
+        from .sn_join_quorum import sn_join_quorum
+        kreq = sn_join_quorum(sn, join_idx, r, len(branches))
+        values = np.array([fj_tail_ordstat(ET, VT, None, p, kreq)[0] for p in pcts])
         PercRT.append({'class': classnames[r],
                        'percentiles': pcts / 100.0 if np.any(pcts > 1) else pcts,
                        'values': values,
-                       'method': 'forktail'})
+                       'quorum': kreq,
+                       'nbranches': len(branches),
+                       'method': 'forktail-quorum' if kreq < len(branches) else 'forktail'})
         for pi, p in enumerate(pcts):
             rows.append({'JobClass': classnames[r],
                          'Percentile': p/100.0 if p > 1 else p,

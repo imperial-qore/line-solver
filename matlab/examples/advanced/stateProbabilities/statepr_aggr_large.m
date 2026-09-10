@@ -76,12 +76,14 @@ for i=1:M
 end
 state = model.getState;
 
-solver = CTMC(model,options);
+solver = CTMC(model, 'exact',options);
 for i=M
     Pr = solver.getProbAggr(node{i});
     fprintf(1,'Station %d is in state %s with probability %.15g\n',i,mat2str(state{i}),Pr);
 end
 Pr_ctmc = Pr;
+% Echoed at full precision, mirroring the Python twin's `print('Pr_ctmc ='); print(Pr_ctmc)`.
+fprintf(1,'Pr_ctmc =\n%.15g\n',Pr_ctmc);
 
 solver = NC(model,options);
 for i=M

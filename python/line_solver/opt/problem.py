@@ -256,13 +256,17 @@ class OptimizationProblem:
         """Check if problem specification is valid."""
         return len(self.validate()) == 0
 
-    def solve(self, **solver_options) -> OptimizationResult:
+    def solve(self, options=None, **solver_options) -> OptimizationResult:
         """
         Solve the optimization problem.
 
         Uses LineOptSolver with differential evolution.
 
         Args:
+            options: An optional LineOptSolverOptions, as MATLAB's
+                `problem.solve(options)` takes; its entries are merged UNDER the
+                keyword arguments, so an explicit keyword still wins. Passing it
+                positionally is what lets an `opt.` script transliterate.
             **solver_options: Options passed to LineOptSolver
 
         Returns:
@@ -274,6 +278,18 @@ class OptimizationProblem:
         errors = self.validate()
         if errors:
             raise ValueError(f"Invalid problem: {', '.join(errors)}")
+
+        if options is not None:
+            if hasattr(options, 'toDict'):
+                base = dict(options.toDict())
+            elif isinstance(options, dict):
+                base = dict(options)
+            else:
+                raise TypeError(
+                    "solve() takes a LineOptSolverOptions or a dict of options, got %s"
+                    % type(options).__name__)
+            base.update(solver_options)
+            solver_options = base
 
         solver = LineOptSolver(self, **solver_options)
         return solver.solve()

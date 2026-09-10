@@ -5,6 +5,7 @@ Includes metrics extraction, FCFS approximation, and validation utilities.
 """
 
 from .metrics import (
+    fluid_visited_pairs,
     extract_metrics_from_handler_result,
     extract_transient_metrics,
     compute_response_times,
@@ -21,6 +22,7 @@ from .ratemult import (
 )
 
 __all__ = [
+    'fluid_visited_pairs',
     'extract_metrics_from_handler_result',
     'extract_transient_metrics',
     'compute_response_times',

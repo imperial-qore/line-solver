@@ -30,7 +30,8 @@ import java.util.function.Function;
  * <p>The builder produces models with the same topology as
  * {@link Network#cluster(Matrix, Matrix, SchedStrategy[], Matrix, RoutingStrategy)}
  * (open) or {@link Network#clusterClosed(Matrix, Matrix, Matrix, SchedStrategy[], Matrix, RoutingStrategy)}
- * (closed), and adds:
+ * (closed) or {@link Network#clusterMixed(Matrix, Matrix, Matrix, Matrix, SchedStrategy[], Matrix, RoutingStrategy)}
+ * (mixed, selected by {@link #setMixed(double[], int[], double[])}), and adds:
  * <ul>
  *   <li>{@link #compareDispatching(Class, RoutingStrategy...)} — solve the model under
  *       multiple dispatching policies and return the average tables side-by-side;</li>
@@ -52,6 +53,7 @@ public class Cluster {
     private SchedStrategy scheduling;
     private RoutingStrategy dispatching;
     private boolean closed;
+    private boolean mixed;              // open classes first, then closed ones
     private int[] population;
     private double[] thinkTimes;
     private double[][] dispatchProbs;   // PROB: rows = classes (1 broadcasts), cols = servers
@@ -74,6 +76,23 @@ public class Cluster {
         this.scheduling = SchedStrategy.PS;
         this.dispatching = RoutingStrategy.RAND;
         this.closed = false;
+        this.mixed = false;
+    }
+
+    /** Number of open classes in the current configuration. */
+    private int numOpenClasses() {
+        return closed ? 0 : arrivalRates.length;
+    }
+
+    /** Number of closed classes in the current configuration. */
+    private int numClosedClasses() {
+        if (!closed && !mixed) return 0;
+        return population != null ? population.length : 0;
+    }
+
+    /** Total number of classes in the current configuration. */
+    private int numClasses() {
+        return numOpenClasses() + numClosedClasses();
     }
 
     /**
@@ -200,7 +219,7 @@ public class Cluster {
      */
     public Cluster setServiceSCV(double scv) {
         if (scv <= 0) throw new IllegalArgumentException("scv must be positive");
-        int R = closed ? (population != null ? population.length : 1) : arrivalRates.length;
+        int R = Math.max(numClasses(), 1);
         this.serviceScvs = new double[numStations][R];
         for (int i = 0; i < numStations; i++) {
             for (int r = 0; r < R; r++) this.serviceScvs[i][r] = scv;
@@ -274,15 +293,52 @@ public class Cluster {
             throw new IllegalArgumentException("population and thinkTimes must have equal length");
         }
         this.closed = true;
+        this.mixed = false;
         this.population = population.clone();
         this.thinkTimes = thinkTimes.clone();
         return this;
     }
 
+    /**
+     * Switches the cluster to the mixed variant, in which open and closed classes share the
+     * dispatcher and the servers. Classes are ordered open first, so the service-rate and
+     * service-SCV matrices have {@code arrivalRates.length + population.length} columns.
+     *
+     * @param arrivalRates per-class arrival rates of the open classes
+     * @param population   per-class population of the closed classes
+     * @param thinkTimes   per-class think time of the closed classes
+     */
+    public Cluster setMixed(double[] arrivalRates, int[] population, double[] thinkTimes) {
+        if (arrivalRates.length == 0 || population.length == 0) {
+            throw new IllegalArgumentException(
+                    "a mixed cluster needs at least one open and one closed class");
+        }
+        for (double l : arrivalRates) {
+            if (l <= 0) throw new IllegalArgumentException("arrival rate must be positive");
+        }
+        if (population.length != thinkTimes.length) {
+            throw new IllegalArgumentException("population and thinkTimes must have equal length");
+        }
+        this.arrivalRates = arrivalRates.clone();
+        this.population = population.clone();
+        this.thinkTimes = thinkTimes.clone();
+        this.closed = false;
+        this.mixed = true;
+        return this;
+    }
+
+    /**
+     * Mixed cluster with a single open and a single closed class.
+     */
+    public Cluster setMixed(double arrivalRate, int population, double thinkTime) {
+        return setMixed(new double[]{arrivalRate}, new int[]{population},
+                new double[]{thinkTime});
+    }
+
     /** Builds the {@link Network} model from the current configuration. */
     public Network build() {
         int M = numStations;
-        int R = closed ? population.length : arrivalRates.length;
+        int R = numClasses();
 
         SchedStrategy[] strategies = new SchedStrategy[M];
         for (int i = 0; i < M; i++) strategies[i] = scheduling;
@@ -310,7 +366,19 @@ public class Cluster {
         RoutingStrategy factoryDispatch = needsPostProcess ? RoutingStrategy.RAND : dispatching;
 
         Network model;
-        if (closed) {
+        if (mixed) {
+            int Ro = numOpenClasses();
+            int Rc = numClosedClasses();
+            Matrix lambda = new Matrix(1, Ro);
+            for (int r = 0; r < Ro; r++) lambda.set(0, r, arrivalRates[r]);
+            Matrix N = new Matrix(1, Rc);
+            Matrix Z = new Matrix(1, Rc);
+            for (int c = 0; c < Rc; c++) {
+                N.set(0, c, population[c]);
+                Z.set(0, c, thinkTimes[c]);
+            }
+            model = Network.clusterMixed(lambda, N, Z, D, strategies, S, factoryDispatch);
+        } else if (closed) {
             Matrix N = new Matrix(1, R);
             Matrix Z = new Matrix(1, R);
             for (int r = 0; r < R; r++) {
@@ -348,10 +416,10 @@ public class Cluster {
     private void applyDistributionScvs(Network model, int R) {
         List<JobClass> classes = model.getClasses();
 
-        // Arrival SCVs (open networks only).
+        // Arrival SCVs (open classes only, which come first in the order).
         if (!closed && arrivalScvs != null) {
             Source src = (Source) model.getNodeByName("Source");
-            for (int r = 0; r < R; r++) {
+            for (int r = 0; r < numOpenClasses(); r++) {
                 double scv = arrivalScvs[r];
                 if (scv != 1.0) {
                     src.setArrival(classes.get(r), APH.fitMeanAndSCV(1.0 / arrivalRates[r], scv));
@@ -477,10 +545,11 @@ public class Cluster {
     public Map<Double, NetworkAvgTable> sweepArrivalRate(double[] rates,
                                                          Function<Network, NetworkAvgTable> solverFactory) {
         if (closed) {
-            throw new IllegalStateException("sweepArrivalRate is only defined for open clusters");
+            throw new IllegalStateException(
+                    "sweepArrivalRate is only defined for clusters with open classes");
         }
         if (arrivalRates.length != 1) {
-            throw new IllegalStateException("sweepArrivalRate requires a single class");
+            throw new IllegalStateException("sweepArrivalRate requires a single open class");
         }
         Map<Double, NetworkAvgTable> out = new LinkedHashMap<>();
         double saved = arrivalRates[0];

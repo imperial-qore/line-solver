@@ -53,10 +53,13 @@ state = model.getState;
 %% getProbAggr
 % marginal probabilities for the aggregated state space where station i
 % is specified by a tuple (nir), r=1,...R, R being the number of classes.
-solver = CTMC(model,options);
+solver = CTMC(model, 'exact',options);
 Pr = solver.getProbAggr(node{M});
 fprintf(1,'Station %d is in state %s with probability %d\n',i,mat2str(state{i}),Pr);
-Pmarga_ctmc = Pr
+Pmarga_ctmc = Pr;
+% Printed explicitly rather than by unsuppressed display: format short renders
+% 4 decimals, which the Python twin's full-precision print cannot match.
+fprintf(1,'Pmarga_ctmc =\n%.15g\n',Pmarga_ctmc);
 
 solver = NC(model,options);
 Pr = solver.getProbAggr(node{M});
@@ -76,7 +79,7 @@ Pmarga_jmt = Pr
 %% getProb
 % marginal probabilities for the detailed state space, which tracks also
 % the phases of service
-solver = CTMC(model,options);
+solver = CTMC(model, 'exact',options);
 Pr = solver.getProb(node{M});
 fprintf(1,'Station %d is in state %s with probability %d\n',i,mat2str(state{i}),Pr);
 Pmarg_ctmc = Pr
@@ -93,7 +96,7 @@ Pmarg_ssa = Pr
 %% getProbSysAggr
 % joint state probabilities for the aggregated state space where station i
 % is specified by a tuple (nir), r=1,...R, R being the number of classes.
-solver = CTMC(model,options);
+solver = CTMC(model, 'exact',options);
 Pr = solver.getProbSysAggr();
 Pjointa_ctmc = Pr
 
@@ -112,7 +115,7 @@ Pjointa_jmt = Pr
 %% getProbSys
 % joint state probabilities for the detailed state space, which tracks also
 % the phases of service
-solver = CTMC(model,options);
+solver = CTMC(model, 'exact',options);
 Pr = solver.getProbSys();
 Pjoint_ctmc = Pr
 

@@ -1,7 +1,6 @@
 package jline.examples.java.advanced;
 
 import jline.lang.Network;
-import jline.lang.constant.SolverType;
 import jline.lang.layered.LayeredNetwork;
 import jline.solvers.NetworkSolver;
 import jline.solvers.ln.LN;
@@ -11,8 +10,8 @@ import java.util.Scanner;
 /**
  * Examples demonstrating layered queueing networks with contention queues (CQ).
  * 
- * This class provides Java implementations corresponding to the Kotlin notebooks
- * in jline.examples.kotlin.advanced.layeredCQ package.
+ * This class provides Java implementations corresponding to the example notebooks
+ * in jline.examples.java.advanced.layeredCQ package.
  */
 public class LayeredCQExamples {
 
@@ -50,7 +49,10 @@ public class LayeredCQExamples {
     public static void lcq_singlehost() throws Exception {
         LayeredNetwork model = LayeredCQModel.lcq_singlehost();
         
-        LN solver = new LN(model, SolverType.MVA);
+        // MVA LAYERS, as the reference pins: MVA layers and NC layers are
+        // different fixed points, and on this model they part company by 4.5%.
+        LN solver = new LN(model, (subModel) -> new jline.solvers.mva.MVA(subModel, "verbose",
+                jline.VerboseLevel.SILENT));
         
         try {
             solver.getAvgTable().print();
@@ -78,10 +80,16 @@ public class LayeredCQExamples {
     public static void lcq_threehosts() throws Exception {
         LayeredNetwork model = LayeredCQModel.lcq_threehosts();
         
-        LN solver = new LN(model, SolverType.MVA);
+        // NC layers FIRST, then MVA layers: the reference runs both, and the
+        // golden holds the first table (goldens/corpus.json multiModelExamples).
+        LN ncLayers = new LN(model, (subModel) -> new jline.solvers.nc.NC(subModel, "verbose",
+                jline.VerboseLevel.SILENT));
+        LN mvaLayers = new LN(model, (subModel) -> new jline.solvers.mva.MVA(subModel, "verbose",
+                jline.VerboseLevel.SILENT));
         
         try {
-            solver.getAvgTable().print();
+            ncLayers.getAvgTable().print();
+            mvaLayers.getAvgTable().print();
         } catch (Exception e) {
         }
         

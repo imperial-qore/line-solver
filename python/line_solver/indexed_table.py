@@ -227,6 +227,14 @@ class IndexedTable:
             return False
         if isinstance(arg, (list, tuple, dict, slice)):
             return False
+        # pandas/numpy indexers are NOT model objects: a boolean mask, an Index or
+        # an array must reach self.data and keep DataFrame semantics. Without this
+        # they fall through to filterBy, where a pd.Series matches the
+        # `hasattr(obj, 'name')` fallback -- a Series carries a .name attribute --
+        # and comes back as a SILENTLY EMPTY frame. That is what made
+        # `table[table['Station'] == 'Q']` return nothing.
+        if isinstance(arg, (pd.Series, pd.Index, pd.DataFrame, np.ndarray)):
+            return False
         # Assume everything else is an object
         return True
 
@@ -321,6 +329,36 @@ class IndexedTable:
 
     def __str__(self):
         """Return string representation with MATLAB-style number formatting."""
+        return self._format_table()
+
+    def tabulate(self):
+        """The underlying DataFrame.
+
+        Callers written before this wrapper existed test `isinstance(t,
+        DataFrame)` and fall back to `t.tabulate()`, so a table that is neither
+        raises inside pandas' own `__getattr__` with a message naming DataFrame
+        rather than this class. Kept as the escape hatch that contract expects;
+        `.data` is the same object under its current name.
+        """
+        return self.data
+
+    def to_string(self, index=False, **kwargs):
+        """MATLAB-style rendering, so `print(t)` and `print(t.to_string())` agree.
+
+        WITHOUT THIS, `to_string` fell through `__getattr__` to pandas, which
+        formats to `display.precision` DECIMAL PLACES (5, set in __init__.py)
+        while every other codebase prints 5 SIGNIFICANT DIGITS. The two coincide
+        only for values of order 1: a cache hit rate of 0.024273 printed as
+        0.02427, one digit short, and the parity comparator read a 1.2e-4
+        relative gap against MATLAB's 0.024273 where the underlying values agreed
+        to twelve digits. It looked like a solver defect and was a formatter.
+
+        A caller that explicitly wants the index, or passes any other pandas
+        option, gets pandas' own rendering: this override exists to fix the
+        DEFAULT, not to reimplement `DataFrame.to_string`.
+        """
+        if index or kwargs:
+            return self.data.to_string(index=index, **kwargs)
         return self._format_table()
 
     def _format_table(self):

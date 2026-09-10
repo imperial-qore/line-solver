@@ -13,6 +13,7 @@ import jline.lang.processes.DiscreteDistribution;
 import jline.util.Pair;
 import jline.lang.reward.RewardFunction;
 import jline.util.SerializableFunction;
+import org.apache.commons.math3.complex.Complex;
 import jline.util.matrix.Matrix;
 import jline.util.matrix.MatrixCell;
 
@@ -38,7 +39,18 @@ public class NetworkStruct implements Copyable, Cloneable {
     public int nchains;
 
     public Map<JobClass, Map<JobClass, Matrix>> rtorig;
-    public Map<Station, Map<JobClass, SerializableFunction<Double, Double>>> lst;
+    /**
+     * Per (station, class) Laplace-Stieltjes transform of the arrival law at the
+     * source and of the service law elsewhere.
+     *
+     * COMPLEX, not real. A transform is evaluated off the real axis by anything
+     * that inverts it or locates its roots: the Abate-Whitt Euler sum walks a
+     * vertical line, and a matrix transform int exp(Ut) dF(t) is read off the
+     * spectrum of U, which is complex in general. A real-valued handle serves
+     * neither, so the field carries the complex overload and a real-argument
+     * caller passes Complex(s, 0) and takes getReal().
+     */
+    public Map<Station, Map<JobClass, SerializableFunction<Complex, Complex>>> lst;
     public Map<StatefulNode, Matrix> state;
     public Map<StatefulNode, Matrix> stateprior;
     public Map<StatefulNode, Matrix> space;
@@ -77,6 +89,16 @@ public class NetworkStruct implements Copyable, Cloneable {
     public Map<Station, SerializableFunction<Matrix, Matrix>> jdscaling;
     // Declared peak joint-dependent rate scaling per class, twin of cdscalingpeak.
     public Map<Station, Matrix> jdscalingpeak;
+    // Network-level globally state-dependent (Whittle) scaling phi(n): the
+    // argument is the FULL (nstations x nclasses) population matrix, not one
+    // station's slice, and the result is a scalar, an (M x 1) column or an
+    // (M x K) matrix of rate scalings. Null when the model declares none.
+    // See Network.setGlobalDependence.
+    public SerializableFunction<Matrix, Matrix> gdscaling;
+    // Declared (nstations x nclasses) peak of gdscaling, for Util=T*S/peak.
+    public Matrix gdscalingpeak;
+    // Open-class truncation used to materialize gdscaling onto the JSON wire; solving ignores it.
+    public int gdscalingcutoff = 10;
 
     // Impatience (customer abandonment) parameters - Reneging
     public Map<Station, Map<JobClass, ProcessType>> impatienceType;
@@ -152,11 +174,20 @@ public class NetworkStruct implements Copyable, Cloneable {
     public Matrix isstation;
     public Matrix isstateful;
     public Matrix isstatedep;
+
+    /**
+     * Krzesinski (1987) product-form state-dependent routing, in station
+     * indices; null unless a node declares it with Node.setStateDepRouting.
+     * Branch index 1 denotes the complement M-V and is unused. The node-indexed
+     * twin lives in nodeparam.get(entry).sdr, where the per-state routing
+     * function reads it. See _kb/16-state-dependent-routing.md
+     */
+    public jline.lang.StateDepRouting sdr;
     /**
      * Station-indexed mask of queue stations carrying setup/delay-off times
      * (function stations), as in MATLAB refreshStruct.m.
      */
-    public Matrix isfunction;
+    public Matrix hassetup;
     public Matrix nodeToStateful;
     public Matrix nodeToStation;
     public Matrix stationToNode;
@@ -207,7 +238,7 @@ public class NetworkStruct implements Copyable, Cloneable {
     public Matrix cap;
     public Matrix classcap;
     public int nregions;  // Number of finite capacity regions (F)
-    public MatrixCell region;  // CellMatrix of size F; region.get(f) is Matrix(M, R+1) where entry (i,r) is max jobs of class r at station i in region f; (i,R) is global max at station i; -1 = infinite
+    public MatrixCell region;  // CellMatrix(F); region.get(f)=Matrix(M,R+1); entry (i,r)=max jobs of class r at station i in region f; (i,R)=global max at station i; -1=infinite
     public Matrix regionrule;  // Matrix(F, R) where entry (f,r) is DropStrategy id for class r in region f
     public Matrix regionweight;  // Matrix(F, R) where entry (f,r) is class weight for class r in region f (default 1.0)
     public Matrix regionsz;  // Matrix(F, R) where entry (f,r) is class size/memory for class r in region f (default 1)

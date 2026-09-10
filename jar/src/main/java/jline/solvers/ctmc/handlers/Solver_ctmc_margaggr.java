@@ -9,6 +9,7 @@ import jline.io.InputOutput;
 import jline.lang.NetworkStruct;
 import jline.lang.state.State;
 import jline.lang.state.ToMarginal;
+import jline.VerboseLevel;
 import jline.solvers.SolverOptions;
 import jline.solvers.ctmc.ResultCTMC;
 import jline.solvers.ctmc.ResultCTMCMargAggr;
@@ -33,7 +34,11 @@ public final class Solver_ctmc_margaggr {
                 MatFileUtils.ensureWorkspaceDirectoryExists();
                 fname = MatFileUtils.genFilename("workspace");
                 MatFileUtils.saveCTMCWorkspace(SS, Q, SSq, fname);
-                System.out.println("\nCTMC generator and state space saved in: " + fname + ".mat");
+                // genFilename already ends in .mat, and the MATLAB twin routes this
+                // through line_printf, so it stays silent at VerboseLevel.SILENT.
+                if (options.verbose != VerboseLevel.SILENT) {
+                    System.out.println("\nCTMC generator and state space saved in: " + fname);
+                }
             } catch (Exception e) {
                 InputOutput.line_warning("solver_ctmc_margaggr",
                         "Could not save workspace to .mat file: %s", e.getMessage());

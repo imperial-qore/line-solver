@@ -93,14 +93,20 @@ for r=1:numOfClasses
                 subParameterNode2.setAttribute('classPath', 'jmt.engine.NetStrategies.QueuePutStrategies.TailStrategyPriority');
                 subParameterNode2.setAttribute('name', 'TailStrategyPriority');
             case SchedStrategy.EDD
-                % Note: JMT does not natively support EDD yet. This generates XML for future compatibility.
-                % For now, this will likely fall back to FCFS behavior in JMT execution.
+                % JMT 1.2.x serves EDD: EDDStrategy.class is in JMT.jar and
+                % orders the buffer by Job.getCurrentStationSoftDeadline. The
+                % due dates come from the <classSoftDeadlines> element
+                % saveClassSoftDeadlines writes on the node, WITHOUT WHICH THIS
+                % ARM ABORTS THE RUN rather than falling back to FCFS; see
+                % jmtDeadlineRefusal, which gates the model on it.
                 subParameterNode2 = simDoc.createElement('subParameter');
                 subParameterNode2.setAttribute('classPath', 'jmt.engine.NetStrategies.QueuePutStrategies.EDDStrategy');
                 subParameterNode2.setAttribute('name', 'EDDStrategy');
             case SchedStrategy.EDF
-                % Note: JMT does not natively support EDF yet. This generates XML for future compatibility.
-                % For now, this will likely fall back to FCFS behavior in JMT execution.
+                % Same due dates as EDD above, plus the preemption: EDFStrategy
+                % extends EDDStrategy and implements PreemptiveStrategy, so
+                % writeJSIM must also promote the server section to
+                % PreemptiveServer for this station.
                 subParameterNode2 = simDoc.createElement('subParameter');
                 subParameterNode2.setAttribute('classPath', 'jmt.engine.NetStrategies.QueuePutStrategies.EDFStrategy');
                 subParameterNode2.setAttribute('name', 'EDFStrategy');

@@ -2,6 +2,7 @@ function result = runRemoteLQNS(self, filename, options)
 % RUNREMOTELQNS Execute LQNS via remote REST API
 %
 % @brief Executes LQNS solver via a remote Docker container running lqns-rest API
+% @param self The SolverLQNS instance
 % @param filename Path to the LQNX model file (without extension)
 % @param options Solver options including remote configuration
 % @return result Response from the remote server

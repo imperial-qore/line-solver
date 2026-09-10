@@ -105,9 +105,11 @@ for e in range(E):
 # This example illustrates the computation of the infinitesimal generator of the system.
 # %%
 # Create solvers for each submodel using CTMC
+# soptions.verbose = 0 in the MATLAB twin: the inner solver's banner must not
+# precede the environment's own table
 solvers = np.empty(E, dtype=object)
 for e in range(E):
-    solvers[e] = CTMC(envSubModel[e])
+    solvers[e] = CTMC(envSubModel[e], verbose=False)
 
 # Create environment solver
 envSolver = ENV(envModel, solvers)

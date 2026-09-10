@@ -281,6 +281,29 @@ def spaceGenerator_simple(sn, cutoff: Optional[float] = None) -> Tuple[np.ndarra
 
     return SS, SSh, sn, np.array([]), np.array([])
 
+def space_closed_single(M: int, N: int) -> np.ndarray:
+    """
+    Twin of MATLAB State.spaceClosedSingle: the ways to place N jobs over M
+    slots, one row each, in the row order of multichoose (first coordinate
+    ascending).
+
+    This is the lattice primitive the CTMC state space is built from, and the
+    same one the MAM background chain enumerates a block with, so callers that
+    need a closed population lattice must come here rather than roll their own
+    composition recursion.
+
+    Args:
+        M: number of slots (stations or phases)
+        N: number of jobs to place
+
+    Returns:
+        (C x M) integer array, C = nchoosek(N+M-1, M-1); no rows when M == 0
+    """
+    from ..pfqn import multichoose
+    if M == 0:
+        return np.zeros((0, 0), dtype=int)
+    return np.atleast_2d(np.asarray(multichoose(int(M), int(N)), dtype=int))
+
 def enumerate_all_populations(N: np.ndarray) -> np.ndarray:
     """
     Enumerate all population vectors n where 0 <= n[r] <= N[r].

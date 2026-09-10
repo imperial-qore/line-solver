@@ -7,14 +7,16 @@ package jline.cli;
 
 import jline.lang.Network;
 import jline.lang.NetworkStruct;
+import jline.lang.layered.LayeredNetwork;
 import jline.solvers.ldes.SolverLDES;
 import jline.solvers.ldes.LDESOptions;
 import jline.solvers.ldes.LDESResult;
+import jline.solvers.ldes.LNLDESResult;
 import jline.io.LineModelIO;
 import jline.io.LDESResultIO;
 
 /**
- * CLI for the standalone ldes.jar (LINE Discrete Event Simulator).
+ * CLI for the standalone ldes.jar (LDES simulation engine).
  *
  * <p>Usage: {@code java -jar ldes.jar solve model.json -o result.json [OPTIONS]}
  */
@@ -24,7 +26,7 @@ public class LdesCLI {
      * Prints help for the solve subcommand.
      */
     static void printHelp() {
-        System.out.println("LDES - LINE Discrete Event Simulator");
+        System.out.println("LDES - discrete-event simulation engine for LINE models");
         System.out.println();
         System.out.println("USAGE:");
         System.out.println("  java -jar ldes.jar solve <model.json> -o <result.json> [OPTIONS]");
@@ -53,7 +55,10 @@ public class LdesCLI {
         System.out.println("  --timespan <T0,T1>     Transient analysis time span");
         System.out.println("  --initsol <v1,v2,...>  Initial placement, station-major [st0_cl0, st0_cl1, ...]");
         System.out.println("  --trajectory           Request trajectory data");
-        System.out.println("  --respt-samples        Export per-job response time samples (empirical CDF input)");
+        System.out.println("  --respt-samples        Export per-job response time samples (empirical CDF input);");
+        System.out.println("                         per (station, class) for a Network, per ENTRY for an LQN");
+        System.out.println("  --busyperiod <K>       Measure busy periods of orders 1..K per station and class");
+        System.out.println("  --busyperiod-subnet <i,j,...>  Also measure the joint busy period of these stations");
         System.out.println("  --slotted              Discrete-time mode: all intervals must fall on the slot lattice");
         System.out.println("  --slotlength <V>       Slot length in model time units, implies --slotted (default: 1)");
         System.out.println("  -h, --help             Show this help");
@@ -353,6 +358,35 @@ public class LdesCLI {
                 case "--export-histogram":
                     opts.exportStateHistogram = true;
                     break;
+                case "--busyperiod":
+                    if (i + 1 >= args.length) {
+                        System.err.println("Error: --busyperiod requires the highest order.");
+                        return 1;
+                    }
+                    try {
+                        opts.busyPeriodOrders = Integer.parseInt(args[++i]);
+                    } catch (NumberFormatException e) {
+                        System.err.println("Error: Invalid busyperiod value.");
+                        return 1;
+                    }
+                    break;
+                case "--busyperiod-subnet":
+                    if (i + 1 >= args.length) {
+                        System.err.println("Error: --busyperiod-subnet requires comma-separated station indexes.");
+                        return 1;
+                    }
+                    try {
+                        String[] stationIdx = args[++i].split(",");
+                        int[] subnet = new int[stationIdx.length];
+                        for (int v = 0; v < stationIdx.length; v++) {
+                            subnet[v] = Integer.parseInt(stationIdx[v].trim());
+                        }
+                        opts.busyPeriodSubnets.add(subnet);
+                    } catch (NumberFormatException e) {
+                        System.err.println("Error: Invalid busyperiod-subnet values.");
+                        return 1;
+                    }
+                    break;
                 case "--initsol":
                     if (i + 1 >= args.length) {
                         System.err.println("Error: --initsol requires comma-separated values.");
@@ -408,8 +442,32 @@ public class LdesCLI {
 
         try {
             Object loaded = LineModelIO.load(modelPath);
+
+            // A LayeredNetwork takes its own engine, its own result container and
+            // its own document: its metrics are indexed by LQN element, not by
+            // (station, class), so nothing downstream of here is shared.
+            if (loaded instanceof LayeredNetwork) {
+                if (timespan != null) {
+                    System.err.println("Error: --timespan is a Network-path option; the layered "
+                            + "engine reports steady state only.");
+                    return 1;
+                }
+                if (trajectory) {
+                    System.err.println("Error: --trajectory is a Network-path option; the layered "
+                            + "engine records no station-level sample path.");
+                    return 1;
+                }
+                LayeredNetwork lnModel = (LayeredNetwork) loaded;
+                SolverLDES lnSolver = new SolverLDES(lnModel, opts);
+                lnSolver.getAvg();
+                LNLDESResult lnResult = (LNLDESResult) lnSolver.result;
+                LDESResultIO.saveLN(lnResult, lnModel.getStruct(), outputPath, resptSamples);
+                return 0;
+            }
+
             if (!(loaded instanceof Network)) {
-                System.err.println("Error: LDES currently supports Network models only (not LayeredNetwork).");
+                System.err.println("Error: LDES supports Network and LayeredNetwork models; got "
+                        + loaded.getClass().getSimpleName() + ".");
                 return 1;
             }
             Network model = (Network) loaded;

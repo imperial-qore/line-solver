@@ -188,6 +188,9 @@ class SchedStrategy(IntEnum):
     FSP = 36      # Fair Sojourn Protocol (virtual-PS finish time ranking)
     PAS = 37      # Pass-and-swap (order-independent queue with class swap graph)
     OI = 38       # Order-independent (pass-and-swap specialization with empty/zero swap graph)
+    # appended, not slotted next to FCFSPR: 43 is the first id free in all
+    # three Python SchedStrategy enums, and constants.toID is positional
+    FCFSPI = 43   # FCFS Preemptive Identical
 
 
 class RoutingStrategy(IntEnum):
@@ -202,7 +205,7 @@ class RoutingStrategy(IntEnum):
     JSQ = 4       # Join Shortest Queue
     FIRING = 5    # Firing (for Petri nets)
     SQ = 6  # K-Choices
-    RL = 7        # Reinforcement Learning
+    SDR = 7       # Krzesinski (1987) product-form state-dependent routing
     DISABLED = -1 # Disabled routing
 
 
@@ -258,7 +261,7 @@ class NetworkStruct:
         nodetype: List[NodeType] - Node types
         isstation: (N, 1) Boolean mask for stations
         isstateful: (N, 1) Boolean mask for stateful nodes
-        isfunction: (M, 1) Boolean mask, STATION-indexed: queue stations that
+        hassetup: (M, 1) Boolean mask, STATION-indexed: queue stations that
             carry setup/delay-off times (function stations)
         nodeToStation: (N, 1) Node index -> station index mapping
         nodeToStateful: (N, 1) Node index -> stateful index mapping
@@ -320,7 +323,11 @@ class NetworkStruct:
     isstation: np.ndarray = field(default_factory=lambda: np.array([]))
     isstateful: np.ndarray = field(default_factory=lambda: np.array([]))
     isstatedep: Optional[np.ndarray] = None  # (N, 3) - buffer, srv, routing
-    isfunction: np.ndarray = field(default_factory=lambda: np.array([]))
+    # Krzesinski (1987) product-form state-dependent routing; None unless a node
+    # declares it. Station-indexed; branch index 1 denotes the complement M-V and
+    # is unused. See _kb/16-state-dependent-routing.md
+    sdr: Optional[dict] = None
+    hassetup: np.ndarray = field(default_factory=lambda: np.array([]))
 
     # Node mappings (0-indexed)
     nodeToStation: np.ndarray = field(default_factory=lambda: np.array([]))
@@ -341,6 +348,13 @@ class NetworkStruct:
     cdscalingpeak: Optional[np.ndarray] = None  # (M, R) declared peak class-dependent rate scaling, for Util=T*S/peak
     jdscaling: Optional[Dict] = None  # joint-dependent (non-product-form) scaling functions eta_i
     jdscalingpeak: Optional[np.ndarray] = None  # (M, R) declared peak joint-dependent rate scaling, for Util=T*S/peak
+    # Network-level globally state-dependent (Whittle) scaling phi(n): the argument is
+    # the FULL (M, R) population matrix, not one station's slice, and the result is a
+    # scalar, an (M,) column or an (M, R) matrix. None when the model declares none.
+    # See Network.set_global_dependence.
+    gdscaling: Optional[Any] = None
+    gdscalingpeak: Optional[np.ndarray] = None  # (M, R) declared peak global rate scaling, for Util=T*S/peak
+    gdscalingcutoff: Optional[int] = None  # open-class truncation used to materialize gdscaling onto the JSON wire; solving ignores it
 
     # Class properties
     classprio: Optional[np.ndarray] = None  # (1, K) - class priorities
@@ -613,10 +627,16 @@ class NetworkStruct:
         return self.sched.get(station_id, SchedStrategy.FCFS)
 
     def has_multi_server(self) -> bool:
-        """Check if any station has multiple servers."""
+        """Check if any station has multiple servers.
+
+        Infinite servers are delays, not multiserver queues: counting them made
+        every model with a Delay read as multiserver (MATLAB sn_has_multi_server
+        filters them out).
+        """
         if self.nservers is None or len(self.nservers) == 0:
             return False
-        return np.any(self.nservers > 1)
+        nservers = np.asarray(self.nservers).flatten()
+        return bool(np.any(nservers[np.isfinite(nservers)] > 1))
 
     def has_load_dependence(self) -> bool:
         """Check if model has load-dependent service rates."""

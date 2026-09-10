@@ -25,8 +25,8 @@ avg_table_fcfs = MVA(cluster.build()).get_avg_table()
 print(avg_table_fcfs)
 # %%
 # Block 3: cross-check the same FCFS multi-server model under three simulators.
-#  JMT is the Java-based discrete-event simulator (XML-driven); LDES is the
-#  LINE Discrete Event Simulator (SSJ-backed, subprocess-invoked); SSA is
+#  JMT is the Java-based discrete-event simulator (XML-driven); LDES is a
+#  SSJ-backed discrete-event simulator (subprocess-invoked); SSA is
 #  LINE's native stochastic simulator using the next-reaction method.
 #  All three produce statistically equivalent results on this open-class cluster.
 print('=== JMT ===')

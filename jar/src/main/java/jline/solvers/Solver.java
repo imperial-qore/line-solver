@@ -128,15 +128,16 @@ public abstract class Solver {
         List<String> allMethods = Arrays.asList(
                 "cache", "cutoff", "force", "init_sol", "iter_max", "iter_tol", "lang", "tol",
                 "keep", "method", "odesolvers", "samples", "seed", "stiff", "timespan", "verbose", "config.multiserver",
-                "default", "exact", "auto", "ctmc", "ctmc.gpu", "gpu", "mva", "mva.exact", "mva.amva", "mva.qna", "sqrt", "mva.sqrt",
+                "default", "exact", "auto", "heur", "tree", "sim", "fast", "accurate", "bound", // SolverAUTO selection method names
+                "ctmc", "ctmc.gpu", "gpu", "mva", "mva.exact", "mva.amva", "mva.qna", "sqrt", "mva.sqrt",
                 "amva", "amva.bs", "amva.qd", "bs", "qd", "amva.qli", "qli", "amva.fli", "fli", "amva.aql", "aql", "amva.qdaql", "qdaql", "amva.lin", "lin", "amva.qdlin", "qdlin",
                 "nrm", "ssa", "ssa.serial.hash", "ssa.para.hash", "ssa.parallel.hash", "ssa.serial", "ssa.para", "ssa",
                 "ssa.parallel", "serial.hash", "serial", "para", "parallel", "para.hash", "parallel.hash",
                 "jmt", "jsim", "jmva", "jmva.amva", "jmva.mva", "jmva.recal", "jmva.mom", "jmva.comom", "jmva.chow", "jmva.bs", "jmva.aql", "jmva.lin", "jmva.dmlin", "jmva.ls",
                 "jmt.jsim", "jmt.jmva", "jmt.jmva.mva", "jmt.jmva.amva", "jmt.jmva.recal", "jmt.jmva.comom", "jmt.jmva.chow", "jmt.jmva.bs", "jmt.jmva.aql", "jmt.jmva.lin", "jmt.jmva.dmlin", "jmt.jmva.ls",
-                "brute", "ca", "comomrm", "comomld", "gm", "mom", "propfair", "recal", "kt", "rd", "nr.probit", "nr.logit", "nc.brute", "nc.ca", "nc.comom", "nc.comomld", "nc.gm", "nc.mom", "nc.propfair", "nc.recal", "nc.kt", "nc.rd", "nc.nr.probit", "nc.nr.logit",
+                "brute", "ca", "comom", "comomrm", "comomld", "gm", "propfair", "recal", "kt", "bkt", "lekt", "rd", "nr.probit", "nr.logit", "nc.brute", "nc.ca", "nc.comom", "nc.comomld", "nc.gm", "nc.propfair", "nc.recal", "nc.kt", "nc.bkt", "nc.lekt", "nc.rd", "nc.nr.probit", "nc.nr.logit",
                 "fluid", "matrix", "softmin", "statedep", "closing", "fluid.softmin", "fluid.statedep", "fluid.closing", "fluid.matrix",
-                "nc", "nc.exact", "nc.imci", "ls", "nc.ls", "nc.cub", "cub", "le", "nc.le", "nc.panacea", "panacea", "nc.panaceald", "panaceald", "nc.mmint2", "mmint2", "nc.gleint", "gleint", "mam", "dec.source", "dec.mmap",
+                "nc", "nc.exact", "nc.imci", "ls", "nc.ls", "nc.cub", "cub", "le", "nc.le", "ble", "nc.ble", "aghq", "nc.aghq", "mcmc", "nc.mcmc", "nc.pana", "pana", "nc.panald", "panald", "nc.mmint2", "mmint2", "nc.gleint", "gleint", "mam", "dec.source", "dec.mmap",
                 "mmk", "gigk", "gigk.kingman_approx",
                 "mm1", "mg1", "gm1", "gig1", "gim1", "gig1.kingman", "gig1.gelenbe", "gig1.heyman", "gig1.kimura", "gig1.allen", "gig1.kobayashi", "gig1.klb", "gig1.marchal",
                 "aba.upper", "aba.lower", "gb.upper", "gb.lower", "sb.upper", "sb.lower", "bjb.upper", "bjb.lower", "pb.upper", "pb.lower"
@@ -190,27 +191,67 @@ public abstract class Solver {
             return options;
         }
         
-        // Parse key-value pairs
+        // Parse key-value pairs, plus the positional method name
         for (int i = 0; i < varargin.length; i++) {
             if (varargin[i] instanceof String) {
                 String key = (String) varargin[i];
-                
-                // Handle single keywords without values
-                if (key.equals("exact")) {
-                    options.method("exact");
+
+                if (isOptionKey(key)) {
+                    if (i + 1 >= varargin.length) {
+                        // A dangling option name used to be dropped in silence,
+                        // leaving the solver on the default for that option.
+                        line_error(mfilename(new Object() {
+                        }), String.format("Option '%s' was given without a value.", key));
+                    }
+                    parseOptionPair(options, key, varargin[i + 1]);
+                    i++;   // skip the value
                     continue;
                 }
-                
-                // Handle key-value pairs
-                if (i + 1 < varargin.length) {
-                    Object value = varargin[i + 1];
-                    parseOptionPair(options, key, value);
-                    i++; // Skip the value
+
+                // An unrecognized name followed by a non-string is still a
+                // key-value pair whose key parseOptionPair does not implement
+                // (e.g. "warmup", 1e4): consume both and let it fall through
+                // there, as before. Reading such a key as a method instead would
+                // break every caller that passes one.
+                if (i + 1 < varargin.length && !(varargin[i + 1] instanceof String)) {
+                    parseOptionPair(options, key, varargin[i + 1]);
+                    i++;
+                    continue;
                 }
+
+                // What is left is the METHOD, which is how MATLAB and python
+                // spell SolverCTMC(model,'mdd'). Dropping it in silence (the
+                // previous behaviour, which only exempted the literal "exact")
+                // ran the DEFAULT method under the name of another one, so every
+                // comparison of that method against the default agreed trivially.
+                options.method(key);
             }
         }
-        
+
         return options;
+    }
+
+    /**
+     * Names {@link #parseOptionPair} recognizes as an option, as opposed to a
+     * method name given positionally.
+     *
+     * <p>Kept in step with the switch in parseOptionPair by hand: a key missing
+     * here is read as a method name and its value is then parsed as a second
+     * positional argument, which is why the two lists must agree.</p>
+     */
+    private static final Set<String> OPTION_KEYS = new HashSet<String>(Arrays.asList(
+            "cache", "compress", "container", "cutoff", "eventcache", "force", "fork_join",
+            "hide_immediate", "highvar", "init_sol", "interlocking", "iter_max", "iter_tol",
+            "keep", "lang", "merge", "method", "multiserver", "np_priority", "pstar",
+            "remote", "remote_endpoint", "resturl", "rest_url", "samples", "seed",
+            "space_max", "state_space_gen", "stiff", "timespan", "tol", "verbose"));
+
+    /** True when the string names an option rather than a method. */
+    private static boolean isOptionKey(String key) {
+        if (key == null) {
+            return false;
+        }
+        return key.startsWith("config.") || OPTION_KEYS.contains(key.toLowerCase());
     }
     
     /**
@@ -323,6 +364,17 @@ public abstract class Solver {
                     options.remote_endpoint = (String) value;
                 }
                 break;
+            case "restUrl":
+            case "rest_url":
+                if (value instanceof String) {
+                    options.restUrl = (String) value;
+                }
+                break;
+            case "container":
+                if (value instanceof String) {
+                    options.container = (String) value;
+                }
+                break;
             case "samples":
                 if (value instanceof Integer) {
                     options.samples = (Integer) value;
@@ -363,6 +415,20 @@ public abstract class Solver {
                     options.tol = ((Integer) value).doubleValue();
                 } else if (value instanceof String) {
                     options.tol = Double.parseDouble((String) value);
+                }
+                break;
+            case "warmup":
+                // an absolute count of samples to discard; resolved against
+                // options.samples when the run is configured, since the two may
+                // be given in either order
+                if (value instanceof Number) {
+                    options.config.warmup = ((Number) value).doubleValue();
+                } else if (value instanceof String) {
+                    options.config.warmup = Double.parseDouble((String) value);
+                } else {
+                    line_error(mfilename(new Object() {
+                    }), String.format("Unsupported type for option 'warmup': %s.",
+                            value == null ? "null" : value.getClass().getName()));
                 }
                 break;
             case "verbose":
@@ -693,6 +759,22 @@ public abstract class Solver {
      */
     public FeatureSet getMethodFeatureSet(String method) {
         return null;
+    }
+
+    /**
+     * Does this solver produce transient averages, i.e. does getTranAvg return
+     * trajectories on a finite options.timespan? Declared false here and
+     * overridden by the solvers that populate result.Tran (Fluid, CTMC, LDES,
+     * JMT). It is a capability claim, not a state test: it must answer before
+     * any run has taken place, because the MAP/MMPP random-environment fallback
+     * uses it to decide whether the environment stages can be coupled by the
+     * mean-field analyzer (which needs getTranAvg) or only by the two
+     * steady-state limits.
+     *
+     * @return true if the solver can return transient averages
+     */
+    public boolean supportsTransientAnalysis() {
+        return false;
     }
 
     /**

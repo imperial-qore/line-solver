@@ -66,11 +66,20 @@ public final class Pfqn_bs {
 
     /**
      * Bard-Schweitzer approximate mean value analysis algorithm with optional weighted priorities.
+     *
+     * @param tol convergence tolerance; NaN selects the published Linearizer termination test of
+     *            Chandy and Neuse, Commun. ACM 25(2), 1982, i.e. the cutoff Pfqn_cntol.pfqn_cntol(N)
+     *            applied to max_{i,r}|dQ(i,r)|/N_r instead of the relative-change metric used by
+     *            default. This is the test LQNS runs, since it sets it in SchweitzerCommon.
      */
     public static Ret.pfqnAMVA pfqn_bs(Matrix L, Matrix N, Matrix Z, double tol, int maxiter,
                                         Matrix QN0, SchedStrategy[] type, Matrix weight) {
         int M = L.getNumRows();
         int R = L.getNumCols();
+        boolean cntest = Pfqn_cntol.isCntol(tol);
+        if (cntest) {
+            tol = Pfqn_cntol.pfqn_cntol(N);
+        }
         if (QN0 == null || QN0.isEmpty()) {
             QN0 = N.repmat(M, 1);
             for (int i = 0; i < QN0.getNumRows(); i++) {
@@ -168,7 +177,11 @@ public final class Pfqn_bs {
                     if (N.get(j) == 0.0) {
                         continue;
                     }
-                    double absValue = FastMath.abs(1 - QN.get(i, j) / QN_1.get(i, j));
+                    // Chandy and Neuse (1982), p.129: absolute queue-length change scaled by the
+                    // class population, not the relative change.
+                    double absValue = cntest
+                            ? FastMath.abs(QN.get(i, j) - QN_1.get(i, j)) / N.get(j)
+                            : FastMath.abs(1 - QN.get(i, j) / QN_1.get(i, j));
                     maxabs = Maths.max(maxabs, absValue);
                 }
             }

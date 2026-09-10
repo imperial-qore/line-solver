@@ -3,7 +3,8 @@
  *
  * O(K) throughput bounds for single-class closed networks with multiserver stations,
  * bracketing each C_k-server station between single-server disaggregations jointly with
- * ABA (Theorem 5). Ported at parity from MATLAB pfqn_ssd.m.
+ * ABA (Theorem 5). With Z&gt;0 the queueing terms carry the terminal-workload correction
+ * of Lazowska et al. 1984, Table 5.2. Ported at parity from MATLAB pfqn_ssd.m.
  *
  * @since LINE 3.0
  */
@@ -37,8 +38,8 @@ public final class Pfqn_ssd {
             if (Lc > bestLc) { bestLc = Lc; b = k; }
         }
         double Yu = Ru / K;
-        double Xlo = N / (Rl + Z + (N - 1) * Yl);
-        double xhi = N / (Ru + Z + (N - 1) * Yu);         // Theorem 5 upper
+        double Xlo = N / (Rl + Z + (N - 1) * Yl / (1 + Z / (N * Rl)));
+        double xhi = N / (Ru + Z + (N - 1) * Yu / (1 + Z / Ru));  // Theorem 5 upper
         double aba1 = nservers.get(b) / L.get(b);         // ABA capacity bound
         double aba2 = N / (Rl + Z);                       // ABA population bound
         double Xhi = Math.min(xhi, Math.min(aba1, aba2));

@@ -24,7 +24,7 @@ public class FCRegionExamples {
         System.out.println("=== FCR Multiclass Blocking Example ===\n");
 
         Network model = FCRegionModel.fcr_oqnwaitq();
-        JMT solver = new JMT(model, "seed", 23000, "samples", 50000, "verbose", VerboseLevel.SILENT);
+        JMT solver = new JMT(model, "seed", 23000, "samples", 10000, "verbose", VerboseLevel.SILENT);
         NetworkAvgTable avgTable = solver.getAvgTable();
 
         System.out.println(avgTable);
@@ -53,11 +53,15 @@ public class FCRegionExamples {
         // FCR blocking model
         Network model1 = FCRegionModel.fcr_mm1waitq();
         JMT solver1 = new JMT(model1, "seed", 23000, "samples", 100000, "verbose", VerboseLevel.SILENT);
+        // THE NODE TABLE, as the reference prints: its golden holds the FCR1 and
+        // Sink rows, which no station table carries.
+        solver1.getAvgNodeTable().print();
         NetworkAvgTable avgTable1 = solver1.getAvgTable();
 
         // Standard M/M/1
         Network model2 = FCRegionModel.mm1();
         JMT solver2 = new JMT(model2, "seed", 23000, "samples", 100000, "verbose", VerboseLevel.SILENT);
+        solver2.getAvgNodeTable().print();
         NetworkAvgTable avgTable2 = solver2.getAvgTable();
 
         // Compare results (queue is at index 1)
@@ -92,7 +96,7 @@ public class FCRegionExamples {
      * Demonstrates that FCR with dropping behaves like M/M/1/K.
      */
     public static void fcr_mm1kdrop() {
-        int K = 2;
+        int K = 3;
         System.out.printf("=== Comparison: FCR Dropping vs M/M/1/K (K=%d) ===%n%n", K);
 
         // FCR dropping model
@@ -142,9 +146,9 @@ public class FCRegionExamples {
     public static void fcr_constraints() {
         System.out.println("=== FCR Constraint Types Demo ===\n");
         System.out.println("Region covers: Queue1, Queue2");
-        System.out.println("Global max jobs: 6");
-        System.out.println("HighPriority max: 4 (blocking)");
-        System.out.println("LowPriority max: 3 (dropping)\n");
+        System.out.println("Global max jobs: 2");
+        System.out.println("HighPriority max: 2 (dropping)");
+        System.out.println("LowPriority max: 2 (dropping)\n");
 
         Network model = FCRegionModel.fcr_constraints();
         JMT solver = new JMT(model, "seed", 23000, "samples", 100000, "verbose", VerboseLevel.SILENT);
@@ -152,8 +156,8 @@ public class FCRegionExamples {
 
         System.out.println(avgTable);
 
-        System.out.println("\nNote: HighPriority jobs experience delays when region is full.");
-        System.out.println("LowPriority jobs are dropped when their class limit or global limit is reached.");
+        System.out.println("\nNote: jobs of either class are dropped once the region reaches");
+        System.out.println("its global limit or that class's own limit.");
     }
 
     /**

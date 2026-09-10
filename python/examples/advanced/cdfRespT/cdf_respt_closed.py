@@ -74,13 +74,23 @@ for i in range(model.getNumberOfStations()):
     for c in range(model.getNumberOfClasses()):
         cdf_data = rd_fluid[i][c]
         if cdf_data is not None and len(cdf_data) > 1:
+            # MIDPOINT RIEMANN-STIELTJES, and the rule is the law and not the
+            # taste. A fluid CDF is a CONTINUOUS law read off an integrator
+            # grid: the mass dF of an interval sits somewhere inside it, so the
+            # midpoint is the second-order estimate and the right endpoint used
+            # for the simulated curve above is first-order, i.e. carries a bias
+            # that moves with whatever grid the integrator chose. A SIMULATED
+            # CDF jumps AT its samples, so up there the right endpoint IS the
+            # sample and that sum is exact -- the two are not interchangeable.
+            mid = [(cdf_data[j][1] + cdf_data[j+1][1]) / 2 for j in range(len(cdf_data)-1)]
+
             # Compute mean from CDF
-            mean_val = sum((cdf_data[j+1][0] - cdf_data[j][0]) * cdf_data[j+1][1]
+            mean_val = sum((cdf_data[j+1][0] - cdf_data[j][0]) * mid[j]
                           for j in range(len(cdf_data)-1))
             avg_respt_from_cdf_fluid[i].append(mean_val)
 
             # Compute second moment
-            power_moment_2 = sum((cdf_data[j+1][0] - cdf_data[j][0]) * (cdf_data[j+1][1] ** 2)
+            power_moment_2 = sum((cdf_data[j+1][0] - cdf_data[j][0]) * (mid[j] ** 2)
                                 for j in range(len(cdf_data)-1))
             variance = power_moment_2 - mean_val ** 2
             scv = variance / (mean_val ** 2) if mean_val > 0 else 0

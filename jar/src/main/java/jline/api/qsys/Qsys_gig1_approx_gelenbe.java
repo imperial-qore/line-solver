@@ -17,15 +17,17 @@ public final class Qsys_gig1_approx_gelenbe {
      *
      * @param lambda arrival rate
      * @param mu service rate
-     * @param ca squared coefficient of variation of inter-arrival time
-     * @param cs squared coefficient of variation of service time
+     * @param ca coefficient of variation of the inter-arrival time
+     * @param cs coefficient of variation of the service time
      * @return HashMap containing W (mean response time) and rhohat
      */
     public static HashMap<String, Object> qsys_gig1_approx_gelenbe(double lambda, double mu, double ca, double cs) {
         HashMap<String, Object> result = new HashMap<String, Object>();
 
         double rho = lambda / mu;
-        double rhat = Math.exp(-2.0 * (1.0 - rho) / (rho * ca + cs));
+        // ca and cs are COEFFICIENTS of variation, as everywhere else in this
+        // package (see Qsys_gig1_approx_heyman); the formula squares them.
+        double rhat = Math.exp(-2.0 * (1.0 - rho) / (rho * ca * ca + cs * cs));
         double W = 1.0 / (mu * (1.0 - rhat));
         double rhohat = W * lambda / (1.0 + W * lambda);
 

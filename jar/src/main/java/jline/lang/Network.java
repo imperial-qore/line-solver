@@ -31,6 +31,7 @@ import jline.util.Maths;
 import jline.util.Pair;
 import jline.lang.reward.RewardFunction;
 import jline.util.SerializableFunction;
+import org.apache.commons.math3.complex.Complex;
 import jline.util.matrix.Matrix;
 import jline.util.matrix.MatrixCell;
 import org.apache.commons.math3.util.FastMath;
@@ -132,6 +133,12 @@ public class Network extends Model implements Copyable {
     private boolean hasStruct;
     public boolean isFJAugmented = false; // true on FJ tag-augmented copies (see ModelAdapter.fjtag)
     private NetworkStruct sn;
+    // Network-level globally state-dependent (Whittle) rate scaling phi(n) over the
+    // FULL (nstations x nclasses) population matrix; see setGlobalDependence
+    private SerializableFunction<Matrix, Matrix> gdScaling;
+    private Matrix gdScalingPeak;
+    // Open-class truncation used to materialize gdScaling onto the JSON wire; solving ignores it.
+    private int gdScalingCutoff = 10;
     // Markov reward definitions live on the model (not the transient struct) so they
     // survive resetStruct()/refreshStruct(); refreshStruct copies them into sn.reward.
     private Map<String, RewardFunction> rewardFunctions;
@@ -177,6 +184,7 @@ public class Network extends Model implements Copyable {
         this.connections = null;
         this.allowReplace = false;
         this.attribute = new NetworkAttribute();
+        super.setAttribute(this.attribute); // keep Model.attribute pointing at the typed container
     }
 
     // ========================================================================
@@ -840,6 +848,97 @@ public class Network extends Model implements Copyable {
     }
 
     /**
+     * Creates a mixed cluster network in which open and closed classes share the dispatcher
+     * and the servers: open classes flow Source -&gt; Dispatcher -&gt; Servers -&gt; Sink while closed
+     * classes cycle Think (Delay) -&gt; Dispatcher -&gt; Servers -&gt; Think.
+     *
+     * <p>Classes are ordered open first: columns 1..Ro of {@code D} refer to the open classes
+     * and columns Ro+1..Ro+Rc to the closed ones.
+     *
+     * @param lambda      per-class arrival rate matrix [1 x Ro] of the open classes
+     * @param N           per-class population matrix [1 x Rc] of the closed classes
+     * @param Z           per-class think time matrix [1 x Rc] of the closed classes
+     * @param D           service time matrix [M x (Ro+Rc)]; entry (i, r) is the mean service time
+     *                    of class r at server i
+     * @param strategy    per-server scheduling strategies (length M)
+     * @param S           server count matrix [M x 1]; entry i is the multiplicity of server i
+     * @param dispatching dispatching policy applied at the router for every class
+     * @return configured mixed cluster model
+     */
+    public static Network clusterMixed(Matrix lambda, Matrix N, Matrix Z, Matrix D,
+                                       SchedStrategy[] strategy, Matrix S,
+                                       RoutingStrategy dispatching) {
+        int M = D.getNumRows();
+        int R = D.getNumCols();
+        int Ro = lambda.length();
+        int Rc = N.length();
+        if (R != Ro + Rc) {
+            throw new IllegalArgumentException("D must have lambda.length()+N.length() columns");
+        }
+        if (Z.length() != Rc) {
+            throw new IllegalArgumentException("N and Z must have the same length");
+        }
+
+        Network model = new Network("Cluster");
+
+        Source source = new Source(model, "Source");
+        Delay think = new Delay(model, "Think");
+        Router dispatcher = new Router(model, "Dispatcher");
+        Queue[] servers = new Queue[M];
+        for (int i = 0; i < M; i++) {
+            servers[i] = new Queue(model, "Station" + (i + 1), strategy[i]);
+            int c = (S != null && S.getNumRows() > i) ? (int) S.get(i, 0) : 1;
+            if (c > 1) {
+                servers[i].setNumberOfServers(c);
+            }
+        }
+        Sink sink = new Sink(model, "Sink");
+
+        List<JobClass> jobclasses = new ArrayList<>(R);
+        for (int r = 0; r < Ro; r++) {
+            OpenClass cls = new OpenClass(model, "Class" + (r + 1), 0);
+            jobclasses.add(cls);
+            source.setArrival(cls, Exp.fitMean(1.0 / lambda.get(r)));
+            think.setService(cls, Disabled.getInstance());
+            for (int i = 0; i < M; i++) {
+                servers[i].setService(cls, Exp.fitMean(D.get(i, r)));
+            }
+        }
+        for (int c = 0; c < Rc; c++) {
+            int r = Ro + c;
+            ClosedClass cls = new ClosedClass(model, "Class" + (r + 1), (int) N.get(c), think, 0);
+            jobclasses.add(cls);
+            think.setService(cls, Exp.fitMean(Z.get(c)));
+            for (int i = 0; i < M; i++) {
+                servers[i].setService(cls, Exp.fitMean(D.get(i, r)));
+            }
+        }
+
+        model.addLink(source, dispatcher);
+        model.addLink(think, dispatcher);
+        for (int i = 0; i < M; i++) {
+            model.addLink(dispatcher, servers[i]);
+            model.addLink(servers[i], sink);
+            model.addLink(servers[i], think);
+        }
+
+        // Class-specific exits: the servers feed the sink for open classes and the delay for
+        // closed ones, so the shared arcs carry explicit per-class probabilities.
+        for (int r = 0; r < R; r++) {
+            JobClass cls = jobclasses.get(r);
+            dispatcher.setRouting(cls, dispatching);
+            double isOpen = r < Ro ? 1.0 : 0.0;
+            for (int i = 0; i < M; i++) {
+                servers[i].setProbRouting(cls, sink, isOpen);
+                servers[i].setProbRouting(cls, think, 1.0 - isOpen);
+            }
+            source.setProbRouting(cls, dispatcher, isOpen);
+            think.setProbRouting(cls, dispatcher, 1.0 - isOpen);
+        }
+        return model;
+    }
+
+    /**
      * Adds an item set to the current list of items
      *
      * @param itemSet - the item set to be added
@@ -979,6 +1078,9 @@ public class Network extends Model implements Copyable {
         int regionIndex = this.regions.size() + 1;
         region.setName("FCR" + regionIndex);
         this.regions.add(region);
+        region.setModel(this);
+        // a cached struct predates this region, so it would carry nregions=0
+        resetStruct();
         return region;
     }
 
@@ -1196,6 +1298,46 @@ public class Network extends Model implements Copyable {
         return this.getAvgHandles().getAvgQLenHandles();
     }
 
+    /**
+     * Mean tardiness handles, Tard(i,r) for class r at station i.
+     *
+     * <p>The handles were already built by {@link #getAvgHandles()}; only the
+     * named accessor was missing, so a caller had to reach through
+     * SolverAvgHandles by field. Twin of the MATLAB
+     * {@code MNetwork.getAvgTardHandles}.
+     */
+    public AvgHandle getAvgTardHandles() {
+        return this.getAvgHandles().getAvgTardHandles();
+    }
+
+    /** Mean system tardiness handles, SysTard(1,r) for class r. */
+    public AvgHandle getAvgSysTardHandles() {
+        return this.getAvgHandles().getAvgSysTardHandles();
+    }
+
+    /** The reducibility structure plus one suggested repair per absorbing station. */
+    public RoutingErgodicity.ReducibilityInfo getReducibilityInfo() {
+        return RoutingErgodicity.getReducibilityInfo(this);
+    }
+
+    /** The stations that are absorbing: once a job enters, it never leaves. */
+    public List<Station> getAbsorbingStations() {
+        return RoutingErgodicity.getAbsorbingStations(this);
+    }
+
+    /**
+     * A routing matrix that makes the network ergodic. Does NOT relink; apply it
+     * with {@code model.link(P)}.
+     */
+    public RoutingMatrix makeErgodic() {
+        return RoutingErgodicity.makeErgodic(this, null);
+    }
+
+    /** As {@link #makeErgodic()}, routing absorbing stations to TARGETNAME. */
+    public RoutingMatrix makeErgodic(String targetName) {
+        return RoutingErgodicity.makeErgodic(this, targetName);
+    }
+
     public AvgHandle getAvgResidTHandles() {
         return this.getAvgHandles().getAvgResidTHandles();
     }
@@ -1223,12 +1365,29 @@ public class Network extends Model implements Copyable {
     // Methods for retrieving job classes and chains information
     // ========================================================================
 
+    /**
+     * The chains of this network, each carrying the job classes it contains.
+     *
+     * <p>{@code sn.inchain.get(c)} IS A LIST OF CLASS INDICES, not an indicator
+     * vector over classes -- which is how the rest of this file reads it (see
+     * the chain-capacity loops around line 5100). Testing {@code get(0,r) == 1}
+     * instead returned a chain with NO classes on every single-class model,
+     * because inchain[0] is then the vector [0] and 0 != 1. Everything built on
+     * top silently degraded: SolverCTMC.getCdfRespT looped over zero classes and
+     * its catch returned a zero matrix.
+     *
+     * <p>The chain list is also rebuilt rather than appended to; the old code
+     * accumulated a fresh set of chains on every call.
+     */
     public List<Chain> getChains() {
         NetworkStruct sn = this.getStruct();
+        chains.clear();
         for (int c = 0; c < sn.chains.getNumElements(); c++) {
             List<JobClass> chainClasses = new ArrayList<>();
-            for (int r = 0; r < sn.nclasses; r++) {
-                if (sn.inchain.get(c).get(0, r) == 1) {
+            Matrix inchain_c = sn.inchain.get(c);
+            for (int idx = 0; idx < inchain_c.length(); idx++) {
+                int r = (int) inchain_c.get(idx);
+                if (r >= 0 && r < sn.nclasses) {
                     chainClasses.add(this.jobClasses.get(r));
                 }
             }
@@ -1250,21 +1409,28 @@ public class Network extends Model implements Copyable {
         return null;
     }
 
+    /**
+     * The chain containing the given class.
+     *
+     * <p>The old form ignored {@code jobClass} entirely and returned the first
+     * chain whose indicator test passed, so on a multi-chain model it answered
+     * with the wrong chain. It reads inchain as a list of class indices, as
+     * {@link #getChains()} does.
+     */
     public Chain getClassChain(JobClass jobClass) {
-        NetworkStruct sn = this.getStruct();
-        for (int c = 0; c < sn.chains.getNumElements(); c++) {
-            for (int r = 0; r < sn.nclasses; r++) {
-                if (sn.inchain.get(c).get(0, r) == 1) return chains.get(c);
-            }
-        }
-        return null;
+        int c = getClassChainIndex(jobClass);
+        if (c < 0) return null;
+        List<Chain> all = getChains();
+        return c < all.size() ? all.get(c) : null;
     }
 
     public int getClassChainIndex(JobClass jobClass) {
         NetworkStruct sn = this.getStruct();
+        int target = jobClass.getIndex() - 1;
         for (int c = 0; c < sn.chains.getNumElements(); c++) {
-            for (int r = 0; r < sn.nclasses; r++) {
-                if (sn.inchain.get(c).get(0, r) == 1) return c;
+            Matrix inchain_c = sn.inchain.get(c);
+            for (int idx = 0; idx < inchain_c.length(); idx++) {
+                if ((int) inchain_c.get(idx) == target) return c;
             }
         }
         return -1;
@@ -1551,21 +1717,18 @@ public class Network extends Model implements Copyable {
     /**
      * Peak (max) class-dependent rate scaling per class for each class-dependent
      * station, as a 1xR row vector (scalar declarations broadcast to R classes).
-     * Used to normalize utilization as U = T*S/peak. A station that declared no
-     * explicit peak (e.g. reconstructed via deserialization) has its peak
-     * derived from the handle over the population lattice.
+     * Used to normalize utilization as U = T*S/peak. A station that declares a
+     * class dependence without a peak is a MODEL DEFECT and is refused here, as
+     * in MATLAB's getLimitedClassDependencePeak.m: the peak is not recoverable
+     * from the handle, and guessing it reports a number that is not a
+     * utilization.
      *
      * @return map from station to its 1xR peak vector; empty if no class dependence
+     * @throws RuntimeException if a class-dependent station declared no peak
      */
     public Map<Station, Matrix> getLimitedClassDependencePeak() {
         Map<Station, Matrix> peakMap = new HashMap<Station, Matrix>();
         int K = getNumberOfClasses();
-        Matrix njobsVec = getNumberOfJobs();
-        int[] NK = new int[K];
-        for (int r = 0; r < K; r++) {
-            double nj = njobsVec.get(r);
-            NK[r] = Double.isFinite(nj) ? (int) nj : 0;
-        }
         for (Station station : this.stations) {
             SerializableFunction<Matrix, Matrix> beta = station.getLimitedClassDependence();
             if (beta == null) continue;
@@ -1578,9 +1741,13 @@ public class Network extends Model implements Copyable {
                     for (int r = 0; r < K; r++) peakVec.set(0, r, declared.get(r));
                 }
             } else {
-                // see _kb/04-networkstruct.md (Node/process construction notes) for rationale
-                double bmax = jline.api.pfqn.ld.CdPeakScaling.cd_peak_scaling(beta, NK, K);
-                for (int r = 0; r < K; r++) peakVec.set(0, r, bmax);
+                // NOT DERIVED. Sweeping beta for max_n beta(n) needs a bound the
+                // handle does not carry, and an open class has no bound at all,
+                // so a "derived" peak there is just beta(0) -- a number that
+                // reads as a utilization and is not one. MATLAB's
+                // getLimitedClassDependencePeak.m errors on exactly this.
+                throw new RuntimeException("Class-dependent station '" + station.getName()
+                        + "' has no declared peak rate; use setClassDependence(beta, peakRatePerClass).");
             }
             peakMap.put(station, peakVec);
         }
@@ -1609,16 +1776,11 @@ public class Network extends Model implements Copyable {
      * {@link #getLimitedClassDependencePeak()}.
      *
      * @return map from station to its 1xR peak vector; empty if no joint dependence
+     * @throws RuntimeException if a joint-dependent station declared no peak
      */
     public Map<Station, Matrix> getLimitedJointDependencePeak() {
         Map<Station, Matrix> peakMap = new HashMap<Station, Matrix>();
         int K = getNumberOfClasses();
-        Matrix njobsVec = getNumberOfJobs();
-        int[] NK = new int[K];
-        for (int r = 0; r < K; r++) {
-            double nj = njobsVec.get(r);
-            NK[r] = Double.isFinite(nj) ? (int) nj : 0;
-        }
         for (Station station : this.stations) {
             SerializableFunction<Matrix, Matrix> eta = station.getLimitedJointDependence();
             if (eta == null) continue;
@@ -1631,12 +1793,127 @@ public class Network extends Model implements Copyable {
                     for (int r = 0; r < K; r++) peakVec.set(0, r, declared.get(r));
                 }
             } else {
-                double bmax = jline.api.pfqn.ld.CdPeakScaling.cd_peak_scaling(eta, NK, K);
-                for (int r = 0; r < K; r++) peakVec.set(0, r, bmax);
+                throw new RuntimeException("Joint-dependent station '" + station.getName()
+                        + "' has no declared peak rate; use setJointDependence(eta, peakRatePerClass).");
             }
             peakMap.put(station, peakVec);
         }
         return peakMap;
+    }
+
+    /**
+     * Declares a globally state-dependent service-rate scaling phi(n), where n is
+     * the FULL (nstations x nclasses) population matrix rather than the population
+     * local to one station. This is the Whittle-network primitive: when phi satisfies
+     * phi_s(n) phi_t(n-e_s) = phi_t(n) phi_s(n-e_t) the chain is reversible, has the
+     * product form pi(n) ~ Phi(n) prod rho_s^n_s and is insensitive. It also expresses
+     * bandwidth sharing, where one route holds several links at once and no per-station
+     * scaling can reproduce the coupling.
+     *
+     * <p>phi returns a 1x1 scalar (broadcast), an (M x 1) column (per station) or an
+     * (M x K) matrix. The effective rate of class r at station i is its base rate times
+     * phi(i,r), composing multiplicatively with any load-, class- or joint-dependence.
+     * Only SolverCTMC declares support for it.
+     *
+     * @param phi  the scaling handle over the full population matrix
+     * @param peak REQUIRED peak scaling, 1x1, (M x 1) or (M x K), normalizing Util=T*S/peak
+     */
+    public void setGlobalDependence(SerializableFunction<Matrix, Matrix> phi, Matrix peak) {
+        setGlobalDependence(phi, peak, 10);
+    }
+
+    /**
+     * As {@link #setGlobalDependence(SerializableFunction, Matrix)}, with an explicit
+     * per-slot OPEN-class truncation used when phi is materialized onto the JSON wire
+     * (closed classes are tabulated up to their own population). It plays no part in
+     * solving, and exists because a handle cannot cross a language boundary: the writer
+     * needs to know how far the lattice extends. Set it to the cutoff the model is
+     * solved at.
+     *
+     * @param phi        the scaling handle over the full population matrix
+     * @param peak       REQUIRED peak scaling, 1x1, (M x 1) or (M x K)
+     * @param wireCutoff positive open-class truncation for JSON serialization
+     */
+    public void setGlobalDependence(SerializableFunction<Matrix, Matrix> phi, Matrix peak, int wireCutoff) {
+        if (phi == null) {
+            throw new IllegalArgumentException("Global dependence must be specified through a function.");
+        }
+        if (peak == null || peak.isEmpty()) {
+            throw new IllegalArgumentException("Global dependence requires an explicit peak rate: setGlobalDependence(phi, peak).");
+        }
+        int M = getNumberOfStations();
+        int K = getNumberOfClasses();
+        for (int i = 0; i < peak.length(); i++) {
+            if (peak.get(i) <= 0) {
+                throw new IllegalArgumentException("peak must be positive.");
+            }
+        }
+        // Probe now so a wrong output shape is refused at declaration time rather
+        // than midway through state-space generation.
+        Matrix[] probes = new Matrix[]{new Matrix(M, K), Matrix.ones(M, K)};
+        for (int p = 0; p < probes.length; p++) {
+            Matrix v = phi.apply(probes[p]);
+            if (v == null || v.isEmpty()) {
+                throw new IllegalArgumentException("The global dependence handle returned no scaling.");
+            }
+            boolean okShape = (v.length() == 1)
+                    || (v.getNumRows() == M && v.getNumCols() == 1)
+                    || (v.getNumRows() == M && v.getNumCols() == K);
+            if (!okShape) {
+                throw new IllegalArgumentException("The global dependence handle must return a scalar, an (" + M + " x 1) column or an (" + M + " x " + K + ") matrix.");
+            }
+            for (int j = 0; j < v.length(); j++) {
+                if (!Double.isFinite(v.get(j)) || v.get(j) < 0) {
+                    throw new IllegalArgumentException("The global dependence handle must return finite nonnegative scalings.");
+                }
+            }
+        }
+        if (wireCutoff < 1) {
+            throw new IllegalArgumentException("wireCutoff must be a positive integer.");
+        }
+        this.gdScaling = phi;
+        this.gdScalingPeak = expandGlobalPeak(peak, M, K);
+        this.gdScalingCutoff = wireCutoff;
+        this.hasStruct = false;
+        this.sn = null;
+    }
+
+    /** Network-level global dependence handle, or null if the model declares none. */
+    public SerializableFunction<Matrix, Matrix> getGlobalDependence() {
+        return this.gdScaling;
+    }
+
+    /** Per-slot open-class wire truncation of the global dependence (default 10). */
+    public int getGlobalDependenceCutoff() {
+        return this.gdScalingCutoff;
+    }
+
+    /** (nstations x nclasses) peak of the global dependence, or null if none is declared. */
+    public Matrix getGlobalDependencePeak() {
+        if (this.gdScaling == null) {
+            return null;
+        }
+        return expandGlobalPeak(this.gdScalingPeak, getNumberOfStations(), getNumberOfClasses());
+    }
+
+    private static Matrix expandGlobalPeak(Matrix peak, int M, int K) {
+        Matrix out = new Matrix(M, K);
+        if (peak.length() == 1) {
+            for (int i = 0; i < M; i++) {
+                for (int r = 0; r < K; r++) out.set(i, r, peak.get(0));
+            }
+        } else if (peak.getNumRows() == M && peak.getNumCols() == 1) {
+            for (int i = 0; i < M; i++) {
+                for (int r = 0; r < K; r++) out.set(i, r, peak.get(i, 0));
+            }
+        } else if (peak.getNumRows() == M && peak.getNumCols() == K) {
+            for (int i = 0; i < M; i++) {
+                for (int r = 0; r < K; r++) out.set(i, r, peak.get(i, r));
+            }
+        } else {
+            throw new IllegalArgumentException("peak must be a scalar, an (" + M + " x 1) column or an (" + M + " x " + K + ") matrix.");
+        }
+        return out;
     }
 
     public Matrix getLimitedLoadDependence() {
@@ -1725,6 +2002,91 @@ public class Network extends Model implements Copyable {
     }
 
     /**
+     * Fills the variable-forking-level matrices of a fork's node parameters.
+     *
+     * <p>Twin of the {@code case 'Fork'} block of MATLAB {@code refreshLocalVars}
+     * and of {@code Network._refresh_nodeparam} in native Python. The matrices
+     * are (nnodes x nclasses) and indexed by DESTINATION NODE, so a relink
+     * cannot permute them; connectivity is read off the fork's own output
+     * strategies, which is where the destinations live before {@code connmatrix}
+     * is rebuilt.</p>
+     *
+     * <p>When any override is present the scalar {@code fanOut} is reset to the
+     * mean over the connected links, so a solver that has not been taught the
+     * matrices degrades to E[tasks per link] rather than to a number the fork
+     * never emits.</p>
+     */
+    private void buildForkFanout(ForkNodeParam forkParam, Forker forker, Node node) {
+        int I = this.getNumberOfNodes();
+        int K = this.getNumberOfClasses();
+        Matrix fanOutLink = new Matrix(I, K);
+        Matrix fanOutProb = new Matrix(I, K);
+        DiscreteSampler[][] fanOutDist = new DiscreteSampler[I][K];
+        boolean[][] connrc = new boolean[I][K];
+
+        for (OutputStrategy os : forker.getOutputStrategies()) {
+            if (os.getDestination() == null || os.getJobClass() == null) continue;
+            int k = this.getNodeIndex(os.getDestination());
+            int r = os.getJobClass().getIndex() - 1;  // getIndex() is 1-based
+            if (k < 0 || k >= I || r < 0 || r >= K) continue;
+            connrc[k][r] = true;
+            fanOutLink.set(k, r, forker.tasksPerLink);
+            fanOutProb.set(k, r, 1.0);
+        }
+
+        for (Forker.ForkOverride ov : forker.tasksPerLinkByDest)
+            for (int k : forkOverrideDests(ov.dest, connrc, I))
+                fanOutLink.set(k, ov.jobClass - 1, ov.value);
+        for (Forker.ForkOverride ov : forker.branchProb)
+            for (int k : forkOverrideDests(ov.dest, connrc, I))
+                fanOutProb.set(k, ov.jobClass - 1, ov.value);
+        for (Forker.ForkOverride ov : forker.tasksPerLinkDist)
+            for (int k : forkOverrideDests(ov.dest, connrc, I)) {
+                fanOutDist[k][ov.jobClass - 1] = ov.dist;
+                // the scalar slot carries the mean, so a consumer that only
+                // reads fanOutLink still sees E[tasks per link]
+                fanOutLink.set(k, ov.jobClass - 1, ov.dist.getMean());
+            }
+
+        forkParam.fanOutLink = fanOutLink;
+        forkParam.fanOutProb = fanOutProb;
+        forkParam.fanOutDist = fanOutDist;
+
+        if (!forker.tasksPerLinkDist.isEmpty() || !forker.tasksPerLinkByDest.isEmpty()
+                || !forker.branchProb.isEmpty()) {
+            // The branch probability is folded in HERE and not into fanOutLink,
+            // because JMT and LDES read the two separately: fanOutLink is the
+            // count GIVEN the branch fires, fanOutProb is whether it fires.
+            double acc = 0.0;
+            int cnt = 0;
+            for (int k = 0; k < I; k++)
+                for (int r = 0; r < K; r++)
+                    if (connrc[k][r]) { acc += fanOutLink.get(k, r) * fanOutProb.get(k, r); cnt++; }
+            if (cnt > 0) forkParam.fanOut = acc / cnt;
+        }
+    }
+
+    /** Node indexes a fork override applies to; an empty name means every connected link. */
+    private List<Integer> forkOverrideDests(String dest, boolean[][] connrc, int I) {
+        List<Integer> out = new ArrayList<Integer>();
+        if (dest == null || dest.isEmpty()) {
+            for (int k = 0; k < I; k++) {
+                boolean any = false;
+                for (int r = 0; r < connrc[k].length; r++) any = any || connrc[k][r];
+                if (any) out.add(k);
+            }
+            return out;
+        }
+        int k = this.getNodeIndex(dest);
+        if (k < 0) {
+            line_error(mfilename(new Object() {}),
+                    "Fork override names destination \"" + dest + "\", which is not a node of this model.");
+        }
+        out.add(k);
+        return out;
+    }
+
+    /**
      * True when {@code station} is a queue registered as a retrieval-system queue
      * of some Cache (via {@link jline.lang.nodes.Cache#setRetrievalSystem}). Such a
      * queue carries a finite per-class capacity and a WaitingQueue drop marker as
@@ -1801,7 +2163,6 @@ public class Network extends Model implements Copyable {
                 else throw new Exception("Unknown node type.");
             }
         } catch (Exception e) {
-            e.printStackTrace();
             throw new RuntimeException("Fatal error in Network.getNodeTypes() call.", e);
         }
 
@@ -1954,6 +2315,10 @@ public class Network extends Model implements Copyable {
             return ProcessType.IMMEDIATE;
         } else if (distr instanceof NHPP) {
             return ProcessType.NHPP;
+        } else if (distr instanceof MAPt) {
+            return ProcessType.MAPT;
+        } else if (distr instanceof PHt) {
+            return ProcessType.PHT;
         } else {
             return ProcessType.DISABLED;
         }
@@ -2117,7 +2482,8 @@ public class Network extends Model implements Copyable {
                             // see _kb/04-networkstruct.md (Node/process construction notes) for rationale
                             if (!(jobclass instanceof SelfLoopingClass)
                                     && !(jobclass instanceof Signal)
-                                    && !(jobclass instanceof OpenSignal)) {
+                                    && !(jobclass instanceof OpenSignal)
+                                    && !(jobclass instanceof ClosedSignal)) {
                                 sum = conn.sumRows(ind);
                                 if (sum > 0) {
                                     for (int jnd = 0; jnd < I; jnd++) {
@@ -2172,6 +2538,7 @@ public class Network extends Model implements Copyable {
                         case RROBIN:
                         case JSQ:
                         case SQ:
+                        case SDR:
                             if (isInf((NK.get(0, k)))) {
                                 sum = conn.sumRows(ind);
                                 for (int j = 0; j < I; j++) {
@@ -2401,7 +2768,7 @@ public class Network extends Model implements Copyable {
             }
         }
 
-        // ignore all chains containing a Pnodes column that sums to 0, since these are classes that cannot arrive to the node unless this column belongs to the source
+        // ignore chains with a Pnodes column summing to 0: these classes cannot arrive to the node unless the column belongs to the source
         Matrix sumRtnodesCols = rtnodes.sumCols();
         Set<Integer> colsToIgnore = new HashSet<Integer>();
         for (int col = 0; col < sumRtnodesCols.getNumCols(); col++) {
@@ -2598,8 +2965,6 @@ public class Network extends Model implements Copyable {
                 }
             }
         } catch (Exception e) {
-            e.printStackTrace();
-            //System.exit(1);
             throw new RuntimeException("Fatal error in Network.getRoutingStrategyFromNodeAndClassPair() call.", e);
         }
 
@@ -2990,6 +3355,202 @@ public class Network extends Model implements Copyable {
     }
 
     /**
+     * Which solvers and solver methods can analyze THIS model.
+     *
+     * <pre>
+     * model.findSolver()                  every (solver, method) pair that runs
+     * model.findSolver("cdf", false)      ... that returns a passage-time law
+     * model.findSolver("getCdfRespT", false)  the same question, by accessor
+     * model.findSolver("", true)          also the pairs that are refused, and why
+     * </pre>
+     *
+     * <p>One row per pair; see {@link jline.solvers.auto.SolverCandidate} for the
+     * columns and {@code SolverCandidate.toTable} to print them. The method
+     * column is the method name to pass as a solver method, so a row can be acted on
+     * directly.
+     *
+     * <p>{@link #findMethod()} and {@link #help()} are aliases.
+     *
+     * @return one row per runnable (family, method) pair
+     */
+    public java.util.List<jline.solvers.auto.SolverCandidate> findSolver() {
+        return findSolver("", false);
+    }
+
+    /**
+     * Which solvers and solver methods can analyze this model, narrowed to one
+     * measure and optionally including the refused pairs.
+     *
+     * @param metric  a measure group ("cdf") or the accessor that returns it
+     *                ("getCdfRespT"); "" or "any" keeps every pair
+     * @param showAll keep the refused pairs too, with the reason each was refused
+     * @return the matching rows
+     */
+    public java.util.List<jline.solvers.auto.SolverCandidate> findSolver(String metric,
+                                                                        boolean showAll) {
+        // The gate lives in SolverAUTO, which is the class that already knows
+        // every family, how to build one and what each refuses. Asking it here
+        // rather than reimplementing the walk is what keeps the model's answer
+        // and AUTO's own dispatch from being two opinions.
+        //
+        // The construction is silenced as well as the walk: SolverAUTO probes
+        // every candidate with supports(model), which warns on a model one of
+        // them refuses, and a report must not print.
+        VerboseLevel saved = GlobalConstants.getVerbose();
+        GlobalConstants.setVerbose(VerboseLevel.SILENT);
+        jline.solvers.auto.SolverAUTO auto;
+        try {
+            auto = new jline.solvers.auto.SolverAUTO(this);
+        } finally {
+            GlobalConstants.setVerbose(saved);
+        }
+        return auto.findSolver(metric, showAll);
+    }
+
+    /**
+     * Alias of {@link #findSolver()}: which solvers and solver methods can
+     * analyze this model.
+     *
+     * <p>The two names exist because the question is asked both ways round --
+     * "which solver do I use" and "which method do I pass" -- and the answer is
+     * the same table, whose method column carries the method name either caller needs.
+     *
+     * @return one row per runnable (family, method) pair
+     */
+    public java.util.List<jline.solvers.auto.SolverCandidate> findMethod() {
+        return findSolver("", false);
+    }
+
+    /**
+     * Alias of {@link #findSolver(String, boolean)}.
+     *
+     * @param metric  a measure group or the accessor that returns it
+     * @param showAll keep the refused pairs too
+     * @return the matching rows
+     */
+    public java.util.List<jline.solvers.auto.SolverCandidate> findMethod(String metric,
+                                                                        boolean showAll) {
+        return findSolver(metric, showAll);
+    }
+
+    /**
+     * Alias of {@link #findSolver()}: what can this model be solved with?
+     *
+     * @return one row per runnable (family, method) pair
+     */
+    public java.util.List<jline.solvers.auto.SolverCandidate> help() {
+        return findSolver("", false);
+    }
+
+    /**
+     * Alias of {@link #findSolver(String, boolean)}.
+     *
+     * @param metric  a measure group or the accessor that returns it
+     * @param showAll keep the refused pairs too
+     * @return the matching rows
+     */
+    public java.util.List<jline.solvers.auto.SolverCandidate> help(String metric,
+                                                                  boolean showAll) {
+        return findSolver(metric, showAll);
+    }
+
+    /**
+     * The answer of {@link #findBindingCapacity()}: whether a buffer binds and,
+     * when it does, which one. {@code classIndex} is the 0-based class index of
+     * a per-class buffer and -1 for a station-level one; {@code isOpen} says
+     * whether an open class reaches the buffer, which decides the fallback
+     * advice the refusal gives.
+     */
+    public static class BindingCapacity {
+        public final boolean binds;
+        public final Station station;
+        public final double cap;
+        public final int classIndex;
+        public final JobClass jobClass;
+        public final boolean isOpen;
+
+        BindingCapacity() {
+            this(null, Double.POSITIVE_INFINITY, -1, null, false);
+        }
+
+        BindingCapacity(Station station, double cap, int classIndex, JobClass jobClass, boolean isOpen) {
+            this.binds = station != null;
+            this.station = station;
+            this.cap = cap;
+            this.classIndex = classIndex;
+            this.jobClass = jobClass;
+            this.isOpen = isOpen;
+        }
+    }
+
+    /**
+     * The first station whose finite capacity can actually BIND, or a result
+     * whose {@code binds} is false when no buffer in the model can refuse a job.
+     * <p>
+     * ONE PREDICATE, TWO CALLERS, the port of MATLAB
+     * {@code MNetwork.findBindingCapacity}. {@code
+     * NetworkSolver.bindingCapacityReason} turns the answer into the refusal the
+     * product-form solvers raise, and {@link #getUsedLangFeatures()} marks the
+     * registry name {@code FiniteCapacity} on the same answer, so a solver that
+     * does not declare the name refuses exactly the models the structural gate
+     * refuses.
+     * <p>
+     * The test reads the node-level cap / classCap the user set and the class
+     * populations from the CLASS OBJECTS ({@link #getNumberOfJobs()}), never
+     * sn.cap / sn.classcap: refreshCapacity derives a FINITE classcap (the chain
+     * population) for every closed model, so an sn-level test would call every
+     * closed model capped, and reading the struct from the recorder would
+     * trigger a refresh on every feature query.
+     * <p>
+     * Only a capacity that can bind counts. A closed model whose station
+     * capacity is at least the total population can never block a job, so the
+     * declaration is a no-op (setCapacity(N) on a station of an N-job closed
+     * model is a common idiom). The population of an open class is Inf, so any
+     * finite capacity an open class can reach binds. A Cache model is exempt:
+     * Cache builds retrieval queues that legitimately carry a per-class capacity
+     * of 1, and the cache analyzers solve those rather than treating them as a
+     * buffer constraint.
+     *
+     * @return - the binding buffer, or a result whose {@code binds} is false
+     */
+    public BindingCapacity findBindingCapacity() {
+        for (Node node : this.nodes) {
+            if (node instanceof Cache) {
+                return new BindingCapacity();
+            }
+        }
+        Matrix njobs = getNumberOfJobs();
+        double totalJobs = 0; // Inf as soon as one class is open
+        boolean anyOpen = false;
+        for (int r = 0; r < njobs.length(); r++) {
+            totalJobs += njobs.get(r);
+            if (Double.isInfinite(njobs.get(r))) {
+                anyOpen = true;
+            }
+        }
+        for (Node node : this.nodes) {
+            if (!(node instanceof Station) || node instanceof Source || node instanceof Sink) {
+                continue;
+            }
+            Station station = (Station) node;
+            // hasFiniteCap() decodes the three "unbounded" encodings (MAX_VALUE, Inf, and
+            // JMT2LINE's negative sentinel) in one place; see Station.hasFiniteCap.
+            if (station.hasFiniteCap() && station.getCap() < totalJobs) {
+                return new BindingCapacity(station, station.getCap(), -1, null, anyOpen);
+            }
+            for (int r = 0; r < Math.min(this.jobClasses.size(), njobs.length()); r++) {
+                JobClass jobClass = this.jobClasses.get(r);
+                double classCap = station.getClassCap(jobClass);
+                if (classCap > 0 && classCap < Integer.MAX_VALUE && classCap < njobs.get(r)) {
+                    return new BindingCapacity(station, classCap, r, jobClass,
+                            Double.isInfinite(njobs.get(r)));
+                }
+            }
+        }
+        return new BindingCapacity();
+    }
+
+    /**
      * Returns the language features used by the given network
      *
      * @return - the language features used by the given network
@@ -3065,7 +3626,16 @@ public class Network extends Model implements Copyable {
                     ServiceBinding serviceProcess = n.getServer().getServiceProcess(this.getClassByIndex(r));
                     if (serviceProcess != null) {
                         if (!(serviceProcess.getDistribution() instanceof Disabled) && !(serviceProcess.getDistribution() instanceof Immediate)) {
-                            setUsedLangFeature(serviceProcess.getDistribution().getName());
+                            setUsedLangFeature(serviceProcess.getDistribution().getFeatureName());
+                        }
+                        // A finite-server station serving several jobs at once. A Delay
+                        // carries Integer.MAX_VALUE here and is NOT one: the single-server
+                        // recursions answered a c-server station as one server of the same
+                        // rate, and only a structural predicate could say so. Marked once
+                        // per model; setUsedLangFeature is idempotent.
+                        int nserv = ((Station) n).getNumberOfServers();
+                        if (nserv > 1 && nserv < Integer.MAX_VALUE) {
+                            setUsedLangFeature("MultiServer");
                         }
                         String sched = "";
                         if (n instanceof Delay) {
@@ -3095,7 +3665,7 @@ public class Network extends Model implements Copyable {
                 } else if (n instanceof Source) {
                     Distribution serviceProcess = ((Source) n).getArrivalProcess(this.getClassByIndex(r));
                     if (!(serviceProcess instanceof Disabled) && !(serviceProcess instanceof Immediate)) {
-                        setUsedLangFeature(serviceProcess.getName());
+                        setUsedLangFeature(serviceProcess.getFeatureName());
                     }
                     setUsedLangFeature("Source");
                     // see _kb/04-networkstruct.md (Node/process construction notes: getUsedLangFeatures) for rationale
@@ -3108,6 +3678,12 @@ public class Network extends Model implements Copyable {
                 } else if (n instanceof Fork) {
                     setUsedLangFeature("Fork");
                     setUsedLangFeature("Forker");
+                    // variable forking levels: a name declared but never marked
+                    // is a name no solver can ever refuse, so mark all three here
+                    Forker fk = (Forker) n.getOutput();
+                    if (!fk.tasksPerLinkByDest.isEmpty()) setUsedLangFeature("ForkFanoutVector");
+                    if (!fk.tasksPerLinkDist.isEmpty()) setUsedLangFeature("ForkFanoutRandom");
+                    if (!fk.branchProb.isEmpty()) setUsedLangFeature("ForkBranchProbability");
                 } else if (n instanceof Join) {
                     setUsedLangFeature("Join");
                     setUsedLangFeature("Joiner");
@@ -3119,6 +3695,10 @@ public class Network extends Model implements Copyable {
                     String replStrat = ReplacementStrategy.toFeature(((Cache) n).getReplacementStrategy());
                     if (replStrat != null && !replStrat.isEmpty()) {
                         setUsedLangFeature(replStrat);
+                    }
+                    // per-list storage cost caps with per-item sizes
+                    if (((Cache) n).getCostCaps() != null && !((Cache) n).getCostCaps().isEmpty()) {
+                        setUsedLangFeature("CacheItemSize");
                     }
                     // see _kb/04-networkstruct.md (Node/process construction notes: getUsedLangFeatures) for rationale
                     if (!((Cache) n).getRetrievalClassIndices().isEmpty()) {
@@ -3183,10 +3763,25 @@ public class Network extends Model implements Copyable {
                 break;
             }
         }
+        // Globally state-dependent scaling phi(n) over the full network state, the
+        // Whittle primitive. Only SolverCTMC plumbs it, so every other solver must
+        // reject the model rather than solve it unscaled.
+        if (this.gdScaling != null) {
+            setUsedLangFeature("GlobalDependence");
+        }
         // see _kb/04-networkstruct.md (Node/process construction notes: getUsedLangFeatures) for rationale
         for (Station station : this.stations) {
             if (station instanceof Queue && ((Queue) station).isDelayOffEnabled()) {
                 setUsedLangFeature("SetupDelayOff");
+                break;
+            }
+        }
+        // Server parallelism: a job seizing n>1 servers changes the effective
+        // capacity of the station, so a solver that cannot honour it must reject
+        // the model rather than solve it as if every job seized one server.
+        for (Station station : this.stations) {
+            if (station instanceof Queue && ((Queue) station).hasServerParallelism()) {
+                setUsedLangFeature("ServerParallelism");
                 break;
             }
         }
@@ -3223,6 +3818,111 @@ public class Network extends Model implements Copyable {
                 setUsedLangFeature("Breakdown");
                 break;
             }
+        }
+        // A retrial orbit (Station.setRetrial / setOrbit): the same per-class test
+        // refreshRetrial makes for sn.retrialProc, a configured delay that is not
+        // the Disabled placeholder, and restricted to a Queue as refreshStruct is.
+        // A solver that reads no sn.retrial* field would answer the model with the
+        // refused jobs simply lost, so the orbit is gated by name.
+        for (Node node : this.nodes) {
+            if (!(node instanceof Queue)) {
+                continue;
+            }
+            boolean retrial = false;
+            for (JobClass jobClass : this.jobClasses) {
+                if (((Queue) node).hasRetrial(jobClass)) {
+                    retrial = true;
+                    break;
+                }
+            }
+            if (retrial) {
+                setUsedLangFeature("Retrial");
+                break;
+            }
+        }
+        // A genuine QUORUM join (PARTIAL, k of n siblings with k < n) fires on the
+        // k-th branch completion, which is not their maximum, and the n-k stragglers
+        // are discarded on arrival: a solver that serves it as a full join returns a
+        // silent wrong answer, so the rule is gated by its own name. k >= n and
+        // k <= 0 are full joins and are not flagged.
+        if (!this.nodes.isEmpty()) {
+            Matrix conn = getConnectionMatrix();
+            for (Node node : this.nodes) {
+                if (!(node instanceof Join) || !(node.getInput() instanceof Joiner)) {
+                    continue;
+                }
+                Joiner joiner = (Joiner) node.getInput();
+                // siblings are counted at the FORK, as the engines do: its out-degree
+                // times tasksPerLink. The join in-degree is the fallback.
+                int joinIdx = getNodeIndex(node);
+                double nsib = 0;
+                for (int i = 0; i < conn.getNumRows(); i++) {
+                    if (conn.get(i, joinIdx) > 0) nsib++;
+                }
+                Node forkNode = ((Join) node).joinOf;
+                if (forkNode instanceof Fork && forkNode.getOutput() instanceof Forker) {
+                    int forkIdx = getNodeIndex(forkNode);
+                    double w = Math.max(1.0, Math.round(((Forker) forkNode.getOutput()).tasksPerLink));
+                    double outdeg = 0;
+                    for (int j = 0; j < conn.getNumCols(); j++) {
+                        if (conn.get(forkIdx, j) > 0) outdeg++;
+                    }
+                    nsib = outdeg * w;
+                }
+                for (JobClass jobClass : this.jobClasses) {
+                    JoinStrategy js = joiner.joinStrategy.get(jobClass);
+                    Double kreq = joiner.joinRequired.get(jobClass);
+                    if (js == null || js == JoinStrategy.STD || kreq == null || kreq <= 0) {
+                        continue;
+                    }
+                    if (nsib <= 0 || kreq < nsib) {
+                        setUsedLangFeature("JoinPartial");
+                    }
+                }
+            }
+        }
+        // Heterogeneous server pools (Queue.addServerType): the station is
+        // served by several pools with their own counts, class compatibilities
+        // and per-(type,class) rates. A solver that reads only sn.nservers
+        // answers for a homogeneous station of the same total size, which is a
+        // different system, so the pools are gated by their own name rather
+        // than silently flattened.
+        for (Station station : this.stations) {
+            if (station instanceof Queue && !((Queue) station).getServerTypes().isEmpty()) {
+                setUsedLangFeature("HeteroServers");
+                break;
+            }
+        }
+        // A FIFO depository (Place.setDepartureDiscipline) releases a served
+        // token only after the tokens that entered service before it, so which
+        // output transitions are enabled depends on the arrival order and not
+        // only on the marking. No solver implements it, hence a clean refusal
+        // instead of a Normal depository's answer under the user's name.
+        for (Node node : this.nodes) {
+            if (!(node instanceof Place)) {
+                continue;
+            }
+            Place place = (Place) node;
+            boolean nonNormal = false;
+            for (JobClass jobClass : this.jobClasses) {
+                if (place.getDepartureDiscipline(jobClass) != DepartureDiscipline.Normal) {
+                    nonNormal = true;
+                    break;
+                }
+            }
+            if (nonNormal) {
+                setUsedLangFeature("DepartureDiscipline");
+                break;
+            }
+        }
+        // A station or per-class buffer that can BIND: the one predicate
+        // NetworkSolver.bindingCapacityReason refuses on (node-level caps against
+        // the class populations, open classes always bind, Cache models exempt),
+        // asked here so the refusal has a registry name and a solver method that
+        // does not declare it is gated on exactly the models the structural gate
+        // refuses.
+        if (findBindingCapacity().binds) {
+            setUsedLangFeature("FiniteCapacity");
         }
         return usedFeatures;
     }
@@ -3883,15 +4583,33 @@ public class Network extends Model implements Copyable {
                             break;
                         }
                         state_i = FromMarginal.fromMarginalAndStarted(sn, ind, n0, s0);
-                        if (sn.isstation.get(ind, 0) == 1) {
-                            for (int r = 0; r < sn.nclasses; r++) {
-                                if (sn.procid.get(sn.nodes.get(ind)).get(sn.jobclasses.get(r)) == ProcessType.MAP) {
-                                    Matrix one = new Matrix(1, 1, 1);
-                                    one.set(0, 0, 1);
-                                    state_i = Matrix.cartesian(state_i, one);
-                                }
-                            }
+                }
+
+                // The synchronous-call (REPLY) counters are the LAST local variables (see
+                // ReplyBlock), but the modulation, routing and node blocks below are
+                // appended after them. Detach the counters here and re-attach them at the
+                // tail, otherwise the initial row is a column permutation of every
+                // enumerated row, matchrow fails, and Solver_ctmc silently skips its
+                // unreachable-state pruning.
+                Matrix replyCols = new Matrix(0, 0);
+                if (jline.lang.state.ReplyBlock.holds(sn, ind)) {
+                    int replyw = jline.lang.state.ReplyBlock.info(sn, ind).width;
+                    if (replyw > 0 && state_i.getNumCols() >= replyw) {
+                        int wkeep = state_i.getNumCols() - replyw;
+                        replyCols = Matrix.extract(state_i, 0, state_i.getNumRows(), wkeep, state_i.getNumCols());
+                        state_i = Matrix.extract(state_i, 0, state_i.getNumRows(), 0, wkeep);
+                    }
+                }
+
+                // Markov-modulated service keeps a phase-restart slot per class (nvars
+                // columns 0..R-1, allocated by refreshLocalVars for MAP/DMAP/MMPP2/BMAP);
+                // the enumerated space stores it 1-based, so the server starts in phase 1.
+                if (sn.isstation.get(ind, 0) == 1 && sn.nvars != null && !sn.nvars.isEmpty()) {
+                    for (int r = 0; r < sn.nclasses; r++) {
+                        for (int v = 0; v < (int) sn.nvars.get(ind, r); v++) {
+                            state_i = state_i.concatCols(Matrix.singleton(1));
                         }
+                    }
                 }
 
                 for (int r = 0; r < sn.nclasses; r++) {
@@ -3946,6 +4664,12 @@ public class Network extends Model implements Copyable {
                     }
                 }
 
+                // No call is outstanding at time zero, so the counters are zero, but the
+                // columns must trail every other local variable (see ReplyBlock).
+                if (!replyCols.isEmpty()) {
+                    state_i = state_i.concatCols(replyCols);
+                }
+
                 if (state_i.isEmpty()) {
                     if (GlobalConstants.Verbose == VerboseLevel.DEBUG) {
                         line_warning(mfilename(new Object() {
@@ -3959,18 +4683,38 @@ public class Network extends Model implements Copyable {
                     int cacheCapacity = cacheNode.getTotalCacheCapacity();
                     int retrievalSystemCapacity = cacheNode.getRetrievalSystemCapacity();
                     int nItems = ((CacheNodeParam) sn.nodeparam.get(this.nodes.get(ind))).nitems;
-                    // When a retrieval system is configured the local state appends a per-item occupancy bitmap
-                    // (one column per item); otherwise only the cache contents are stored.
+                    // When a retrieval system is configured the local state appends block A (a
+                    // per-item occupancy bitmap) and block B (per-retrieval-class delayed-hit
+                    // counts); otherwise only the cache contents are stored.
                     int retrievalBitmapWidth = (retrievalSystemCapacity > 0) ? nItems : 0;
+                    int retrievalPendingWidth = (retrievalSystemCapacity > 0)
+                            ? cacheNode.getRetrievalClassIndices().size() : 0;
 
-                    // Cache state appears as a flattened vector of [Classes | cache contents | retrieval bitmap]
-                    state_i = new Matrix(1, numClasses + cacheCapacity + retrievalBitmapWidth);
+                    // Cache state appears as a flattened vector of [Classes | cache contents | block A | block B]
+                    state_i = new Matrix(1, numClasses + cacheCapacity + retrievalBitmapWidth + retrievalPendingWidth);
                     int ctr = 0;
                     for (int idx = numClasses; idx < numClasses + cacheCapacity; idx++) {
                         state_i.set(idx, ++ctr);
                     }
                 } else if (this.nodes.get(ind) instanceof Router) {
                     state_i = Matrix.zeros(1, this.getNumberOfClasses());
+                    // A router is stateful precisely because a cyclic strategy keeps a
+                    // pointer there, and refreshLocalVars counts that pointer in nvars.
+                    // Without the column the row is one short of what every reader
+                    // derives from nvars, and the per-class marginal runs off its end.
+                    for (int r = 0; r < sn.nclasses; r++) {
+                        RoutingStrategy rstrat = sn.routing.get(sn.nodes.get(ind)).get(sn.jobclasses.get(r));
+                        if (rstrat == RoutingStrategy.WRROBIN) {
+                            state_i = state_i.concatCols(Matrix.singleton(1));
+                        } else if (rstrat == RoutingStrategy.RROBIN) {
+                            for (int p = 0; p < sn.connmatrix.getNumCols(); p++) {
+                                if (sn.connmatrix.get(ind, p) == 1) {
+                                    state_i = state_i.concatCols(Matrix.singleton(p));
+                                    break;
+                                }
+                            }
+                        }
+                    }
                 } else if (this.nodes.get(ind) instanceof StatefulFork) {
                     // Stateful Fork (FJ tag-augmented copies only): per-class
                     // count of parent jobs held before the fork firing
@@ -4446,17 +5190,58 @@ public class Network extends Model implements Copyable {
 
         // Check that order-independent (OI) stations have a permutation-invariant
         // rate mu(c). Disabled by model.setChecks(false).
-        if (this.enableChecks) {
+        boolean hasOI = false;
+        for (Node node : this.nodes) {
+            if (node instanceof Queue) {
+                Queue q = (Queue) node;
+                if (q.getSchedStrategy() == SchedStrategy.OI && q.getServiceRateFunction() != null) {
+                    hasOI = true;
+                    break;
+                }
+            }
+        }
+        if (this.enableChecks && hasOI) {
             int K = this.jobClasses.size();
-            double[] Nvec = new double[K];
+            double[] pop = new double[K];
+            double ntot = 0;
             for (int r = 0; r < K; r++) {
-                Nvec[r] = this.jobClasses.get(r).getNumberOfJobs();
+                pop[r] = this.jobClasses.get(r).getNumberOfJobs();
+                ntot += pop[r];
+            }
+            // The conserved quantity under class switching is the CHAIN
+            // population, not the per-class one: a class reaches counts up to
+            // its chain's total, and a class declared empty and filled only by
+            // a switch (a ClassSwitch target, a Cache hit/miss class) reaches
+            // them from a declared population of 0. Bounding each class by its
+            // OWN population leaves reachable microstates unenumerated -- every
+            // mixed one, when that population is 0 -- and the check then passes
+            // vacuously on plainly order-dependent rates. csMatrix is the mask
+            // P.setRouting has just recorded above; its weakly connected
+            // components are the chains. Without class switching each component
+            // is a single class and Nvec falls back to pop. A stale mask (a
+            // fork-join copy widens the class set) is ignored, as elsewhere.
+            double[] Nvec = new double[K];
+            System.arraycopy(pop, 0, Nvec, 0, K);
+            if (hasUsableCsMatrix(K)) {
+                for (Set<Integer> chain : Matrix.weaklyConnect(this.csMatrix, new HashSet<Integer>())) {
+                    double chainPop = 0;
+                    for (Integer r : chain) {
+                        if (r >= 0 && r < K) chainPop += pop[r];
+                    }
+                    for (Integer r : chain) {
+                        if (r >= 0 && r < K) Nvec[r] = chainPop;
+                    }
+                }
             }
             for (Node node : this.nodes) {
                 if (node instanceof Queue) {
                     Queue q = (Queue) node;
                     if (q.getSchedStrategy() == SchedStrategy.OI && q.getServiceRateFunction() != null) {
-                        Queue.PermCheckResult pr = q.checkPermInvariance(Nvec, q.getCap());
+                        // ntot caps the microstate LENGTH: with Nvec now
+                        // chain-wide, summing it inside checkPermInvariance
+                        // would count each chain once per class and admit
+                        // microstates longer than the network can produce.
+                        Queue.PermCheckResult pr = q.checkPermInvariance(Nvec, Math.min(q.getCap(), ntot));
                         if (!pr.ok) {
                             line_error(mfilename(new Object() {}),
                                 "Order-independent (OI) station '" + q.getName() + "' has a service rate "
@@ -4464,7 +5249,24 @@ public class Network extends Model implements Copyable {
                                 + "of the microstate " + java.util.Arrays.toString(pr.badc) + ". Use "
                                 + "SchedStrategy.PAS for order-dependent service, or disable this check with "
                                 + "model.setChecks(false).");
-                        } else if (pr.partial) {
+                        }
+                        // (1): per-job rates must be non-negative. Runs second
+                        // because permutation invariance is what makes mu a
+                        // function of the count vector, which is what the
+                        // increment test walks.
+                        Queue.MonoCheckResult mr =
+                                q.checkRateMonotonicity(Nvec, Math.min(q.getCap(), ntot));
+                        if (!mr.ok) {
+                            line_error(mfilename(new Object() {}),
+                                "Order-independent (OI) station '" + q.getName() + "' has a service rate "
+                                + "function with a negative per-job service rate: mu(c) DROPS when a class-"
+                                + mr.badr + " job joins, at microstate "
+                                + java.util.Arrays.toString(mr.badc) + ". An OI rate must satisfy "
+                                + "mu(c[:j]) >= mu(c[:j-1]), so that every mu_j(c) is non-negative. A "
+                                + "processor-sharing total rate (sum_j mu_{c_j})/n has this shape whenever "
+                                + "classes have different rates -- use SchedStrategy.PS for that station, "
+                                + "or disable this check with model.setChecks(false).");
+                        } else if (pr.partial || mr.partial) {
                             line_warning(mfilename(new Object() {}),
                                 "Order-independent (OI) station '" + q.getName() + "': the permutation-"
                                 + "invariance check was only partial because the reachable population is "
@@ -4837,6 +5639,80 @@ public class Network extends Model implements Copyable {
             }
         }
 
+        // A chain routed through a QUORUM join is not population-conserving either,
+        // and for the same reason: the join releases the parent at the k-th of n
+        // siblings and the n-k stragglers stay in the branches, so the parent forks
+        // again while they are still in flight. Nothing bounds that backlog, so a
+        // branch station holds no more than the class population only under a
+        // STANDARD join; capping it at sum(njobs) makes a simulator drop a closed
+        // job. Read off the node objects, not off sn.nodeparam: refreshCapacity
+        // runs before refreshLocalVars rebuilds nodeparam.
+        // see _kb/05-solvers-overview.md
+        boolean[] quorumClass = new boolean[K];
+        // Read this.connections DIRECTLY and never getConnectionMatrix(), which
+        // ALLOCATES and EXPANDS it as a side effect. Doing that from inside a
+        // refresh resized the connection matrix of a tag-augmented copy (which
+        // carries more nodes than the model it came from) and broke State.fromMarginal
+        // on it. A null or undersized matrix here just leaves nsib at 0, which the
+        // quorum test below already treats as "sibling count unknown".
+        Matrix connq = this.connections;
+        if (!this.nodes.isEmpty()) {
+            for (Node node : this.nodes) {
+                if (!(node instanceof Join) || !(node.getInput() instanceof Joiner)) continue;
+                Joiner joiner = (Joiner) node.getInput();
+                int joinIdx = getNodeIndex(node);
+                double nsib = 0;
+                if (connq != null && joinIdx < connq.getNumCols()) {
+                    for (int i = 0; i < connq.getNumRows(); i++) {
+                        if (connq.get(i, joinIdx) > 0) nsib++;
+                    }
+                    Node forkNode = ((Join) node).joinOf;
+                    if (forkNode instanceof Fork && forkNode.getOutput() instanceof Forker) {
+                        int forkIdx = getNodeIndex(forkNode);
+                        if (forkIdx >= 0 && forkIdx < connq.getNumRows()) {
+                            double w = Math.max(1.0,
+                                    Math.round(((Forker) forkNode.getOutput()).tasksPerLink));
+                            double outdeg = 0;
+                            for (int j = 0; j < connq.getNumCols(); j++) {
+                                if (connq.get(forkIdx, j) > 0) outdeg++;
+                            }
+                            nsib = outdeg * w;
+                        }
+                    }
+                }
+                for (int r0 = 0; r0 < K; r0++) {
+                    JobClass jc = this.jobClasses.get(r0);
+                    JoinStrategy js = joiner.joinStrategy.get(jc);
+                    Double kreq = joiner.joinRequired.get(jc);
+                    if (js == null || js == JoinStrategy.STD || kreq == null || kreq <= 0) continue;
+                    if (nsib <= 0 || kreq < nsib) quorumClass[r0] = true;
+                }
+            }
+        }
+        boolean[] quorumFedChain = new boolean[C];
+        for (int c0 = 0; c0 < C; c0++) {
+            Matrix inchain_c0 = this.sn.inchain.get(c0);
+            for (int idx = 0; idx < inchain_c0.length(); idx++) {
+                int r0 = (int) inchain_c0.get(idx);
+                if (r0 >= 0 && r0 < K && quorumClass[r0]) quorumFedChain[c0] = true;
+            }
+        }
+        // A fork with tasksPerLink = w > 1 puts w tasks of the SAME parent on one link,
+        // so a branch station can hold w jobs per circulating parent and the chain
+        // population is no longer its bound. The multiplier is the PRODUCT over the
+        // forks, because a fork nested in another's branch multiplies again; that is an
+        // upper bound for forks in series, where a cap that never binds costs nothing,
+        // and exact for the single-fork case. Without it a simulator drops a closed job
+        // at a branch station. see _kb/04-networkstruct.md
+        double forkTaskFactor = 1.0;
+        for (Node node : this.nodes) {
+            if (!(node instanceof Fork) || !(node.getOutput() instanceof Forker)) continue;
+            double tpl = ((Forker) node.getOutput()).tasksPerLink;
+            if (!Double.isNaN(tpl) && tpl >= 1) {
+                forkTaskFactor *= Math.max(1.0, Math.round(tpl));
+            }
+        }
+
         for (int c = 0; c < C; c++) {
             Matrix inchain_c = this.sn.inchain.get(c);
             //chainCap = sum(njobs(inchain));
@@ -4844,8 +5720,9 @@ public class Network extends Model implements Copyable {
             for (int idx = 0; idx < inchain_c.length(); idx++) {
                 chainCap += njobs.get(0, (int) inchain_c.get(0, idx));
             }
+            chainCap *= forkTaskFactor;
 
-            if (chainCap >= Integer.MAX_VALUE || spawnFedChain[c]) {
+            if (chainCap >= Integer.MAX_VALUE || spawnFedChain[c] || quorumFedChain[c]) {
                 chainCap = Inf;
             }
 
@@ -5134,7 +6011,7 @@ public class Network extends Model implements Copyable {
     public void refreshLST(List<Integer> statSet, List<Integer> classSet) {
         int M = this.stations.size();
         int K = this.jobClasses.size();
-        Map<Station, Map<JobClass, SerializableFunction<Double, Double>>> lst;
+        Map<Station, Map<JobClass, SerializableFunction<Complex, Complex>>> lst;
 
         if (statSet == null) {
             statSet = new ArrayList<Integer>();
@@ -5150,23 +6027,23 @@ public class Network extends Model implements Copyable {
         if (this.sn.lst != null) {
             lst = this.sn.lst;
         } else {
-            lst = new HashMap<Station, Map<JobClass, SerializableFunction<Double, Double>>>();
+            lst = new HashMap<Station, Map<JobClass, SerializableFunction<Complex, Complex>>>();
             for (Station station : stations) {
-                lst.put(station, new HashMap<JobClass, SerializableFunction<Double, Double>>());
+                lst.put(station, new HashMap<JobClass, SerializableFunction<Complex, Complex>>());
             }
         }
         int sourceIdx = this.getIndexSourceStation();
 
         for (Integer i : statSet) {
             Station station = this.stations.get(i);
-            Map<JobClass, SerializableFunction<Double, Double>> map = new HashMap<JobClass, SerializableFunction<Double, Double>>();
+            Map<JobClass, SerializableFunction<Complex, Complex>> map = new HashMap<JobClass, SerializableFunction<Complex, Complex>>();
             for (Integer r : classSet) {
                 JobClass jobclass = this.jobClasses.get(r);
                 if (i == sourceIdx) {
                     Distribution distr = ((Source) station).getArrivalDistribution(jobclass);
                     if (distr instanceof Disabled) map.put(jobclass, null);
                     // see _kb/04-networkstruct.md (refreshStruct.m field-population notes) for rationale
-                    else map.put(jobclass, e -> distr.evalLST(e));
+                    else map.put(jobclass, e -> distr.evalLST(e));  // the Complex overload
                 } else {
                     //line 45-46 is ignored since Fork is not station
                     if (station instanceof Join) map.put(jobclass, null);
@@ -5313,28 +6190,45 @@ public class Network extends Model implements Copyable {
                     Cache cache = (Cache) node;
                     cacheParam.nitems = 0;
                     cacheParam.accost = cache.accessProb;
+                    // popularity is keyed (itemSetIndex, class): address this cache's own
+                    // row explicitly, since the linear form aliases to it only when the
+                    // cache's item set is the first in the model, i.e. only when the model
+                    // holds a single cache.
+                    int itemRow = cache.getItems().getIndex();
                     for (int r = 0; r < this.getNumberOfClasses(); r++) {
-                        if (!cache.popularityGet(r).isDisabled()) {
-                            cacheParam.nitems = (int) Maths.max(cacheParam.nitems, cache.popularityGet(r).getSupport().getRight());
+                        Distribution pop = cache.popularityGet(itemRow, r);
+                        if (pop != null && !pop.isDisabled()) {
+                            cacheParam.nitems = (int) Maths.max(cacheParam.nitems, pop.getSupport().getRight());
                         }
                     }
                     // see _kb/04-networkstruct.md (State-space construction conventions) for rationale
                     int retrievalBitmapWidth = (cache.getRetrievalSystemCapacity() > 0) ? cacheParam.nitems : 0;
-                    nvars.set(ind, 2 * R, cache.getTotalCacheCapacity() + retrievalBitmapWidth);
+                    int retrievalPendingWidth = (cache.getRetrievalSystemCapacity() > 0)
+                            ? cache.getRetrievalClassIndices().size() : 0;
+                    nvars.set(ind, 2 * R, cache.getTotalCacheCapacity() + retrievalBitmapWidth + retrievalPendingWidth);
                     cacheParam.itemcap = cache.getItemLevelCap();
+                    // per-item storage costs and per-list cost caps (ton21cache Sec. IX)
+                    cacheParam.itemsize = cache.getItemSizes();
+                    cacheParam.costcap = cache.getCostCaps();
+                    cacheParam.costcapglobal = cache.isCostCapGlobal();
                     cacheParam.totalCacheCapacity = cache.getTotalCacheCapacity();
                     cacheParam.retrievalSystemCapacity = cache.getRetrievalSystemCapacity();
                     cacheParam.pread = new HashMap<>();
                     for (int r = 0; r < this.getNumberOfClasses(); r++) {
-                        if (cache.popularityGet(r).isDisabled()) {
+                        Distribution pop = cache.popularityGet(itemRow, r);
+                        if (pop == null || pop.isDisabled()) {
                             cacheParam.pread.put(r, null);
                         } else {
                             List<Double> t = new ArrayList<>();
                             for (int j = 1; j <= cacheParam.nitems; j++) {
                                 t.add((double) j);
                             }
-                            cacheParam.pread.put(r, ((DiscreteDistribution) cache.popularityGet(r)).evalPMF(t).toList1D());
+                            cacheParam.pread.put(r, ((DiscreteDistribution) pop).evalPMF(t).toList1D());
                         }
+                    }
+                    cacheParam.classitem = new HashMap<>();
+                    for (int r = 0; r < this.getNumberOfClasses(); r++) {
+                        cacheParam.classitem.put(r, cache.getItemOfClass(r));
                     }
                     cacheParam.replacestrat = cache.getReplacementStrategy();
                     cacheParam.qlru = cache.getAdmissionProb();
@@ -5393,14 +6287,21 @@ public class Network extends Model implements Copyable {
                     break;
                 case Fork:
                     ForkNodeParam forkParam = new ForkNodeParam();
-                    forkParam.fanOut = ((Forker) node.getOutput()).tasksPerLink;
+                    Forker forker = (Forker) node.getOutput();
+                    forkParam.fanOut = forker.tasksPerLink;
+                    buildForkFanout(forkParam, forker, node);
                     param = forkParam;
                     break;
                 case Join:
                     JoinNodeParam joinParam = new JoinNodeParam();
                     Joiner joiner = (Joiner) node.getInput();
                     joinParam.joinStrategy = joiner.joinStrategy;
+                    // fanIn is the JMT numRequired of a STANDARD join (-1 = every
+                    // sibling), joinRequired the quorum k of a PARTIAL one: the two
+                    // read the same field but are written to different JMT elements,
+                    // so both are carried
                     joinParam.fanIn = joiner.joinRequired;
+                    joinParam.joinRequired = joiner.joinRequired;
                     param = joinParam;
                     break;
                 case Logger:
@@ -5587,6 +6488,46 @@ public class Network extends Model implements Copyable {
                 Matrix conn_i;
                 Matrix conn_i_transpose;
                 switch (this.sn.routing.get(node).get(jobclass)) {
+                    case SDR: {
+                        // Krzesinski SDR: resolve the declared branch topology from
+                        // node objects to node indices. The product-form solvers read
+                        // the station-indexed twin from sn.sdr, built by
+                        // refreshStateDepRouting.
+                        jline.lang.StateDepRouting decl = node.getStateDepRouting(jobclass);
+                        if (decl == null) {
+                            throw new RuntimeException("Node " + node.getName() + " declares state-dependent routing "
+                                    + "without a structure; use Node.setStateDepRouting.");
+                        }
+                        if (param.sdr == null) param.sdr = new HashMap<JobClass, jline.lang.StateDepRouting>();
+                        int Bsdr = decl.branchNodes.size();
+                        jline.lang.StateDepRouting resolved = new jline.lang.StateDepRouting();
+                        resolved.entry = ind;
+                        resolved.departure = decl.departureNode.getNodeIndex();
+                        resolved.branch = new int[Bsdr][];
+                        resolved.entryOf = new int[Bsdr];
+                        resolved.departureOf = new int[Bsdr];
+                        for (int b = 1; b < Bsdr; b++) {
+                            List<Node> bn = decl.branchNodes.get(b);
+                            int[] idx = new int[bn.size()];
+                            for (int k = 0; k < bn.size(); k++) {
+                                idx[k] = bn.get(k).getNodeIndex();
+                            }
+                            resolved.branch[b] = idx;
+                            resolved.entryOf[b] = bn.get(0).getNodeIndex();
+                            resolved.departureOf[b] = bn.get(bn.size() - 1).getNodeIndex();
+                        }
+                        resolved.level = decl.level.clone();
+                        resolved.C = decl.C.clone();
+                        resolved.d = new double[decl.d.length][];
+                        for (int t = 0; t < decl.d.length; t++) {
+                            resolved.d[t] = decl.d[t].clone();
+                        }
+                        resolved.entryNode = decl.entryNode;
+                        resolved.departureNode = decl.departureNode;
+                        resolved.branchNodes = decl.branchNodes;
+                        param.sdr.put(jobclass, resolved);
+                        break;
+                    }
                     case SQ: {
                         if (param.d == null) param.d = new HashMap<JobClass, Integer>();
                         if (param.outlinks == null) param.outlinks = new HashMap<JobClass, Matrix>();
@@ -5655,27 +6596,6 @@ public class Network extends Model implements Copyable {
                         }
                         param.weightedOutlinks.put(jobclass, wrrWol);
                         break;
-                    case RL: {
-                        // see _kb/04-networkstruct.md (refreshStruct.m field-population notes) for rationale
-                        if (param.rlValueFunction == null) param.rlValueFunction = new HashMap<JobClass, Matrix>();
-                        if (param.rlValueFunctionShape == null) param.rlValueFunctionShape = new HashMap<JobClass, int[]>();
-                        if (param.rlNodesNeedAction == null) param.rlNodesNeedAction = new HashMap<JobClass, int[]>();
-                        if (param.rlStateSize == null) param.rlStateSize = new HashMap<JobClass, Integer>();
-                        List<OutputStrategy> rlOs = node.getOutput().getOutputStrategyByClass(jobclass);
-                        if (rlOs != null) {
-                            for (OutputStrategy os : rlOs) {
-                                if (os.getRoutingStrategy() != jline.lang.constant.RoutingStrategy.RL) {
-                                    continue;
-                                }
-                                param.rlValueFunction.put(jobclass, os.getRlValueFunction());
-                                param.rlValueFunctionShape.put(jobclass, os.getRlValueFunctionShape());
-                                param.rlNodesNeedAction.put(jobclass, os.getRlNodesNeedAction());
-                                param.rlStateSize.put(jobclass, os.getRlStateSize());
-                                break;
-                            }
-                        }
-                        break;
-                    }
                     case RROBIN:
                         if (param.outlinks == null) { param.outlinks = new HashMap<JobClass, Matrix>(); }
 
@@ -5771,8 +6691,10 @@ public class Network extends Model implements Copyable {
                     if (sched != SchedStrategy.FCFS) {
                         throw new RuntimeException("Synchronous calls (REPLY signals) are supported only at FCFS "
                                 + "stations, but " + node.getName() + " uses " + SchedStrategy.toText(sched)
-                                + ". Holding a server across a call has no representation in the state of the "
-                                + "other disciplines.");
+                                + ". A held server is encoded as a per-class counter, which is exact only where "
+                                + "servers are interchangeable (FCFS) or unlimited (INF); the other disciplines "
+                                + "are not yet encoded rather than infeasible. Set this station to FCFS or INF, "
+                                + "or simulate the layered model directly with SolverLDES.");
                     }
                     nvars.set(ind, 2 * R + 1 + r, 1);
                     replyblock.set(ind, r, 1);
@@ -5783,6 +6705,7 @@ public class Network extends Model implements Copyable {
         if (this.sn != null) {
             this.sn.nvars = nvars;
             this.sn.nodeparam = nodeparam;
+            refreshStateDepRouting();
             // Size the polling controller now that nodeparam is complete: Polling.info
             // reads sn.nodeparam/sn.sched/sn.proc, and memoizes itself on the param.
             for (int pi = 0; pi < pollingParamNodes.size(); pi++) {
@@ -6040,8 +6963,6 @@ public class Network extends Model implements Copyable {
         }
     }
 
-    @SuppressWarnings("unchecked")
-    //Current this function not implement the return value
     /**
      * True when the station's process representation for this class holds raw
      * distribution parameters rather than a (D0,D1) pair. Gamma, Weibull,
@@ -6064,6 +6985,7 @@ public class Network extends Model implements Copyable {
                 || dist instanceof jline.lang.processes.Uniform;
     }
 
+    @SuppressWarnings("unchecked")
     public void refreshProcessRepresentations() {
         int M = this.stations.size();
         int K = this.jobClasses.size();
@@ -6087,8 +7009,6 @@ public class Network extends Model implements Copyable {
                 } else {
                     ph_i = (Map<JobClass, MatrixCell>) station.getServiceRates().get(0);
                 }
-            }
-            for (JobClass jc : ph_i.keySet()) {
             }
             ph.put(station, ph_i);
 
@@ -6137,7 +7057,13 @@ public class Network extends Model implements Copyable {
                             ? ((Source) station).getArrivalDistribution(jc4phases)
                             : (station instanceof ServiceStation
                                 ? ((ServiceStation) station).getServiceProcess(jc4phases) : null);
-                    if (d4phases instanceof NHPP) {
+                    if (d4phases instanceof MAPt) {
+                        // a matrix schedule modulates a phase structure, so the phase
+                        // count is the order of the segment matrices, not 1
+                        phases.set(i, r, ((MAPt) d4phases).getNumberOfPhases());
+                    } else if (d4phases instanceof PHt) {
+                        phases.set(i, r, ((PHt) d4phases).getNumberOfPhases());
+                    } else if (d4phases instanceof NHPP) {
                         phases.set(i, r, 1.0);
                     } else {
                         phases.set(i, r, ph_i_r.get(0).getNumCols());
@@ -6162,7 +7088,14 @@ public class Network extends Model implements Copyable {
                                 ? ((Source) station).getArrivalDistribution(jobclass)
                                 : (station instanceof ServiceStation
                                     ? ((ServiceStation) station).getServiceProcess(jobclass) : null);
-                        if (d4pie instanceof NHPP) {
+                        if (d4pie instanceof MAPt || d4pie instanceof PHt) {
+                            // pie of the time-averaged nominal, which the fluid carrier
+                            // uses; NaN would strand the phase structure
+                            MatrixCell nominal = (d4pie instanceof MAPt)
+                                    ? ((MAPt) d4pie).getTimeAverageProcess()
+                                    : ((PHt) d4pie).getTimeAverageProcessMAP();
+                            pie_i.put(jobclass, map_pie(nominal.get(0), nominal.get(1)));
+                        } else if (d4pie instanceof NHPP) {
                             Matrix nanPie = new Matrix(1, 1, 0);
                             nanPie.set(0, 0, NaN);
                             pie_i.put(jobclass, nanPie);
@@ -6617,6 +7550,21 @@ public class Network extends Model implements Copyable {
             }
 
             Queue queue = (Queue) station;
+
+            // Job parallelism is independent of the pools: a homogeneous station
+            // may declare it, and a heterogeneous one may not.
+            if (snp != null) {
+                if (queue.hasServerParallelism()) {
+                    Matrix par = new Matrix(1, K, K);
+                    for (int r = 0; r < K; r++) {
+                        par.set(0, r, queue.getServerParallelism(this.jobClasses.get(r)));
+                    }
+                    snp.serverparallelism = par;
+                } else {
+                    snp.serverparallelism = null;
+                }
+            }
+
             if (!queue.isHeterogeneous()) {
                 if (snp != null) {
                     snp.nservertypes = 0;
@@ -6989,8 +7937,8 @@ public class Network extends Model implements Copyable {
                                     case SQ:
                                         map.put(jnd * K + s, (pair) -> sub_sq(ind_final, jnd_final, r_final, s_final, linksmat, pair.getLeft(), pair.getRight()));
                                         break;
-                                    case RL:
-                                        map.put(jnd * K + s, (pair) -> sub_rl(ind_final, jnd_final, r_final, s_final, linksmat, pair.getLeft(), pair.getRight()));
+                                    case SDR:
+                                        map.put(jnd * K + s, (pair) -> sub_sdr(ind_final, jnd_final, r_final, s_final, linksmat, pair.getLeft(), pair.getRight()));
                                         break;
                                     default:
                                         map.put(jnd * K + s, (pair) -> rtnodes.get(ind_final * K + r_final, jnd_final * K + s_final));
@@ -7192,8 +8140,16 @@ public class Network extends Model implements Copyable {
         Map<Station, Matrix> cdscalingpeak = getLimitedClassDependencePeak();
         Map<Station, SerializableFunction<Matrix, Matrix>> jdscaling = getLimitedJointDependence();
         Map<Station, Matrix> jdscalingpeak = getLimitedJointDependencePeak();
+        SerializableFunction<Matrix, Matrix> gdscaling = getGlobalDependence();
+        Matrix gdscalingpeak = getGlobalDependencePeak();
+        int gdscalingcutoff = getGlobalDependenceCutoff();
 
         if (sn == null) sn = new NetworkStruct();
+
+        jline.io.LineConsole.compiling(this.getName());
+        jline.io.LineConsole.compileDetail("reading the routing strategies of %s and %s",
+                jline.io.LineConsole.plural(this.nodes.size(), "node", "nodes"),
+                jline.io.LineConsole.plural(this.jobClasses.size(), "class", "classes"));
 
         // sn.nnodes counts physical nodes only; FCRs are virtual nodes appended to nodenames/nodetypes
         sn.nnodes = this.nodes.size();
@@ -7347,6 +8303,9 @@ public class Network extends Model implements Copyable {
         sn.cdscalingpeak = cdscalingpeak;
         sn.jdscaling = jdscaling;
         sn.jdscalingpeak = jdscalingpeak;
+        sn.gdscaling = gdscaling;
+        sn.gdscalingpeak = gdscalingpeak;
+        sn.gdscalingcutoff = gdscalingcutoff;
         sn.nodetype = nodetypes;
         sn.isstateful = new Matrix(nodes.size(), 1, nodes.size());
         for (int i = 0; i < sn.nnodes; i++) {
@@ -7358,11 +8317,11 @@ public class Network extends Model implements Copyable {
         }
         // Station-indexed mask of queue stations carrying setup/delay-off
         // times, as in MATLAB refreshStruct.m.
-        sn.isfunction = new Matrix(sn.nstations, 1, sn.nstations);
+        sn.hassetup = new Matrix(sn.nstations, 1, sn.nstations);
         for (int i = 0; i < sn.nstations; i++) {
             Station station = this.stations.get(i);
-            boolean isFunction = station instanceof Queue && ((Queue) station).isDelayOffEnabled();
-            sn.isfunction.set(i, 0, isFunction ? 1.0 : 0.0);
+            boolean hasSetup = station instanceof Queue && ((Queue) station).isDelayOffEnabled();
+            sn.hassetup.set(i, 0, hasSetup ? 1.0 : 0.0);
         }
         sn.isstatedep = new Matrix(sn.nnodes, 3, 3 * sn.nnodes);
         for (int i = 0; i < sn.nnodes; i++) {
@@ -7376,8 +8335,8 @@ public class Network extends Model implements Copyable {
                     case RROBIN:
                     case WRROBIN:
                     case JSQ:
-                    case RL:
                     case SQ:
+                    case SDR:
                         sn.isstatedep.set(i, 2, 1.0); // state dependent routing
                         break;
                     default:
@@ -7446,6 +8405,7 @@ public class Network extends Model implements Copyable {
             }
         }
 
+        jline.io.LineConsole.compileDetail("refreshing class priorities");
         refreshPriorities();
         refreshDeadlines();
         refreshProcesses(null, null);
@@ -7516,7 +8476,11 @@ public class Network extends Model implements Copyable {
             }
         }
 
+        jline.io.LineConsole.compileDetail("computing the routing table and the chains");
         refreshChains(!sn.nodetype.contains(NodeType.Cache));
+        jline.io.LineConsole.compileDetail("found %s over %s",
+                jline.io.LineConsole.plural(sn.nchains, "chain", "chains"),
+                jline.io.LineConsole.plural(sn.nclasses, "class", "classes"));
 
         Matrix refclasses = this.getReferenceClasses();
         Matrix refclass = new Matrix(1, sn.nchains);
@@ -7534,11 +8498,13 @@ public class Network extends Model implements Copyable {
         this.sn.refclass = refclass;
         this.sn.fj = this.getForkJoins();
 
+        jline.io.LineConsole.compileDetail("refreshing node parameters and state-dependent routing");
         refreshLocalVars();
         // Must run after refreshLocalVars(), which populates the per-station ServiceNodeParam
         // (QueueNodeParam) that getServiceParam() reads to store nservertypes/heterorates.
         refreshHeterogeneousServers();
         refreshPetriNetNodes();
+        jline.io.LineConsole.compileDetail("building the synchronization events");
         refreshSync();
         refreshGlobalSync();
         refreshRegions();
@@ -7637,6 +8603,274 @@ public class Network extends Model implements Copyable {
             }
 
             // see _kb/04-networkstruct.md (refreshStruct.m field-population notes) for rationale
+        }
+
+        // Needs the visit ratios, so it runs after refreshChains.
+        checkServiceReachable();
+    }
+
+    /**
+     * Refuses a class that is ROUTED TO a station which cannot serve it.
+     *
+     * <p>sanitize() disables the OUTGOING routing of a class a station cannot
+     * serve, which is what keeps it out of that station's visit ratios -- but
+     * nothing stopped the class being routed IN, and a class that arrives where
+     * it cannot be served is a flow sink: it enters and never leaves. The
+     * station-level guard next to it cannot see this, because it asks whether the
+     * station serves ANY class, not whether it serves the classes that reach
+     * it.</p>
+     *
+     * <p>One such model gave three different wrong answers, none flagged, on a
+     * closed cycle D &lt;-&gt; Q whose class C2 has no service at Q: MVA reported
+     * Q/C2 with ArvR 1 against Tput 0, CTMC dropped class C2 entirely, and SSA
+     * returned D/C2 QLen 2e-06 with the Q rows absent.</p>
+     *
+     * <p>AN ABSENT SERVICE AND AN EXPLICIT Disabled ARE TREATED ALIKE. sanitize
+     * fills an absent slot with Disabled, so the two reach every solver as the
+     * identical struct and produce identical wrong numbers; the spelling cannot
+     * decide. What decides is whether anything ROUTES THE CLASS IN, which is what
+     * this tests, so the class-switching idiom -- each queue serving one class and
+     * marking the rest Disabled -- has no incoming flow there and is untouched.</p>
+     *
+     * <p>READS sn.rtnodes, WALKED FORWARD FROM THE FEED POINTS -- not sn.nodevisits,
+     * which this guard read until 2026-09-02 and which 94d5570f3 had made blind to
+     * the very case it exists for. That commit extended the `served` mask of
+     * sn_refresh_visits from the station chain to the NODE chain, and it had to: on
+     * a materialised LQN replica the unserved states close into a spurious cycle.
+     * But the mask zeroes exactly the (station, class) cell a flow sink shows up in.
+     * On Source -&gt; Q -&gt; Sink with class B unservable at Q, B's chain went from
+     * Q = 1 to Q = 0 and the guard fell silent, while the Sink still read 1 -- flow
+     * arriving downstream of a node it never visited. A MASKED VISIT VECTOR CANNOT
+     * ANSWER THIS QUESTION, because the mask IS the answer being looked for. Do not
+     * route this guard back through nodevisits or visits; both carry that mask.</p>
+     *
+     * <p>rtnodes on its own over-approximates -- it says where a class WOULD go if
+     * one existed -- and the WALK is what removes the slack. It starts only at
+     * (Source, class) pairs whose arrival is not Disabled, and at the reference
+     * station of each closed class with a positive population, so the
+     * Disabled-arrival row a class-switching Source carries is never entered. Three
+     * rules keep it honest: a Sink is ABSORBING (rtnodes wraps it back to the Source
+     * to close the kernel, and following that wrap re-enters every Source row,
+     * including the Disabled ones the seeding just excluded); a Source is expanded
+     * ONLY AS A SEED, for the same reason; and an unservable (station, class) is
+     * REACHED BUT NOT EXPANDED, since nothing leaves it -- that is the whole
+     * complaint -- so nothing downstream of it is evidence of anything.</p>
+     *
+     * <p>This SUBSUMES the fed-chain precondition the guard used to carry
+     * separately: a chain no job can enter has no seed, so its rows are never walked
+     * at all. That is strictly finer than the per-chain test it replaces, which
+     * admitted every class of a chain any one of whose classes was fed.</p>
+     *
+     * <p>A SYNCHRONOUS REPLY IS NOT SERVED BY THE STATION IT RETURNS TO: it releases
+     * the server that station held across the call, which is the whole content of
+     * setSyncReply. Its Disabled service there is the marker of the feature, not a
+     * flow sink, so the (station, reply class) pairs sn.replyblock marks are exempt.</p>
+     */
+    /**
+     * Whether a job of class r can LEAVE node ind again.
+     *
+     * <p>True for anything that is not a service station, and for a station that
+     * serves r, declares heterogeneous server types (its per-class slot is empty by
+     * construction) or holds a server across a synchronous call whose reply class is
+     * r. False only for the flow sink itself, which is what stops the walk in
+     * reachedNodeClasses -- the same three exemptions the guard applies, kept in one
+     * place so the walk and the verdict cannot drift apart.</p>
+     *
+     * @param ind 0-based node index
+     * @param r   0-based class index
+     * @return true when the pair is not a flow sink
+     */
+    private boolean servesClass(int ind, int r) {
+        Node nd = this.nodes.get(ind);
+        if (!(nd instanceof Queue) && !(nd instanceof Delay)) {
+            return true;
+        }
+        if (nd instanceof Queue && !((Queue) nd).getServerTypes().isEmpty()) {
+            return true;
+        }
+        JobClass jobclass = this.jobClasses.get(r);
+        Station st = (Station) nd;
+        if (st.getServer().containsJobClass(jobclass)
+                && !(st.getServiceProcess(jobclass) instanceof Disabled)) {
+            return true;
+        }
+        return holdsReplyFor(ind, r);
+    }
+
+    /**
+     * The (node, class) pairs a job can actually ARRIVE at.
+     *
+     * <p>A forward walk of sn.rtnodes from the feed points. See
+     * checkServiceReachable for why the evidence is the UNMASKED routing kernel
+     * rather than sn.nodevisits, and for the three rules -- absorbing Sink, Source
+     * expanded only as a seed, unservable pair reached but not expanded -- that keep
+     * the walk from over-approximating.</p>
+     *
+     * @return an [nodes][classes] table, or null when rtnodes is unreadable or is
+     *         not the expected (N*R) square, which leaves the caller checking
+     *         nothing exactly as before
+     */
+    private boolean[][] reachedNodeClasses() {
+        Matrix rt = this.sn == null ? null : this.sn.rtnodes;
+        int N = this.nodes.size();
+        int R = this.jobClasses.size();
+        if (rt == null || N < 1 || R < 1
+                || rt.getNumRows() < N * R || rt.getNumCols() < N * R) {
+            return null;
+        }
+        boolean[][] reached = new boolean[N][R];
+        boolean[][] seed = new boolean[N][R];
+        Deque<int[]> stack = new ArrayDeque<int[]>();
+        for (int ind = 0; ind < N; ind++) {
+            Node nd = this.nodes.get(ind);
+            if (!(nd instanceof Source)) {
+                continue;
+            }
+            for (int r = 0; r < R; r++) {
+                Distribution arv = ((Source) nd).getArrivalDistribution(this.jobClasses.get(r));
+                if (arv != null && !(arv instanceof Disabled)) {
+                    seed[ind][r] = true;
+                }
+            }
+        }
+        for (int r = 0; r < R; r++) {
+            JobClass jobclass = this.jobClasses.get(r);
+            if (!(jobclass instanceof ClosedClass)
+                    || ((ClosedClass) jobclass).getPopulation() <= 0) {
+                continue;
+            }
+            if (this.sn.refstat == null || r >= this.sn.refstat.getNumRows()
+                    || this.sn.stationToNode == null) {
+                continue;
+            }
+            int ist = (int) this.sn.refstat.get(r, 0);
+            if (ist < 0 || ist >= this.sn.stationToNode.getNumRows()) {
+                continue;
+            }
+            int ind = (int) this.sn.stationToNode.get(ist, 0);
+            if (ind >= 0 && ind < N) {
+                seed[ind][r] = true;
+            }
+        }
+        for (int ind = 0; ind < N; ind++) {
+            for (int r = 0; r < R; r++) {
+                if (seed[ind][r] && !reached[ind][r]) {
+                    reached[ind][r] = true;
+                    stack.push(new int[]{ind, r});
+                }
+            }
+        }
+        while (!stack.isEmpty()) {
+            int[] cur = stack.pop();
+            int ind = cur[0];
+            int r = cur[1];
+            Node nd = this.nodes.get(ind);
+            if (nd instanceof Sink) {
+                continue;
+            }
+            if (nd instanceof Source && !seed[ind][r]) {
+                continue;
+            }
+            if (!servesClass(ind, r)) {
+                continue;
+            }
+            int row = ind * R + r;
+            for (int col = 0; col < N * R; col++) {
+                if (rt.get(row, col) <= GlobalConstants.Zero) {
+                    continue;
+                }
+                int j = col / R;
+                int sIdx = col % R;
+                if (!reached[j][sIdx]) {
+                    reached[j][sIdx] = true;
+                    stack.push(new int[]{j, sIdx});
+                }
+            }
+        }
+        return reached;
+    }
+
+    /**
+     * Whether node ind holds a server across a synchronous call whose reply class
+     * is r, i.e. r returns there to RELEASE a server rather than to be served by
+     * one.
+     *
+     * <p>sn.syncreply is indexed by the CALLING class and holds the 0-based reply
+     * class, -1 where no reply is expected; sn.replyblock marks the (node, calling
+     * class) pairs that hold a server across the call.</p>
+     *
+     * @param ind 0-based node index
+     * @param r   0-based class index, tested as a reply class
+     * @return true when a Disabled service for r at ind is the marker of a
+     *         synchronous call rather than a flow sink
+     */
+    private boolean holdsReplyFor(int ind, int r) {
+        if (this.sn.replyblock == null || this.sn.replyblock.isEmpty()
+                || this.sn.syncreply == null || this.sn.syncreply.isEmpty()
+                || ind >= this.sn.replyblock.getNumRows()) {
+            return false;
+        }
+        int nk = FastMath.min(this.sn.syncreply.getNumRows(), this.sn.replyblock.getNumCols());
+        for (int k = 0; k < nk; k++) {
+            if ((int) this.sn.syncreply.get(k, 0) == r && this.sn.replyblock.get(ind, k) > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void checkServiceReachable() {
+        if (!this.enableChecks || this.sn == null) {
+            return;
+        }
+        // Same exemption as the sanitize checks: a station of a cache, Petri-net
+        // or fork-join model legitimately carries no per-class service.
+        for (int ind = 0; ind < this.nodes.size(); ind++) {
+            Node nd = this.nodes.get(ind);
+            if (nd instanceof Cache || nd instanceof Place || nd instanceof Transition
+                    || nd instanceof Fork || nd instanceof Join) {
+                return;
+            }
+        }
+        boolean[][] reached = reachedNodeClasses();
+        if (reached == null) {
+            return;
+        }
+        int K = this.jobClasses.size();
+        for (int ind = 0; ind < this.nodes.size(); ind++) {
+            Node nd = this.nodes.get(ind);
+            if (!(nd instanceof Queue) && !(nd instanceof Delay)) {
+                continue;
+            }
+            if (nd instanceof Queue && !((Queue) nd).getServerTypes().isEmpty()) {
+                continue;
+            }
+            if (ind >= reached.length) {
+                continue;
+            }
+            Station st = (Station) nd;
+            for (int r = 0; r < K; r++) {
+                if (r >= reached[ind].length || !reached[ind][r]) {
+                    continue;
+                }
+                JobClass jobclass = this.jobClasses.get(r);
+                if (st.getServer().containsJobClass(jobclass)
+                        && !(st.getServiceProcess(jobclass) instanceof Disabled)) {
+                    continue;
+                }
+                // A SYNCHRONOUS REPLY is not served by the station it returns to:
+                // it releases the server that station held across the call, which
+                // is the whole content of setSyncReply.
+                if (holdsReplyFor(ind, r)) {
+                    continue;
+                }
+                String kind = (nd instanceof Delay) ? "Delay" : "Queue";
+                line_error(mfilename(new Object() {
+                }), kind + " '" + nd.getName() + "' has no service configured for job class '"
+                        + jobclass.getName() + "', but the class is routed to it. Jobs would arrive "
+                        + "and never leave. Call setService() for that class, route it elsewhere, "
+                        + "or disable this check with model.setChecks(false).");
+            }
         }
     }
 
@@ -7767,7 +9001,7 @@ public class Network extends Model implements Copyable {
                                         case WRROBIN:
                                         case JSQ:
                                         case SQ:
-                                        case RL:
+                                        case SDR:
                                             // see _kb/04-networkstruct.md (refreshGlobalSync/refreshSync section) for rationale
                                             final int isf_final = isf, jsf_final = jsf, r_final = r, s_final = s;
                                             synct.passive.put(0, new Event(EventType.ARV, j, s, ((pair) -> sn.rtfun.apply(pair).get(isf_final * nclasses + r_final, jsf_final * nclasses + s_final)), new Matrix(0, 0), NaN, NaN));
@@ -8083,9 +9317,13 @@ public class Network extends Model implements Copyable {
                 Node node = this.nodes.get(i);
                 if (node instanceof Cache) {
                     Cache cache = (Cache) node;
+                    // address this cache's own item-set row, not a linear index into the
+                    // (itemSetIndex, class) map, which aliases wrongly once a second
+                    // cache gives the map more than one row
+                    int itemRow = cache.getItems().getIndex();
                     for (int k = 0; k < K; k++) {
-                        if (k >= cache.popularityLength() || cache.popularityGet(k) == null) {
-                            cache.popularitySet(k, Disabled.getInstance());
+                        if (cache.popularityGet(itemRow, k) == null) {
+                            cache.popularitySet(itemRow, k, Disabled.getInstance());
                         }
                     }
                     if (cache.accessProb == null || cache.accessProb.length == 0) {
@@ -8494,6 +9732,110 @@ public class Network extends Model implements Copyable {
     // Helper and utility methods for various network operations
     // ========================================================================
 
+    /**
+     * Builds sn.sdr, the station-indexed twin of the Krzesinski state-dependent
+     * routing structure declared on the entry center. The node-indexed copy stays
+     * in sn.nodeparam.get(entry).sdr, where the routing function sub_sdr reads it.
+     *
+     * <p>A network admits one subnetwork Q(V,V) and every class routed by it must
+     * declare the same one: the routing probabilities of Krzesinski (1987) are
+     * chain independent, so a per-class topology has no product form.</p>
+     */
+    public void refreshStateDepRouting() {
+        if (this.sn == null) {
+            return;
+        }
+        this.sn.sdr = null;
+        if (this.sn.nodeparam == null) {
+            return;
+        }
+        jline.lang.StateDepRouting decl = null;
+        String declName = null;
+        for (int ind = 0; ind < this.sn.nnodes; ind++) {
+            Node node = this.nodes.get(ind);
+            NodeParam np = this.sn.nodeparam.get(node);
+            if (np == null || np.sdr == null) {
+                continue;
+            }
+            for (JobClass jobclass : np.sdr.keySet()) {
+                jline.lang.StateDepRouting cand = np.sdr.get(jobclass);
+                if (decl == null) {
+                    decl = cand;
+                    declName = node.getName();
+                } else if (!decl.sameAs(cand)) {
+                    throw new RuntimeException("Two different state-dependent routing structures are declared (nodes "
+                            + declName + " and " + node.getName() + "). The routing probabilities of Krzesinski (1987) "
+                            + "are chain independent, so a network admits one subnetwork Q(V,V) and every class routed "
+                            + "by it must declare the same branches, nesting and coefficients.");
+                }
+            }
+        }
+        if (decl == null) {
+            return;
+        }
+        jline.lang.StateDepRouting stationSdr = decl.toStationIndices(this.sn.nodeToStation, this.sn.nodenames);
+        jline.api.pfqn.Pfqn_sdr.pfqn_sdrcoeff(stationSdr); // validates the declaration and its bounds
+        stationSdr.entryNode = decl.entryNode;
+        stationSdr.departureNode = decl.departureNode;
+        stationSdr.branchNodes = decl.branchNodes;
+        this.sn.sdr = stationSdr;
+    }
+
+    /**
+     * Krzesinski (1987) product-form state-dependent routing, eq. (10).
+     *
+     * <p>ind is the entry center e of Q(V,V). The probability of proceeding to a
+     * branch entry is a function of the total branch and subnetwork populations,
+     * and the residual mass returns the customer to the departure center d, which
+     * is the busy form of waiting of Section 2.5.</p>
+     *
+     * @param ind entry node index
+     * @param jnd destination node index
+     * @param r active class
+     * @param s passive class
+     * @param linksmat connection matrix
+     * @param state_before state before the transition
+     * @param state_after state after the transition
+     * @return the routing probability from ind to jnd
+     */
+    public double sub_sdr(int ind, int jnd, int r, int s, Matrix linksmat,
+                          Map<Node, Matrix> state_before, Map<Node, Matrix> state_after) {
+        int isf = (int) this.sn.nodeToStateful.get(ind);
+        Node statefulNode = this.getStatefulNodeFromIndex(isf);
+        if (!state_before.containsKey(statefulNode)) {
+            return FastMath.min(linksmat.get(ind, jnd), 1.0);
+        }
+        if (r != s) {
+            return 0.0;
+        }
+        NodeParam np = this.sn.nodeparam.get(this.nodes.get(ind));
+        jline.lang.StateDepRouting sdr = np.sdr.get(this.jobClasses.get(r));
+        double[] n = new double[this.sn.nnodes];
+        for (int knd = 0; knd < this.sn.nnodes; knd++) {
+            int ksf = (int) this.sn.nodeToStateful.get(0, knd);
+            if (ksf < 0) {
+                continue;
+            }
+            Node kNode = this.getStatefulNodeFromIndex(ksf);
+            if (!state_before.containsKey(kNode)) {
+                continue;
+            }
+            n[knd] = ToMarginal.toMarginal(this.sn, knd, state_before.get(kNode), null, null, null, null, null).ni.value();
+        }
+        jline.api.pfqn.Pfqn_sdr.Coeff c = jline.api.pfqn.Pfqn_sdr.pfqn_sdrcoeff(sdr);
+        double[] P = jline.api.pfqn.Pfqn_sdr.pfqn_sdrprob(c, n);
+        double p = 0.0;
+        for (int b = 1; b < sdr.branch.length; b++) {
+            if (sdr.entryOf[b] == jnd) {
+                p += P[b];
+            }
+        }
+        if (sdr.departure == jnd) {
+            p += jline.api.pfqn.Pfqn_sdr.pfqn_sdrped(P);
+        }
+        return p;
+    }
+
     public double sub_jsq(int ind, int jnd, int r, int s, Matrix
             linksmat, Map<Node, Matrix> state_before, Map<Node, Matrix> state_after) {
         int isf = (int) this.sn.nodeToStateful.get(ind);
@@ -8617,204 +9959,6 @@ public class Network extends Model implements Copyable {
             sqProbCache.put(cacheKey, pVec);
         }
         return pVec[jnd_pos];
-    }
-
-    /**
-     * Reinforcement-learning routing marginal probability. Mirrors MATLAB
-     * sub_rl in refreshRoutingMatrix.m. Three branches:
-     * <ul>
-     *   <li>rlStateSize == 0: tabular value function lookup over per-queue occupancies.</li>
-     *   <li>rlStateSize &gt; 0: linear approximation (1 + x_i + x_i*x_j features).</li>
-     *   <li>otherwise: JSQ fallback.</li>
-     * </ul>
-     * If the dispatching node is not in rlNodesNeedAction, falls back to JSQ.
-     * If queue lengths fall outside the table/feature support, falls back to JSQ.
-     * Single-class only (matches MATLAB).
-     */
-    public double sub_rl(int ind, int jnd, int r, int s, Matrix linksmat,
-                         Map<Node, Matrix> state_before, Map<Node, Matrix> state_after) {
-        int isf = (int) this.sn.nodeToStateful.get(ind);
-        Node statefulNode = this.getStatefulNodeFromIndex(isf);
-        Matrix stateBefore = state_before.get(statefulNode);
-        if (stateBefore == null || stateBefore.isEmpty()) {
-            return FastMath.min(linksmat.get(ind, jnd), 1.0);
-        }
-        if (r != s) {
-            return 0.0;
-        }
-        // see _kb/04-networkstruct.md (refreshGlobalSync/refreshSync section) for rationale
-
-        Node fromNode = this.nodes.get(ind);
-        NodeParam np = (this.sn.nodeparam != null) ? this.sn.nodeparam.get(fromNode) : null;
-        JobClass jc = this.jobClasses.get(r);
-
-        Integer stateSizeBoxed = (np != null && np.rlStateSize != null) ? np.rlStateSize.get(jc) : null;
-        int stateSize = stateSizeBoxed != null ? stateSizeBoxed : -1;
-        Matrix valueFunction = (np != null && np.rlValueFunction != null) ? np.rlValueFunction.get(jc) : null;
-        int[] vfShape = (np != null && np.rlValueFunctionShape != null) ? np.rlValueFunctionShape.get(jc) : null;
-        int[] nodesNeedAction = (np != null && np.rlNodesNeedAction != null) ? np.rlNodesNeedAction.get(jc) : null;
-
-        boolean indNeedsAction = nodesNeedAction != null && contains(nodesNeedAction, ind);
-        if (!indNeedsAction || stateSize < 0 || valueFunction == null) {
-            return rl_jsq_fallback(ind, jnd, linksmat, state_before);
-        }
-
-        // Collect Queue node indices and per-Queue occupancies x[]
-        List<Integer> indQueue = new ArrayList<Integer>();
-        for (int i = 0; i < this.sn.nnodes; i++) {
-            if (this.nodes.get(i) instanceof jline.lang.nodes.Queue) {
-                indQueue.add(i);
-            }
-        }
-        int Q = indQueue.size();
-        if (Q == 0) {
-            return rl_jsq_fallback(ind, jnd, linksmat, state_before);
-        }
-        int[] x = new int[Q];
-        for (int i = 0; i < Q; i++) {
-            int knd = indQueue.get(i);
-            Node statefulKnd = this.getStatefulNodeFromIndex((int) this.sn.nodeToStateful.get(0, knd));
-            x[i] = (int) ToMarginal.toMarginal(this.sn, knd, state_before.get(statefulKnd),
-                    null, null, null, null, null).ni.value();
-        }
-
-        // For each eligible destination knd, compute v[knd] from valueFunction.
-        // Track JSQ fallback queue lengths n[knd].
-        double[] v = new double[this.sn.nnodes];
-        double[] n = new double[this.sn.nnodes];
-        for (int i = 0; i < this.sn.nnodes; i++) { v[i] = Double.POSITIVE_INFINITY; n[i] = Double.POSITIVE_INFINITY; }
-        boolean inActionSpace = true;
-        int xMaxPlus1 = 0;
-        for (int xi : x) if (xi + 1 > xMaxPlus1) xMaxPlus1 = xi + 1;
-
-        for (int knd = 0; knd < this.sn.nnodes; knd++) {
-            if (linksmat.get(ind, knd) > 0) {
-                Node statefulKnd = this.getStatefulNodeFromIndex((int) this.sn.nodeToStateful.get(0, knd));
-                n[knd] = ToMarginal.toMarginal(this.sn, knd, state_before.get(statefulKnd),
-                        null, null, null, null, null).ni.value();
-                if (stateSize == 0) {
-                    // Tabular: tmp = x + 1, with the chosen destination's queue further +1
-                    int[] tmp = new int[Q];
-                    for (int i = 0; i < Q; i++) tmp[i] = x[i] + 1;
-                    int kndPos = indQueue.indexOf(knd);
-                    if (kndPos >= 0) tmp[kndPos] += 1;
-                    int tmpMax = 0;
-                    for (int t : tmp) if (t > tmpMax) tmpMax = t;
-                    int firstDim = (vfShape != null && vfShape.length > 0) ? vfShape[0] : valueFunction.getNumRows();
-                    if (tmpMax <= firstDim) {
-                        v[knd] = lookupTabular(valueFunction, vfShape, tmp);
-                    }
-                } else { // stateSize > 0: linear approximation
-                    // tmp = x; tmp(kndPos) += 1; tmp_vec = [1, tmp..., x_i*x_j for i<=j]
-                    int[] tmp = new int[Q];
-                    for (int i = 0; i < Q; i++) tmp[i] = x[i];
-                    int kndPos = indQueue.indexOf(knd);
-                    if (kndPos >= 0) tmp[kndPos] += 1;
-                    double[] feat = quadraticLift(tmp);
-                    int coeffLen = (int) valueFunction.length();
-                    if (feat.length == coeffLen) {
-                        double dot = 0.0;
-                        for (int i = 0; i < feat.length; i++) {
-                            dot += feat[i] * valueFunction.get(i);
-                        }
-                        v[knd] = dot;
-                    }
-                }
-            }
-        }
-
-        if (stateSize == 0) {
-            int firstDim = (vfShape != null && vfShape.length > 0) ? vfShape[0] : valueFunction.getNumRows();
-            if (xMaxPlus1 >= firstDim) inActionSpace = false;
-        } else {
-            if (xMaxPlus1 >= stateSize) inActionSpace = false;
-        }
-        boolean anyV = false;
-        double minV = Double.POSITIVE_INFINITY;
-        for (double vk : v) if (vk < Double.POSITIVE_INFINITY) { anyV = true; if (vk < minV) minV = vk; }
-
-        if (anyV && inActionSpace) {
-            if (v[jnd] == minV) {
-                int tied = 0;
-                for (double vk : v) if (vk == minV) tied++;
-                return tied > 0 ? 1.0 / tied : 0.0;
-            }
-            return 0.0;
-        }
-        // JSQ fallback
-        double minN = Double.POSITIVE_INFINITY;
-        for (double nk : n) if (nk < minN) minN = nk;
-        if (n[jnd] == minN) {
-            int tied = 0;
-            for (double nk : n) if (nk == minN) tied++;
-            return tied > 0 ? 1.0 / tied : 0.0;
-        }
-        return 0.0;
-    }
-
-    private double rl_jsq_fallback(int ind, int jnd, Matrix linksmat, Map<Node, Matrix> state_before) {
-        double[] n = new double[this.sn.nnodes];
-        for (int i = 0; i < this.sn.nnodes; i++) n[i] = Double.POSITIVE_INFINITY;
-        for (int knd = 0; knd < this.sn.nnodes; knd++) {
-            if (linksmat.get(ind, knd) > 0) {
-                Node statefulKnd = this.getStatefulNodeFromIndex((int) this.sn.nodeToStateful.get(0, knd));
-                n[knd] = ToMarginal.toMarginal(this.sn, knd, state_before.get(statefulKnd),
-                        null, null, null, null, null).ni.value();
-            }
-        }
-        double minN = Double.POSITIVE_INFINITY;
-        for (double nk : n) if (nk < minN) minN = nk;
-        if (n[jnd] == minN) {
-            int tied = 0;
-            for (double nk : n) if (nk == minN) tied++;
-            return tied > 0 ? 1.0 / tied : 0.0;
-        }
-        return 0.0;
-    }
-
-    private static boolean contains(int[] arr, int v) {
-        for (int a : arr) if (a == v) return true;
-        return false;
-    }
-
-    private static double lookupTabular(Matrix vf, int[] shape, int[] idx) {
-        // see _kb/04-networkstruct.md (State-space construction conventions) for rationale
-        if (shape == null || shape.length == 0) {
-            if (idx.length == 1) return vf.get(idx[0] - 1, 0);
-            if (idx.length == 2) return vf.get(idx[0] - 1, idx[1] - 1);
-            return Double.POSITIVE_INFINITY;
-        }
-        int flat = 0;
-        int stride = 1;
-        for (int i = 0; i < shape.length; i++) {
-            flat += (idx[i] - 1) * stride;
-            stride *= shape[i];
-        }
-        if (flat < 0 || flat >= vf.length()) return Double.POSITIVE_INFINITY;
-        // Walk through vf in column-major linear order for compatibility with
-        // Matrix.get(int) which returns the i-th nonzero / element-major value.
-        int rows = vf.getNumRows();
-        int cols = vf.getNumCols();
-        if (rows * cols == vf.length()) {
-            return vf.get(flat % rows, flat / rows);
-        }
-        return vf.get(flat);
-    }
-
-    private static double[] quadraticLift(int[] x) {
-        // [1, x_1, ..., x_Q, x_1*x_1, x_1*x_2, ..., x_Q*x_Q] (upper triangle)
-        int Q = x.length;
-        int len = 1 + Q + Q * (Q + 1) / 2;
-        double[] feat = new double[len];
-        feat[0] = 1.0;
-        for (int i = 0; i < Q; i++) feat[1 + i] = x[i];
-        int idx = 1 + Q;
-        for (int i = 0; i < Q; i++) {
-            for (int j = i; j < Q; j++) {
-                feat[idx++] = (double) x[i] * (double) x[j];
-            }
-        }
-        return feat;
     }
 
     /**
@@ -9052,7 +10196,13 @@ public class Network extends Model implements Copyable {
      */
     public void setReward(String name, RewardFunction rewardFn) {
         if (this.rewardFunctions == null) {
-            this.rewardFunctions = new HashMap<String, RewardFunction>();
+            // LinkedHashMap, not HashMap: getRewardNames() and getAvgReward()
+            // report in this map's iteration order, and the MATLAB and Python
+            // references report in DECLARATION order. A HashMap here made the
+            // JAR permute an otherwise identical reward vector, which is a
+            // difference no value comparison catches and every transcript diff
+            // does.
+            this.rewardFunctions = new LinkedHashMap<String, RewardFunction>();
         }
         this.rewardFunctions.put(name, rewardFn);
         // Keep the current struct (if any) in sync so callers holding it see the reward.

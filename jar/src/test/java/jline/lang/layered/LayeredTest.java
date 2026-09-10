@@ -152,9 +152,21 @@ class LayeredTest {
 
     @Test
     void activityThinkTimeXMLParsing() throws Exception {
-        // Create a simple XML model with activity think-time
+        // Create a simple XML model with activity think-time. T0 is the reference
+        // task that drives it: the reader refuses a document with no customers.
         String xmlContent = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
                 "<lqn-model name=\"test\">\n" +
+                "  <processor name=\"P0\" scheduling=\"inf\">\n" +
+                "    <task name=\"T0\" scheduling=\"ref\" multiplicity=\"1\">\n" +
+                "      <entry name=\"E0\" type=\"PH1PH2\">\n" +
+                "        <entry-phase-activities>\n" +
+                "          <activity name=\"E0_ph1\" phase=\"1\" host-demand-mean=\"1\">\n" +
+                "            <synch-call dest=\"E1\" calls-mean=\"1\"/>\n" +
+                "          </activity>\n" +
+                "        </entry-phase-activities>\n" +
+                "      </entry>\n" +
+                "    </task>\n" +
+                "  </processor>\n" +
                 "  <processor name=\"P1\" scheduling=\"inf\">\n" +
                 "    <task name=\"T1\" scheduling=\"fcfs\" multiplicity=\"1\">\n" +
                 "      <entry name=\"E1\" type=\"NONE\"/>\n" +
@@ -207,6 +219,11 @@ class LayeredTest {
                 .boundTo(entry1)
                 .repliesTo(entry1);
         act1.setThinkTime(0.4);
+
+        // T0 is the reference task that drives it: the reader refuses a document with no customers
+        Task task0 = new Task(lqn1, "T0", 1, SchedStrategy.REF).on(P1);
+        Entry entry0 = new Entry(lqn1, "E0").on(task0);
+        new Activity(lqn1, "A0", new Exp(1.0)).on(task0).boundTo(entry0).synchCall(entry1, 1.0);
 
         // Write to XML
         String xmlFile = "/tmp/test_actthink_roundtrip.lqnx";
@@ -269,6 +286,11 @@ class LayeredTest {
             Activity a0 = new Activity(model, "e0_1", Exp.fitMean(1.0), "e0", "STOCHASTIC");
             Activity a1 = new Activity(model, "e1_1", Exp.fitMean(1.0), "e1", "STOCHASTIC");
 
+            // tref is the reference task that drives it: the reader refuses a document with no customers
+            Task tref = new Task(model, "tref", 1, SchedStrategy.REF).on(p0);
+            Entry eref = new Entry(model, "eref").on(tref);
+            new Activity(model, "aref", Exp.fitMean(1.0)).on(tref).boundTo(eref).synchCall(e0, 1.0);
+
             // Write to XML
             File xmlFile = tempDir.resolve("forwarding_test.xml").toFile();
             model.writeXML(xmlFile.getAbsolutePath());
@@ -281,6 +303,62 @@ class LayeredTest {
             assertEquals(1, e0Reloaded.getForwardingDests().size());
             assertEquals("e1", e0Reloaded.getForwardingDests().get(0));
             assertEquals(1.0, e0Reloaded.getForwardingProbs().get(0), LOOSE_FINE_TOL);
+        }
+
+        @Test
+        void testCallGroupXMLRoundtrip(@TempDir Path tempDir) throws Exception {
+            // A routed call group rides the document as a LINE <call-group> element
+            // naming the strategy and the targets. Its members stay ordinary
+            // synch-calls, so a reader that re-issued the calls from the group would
+            // double the call rate, and one that ignored the element would report a
+            // dispatcher as three independent coins.
+            LayeredNetwork model = new LayeredNetwork("CallGroupModel");
+
+            Processor pc = new Processor(model, "PC", 1, SchedStrategy.INF);
+            Processor ps = new Processor(model, "PS", 1, SchedStrategy.PS);
+            Task tc = new Task(model, "TC", 10, SchedStrategy.REF).on(pc).setThinkTime(Exp.fitMean(5.0));
+            Task ts1 = new Task(model, "TS1", 5, SchedStrategy.FCFS).on(ps);
+            Task ts2 = new Task(model, "TS2", 5, SchedStrategy.FCFS).on(ps);
+            Task ts3 = new Task(model, "TS3", 5, SchedStrategy.FCFS).on(ps);
+
+            Entry ec = new Entry(model, "EC").on(tc);
+            Entry es1 = new Entry(model, "ES1").on(ts1);
+            Entry es2 = new Entry(model, "ES2").on(ts2);
+            Entry es3 = new Entry(model, "ES3").on(ts3);
+
+            List<Entry> dests = new ArrayList<>();
+            dests.add(es1);
+            dests.add(es2);
+            dests.add(es3);
+            new Activity(model, "AC", Exp.fitMean(0.5)).on(tc).boundTo(ec)
+                    .synchCallRoundRobin(dests, 1.0);
+            new Activity(model, "AS1", Exp.fitMean(1.0)).on(ts1).boundTo(es1).repliesTo(es1);
+            new Activity(model, "AS2", Exp.fitMean(1.0)).on(ts2).boundTo(es2).repliesTo(es2);
+            new Activity(model, "AS3", Exp.fitMean(1.0)).on(ts3).boundTo(es3).repliesTo(es3);
+
+            File xmlFile = tempDir.resolve("callgroup_test.xml").toFile();
+            model.writeXML(xmlFile.getAbsolutePath());
+
+            LayeredNetworkStruct before = model.getStruct();
+            LayeredNetworkStruct after = LayeredNetwork.parseXML(xmlFile.getAbsolutePath()).getStruct();
+            assertEquals(1, before.callgroups.size());
+            assertEquals(before.callgroups.size(), after.callgroups.size());
+            LayeredNetworkStruct.CallGroupStruct gb = before.callgroups.get(0);
+            LayeredNetworkStruct.CallGroupStruct ga = after.callgroups.get(0);
+            assertEquals(gb.strategy, ga.strategy);
+            assertEquals(before.hashnames.get(gb.caller), after.hashnames.get(ga.caller));
+            assertEquals(gb.targets.size(), ga.targets.size());
+            for (int i = 0; i < gb.targets.size(); i++) {
+                assertEquals(before.hashnames.get(gb.targets.get(i)),
+                        after.hashnames.get(ga.targets.get(i)));
+            }
+            // the aggregate call rate is untouched by the trip
+            assertEquals(before.ncalls, after.ncalls);
+            double total = 0.0;
+            for (int c = 0; c < after.ncalls; c++) {   // calls run 0..ncalls-1
+                total += after.callproc_mean.get(c);
+            }
+            assertEquals(1.0, total, LOOSE_FINE_TOL);
         }
 
         @Test
@@ -305,6 +383,11 @@ class LayeredTest {
             Activity a0 = new Activity(model, "e0_1", Exp.fitMean(1.0), "e0", "STOCHASTIC");
             Activity a1 = new Activity(model, "e1_1", Exp.fitMean(1.0), "e1", "STOCHASTIC");
             Activity a2 = new Activity(model, "e2_1", Exp.fitMean(1.0), "e2", "STOCHASTIC");
+
+            // tref is the reference task that drives it: the reader refuses a document with no customers
+            Task tref = new Task(model, "tref", 1, SchedStrategy.REF).on(p0);
+            Entry eref = new Entry(model, "eref").on(tref);
+            new Activity(model, "aref", Exp.fitMean(1.0)).on(tref).boundTo(eref).synchCall(e0, 1.0);
 
             // Write to XML
             File xmlFile = tempDir.resolve("multi_forwarding_test.xml").toFile();
@@ -464,9 +547,9 @@ class LayeredTest {
             e0.forward(e1, 1.0);
 
             // Create activities
-            Activity aClient = new Activity(model, "c0_1", Exp.fitMean(1.0), "c0", "STOCHASTIC");
-            Activity a0 = new Activity(model, "e0_1", Exp.fitMean(1.0), "e0", "STOCHASTIC");
-            Activity a1 = new Activity(model, "e1_1", Exp.fitMean(1.0), "e1", "STOCHASTIC");
+            Activity aClient = new Activity(model, "c0_1", Exp.fitMean(1.0), "c0", "STOCHASTIC").on(client);
+            Activity a0 = new Activity(model, "e0_1", Exp.fitMean(1.0), "e0", "STOCHASTIC").on(t0);
+            Activity a1 = new Activity(model, "e1_1", Exp.fitMean(1.0), "e1", "STOCHASTIC").on(t1);
 
             // Client calls e0
             aClient.synchCall(e0, 1.0);
@@ -481,12 +564,13 @@ class LayeredTest {
 
             // Find the forwarding call in calltype
             boolean foundForwardingCall = false;
-            for (int c = 1; c <= lsn.ncalls; c++) {
+            // calls run 0..ncalls-1, and callpair's columns are 0 (source) and 1 (target)
+            for (int c = 0; c < lsn.ncalls; c++) {
                 if (lsn.calltype.get(c) == CallType.FWD) {
                     foundForwardingCall = true;
                     // Verify it's e0 -> e1
-                    int srcIdx = (int) lsn.callpair.get(c, 1);
-                    int dstIdx = (int) lsn.callpair.get(c, 2);
+                    int srcIdx = (int) lsn.callpair.get(c, 0);
+                    int dstIdx = (int) lsn.callpair.get(c, 1);
                     assertTrue(lsn.hashnames.get(srcIdx).contains("e0"));
                     assertTrue(lsn.hashnames.get(dstIdx).contains("e1"));
                     assertEquals("~>", lsn.callnames.get(c).substring(2, 4), "Forwarding calls should use ~> notation");
@@ -534,13 +618,13 @@ class LayeredTest {
 
             e0.forward(e1, 1.0);
 
-            Activity a0 = new Activity(model, "e0_1", Exp.fitMean(1.0), "e0", "STOCHASTIC");
-            Activity a1 = new Activity(model, "e1_1", Exp.fitMean(1.0), "e1", "STOCHASTIC");
+            Activity a0 = new Activity(model, "e0_1", Exp.fitMean(1.0), "e0", "STOCHASTIC").on(t0);
+            Activity a1 = new Activity(model, "e1_1", Exp.fitMean(1.0), "e1", "STOCHASTIC").on(t1);
 
             LayeredNetworkStruct lsn = model.getStruct();
 
             // Find forwarding call
-            for (int c = 1; c <= lsn.ncalls; c++) {
+            for (int c = 0; c < lsn.ncalls; c++) {   // calls run 0..ncalls-1
                 if (lsn.calltype.get(c) == CallType.FWD) {
                     String callName = lsn.callnames.get(c);
                     assertTrue(callName.contains("~>"), "Forwarding call should use ~> notation, got: " + callName);
@@ -599,9 +683,9 @@ class LayeredTest {
             e0.forward(e1, 1.0);
 
             // Create activities
-            Activity aClient = new Activity(model, "aClient", Exp.fitMean(1.0), "eClient", "STOCHASTIC");
-            Activity a0 = new Activity(model, "a0", Exp.fitMean(1.0), "e0", "STOCHASTIC");
-            Activity a1 = new Activity(model, "a1", Exp.fitMean(1.0), "e1", "STOCHASTIC");
+            Activity aClient = new Activity(model, "aClient", Exp.fitMean(1.0), "eClient", "STOCHASTIC").on(client);
+            Activity a0 = new Activity(model, "a0", Exp.fitMean(1.0), "e0", "STOCHASTIC").on(server0);
+            Activity a1 = new Activity(model, "a1", Exp.fitMean(1.0), "e1", "STOCHASTIC").on(server1);
 
             // Client calls e0 (which will forward to e1)
             aClient.synchCall(e0, 1.0);
@@ -620,7 +704,7 @@ class LayeredTest {
 
             // Find the forwarding call
             boolean foundForwardingCall = false;
-            for (int c = 1; c <= lsn.ncalls; c++) {
+            for (int c = 0; c < lsn.ncalls; c++) {   // calls run 0..ncalls-1
                 if (lsn.calltype.get(c) == CallType.FWD) {
                     foundForwardingCall = true;
                     String callName = lsn.callnames.get(c);
@@ -654,9 +738,9 @@ class LayeredTest {
             e0.forward(e1, 1.0);
 
             // Create activities
-            Activity aClient = new Activity(model, "aClient", Exp.fitMean(1.0), "eClient", "STOCHASTIC");
-            Activity a0 = new Activity(model, "a0", Exp.fitMean(1.0), "e0", "STOCHASTIC");
-            Activity a1 = new Activity(model, "a1", Exp.fitMean(1.0), "e1", "STOCHASTIC");
+            Activity aClient = new Activity(model, "aClient", Exp.fitMean(1.0), "eClient", "STOCHASTIC").on(client);
+            Activity a0 = new Activity(model, "a0", Exp.fitMean(1.0), "e0", "STOCHASTIC").on(server0);
+            Activity a1 = new Activity(model, "a1", Exp.fitMean(1.0), "e1", "STOCHASTIC").on(server1);
 
             // Client calls e0 (which will forward to e1)
             aClient.synchCall(e0, 1.0);

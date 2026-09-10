@@ -11,6 +11,7 @@ References:
 
 import functools
 import numpy as np
+from line_solver.api.io import console as _console
 from dataclasses import dataclass
 from typing import Optional, Tuple, Dict
 from enum import IntEnum
@@ -111,8 +112,15 @@ class AmvaldOptions:
     @dataclass
     class Config:
         multiserver: str = 'default'
+        # np_priority: 'cl'/'chandy-lakshmi' (default) is Chandy-Lakshmi [ChaL83] in the
+        # arrival-instant utilization form of Eager-Lipscomb [EagL88]; 'shadow' is Sevcik
+        # [Sev77]. [ChaL83] derives it for PREEMPTIVE priority; it is applied here at
+        # non-preemptive (HOL) stations.
         np_priority: str = 'default'
         highvar: str = 'default'
+        # Interlock matrix of Franks (1999), Eq. (4.7), already aggregated to the CHAIN
+        # basis by solver_amva. None for every model but the layers of SolverLN.
+        interlock_chain: object = None
 
     config: Config = None
 
@@ -221,6 +229,7 @@ def solver_amvald_forward(
     classprio: Optional[np.ndarray],
     gamma: np.ndarray,
     tau: np.ndarray,
+    Xchain_ref: Optional[np.ndarray],
     Qchain_in: np.ndarray,
     Xchain_in: np.ndarray,
     Uchain_in: np.ndarray,
@@ -244,6 +253,10 @@ def solver_amvald_forward(
         classprio: Class priorities (K,) - lower value = higher priority
         gamma: Correction factors
         tau: Throughput differences
+        Xchain_ref: throughput vector the tau differences were taken against, so that
+            Xchain_ref + tau[r, :] is an arrival-instant throughput from one and the same
+            sweep. Adding tau to the moving inner iterate instead mixes two sweeps and can
+            exceed the service capacity. None when no Linearizer recursion runs.
         Qchain_in: Current queue length estimates (M x K)
         Xchain_in: Current throughput estimates (K,)
         Uchain_in: Current utilization estimates (M x K)
@@ -278,21 +291,30 @@ def solver_amvald_forward(
     ccl = np.where(np.isfinite(Nchain_in) & (Nchain_in > 0))[0]  # closed classes
     nnzclasses = np.where(Nchain_in > 0)[0]  # non-zero classes
 
+    if Xchain_ref is None:
+        Xchain_ref = Xchain_in
+
     # Priority groupings (lower value = higher priority): hprio = strictly
     # higher, ehprio = equal-or-higher priority than r.
     nnzclasses_hprio = {}
     nnzclasses_ehprio = {}
+    nnzclasses_eprio = {}
+    nnzclasses_lprio = {}
     if classprio is not None and len(classprio) == K:
         classprio = np.asarray(classprio).flatten()
         for r in nnzclasses:
             prio_r = classprio[r]
             nnzclasses_hprio[r] = [c for c in nnzclasses if classprio[c] < prio_r]
             nnzclasses_ehprio[r] = [c for c in nnzclasses if classprio[c] <= prio_r]
+            nnzclasses_eprio[r] = [c for c in nnzclasses if classprio[c] == prio_r]
+            nnzclasses_lprio[r] = [c for c in nnzclasses if classprio[c] > prio_r]
     else:
         # No priorities: all classes have same priority
         for r in nnzclasses:
             nnzclasses_hprio[r] = []
             nnzclasses_ehprio[r] = list(nnzclasses)
+            nnzclasses_eprio[r] = list(nnzclasses)
+            nnzclasses_lprio[r] = []
 
     # Compute arrival queue lengths
     interpTotArvlQlen = np.zeros(M)
@@ -415,13 +437,19 @@ def solver_amvald_forward(
     if jdscaling is not None and len(jdscaling) > 0:
         method = options.method if hasattr(options, 'method') else 'default'
         for r in nnzclasses:
+            # Arrival-theorem interpolation of eta_i: the arriving class-r job
+            # increments only its own coordinate (1 + delta_r Q_{k,r}); every other
+            # class s != r is read at its full mean Q_{k,s} (no phantom +1 on the
+            # non-arriving classes). This avoids forcing full support on a
+            # support-rank eta.
+            nvec = stationaryQlen.copy()
             if np.isfinite(Nchain_in[r]):
-                nvec = 1 + selfArvlQlenSeenByClosed
+                nvec[:, r] = 1.0 + selfArvlQlenSeenByClosed[:, r]
                 if method in ('lin', 'qdlin') and gamma.ndim == 3:
-                    nvec = nvec + ((Nchain_in[r] - 1) * gamma[r, :, r])[:, None]
-                jdterm[:, r] = pfqn_jdfun(nvec, jdscaling, r)
+                    nvec[:, r] = nvec[:, r] + (Nchain_in[r] - 1) * gamma[r, :, r]
             else:
-                jdterm[:, r] = pfqn_jdfun(1 + stationaryQlen, jdscaling, r)
+                nvec[:, r] = 1.0 + stationaryQlen[:, r]
+            jdterm[:, r] = pfqn_jdfun(nvec, jdscaling, r)
 
     # Compute Suri correction factor per station
     suriFactor = np.ones(M)
@@ -481,6 +509,27 @@ def solver_amvald_forward(
                         totArvlQlenSeenByClosed[k, r] = (
                             sumQk_cls - (2.0 / Nchain_in[r]) * Qchain_in[k, r] + ratio)
 
+    # Interlocked flow (Franks 1999, Eq. 4.7)
+    # A request cannot queue behind work that its own submission caused, so the
+    # arrival-instant queue drops the interlocked share of every other chain. The
+    # own-class term is never removed.
+    _ILchain = getattr(getattr(options, 'config', None), 'interlock_chain', None)
+    if _ILchain is not None and np.size(_ILchain) > 0:
+        _ILchain = np.asarray(_ILchain, dtype=float)
+        if _ILchain.shape != (K, K):
+            raise ValueError(f"the interlock matrix is {_ILchain.shape} but the model has {K} chains")
+        for k in range(M):
+            for r in nnzclasses:
+                ilqlen = 0.0
+                for sIl in nnzclasses:
+                    if sIl != r:
+                        ilqlen += _ILchain[r, sIl] * Qchain_in[k, sIl]
+                if ilqlen > 0:
+                    totArvlQlenSeenByClosed[k, r] = max(selfArvlQlenSeenByClosed[k, r],
+                                                        totArvlQlenSeenByClosed[k, r] - ilqlen)
+                    totArvlQlenSeenByClosed_HOL[k, r] = max(selfArvlQlenSeenByClosed[k, r],
+                                                            totArvlQlenSeenByClosed_HOL[k, r] - ilqlen)
+
     # Compute waiting times based on scheduling strategy
     for ir, r in enumerate(nnzclasses):
         # other classes; nnzclasses is already sorted and unique, so a boolean
@@ -519,7 +568,7 @@ def solver_amvald_forward(
                                 gamma_correction = np.dot(Nchain_in[ccl], gamma[r, k, ccl]) - gamma[r, k, r]
                             else:
                                 gamma_correction = (Nt - 1) * gamma[r, k] if gamma.ndim == 2 and r < gamma.shape[0] and k < gamma.shape[1] else 0.0
-                            wait_factor = max(options.tol, 1 + interpTotArvlQlen[k] + gamma_correction)
+                            wait_factor = max(options.tol, 1 + totArvlQlenSeenByClosed[k, r] + gamma_correction)
                             Wchain[k, r] += STeff[k, r] * wait_factor
                     elif multiserver_config == 'suri':
                         # Suri: W = S * (1 + Q_seen * suriFactor)
@@ -530,7 +579,7 @@ def solver_amvald_forward(
                                 gamma_correction = np.dot(Nchain_in[ccl], gamma[r, k, ccl]) - gamma[r, k, r]
                             else:
                                 gamma_correction = (Nt - 1) * gamma[r, k] if gamma.ndim == 2 and r < gamma.shape[0] and k < gamma.shape[1] else 0.0
-                            Wchain[k, r] = STeff[k, r] * (1 + (interpTotArvlQlen[k] + gamma_correction) * suriFactor[k])
+                            Wchain[k, r] = STeff[k, r] * (1 + (totArvlQlenSeenByClosed[k, r] + gamma_correction) * suriFactor[k])
                     else:
                         # Default/softmin: no (nservers-1) correction (MATLAB lines 314-324)
                         if r in ocl:
@@ -540,7 +589,7 @@ def solver_amvald_forward(
                                 gamma_correction = np.dot(Nchain_in[ccl], gamma[r, k, ccl]) - gamma[r, k, r]
                             else:
                                 gamma_correction = (Nt - 1) * gamma[r, k] if gamma.ndim == 2 and r < gamma.shape[0] and k < gamma.shape[1] else 0.0
-                            wait_factor = max(options.tol, 1 + interpTotArvlQlen[k] + gamma_correction)
+                            wait_factor = max(options.tol, 1 + totArvlQlenSeenByClosed[k, r] + gamma_correction)
                             Wchain[k, r] = STeff[k, r] * wait_factor
                 else:
                     # Other methods (MATLAB lines 326-341)
@@ -551,20 +600,20 @@ def solver_amvald_forward(
                             Wchain[k, r] += STeff[k, r] * (1 + (totArvlQlenSeenByOpen[r, k] if totArvlQlenSeenByOpen is not None else 0))
                         else:
                             gamma_correction = (Nt - 1) * gamma[r, k] if gamma.ndim == 2 and r < gamma.shape[0] and k < gamma.shape[1] else 0.0
-                            Wchain[k, r] += STeff[k, r] * (1 + totArvlQlenSeenByClosed[k, 0] + gamma_correction)
+                            Wchain[k, r] += STeff[k, r] * (1 + totArvlQlenSeenByClosed[k, r] + gamma_correction)
                     elif multiserver_config == 'suri':
                         # Suri: W = S * (1 + Q_seen * suriFactor)
                         if r in ocl:
                             Wchain[k, r] = STeff[k, r] * (1 + (totArvlQlenSeenByOpen[r, k] if totArvlQlenSeenByOpen is not None else 0) * suriFactor[k])
                         else:
                             gamma_correction = (Nt - 1) * gamma[r, k] if gamma.ndim == 2 and r < gamma.shape[0] and k < gamma.shape[1] else 0.0
-                            Wchain[k, r] = STeff[k, r] * (1 + (totArvlQlenSeenByClosed[k, 0] + gamma_correction) * suriFactor[k])
+                            Wchain[k, r] = STeff[k, r] * (1 + (totArvlQlenSeenByClosed[k, r] + gamma_correction) * suriFactor[k])
                     else:
                         if r in ocl:
                             Wchain[k, r] = STeff[k, r] * (1 + (totArvlQlenSeenByOpen[r, k] if totArvlQlenSeenByOpen is not None else 0))
                         else:
                             gamma_correction = (Nt - 1) * gamma[r, k] if gamma.ndim == 2 and r < gamma.shape[0] and k < gamma.shape[1] else 0.0
-                            Wchain[k, r] = STeff[k, r] * (1 + totArvlQlenSeenByClosed[k, 0] + gamma_correction)
+                            Wchain[k, r] = STeff[k, r] * (1 + totArvlQlenSeenByClosed[k, r] + gamma_correction)
 
             elif sched_k == SchedStrategy.DPS:
                 # DPS: matches solver_amvald_forward.m:383-403
@@ -601,7 +650,7 @@ def solver_amvald_forward(
                     Uchain_r = np.zeros_like(Uchain_in)
                     for s_idx in range(K):
                         if Xchain_in[s_idx] > 0:
-                            Uchain_r[:, s_idx] = Uchain_in[:, s_idx] / Xchain_in[s_idx] * (Xchain_in[s_idx] + tau[r, s_idx])
+                            Uchain_r[:, s_idx] = Uchain_in[:, s_idx] / Xchain_in[s_idx] * (Xchain_ref[s_idx] + tau[r, s_idx])
                         else:
                             Uchain_r[:, s_idx] = Uchain_in[:, s_idx]
 
@@ -661,36 +710,83 @@ def solver_amvald_forward(
                                 Wchain[k, r] += (STeff[k, r] * selfArvlQlenSeenByClosed[k, r] * Bk[r] +
                                                 np.sum(STeff[k, sd] * Bk[sd] * stationaryQlen[k, sd]))
 
+            elif sched_k == SchedStrategy.FCFSPRPRIO:
+                # Preemptive-resume priority (PRIOMVA). Chandy-Lakshmi [ChaL83]
+                # applied where it was derived: a job in service IS preempted by a
+                # higher-priority arrival. Two terms separate this arm from HOL below.
+                #  (a) no non-preemptive residual -- the lower-priority job found in
+                #      service is preempted, so it delays nobody;
+                #  (b) the tagged job's OWN service is interrupted too, so it is
+                #      scaled by 1/(1-sigma_{k-1}) as well as the queued work.
+                # Together: E[T_k] = E[S_k]/(1-sigma_{k-1}) + <queued>/(1-sigma_{k-1}).
+                # Port of matlab/src/solvers/MVA/solver_amvald_forward.m (FCFSPRPRIO arm).
+                if STeff[k, r] > 0:
+                    ns = nservers[k]
+                    if ns > 1 and not np.isinf(ns):
+                        raise ValueError(
+                            f"Station {k} uses FCFSPRPRIO with {int(ns)} servers. The "
+                            "preemptive-resume priority arm (priomva) is implemented for "
+                            "single-server stations only; use SolverCTMC or SolverSSA for "
+                            "multiserver PRS.")
+
+                    tol = options.tol if hasattr(options, 'tol') and options.tol else 1e-6
+
+                    # higher-priority utilization seen at the arrival instant
+                    UHigherPrio = 0.0
+                    for h in nnzclasses_hprio.get(r, []):
+                        UHigherPrio += Vchain_in[k, h] * STeff[k, h] * (Xchain_ref[h] + tau[r, h])
+                    prioScaling = min(max(tol, 1.0 - UHigherPrio), 1.0 - tol)
+
+                    # work of EQUAL OR HIGHER priority already queued ahead
+                    sdprio = [c for c in nnzclasses_ehprio.get(r, []) if c != r]
+                    sdprioQlen = float(np.sum(STeff[k, sdprio] * stationaryQlen[k, sdprio])) if sdprio else 0.0
+                    if r in ocl:
+                        queuedAhead = STeff[k, r] * stationaryQlen[k, r] + sdprioQlen
+                    else:
+                        queuedAhead = STeff[k, r] * selfArvlQlenSeenByClosed[k, r] + sdprioQlen
+
+                    Wchain[k, r] = (STeff[k, r] + queuedAhead) / prioScaling
+
             elif sched_k == SchedStrategy.HOL:
-                # Head of Line (Priority) scheduling - matches MATLAB solver_amvald_forward.m lines 441-547
+                # Head of Line (Priority) scheduling - matches MATLAB solver_amvald_forward.m
                 if STeff[k, r] > 0:
                     ns = nservers[k]
                     hprio = nnzclasses_hprio.get(r, [])
+                    lprio = nnzclasses_lprio.get(r, [])
+                    # Work of EQUAL OR HIGHER priority queued ahead of the arriving job. It is
+                    # disjoint from the 1/prioScaling inflation, which counts only the higher
+                    # priority work that overtakes the job while it waits.
+                    sdprio = [c for c in nnzclasses_ehprio.get(r, []) if c != r]
 
-                    # Chandy-Lakshmi priority scaling (solver_amvald_forward.m:446-458)
                     tol = options.tol if hasattr(options, 'tol') and options.tol else 1e-6
                     UHigherPrio = 0.0
-                    if len(hprio) > 0:
-                        for h in hprio:
-                            # MATLAB tau(h) uses linear indexing on K×K matrix, which is tau(h,1) = first column
-                            # In Python 0-indexed: tau[h, 0]
-                            tau_h = tau[h, 0] if tau.ndim == 2 and h < tau.shape[0] else 0.0
-                            UHigherPrio += Vchain_in[k, h] * STeff[k, h] * (Xchain_in[h] - Qchain_in[k, h] * tau_h)
+                    for h in hprio:
+                        if options.config.np_priority == 'shadow':  # Sevcik's shadow server
+                            UHigherPrio += Vchain_in[k, h] * STeff[k, h] * Xchain_ref[h]
+                        else:  # Chandy-Lakshmi [ChaL83], arrival-instant utilization form of Eager-Lipscomb [EagL88]
+                            UHigherPrio += Vchain_in[k, h] * STeff[k, h] * (Xchain_ref[h] + tau[r, h])
 
                     # MATLAB: prioScaling = min([max([options.tol,1-UHigherPrio]),1-options.tol])
                     prioScaling = max(tol, 1.0 - UHigherPrio)
                     prioScaling = min(prioScaling, 1.0 - tol)
 
                     if ns == 1 or np.isinf(ns):
-                        # Single server: matches MATLAB lines 494-506
-                        # Wchain = STeff / prioScaling
-                        Wchain[k, r] = STeff[k, r] / prioScaling  # Base
+                        # Non-preemptive residual: the job found in service may have strictly
+                        # lower priority and is not preempted, so it is in neither sum above
+                        npResidual = 0.0
+                        for l in lprio:
+                            npResidual += (Vchain_in[k, l] * STeff[k, l] * (Xchain_ref[l] + tau[r, l])
+                                           * STeff[k, l])
+                        sdprioQlen = float(np.sum(STeff[k, sdprio] * stationaryQlen[k, sdprio])) if sdprio else 0.0
+
+                        # Single server
+                        Wchain[k, r] = STeff[k, r]  # own service is not overtaken
                         if r in ocl:
                             # Open class: use stationaryQlen
-                            Wchain[k, r] += (STeff[k, r] * stationaryQlen[k, r]) / prioScaling
+                            Wchain[k, r] += (STeff[k, r] * stationaryQlen[k, r] + sdprioQlen + npResidual) / prioScaling
                         else:
                             # Closed class: use selfArvlQlenSeenByClosed
-                            Wchain[k, r] += (STeff[k, r] * selfArvlQlenSeenByClosed[k, r]) / prioScaling
+                            Wchain[k, r] += (STeff[k, r] * selfArvlQlenSeenByClosed[k, r] + sdprioQlen + npResidual) / prioScaling
                     else:
                         # Multi-server (Seidmann, matches lines 527-542); use
                         # deltaclass, not deltaclass_r, for HOL priority.
@@ -702,17 +798,23 @@ def solver_amvald_forward(
                             Bk = ((deltaclass * Xchain_in * Vchain_in[k, :] * STeff[k, :]) / ns) ** ns
                         Bk = np.where(np.isfinite(Bk), Bk, 1.0)
 
-                        # Multi-server correction with serial think time (MATLAB lines 528-529)
+                        npResidual = 0.0
+                        for l in lprio:
+                            npResidual += (Vchain_in[k, l] * STeff[k, l] * (Xchain_ref[l] + tau[r, l])
+                                           * STeff[k, l] * Bk[l])
+                        sdprioQlenBk = float(np.sum(STeff[k, sdprio] * Bk[sdprio] * stationaryQlen[k, sdprio])) if sdprio else 0.0
+
+                        # Multi-server correction with serial think time
                         # (1/nservers term already in STeff via msterm)
-                        Wchain[k, r] = STeff[k, r] * (ns - 1) / prioScaling
-                        Wchain[k, r] += STeff[k, r] / prioScaling  # Base
+                        Wchain[k, r] = STeff[k, r] * (ns - 1)
+                        Wchain[k, r] += STeff[k, r]  # own service is not overtaken
 
                         if r in ocl:
-                            # Open class (MATLAB line 532)
-                            Wchain[k, r] += (STeff[k, r] * stationaryQlen[k, r] * Bk[r]) / prioScaling
+                            # Open class
+                            Wchain[k, r] += (STeff[k, r] * stationaryQlen[k, r] * Bk[r] + sdprioQlenBk + npResidual) / prioScaling
                         else:
-                            # Closed class (MATLAB line 542)
-                            Wchain[k, r] += (STeff[k, r] * selfArvlQlenSeenByClosed[k, r] * Bk[r]) / prioScaling
+                            # Closed class
+                            Wchain[k, r] += (STeff[k, r] * selfArvlQlenSeenByClosed[k, r] * Bk[r] + sdprioQlenBk + npResidual) / prioScaling
 
             else:
                 # Default: same as FCFS
@@ -899,11 +1001,14 @@ def solver_amvald(
     QchainOuter_1 = Qchain + np.inf
 
     # MATLAB: while (outer_iter < 2 || max(max(abs(Qchain-QchainOuter_1))) > tol) && outer_iter < sqrt(options.iter_max) && totiter <= max_totiter
+    _console.loop('running the AMVA fixed point (tolerance %g)', tol)
     while (outer_iter < 2 or np.max(np.abs(Qchain - QchainOuter_1)) > tol) and outer_iter < max_outer_iter and totiter <= max_totiter:
         outer_iter += 1
         QchainOuter_1 = Qchain.copy()
         XchainOuter_1 = Xchain.copy()
         UchainOuter_1 = Uchain.copy()
+        # baseline the tau differences below are taken against; None when no recursion runs
+        Xchain_ref = XchainOuter_1 if options.method in ('lin', 'qdlin') else None
 
         # For 'lin'/'qdlin' methods, first iterate at population N-1_s for each class s
         # to compute gamma and tau corrections (MATLAB solver_amvald.m lines 76-142)
@@ -934,7 +1039,7 @@ def solver_amvald(
                         # Forward step at N-1_s
                         Wchain_s, STeff_s = solver_amvald_forward(
                             M, K, nservers, schedparam, lldscaling, cdscaling, jdscaling, sched, classprio, gamma, tau,
-                            Qchain_s_1, Xchain_s_1, Uchain_s_1, STchain, Vchain, Nchain_s, options
+                            Xchain_ref, Qchain_s_1, Xchain_s_1, Uchain_s_1, STchain, Vchain, Nchain_s, options
                         )
 
                         totiter += 1
@@ -1012,10 +1117,13 @@ def solver_amvald(
             # Forward step
             Wchain, STeff = solver_amvald_forward(
                 M, K, nservers, schedparam, lldscaling, cdscaling, jdscaling, sched, classprio, gamma, tau,
-                Qchain_1, Xchain_1, Uchain_1, STchain, Vchain, Nchain, options
+                Xchain_ref, Qchain_1, Xchain_1, Uchain_1, STchain, Vchain, Nchain, options
             )
 
             totiter += 1
+            _console.iter_line(totiter, 'AMVA sweep %d: queue-length residual %.3e, X = %.6g',
+                               totiter, float(np.max(np.abs(Qchain - Qchain_1))),
+                               float(np.sum(Xchain[np.isfinite(Xchain)])))
             if totiter >= max_totiter:
                 break
 
@@ -1097,6 +1205,14 @@ def solver_amvald(
         lG = -np.sum(Nclosed[valid] * np.log(Xclosed[valid]))
     else:
         lG = np.nan
+
+    _amva_converged = bool(np.max(np.abs(Qchain - QchainOuter_1)) <= tol)
+    if _amva_converged:
+        _console.step('AMVA converged after %d sweeps, residual %.3e within tolerance %.3e',
+                      totiter, float(np.max(np.abs(Qchain - QchainOuter_1))), tol)
+    else:
+        _console.step('AMVA stopped after %d sweeps with residual %.3e above tolerance %.3e',
+                      totiter, float(np.max(np.abs(Qchain - QchainOuter_1))), tol)
 
     return AmvaldResult(
         Q=Qchain,

@@ -32,7 +32,7 @@ _SPECIAL_TOKENS = {
 def snake_to_camel(name):
     """Convert a snake_case identifier to camelCase (get_tran_avg -> getTranAvg).
 
-    Compound metric tokens keep their canonical spelling
+    Compound metric method names keep their canonical spelling
     (avg_residt -> avgResidT, cdf_respt -> cdfRespT).
     """
     parts = name.split('_')

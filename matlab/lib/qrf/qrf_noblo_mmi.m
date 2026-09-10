@@ -80,8 +80,8 @@ end
                     for j = 1:M
                         if i~=j
                             for kj = 1:K(j)
-                                for ni = 1+(1:F(i))
-                                    for nj = 1+(1:F(j))
+                                for ni = 1+(0:F(i))
+                                    for nj = 1+(0:F(j))
                                          fobj = fobj + p2(i,ni,ki,j,nj,kj,m)*(log(LOGTOL+p2(i,ni,ki,j,nj,kj,m))-log(LOGTOL+p2(i,ni,ki,i,ni,ki,m))-log(LOGTOL+p2(j,nj,kj,j,nj,kj,m)));
                                     end
                                 end

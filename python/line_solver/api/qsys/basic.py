@@ -179,10 +179,12 @@ def qsys_mmck(lambda_val: float, mu: float, c: int, K: int) -> Dict[str, float]:
     """
     Exact closed-form analysis of an M/M/c/K queue (finite capacity K, c servers).
 
-    Port of MATLAB qsys_mmck.m. Stationary distribution (truncated Erlang form):
+    Port of MATLAB qsys_mmck.m. Stationary distribution (truncated Erlang form)::
+
         a = lambda/mu, rho = a/c
         p_n = a^n/n! * p0                 for 0 <= n <= c
         p_n = a^c/c! * rho^(n-c) * p0     for c <= n <= K
+
     with p0 normalizing the (K+1)-point distribution.
 
     Args:

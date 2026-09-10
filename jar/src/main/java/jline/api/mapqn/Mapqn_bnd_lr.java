@@ -34,7 +34,23 @@ public final class Mapqn_bnd_lr {
      * @return Solution containing the optimal value and variable values
      */
     public static Mapqn_solution solve(LinearReductionParameters params, int objectiveQueue, int objectivePhase) {
+        return solve(params, objectiveQueue, objectivePhase, "max");
+    }
+
+    /**
+     * As above, optimizing in the requested direction. The LP is a relaxation
+     * containing the exact solution, so "max" is a valid upper bound on the
+     * utilization and "min" the matching lower bound; reporting only one of the
+     * two leaves the interval half open.
+     *
+     * @param sense "min" or "max"
+     */
+    public static Mapqn_solution solve(LinearReductionParameters params, int objectiveQueue, int objectivePhase,
+                                       String sense) {
         params.validate();
+        if (!("min".equals(sense) || "max".equals(sense))) {
+            throw new IllegalArgumentException("Sense must be 'min' or 'max'");
+        }
         if (objectiveQueue < 1 || objectiveQueue > params.M) {
             throw new IllegalArgumentException("Objective queue must be in range 1..M");
         }
@@ -61,7 +77,8 @@ public final class Mapqn_bnd_lr {
         // Solve the LP
         SimplexSolver solver = new SimplexSolver();
         LinearConstraintSet constraintSet = new LinearConstraintSet(model.getConstraints());
-        PointValuePair solution = solver.optimize(objectiveFunction, constraintSet, GoalType.MAXIMIZE);
+        PointValuePair solution = solver.optimize(objectiveFunction, constraintSet,
+                "min".equals(sense) ? GoalType.MINIMIZE : GoalType.MAXIMIZE);
 
         return new Mapqn_solution(solution.getValue(), extractVariableValues(model, solution.getPoint()));
     }

@@ -676,15 +676,36 @@ public class SaveHandlers {
             cap = Integer.MAX_VALUE;
             numServers = 1;
         }
-        if (sn.isstation.get(ind) == 0 || Utils.isInf(cap)) {
+        // jmtCapIsUnbounded is the same question SolverJMT.jmtBufferCapacityRefusal
+        // asks, so the gate and the writer cannot disagree about which stations
+        // carry a buffer at all. It used to be Utils.isInf on the int-NARROWED
+        // value, which saturated a derived sum of sentinels back onto
+        // Integer.MAX_VALUE and so answered correctly by accident.
+        if (sn.isstation.get(ind) == 0 || jmtCapIsUnbounded(sn, istStation)) {
             valueNode.appendChild(simDoc.createTextNode(String.valueOf(-1)));
         } else {
-            if (cap == Arrays.stream(sn.njobs.getNonZeroValues()).sum()) {
+            if (cap >= jmtReachablePopulation(istStation)) {
+                // A capacity the population cannot reach is unbounded, and the
+                // test is >= and not ==: refreshCapacity DERIVES sn.cap for a
+                // station the user never capped, as sum over the classes served
+                // there of the chain population, so a multi-class station gets
+                // (#classes) x N -- 8 on a two-class model of 4 jobs. Under ==
+                // only the single-class case matched, and every multi-class one
+                // fell through to jmtStationCapAssert and was refused as a
+                // "binding" buffer nobody declared.
+                //
+                // THE POPULATION COMPARED AGAINST IS THE ONE THAT CAN REACH
+                // istStation, not the model total. A class that never visits
+                // this station cannot fill it, so counting its jobs makes a
+                // capacity that is exactly the reachable population look like a
+                // buffer -- which is what a SELF-LOOPING CLASS does. See the
+                // MATLAB twin in JMTIO/saveBufferCapacity.m.
                 valueNode.appendChild(simDoc.createTextNode(String.valueOf(-1)));
             } else if (Utils.isInf(numServers)) {
                 // Infinite servers (delay node) - no buffer constraint
                 valueNode.appendChild(simDoc.createTextNode(String.valueOf(-1)));
             } else {
+                jmtStationCapAssert(istStation);
                 // Send LINE's total capacity K directly to JMT
                 valueNode.appendChild(simDoc.createTextNode(String.valueOf(cap)));
             }
@@ -692,6 +713,210 @@ public class SaveHandlers {
         sizeNode.appendChild(valueNode);
         section.appendChild(sizeNode);
         return new DocumentSectionPair(simDoc, section);
+    }
+
+    /**
+     * The most jobs that can be present at station {@code ist}, read the way
+     * refreshCapacity derives the capacity itself: per CHAIN, because a chain's
+     * whole population can reach a station that serves any one of its classes
+     * (class switching moves jobs between them), and a chain none of whose
+     * classes is served there cannot put a single job on it.
+     * <p>
+     * Deliberately NOT read off {@code sn.classcap}, which refreshCapacity has
+     * already clamped by the station's own cap: comparing a capacity against a
+     * quantity derived from it would make every user-declared buffer look
+     * non-binding. Infinite when an open chain is served here, which is what the
+     * model total gave before and which sends the station to
+     * {@link #jmtStationCapAssert}, where the open classes are skipped by name.
+     * </p>
+     *
+     * @param ist station index
+     * @return the reachable population, possibly infinite
+     */
+    private double jmtReachablePopulation(int ist) {
+        return jmtReachablePopulation(sn, ist);
+    }
+
+    /**
+     * {@link #jmtReachablePopulation(int)} against an explicit struct, so that
+     * SolverJMT.jmtMethodRefusal can apply the writer's own BINDING test without
+     * building a writer. sn.cap is DERIVED for a station the user never capped, so
+     * "the cap is finite" is not the question -- "the cap is below what can reach
+     * the station" is.
+     *
+     * @param sn  the model struct
+     * @param ist station index
+     * @return the reachable population, possibly infinite
+     */
+    public static double jmtReachablePopulation(NetworkStruct sn, int ist) {
+        double n = 0;
+        for (int c = 0; c < sn.nchains; c++) {
+            Matrix inchain = sn.inchain.get(c);
+            if (inchain == null) {
+                continue;
+            }
+            boolean served = false;
+            double chainJobs = 0;
+            for (int k = 0; k < inchain.length(); k++) {
+                int r = (int) inchain.get(k);
+                if (!Double.isNaN(sn.rates.get(ist, r))) {
+                    served = true;
+                }
+                chainJobs += sn.njobs.get(r);
+            }
+            if (served) {
+                n += chainJobs;
+            }
+        }
+        return n;
+    }
+
+    /**
+     * Refuses a binding station capacity JMT cannot express, on two counts.
+     * <p>
+     * (1) THE RULE IS ONE JMT CANNOT READ -- BBS, RSRD or retrial-with-limit; see
+     * {@link #jmtReadsDropStrategy}. Such a value is not approximated, it is IGNORED,
+     * so the capacity stops being enforced and JMT returns the unconstrained answer.
+     * </p><p>
+     * (2) THE RULE IS WAITQ AND A CLOSED CLASS CAN REACH THE LIMIT, for the same
+     * reason {@code jmtClassCapAssert} in {@code saveRegions} refuses the per-class
+     * one: JMT cannot hold a blocked closed job at its upstream station. Note this is
+     * the case where NO blocking rule is declared. That the limit CAN be reached is
+     * the caller's to establish and not retested here: {@code saveBufferCapacity}
+     * reaches this method only for a capacity strictly below the total population,
+     * which is the one thing that makes a buffer a buffer. A model that does declare BAS is
+     * exported as JMT "BAS blocking", which is the same queueing model, under either
+     * declaration form -- see {@link #jmtIsBasDestination}.
+     * </p><p>
+     * That entry advised expressing the limit as the STATION capacity instead.
+     * Measured on 2026-08-19, the advice was wrong, and neither of the two strategies
+     * a WAITQ station maps onto reproduces the UNDECLARED case:
+     * </p><ul>
+     * <li>{@code waiting queue} does not enforce {@code size} at all. On a closed
+     * 3-queue tandem, N=6, Exp(1) FCFS, cap 2 at Q2, JMT returned the
+     * UNCONSTRAINED [2.03 1.99 1.98], X = 0.750, against the exact
+     * [3.6090 0.9711 1.4199], X = 0.6522.</li>
+     * <li>{@code BAS blocking} enforces it, but completes the service BEFORE
+     * blocking, so the blocked job moves the instant room frees. That is a
+     * different queueing model, not a rounding: same fixture, [2.871 1.373 1.756],
+     * X = 0.7126.</li>
+     * </ul><p>
+     * With no rule declared LINE instead disables the upstream departure while the
+     * destination is full, which for exponential service is repetitive service (RS)
+     * and is what SolverCTMC, SolverSSA and SolverLDES all agree on. So THAT model is
+     * refused rather than exported as either of the two things JMT can say. See
+     * BUG-81. A declared-BAS model is a different model and is exported, not refused:
+     * blocking after service is precisely what JMT's "BAS blocking" does.
+     * </p>
+     */
+    private void jmtStationCapAssert(int ist) {
+        String reason = jmtStationCapRefusal(sn, ist);
+        if (!reason.isEmpty()) {
+            throw new RuntimeException(reason);
+        }
+    }
+
+    /**
+     * Is the buffer at station {@code ist} UNBOUNDED, as the JSIM writer reads it?
+     *
+     * <p>THIS PORT DOES NOT CARRY Inf ON sn.cap FOR AN UNBOUNDED STATION, and
+     * that is what makes the question worth a named predicate. {@code
+     * Station.cap} is an {@code int}, so it cannot hold Inf: its "no bound"
+     * value is {@code Integer.MAX_VALUE} ({@link
+     * jline.lang.nodes.Station#hasFiniteCap} is the predicate for the declared
+     * one). refreshCapacity then derives a station's capacity as
+     * {@code min(sum(chaincap row), sum(classcap row))}, and it SUMS that
+     * sentinel across the classes served there -- so an unbounded MIXED station
+     * comes out as 2147483647 + 2 = 2147483649 for one open and one closed
+     * class, and a Source serving two open classes as 2 x 2147483647 =
+     * 4294967294. {@link Utils#isInf} recognises the sentinel EXACTLY and so
+     * does not see a sum of them.
+     *
+     * <p>{@code >= Integer.MAX_VALUE} is refreshCapacity's own idiom for the
+     * same question ({@code chainCap >= Integer.MAX_VALUE},
+     * {@code station.getCap() >= Integer.MAX_VALUE}), and it is safe because
+     * setCapacity takes an {@code int}: no capacity a caller can declare is
+     * larger. MATLAB, native python and C++ all carry a genuine Inf here, so
+     * this narrowing is the JAR's alone.
+     *
+     * <p>saveBufferCapacity used to ask the question by NARROWING to int first,
+     * which saturates the sum back onto Integer.MAX_VALUE and made Utils.isInf
+     * answer correctly by accident. Naming it here is what lets the gate ask the
+     * same question as the writer instead of reading the raw double and
+     * concluding that every mixed model has a binding buffer.
+     *
+     * @param sn  the model struct
+     * @param ist station index
+     * @return true when the station has no bound a job can reach
+     */
+    public static boolean jmtCapIsUnbounded(NetworkStruct sn, int ist) {
+        if (ist < 0 || sn.cap == null || ist >= sn.cap.length()) {
+            return true;
+        }
+        double cap = sn.cap.get(ist);
+        return Utils.isInf(cap) || cap >= Integer.MAX_VALUE;
+    }
+
+    /**
+     * {@link #jmtStationCapAssert(int)} as a SENTENCE rather than an exception,
+     * against an explicit struct; empty when the buffer at {@code ist} is
+     * exportable.
+     *
+     * <p>ONE PREDICATE, TWO CALLERS. saveBufferCapacity raises it while writing
+     * the JSIM document, and SolverJMT.jmtMethodRefusal returns it so that
+     * findSolver and SolverAUTO never offer jmt.jsim on a model the writer will
+     * refuse. It used to be reachable only from inside the writer, which is why
+     * the gate could not see it.
+     *
+     * @param sn  the model struct
+     * @param ist station index
+     * @return empty string when exportable, otherwise the refusal
+     */
+    public static String jmtStationCapRefusal(NetworkStruct sn, int ist) {
+        if (jmtCapIsUnbounded(sn, ist)) {
+            return "";
+        }
+        for (int r = 0; r < sn.nclasses; r++) {
+            if (Double.isNaN(sn.rates.get(ist, r))) {
+                continue;   // class r is not served here
+            }
+            Map<JobClass, DropStrategy> byClass = sn.droprule.get(sn.stations.get(ist));
+            DropStrategy dr = byClass == null ? null : byClass.get(sn.jobclasses.get(r));
+            if (dr != null && !jmtReadsDropStrategy(dr)) {
+                // Unmappable for EITHER class type, so this test precedes the open-class skip
+                return "SolverJMT: station '"
+                        + sn.nodenames.get((int) sn.stationToNode.get(ist))
+                        + "' applies drop strategy \"" + DropStrategy.toText(dr)
+                        + "\" to class '" + sn.classnames.get(r) + "' and carries a finite capacity "
+                        + (long) sn.cap.get(ist) + " it can reach. JMT's queue section reads only"
+                        + " \"drop\", \"waiting queue\", \"BAS blocking\" and \"retrial\"; it does not"
+                        + " approximate anything else, it ignores it, so the capacity would stop being"
+                        + " enforced and the run would return the unconstrained answer."
+                        + " Use SolverCTMC, SolverSSA or SolverLDES.";
+            }
+            if (Utils.isInf(sn.njobs.get(r))) {
+                continue;   // open class: JMT loses its arrivals, as LINE does
+            }
+            if (dr != DropStrategy.WaitingQueue) {
+                continue;   // a mappable declared blocking rule is exported as itself
+            }
+            if (jmtIsBasDestination(sn, ist, r)) {
+                // BAS declared on the UPSTREAM station: jmtDropStrategyText moves it
+                // onto this one, which is where JMT reads it
+                continue;
+            }
+            return "SolverJMT: station '" + sn.nodenames.get((int) sn.stationToNode.get(ist))
+                    + "' carries a finite capacity " + (long) sn.cap.get(ist)
+                    + " that binds for the closed class '" + sn.classnames.get(r)
+                    + "'. LINE blocks a closed job that finds no room -- the upstream departure is disabled"
+                    + " and the job stays where it is -- and no JMT drop strategy reproduces that:"
+                    + " \"waiting queue\" does not enforce the size at all, and \"BAS blocking\" completes"
+                    + " the service before blocking, which is a different queueing model."
+                    + " Use SolverCTMC, SolverSSA or SolverLDES, or declare DropStrategy.BAS"
+                    + " if blocking after service is the model you want, which SolverJMT"
+                    + " does export.";
+        }
+        return "";
     }
 
     public ElementDocumentPair saveCache(ElementDocumentPair elementDocumentPair) {
@@ -1172,6 +1397,85 @@ public class SaveHandlers {
         return new ElementDocumentPair(simElem, simDoc);
     }
 
+    /**
+     * True when station {@code ist} is the RECEIVING side of a true-BAS relation for
+     * class {@code r}, i.e. an arrival of {@code r} that finds {@code ist} full must
+     * block an upstream station rather than be lost.
+     * <p>
+     * LINE accepts the BAS declaration in two places -- on the blocking (upstream)
+     * station, as {@code cqn_bas_blocking} does, or on the full destination, as a model
+     * read back from JMT does -- and {@code Network.refreshLocalVars} resolves both into
+     * {@code sn.isbasdestination} (BUG-83). Reading {@code sn.droprule} at the capped
+     * station sees only the second form, which is what made SolverJMT refuse the first.
+     * </p>
+     */
+    private boolean jmtIsBasDestination(int ist, int r) {
+        return jmtIsBasDestination(sn, ist, r);
+    }
+
+    /** {@link #jmtIsBasDestination(int, int)} against an explicit struct. */
+    private static boolean jmtIsBasDestination(NetworkStruct sn, int ist, int r) {
+        if (ist < 0 || sn.isbasdestination == null) {
+            return false;
+        }
+        if (ist >= sn.isbasdestination.getNumRows() || r >= sn.isbasdestination.getNumCols()) {
+            return false;
+        }
+        return sn.isbasdestination.get(ist, r) == 1.0;
+    }
+
+    /**
+     * Whether JMT's queue section can read this drop strategy at all.
+     * <p>
+     * It recognizes exactly four {@code dropStrategies} strings -- 'drop', 'BAS
+     * blocking', 'waiting queue', 'retrial' (a lookupswitch on String.hashCode in
+     * {@code jmt/engine/NodeSections/Queue.class}; the Storage section of a Place is
+     * even narrower and drops 'retrial'). An unrecognized value falls through the
+     * default arm with NO flag set, so BBS, RSRD and retrial-with-limit are not
+     * approximated, they are IGNORED.
+     * </p>
+     */
+    private static boolean jmtReadsDropStrategy(DropStrategy dr) {
+        return dr == DropStrategy.Drop || dr == DropStrategy.BlockingAfterService
+                || dr == DropStrategy.WaitingQueue || dr == DropStrategy.Retrial;
+    }
+
+    /**
+     * The JMT dropStrategy/dropRule string for station {@code ist}, class {@code r}.
+     * <p>
+     * Beyond {@code DropStrategy.toText} this does two things.
+     * </p><p>
+     * It resolves the two ways LINE can declare BAS blocking onto the one way JMT can
+     * read it. JMT's queue section says what happens to an arrival that finds THIS buffer
+     * full, so it only understands the rule on the destination; a WAITQ slot that
+     * {@link #jmtIsBasDestination} marks is therefore written out as 'BAS blocking'.
+     * </p><p>
+     * And it keeps the written file VALID. JMT recognizes exactly four strings --
+     * 'drop', 'BAS blocking', 'waiting queue', 'retrial' -- so BBS, RSRD and
+     * retrial-with-limit are spelled 'waiting queue', JMT's own no-limit default. That
+     * substitution is only ever reached where the rule cannot be consulted (infinite
+     * size, or a closed capacity equal to the population): a buffer that can actually
+     * fill under one of those three is refused outright by {@link #jmtStationCapAssert}.
+     * </p>
+     */
+    private String jmtDropStrategyText(int ist, int r) {
+        if (ist < 0) {
+            return "drop";     // JMT sets the field to 'drop' for nodes without a buffer
+        }
+        Map<JobClass, DropStrategy> byClass = sn.droprule.get(sn.stations.get(ist));
+        DropStrategy dr = byClass == null ? null : byClass.get(sn.jobclasses.get(r));
+        if (dr == null || dr.getID() == 0) {
+            return "drop";     // the "no rule recorded" slot, which JMT also spells 'drop'
+        }
+        if (dr == DropStrategy.WaitingQueue && jmtIsBasDestination(ist, r)) {
+            return DropStrategy.toText(DropStrategy.BlockingAfterService);
+        }
+        if (!jmtReadsDropStrategy(dr)) {
+            return DropStrategy.toText(DropStrategy.WaitingQueue);
+        }
+        return DropStrategy.toText(dr);
+    }
+
     public DocumentSectionPair saveDropRule(DocumentSectionPair documentSectionPair, int ind) {
         Document simDoc = documentSectionPair.simDoc;
         Element section = documentSectionPair.section;
@@ -1197,7 +1501,7 @@ public class SaveHandlers {
 
             Element valueNode2 = simDoc.createElement("value");
 
-            valueNode2.appendChild(simDoc.createTextNode(DropStrategy.toText(sn.droprule.get(sn.stations.get(i)).get(sn.jobclasses.get(r)))));
+            valueNode2.appendChild(simDoc.createTextNode(jmtDropStrategyText(i, r)));
             subParameterNode.appendChild(valueNode2);
             schedStrategyNode.appendChild(subParameterNode);
             section.appendChild(schedStrategyNode);
@@ -1228,16 +1532,8 @@ public class SaveHandlers {
             subParameterNode.setAttribute("name", "dropStrategy");
 
             Element valueNode2 = simDoc.createElement("value");
-            DropStrategy dropRule = DropStrategy.Drop;
-            if (!Double.isNaN(i) && i >= 0) {
-                dropRule = sn.droprule.get(sn.stations.get((int) i)).get(sn.jobclasses.get(r));
-            }
-
-            if (Double.isNaN(i) || dropRule.getID() == 0) {
-                valueNode2.appendChild(simDoc.createTextNode("drop"));
-            } else {
-                valueNode2.appendChild(simDoc.createTextNode(DropStrategy.toText(dropRule)));
-            }
+            valueNode2.appendChild(simDoc.createTextNode(
+                    Double.isNaN(i) ? "drop" : jmtDropStrategyText((int) i, r)));
             subParameterNode.appendChild(valueNode2);
             schedStrategyNode.appendChild(subParameterNode);
             section.appendChild(schedStrategyNode);
@@ -1492,13 +1788,18 @@ public class SaveHandlers {
         // Check if the node parameter exists and is not null
         NodeParam nodeParam = sn.nodeparam.get(istNode);
         int fanOut = 1; // default value
+        Matrix fanOutLink = null, fanOutProb = null;
+        jline.lang.processes.DiscreteSampler[][] fanOutDist = null;
         if (nodeParam instanceof ForkNodeParam) {
             ForkNodeParam forkParam = (ForkNodeParam) nodeParam;
             if (!Double.isNaN(forkParam.fanOut)) {
                 fanOut = (int) forkParam.fanOut;
             }
+            fanOutLink = forkParam.fanOutLink;
+            fanOutProb = forkParam.fanOutProb;
+            fanOutDist = forkParam.fanOutDist;
         }
-        
+
         valueNode.appendChild(simDoc.createTextNode(String.valueOf(fanOut)));
         jplNode.appendChild(valueNode);
         section.appendChild(jplNode);
@@ -1511,11 +1812,26 @@ public class SaveHandlers {
         blockNode.appendChild(valueNode);
         section.appendChild(blockNode);
 
+        // isSimplifiedFork lets JMT ignore the branch list and send one job down
+        // every link. That is only the same model when every branch is certain
+        // and carries the same number of tasks, so a variable forking level
+        // switches it off and makes JMT read the per-branch entries below.
+        boolean isSimplified = true;
+        if (fanOutLink != null) {
+            for (int k = 0; k < fanOutLink.getNumRows() && isSimplified; k++)
+                for (int r = 0; r < fanOutLink.getNumCols() && isSimplified; r++) {
+                    if (fanOutProb.get(k, r) == 0.0) continue;  // link not taken
+                    if (fanOutProb.get(k, r) != 1.0) isSimplified = false;
+                    if (fanOutLink.get(k, r) != fanOut) isSimplified = false;
+                    if (fanOutDist != null && fanOutDist[k][r] != null) isSimplified = false;
+                }
+        }
+
         Element issimplNode = simDoc.createElement("parameter");
         issimplNode.setAttribute("classPath", "java.lang.Boolean");
         issimplNode.setAttribute("name", "isSimplifiedFork");
         valueNode = simDoc.createElement("value");
-        valueNode.appendChild(simDoc.createTextNode("true"));
+        valueNode.appendChild(simDoc.createTextNode(isSimplified ? "true" : "false"));
         issimplNode.appendChild(valueNode);
         section.appendChild(issimplNode);
 
@@ -1546,63 +1862,95 @@ public class SaveHandlers {
                     Matrix.extractRows(sn.connmatrix, ind, ind + 1, conn_i);
                     Matrix conn_i_find = conn_i.find();
 
-                    Element classStratNode3 = simDoc.createElement("subParameter");
-                    Element classStratNode4 = simDoc.createElement("subParameter");
-                    Element classStratNode4Station = simDoc.createElement("subParameter");
-                    Element classStratNode4StationValueNode = simDoc.createElement("value");
-
+                    // One OutPathEntry per outgoing link. An earlier version
+                    // built the entry inside this loop but appended it outside,
+                    // so only the last connected node survived; that was
+                    // invisible because isSimplifiedFork makes JMT send one job
+                    // down every link and ignore the branch list.
                     for (int idx = 0; idx < conn_i_find.length(); idx++) {
                         int k = (int) conn_i_find.get(idx);
-                        classStratNode3 = simDoc.createElement("subParameter");
+                        Element classStratNode3 = simDoc.createElement("subParameter");
                         classStratNode3.setAttribute("classPath", "jmt.engine.NetStrategies.ForkStrategies.OutPath");
                         classStratNode3.setAttribute("name", "OutPathEntry");
-                        classStratNode4 = simDoc.createElement("subParameter");
+
+                        Element classStratNode4 = simDoc.createElement("subParameter");
                         classStratNode4.setAttribute("classPath", "jmt.engine.random.EmpiricalEntry");
                         classStratNode4.setAttribute("name", "outUnitProbability");
-                        classStratNode4Station = simDoc.createElement("subParameter");
+                        Element classStratNode4Station = simDoc.createElement("subParameter");
                         classStratNode4Station.setAttribute("classPath", "java.lang.String");
                         classStratNode4Station.setAttribute("name", "stationName");
-                        classStratNode4StationValueNode = simDoc.createElement("value");
+                        Element classStratNode4StationValueNode = simDoc.createElement("value");
                         classStratNode4StationValueNode.appendChild(simDoc.createTextNode(String.format("%s", sn.nodenames.get(k))));
+                        classStratNode4Station.appendChild(classStratNode4StationValueNode);
+                        classStratNode4.appendChild(classStratNode4Station);
+                        // branch activation probability: JMT's outUnitProbability
+                        double branchP = (fanOutProb == null) ? 1.0 : fanOutProb.get(k, r);
+                        Element classStratNode4Probability = simDoc.createElement("subParameter");
+                        classStratNode4Probability.setAttribute("classPath", "java.lang.Double");
+                        classStratNode4Probability.setAttribute("name", "probability");
+                        Element classStratNode4ProbabilityValueNode = simDoc.createElement("value");
+                        classStratNode4ProbabilityValueNode.appendChild(simDoc.createTextNode(String.valueOf(branchP)));
+                        classStratNode4Probability.appendChild(classStratNode4ProbabilityValueNode);
+                        classStratNode4.appendChild(classStratNode4Probability);
+                        classStratNode3.appendChild(classStratNode4);
+
+                        // JobsPerLinkDis is an EmpiricalEntry ARRAY: one entry
+                        // per point of the jobs-per-link distribution. A
+                        // deterministic fork emits the single degenerate entry
+                        // it always did.
+                        double[] jplPoints;
+                        double[] jplProbs;
+                        jline.lang.processes.DiscreteSampler jplDist =
+                                (fanOutDist == null) ? null : fanOutDist[k][r];
+                        if (jplDist != null) {
+                            Matrix pm = (Matrix) jplDist.getParam(1).getValue();
+                            Matrix xm = (Matrix) jplDist.getParam(2).getValue();
+                            jplPoints = new double[xm.length()];
+                            jplProbs = new double[pm.length()];
+                            double tot = 0.0;
+                            for (int e = 0; e < pm.length(); e++) tot += pm.get(e);
+                            for (int e = 0; e < pm.length(); e++) {
+                                jplPoints[e] = xm.get(e);
+                                jplProbs[e] = pm.get(e) / tot;
+                            }
+                        } else if (fanOutLink != null) {
+                            jplPoints = new double[]{fanOutLink.get(k, r)};
+                            jplProbs = new double[]{1.0};
+                        } else {
+                            jplPoints = new double[]{fanOut};
+                            jplProbs = new double[]{1.0};
+                        }
+
+                        Element classStratNode4b = simDoc.createElement("subParameter");
+                        classStratNode4b.setAttribute("classPath", "jmt.engine.random.EmpiricalEntry");
+                        classStratNode4b.setAttribute("array", "true");
+                        classStratNode4b.setAttribute("name", "JobsPerLinkDis");
+                        for (int e = 0; e < jplPoints.length; e++) {
+                            Element classStratNode5b = simDoc.createElement("subParameter");
+                            classStratNode5b.setAttribute("classPath", "jmt.engine.random.EmpiricalEntry");
+                            classStratNode5b.setAttribute("name", "EmpiricalEntry");
+                            Element classStratNode5bStation = simDoc.createElement("subParameter");
+                            classStratNode5bStation.setAttribute("classPath", "java.lang.String");
+                            classStratNode5bStation.setAttribute("name", "numbers");
+                            Element classStratNode5bStationValueNode = simDoc.createElement("value");
+                            classStratNode5bStationValueNode.appendChild(
+                                    simDoc.createTextNode(String.valueOf((int) Math.round(jplPoints[e]))));
+                            classStratNode5bStation.appendChild(classStratNode5bStationValueNode);
+                            classStratNode5b.appendChild(classStratNode5bStation);
+                            Element classStratNode5bProbability = simDoc.createElement("subParameter");
+                            classStratNode5bProbability.setAttribute("classPath", "java.lang.Double");
+                            classStratNode5bProbability.setAttribute("name", "probability");
+                            Element classStratNode5bProbabilityValueNode = simDoc.createElement("value");
+                            classStratNode5bProbabilityValueNode.appendChild(
+                                    simDoc.createTextNode(String.valueOf(jplProbs[e])));
+                            classStratNode5bProbability.appendChild(classStratNode5bProbabilityValueNode);
+                            classStratNode5b.appendChild(classStratNode5bProbability);
+                            classStratNode4b.appendChild(classStratNode5b);
+                        }
+                        classStratNode3.appendChild(classStratNode4b);
+
+                        classStratNode2.appendChild(classStratNode3);
                     }
-                    classStratNode4Station.appendChild(classStratNode4StationValueNode);
-                    classStratNode3.appendChild(classStratNode4Station);
-                    Element classStratNode4Probability = simDoc.createElement("subParameter");
-                    classStratNode4Probability.setAttribute("classPath", "java.lang.Double");
-                    classStratNode4Probability.setAttribute("name", "probability");
-                    Element classStratNode4ProbabilityValueNode = simDoc.createElement("value");
-                    classStratNode4ProbabilityValueNode.appendChild(simDoc.createTextNode("1.0"));
-                    classStratNode4Probability.appendChild(classStratNode4ProbabilityValueNode);
-
-                    Element classStratNode4b = simDoc.createElement("subParameter");
-                    classStratNode4b.setAttribute("classPath", "jmt.engine.random.EmpiricalEntry");
-                    classStratNode4b.setAttribute("array", "true");
-                    classStratNode4b.setAttribute("name", "JobsPerLinkDis");
-                    Element classStratNode5b = simDoc.createElement("subParameter");
-                    classStratNode5b.setAttribute("classPath", "jmt.engine.random.EmpiricalEntry");
-                    classStratNode5b.setAttribute("name", "EmpiricalEntry");
-                    Element classStratNode5bStation = simDoc.createElement("subParameter");
-                    classStratNode5bStation.setAttribute("classPath", "java.lang.String");
-                    classStratNode5bStation.setAttribute("name", "numbers");
-                    Element classStratNode5bStationValueNode = simDoc.createElement("value");
-                    classStratNode5bStationValueNode.appendChild(simDoc.createTextNode(String.valueOf((int) ((ForkNodeParam) sn.nodeparam.get(istNode)).fanOut)));
-                    classStratNode5bStation.appendChild(classStratNode5bStationValueNode);
-                    classStratNode4b.appendChild(classStratNode5bStation);
-                    Element classStratNode5bProbability = simDoc.createElement("subParameter");
-                    classStratNode5bProbability.setAttribute("classPath", "java.lang.Double");
-                    classStratNode5bProbability.setAttribute("name", "probability");
-                    Element classStratNode5bProbabilityValueNode = simDoc.createElement("value");
-                    classStratNode5bProbabilityValueNode.appendChild(simDoc.createTextNode("1.0"));
-                    classStratNode5bProbability.appendChild(classStratNode5bProbabilityValueNode);
-
-                    classStratNode4.appendChild(classStratNode4Station);
-                    classStratNode4.appendChild(classStratNode4Probability);
-                    classStratNode3.appendChild(classStratNode4);
-                    classStratNode5b.appendChild(classStratNode5bStation);
-                    classStratNode5b.appendChild(classStratNode5bProbability);
-                    classStratNode4b.appendChild(classStratNode5b);
-                    classStratNode3.appendChild(classStratNode4b);
-                    classStratNode2.appendChild(classStratNode3);
             }
             classStratNode.appendChild(classStratNode2);
             strategyNode.appendChild(classStratNode);
@@ -2582,6 +2930,140 @@ public class SaveHandlers {
     }
 
     /**
+     * Server pools and job parallelism of a node, as the JMT Server section needs them.
+     *
+     * <p>JMT's Server section takes classParallelism, serverNames,
+     * serversPerServerType, serverCompatibilities and schedulingPolicy as one
+     * positional block of its constructor ({@code jmt.engine.NodeSections.Server}),
+     * so the five are emitted together or not at all, and always after the service
+     * strategies. A station declaring parallelism alone is therefore given one
+     * synthetic pool holding all of its servers, since the pool counts, not
+     * numberOfServers, size the server pool once any pool is declared.</p>
+     */
+    public static class ServerPools {
+        /** Pool names, one per server type. */
+        public final java.util.List<String> names;
+        /** Servers held by each pool. */
+        public final Matrix counts;
+        /** Pool-class compatibility, (nTypes x K), 1.0 where the pool serves the class. */
+        public final Matrix compat;
+        /** Assignment policy across pools. */
+        public final HeteroSchedPolicy policy;
+        /** Servers seized at once by a job, (1 x K). */
+        public final Matrix parallelism;
+
+        ServerPools(java.util.List<String> names, Matrix counts, Matrix compat,
+                    HeteroSchedPolicy policy, Matrix parallelism) {
+            this.names = names;
+            this.counts = counts;
+            this.compat = compat;
+            this.policy = policy;
+            this.parallelism = parallelism;
+        }
+    }
+
+    /**
+     * Builds the server pools of node {@code ind}, or null when the station declares
+     * neither server types nor job parallelism.
+     *
+     * @param ind the node index
+     * @return the pools, or null when the Server section needs no pool block
+     */
+    public ServerPools serverPools(int ind) {
+        int istStation = (int) sn.nodeToStation.get(ind);
+        if (istStation < 0 || istStation >= sn.stations.size()) {
+            return null;
+        }
+        Station station = sn.stations.get(istStation);
+        jline.lang.nodeparam.ServiceNodeParam snp = sn.getServiceParam(station);
+        if (snp == null) {
+            return null;
+        }
+        int K = sn.nclasses;
+        boolean hasTypes = snp.nservertypes > 0 && snp.servertypenames != null
+                && !snp.servertypenames.isEmpty() && snp.serverspertype != null
+                && snp.servercompat != null;
+        boolean hasParallelism = false;
+        if (snp.serverparallelism != null) {
+            for (int r = 0; r < Math.min(K, snp.serverparallelism.getNumCols()); r++) {
+                if (snp.serverparallelism.get(0, r) > 1) {
+                    hasParallelism = true;
+                    break;
+                }
+            }
+        }
+        if (!hasTypes && !hasParallelism) {
+            return null;
+        }
+
+        Matrix par = new Matrix(1, K, K);
+        for (int r = 0; r < K; r++) {
+            double n = 1;
+            if (snp.serverparallelism != null && r < snp.serverparallelism.getNumCols()) {
+                n = Math.max(1, snp.serverparallelism.get(0, r));
+            }
+            par.set(0, r, n);
+        }
+
+        if (hasTypes) {
+            HeteroSchedPolicy policy = snp.heteroschedpolicy == null
+                    ? HeteroSchedPolicy.ORDER : snp.heteroschedpolicy;
+            return new ServerPools(snp.servertypenames, snp.serverspertype, snp.servercompat, policy, par);
+        }
+
+        java.util.List<String> names = new java.util.ArrayList<String>();
+        names.add(sn.nodenames.get(ind) + " - Server Type 1");
+        Matrix counts = new Matrix(1, 1, 1);
+        counts.set(0, 0, sn.nservers.get(istStation));
+        Matrix compat = new Matrix(1, K, K);
+        for (int r = 0; r < K; r++) {
+            compat.set(0, r, 1.0);
+        }
+        return new ServerPools(names, counts, compat, HeteroSchedPolicy.ORDER, par);
+    }
+
+    /**
+     * Saves the per-class job parallelism to JMT XML.
+     * Generates the classParallelism parameter array (Server.serverNumRequired).
+     *
+     * @param documentSectionPair the document/section pair
+     * @param ind the node index
+     * @return updated document/section pair
+     */
+    public DocumentSectionPair saveClassParallelism(DocumentSectionPair documentSectionPair, int ind) {
+        Document simDoc = documentSectionPair.simDoc;
+        Element section = documentSectionPair.section;
+
+        ServerPools pools = serverPools(ind);
+        if (pools == null) {
+            return documentSectionPair;
+        }
+
+        Element parNode = simDoc.createElement("parameter");
+        parNode.setAttribute("classPath", "java.lang.Integer");
+        parNode.setAttribute("name", "classParallelism");
+        parNode.setAttribute("array", "true");
+
+        for (int r = 0; r < sn.nclasses; r++) {
+            Element refClassNode = simDoc.createElement("refClass");
+            refClassNode.appendChild(simDoc.createTextNode(sn.classnames.get(r)));
+            parNode.appendChild(refClassNode);
+
+            Element subNode = simDoc.createElement("subParameter");
+            subNode.setAttribute("classPath", "java.lang.Integer");
+            subNode.setAttribute("name", "serverParallelism");
+
+            Element valueNode = simDoc.createElement("value");
+            valueNode.appendChild(simDoc.createTextNode(String.valueOf((int) pools.parallelism.get(0, r))));
+            subNode.appendChild(valueNode);
+            parNode.appendChild(subNode);
+        }
+
+        section.appendChild(parNode);
+        return new DocumentSectionPair(simDoc, section);
+    }
+
+    /**
      * Saves heterogeneous server type names to JMT XML.
      * Generates the serverNames parameter array.
      *
@@ -2593,22 +3075,17 @@ public class SaveHandlers {
         Document simDoc = documentSectionPair.simDoc;
         Element section = documentSectionPair.section;
 
-        int istStation = (int) sn.nodeToStation.get(ind);
-        Station station = sn.stations.get(istStation);
-
-        jline.lang.nodeparam.ServiceNodeParam snp = sn.getServiceParam(station);
-        if (snp == null || snp.servertypenames == null) {
+        ServerPools pools = serverPools(ind);
+        if (pools == null) {
             return documentSectionPair;
         }
-
-        List<String> names = snp.servertypenames;
 
         Element serverNamesNode = simDoc.createElement("parameter");
         serverNamesNode.setAttribute("classPath", "java.lang.String");
         serverNamesNode.setAttribute("name", "serverNames");
         serverNamesNode.setAttribute("array", "true");
 
-        for (String name : names) {
+        for (String name : pools.names) {
             Element subNode = simDoc.createElement("subParameter");
             subNode.setAttribute("classPath", "java.lang.String");
             subNode.setAttribute("name", "serverTypesNames");
@@ -2635,22 +3112,19 @@ public class SaveHandlers {
         Document simDoc = documentSectionPair.simDoc;
         Element section = documentSectionPair.section;
 
-        int istStation = (int) sn.nodeToStation.get(ind);
-        Station station = sn.stations.get(istStation);
-
-        jline.lang.nodeparam.ServiceNodeParam snp = sn.getServiceParam(station);
-        if (snp == null || snp.serverspertype == null) {
+        ServerPools pools = serverPools(ind);
+        if (pools == null) {
             return documentSectionPair;
         }
 
-        Matrix serversPerType = snp.serverspertype;
+        Matrix serversPerType = pools.counts;
 
         Element serversPerTypeNode = simDoc.createElement("parameter");
         serversPerTypeNode.setAttribute("classPath", "java.lang.Integer");
         serversPerTypeNode.setAttribute("name", "serversPerServerType");
         serversPerTypeNode.setAttribute("array", "true");
 
-        for (int t = 0; t < serversPerType.getNumRows(); t++) {
+        for (int t = 0; t < serversPerType.length(); t++) {
             Element subNode = simDoc.createElement("subParameter");
             subNode.setAttribute("classPath", "java.lang.Integer");
             subNode.setAttribute("name", "serverTypesNumOfServers");
@@ -2677,15 +3151,12 @@ public class SaveHandlers {
         Document simDoc = documentSectionPair.simDoc;
         Element section = documentSectionPair.section;
 
-        int istStation = (int) sn.nodeToStation.get(ind);
-        Station station = sn.stations.get(istStation);
-
-        jline.lang.nodeparam.ServiceNodeParam snp = sn.getServiceParam(station);
-        if (snp == null || snp.servercompat == null) {
+        ServerPools pools = serverPools(ind);
+        if (pools == null) {
             return documentSectionPair;
         }
 
-        Matrix compat = snp.servercompat;
+        Matrix compat = pools.compat;
         int nTypes = compat.getNumRows();
         int nClasses = compat.getNumCols();
 
@@ -2732,26 +3203,64 @@ public class SaveHandlers {
         Document simDoc = documentSectionPair.simDoc;
         Element section = documentSectionPair.section;
 
-        int istStation = (int) sn.nodeToStation.get(ind);
-        Station station = sn.stations.get(istStation);
-
-        jline.lang.nodeparam.ServiceNodeParam snp = sn.getServiceParam(station);
-        if (snp == null || snp.heteroschedpolicy == null) {
+        ServerPools pools = serverPools(ind);
+        if (pools == null) {
             return documentSectionPair;
         }
-
-        HeteroSchedPolicy policy = snp.heteroschedpolicy;
 
         Element policyNode = simDoc.createElement("parameter");
         policyNode.setAttribute("classPath", "java.lang.String");
         policyNode.setAttribute("name", "schedulingPolicy");
 
         Element valueNode = simDoc.createElement("value");
-        valueNode.appendChild(simDoc.createTextNode(HeteroSchedPolicy.toJMTText(policy)));
+        valueNode.appendChild(simDoc.createTextNode(HeteroSchedPolicy.toJMTText(pools.policy)));
         policyNode.appendChild(valueNode);
 
         section.appendChild(policyNode);
         return new DocumentSectionPair(simDoc, section);
+    }
+
+    /**
+     * Warns that per-server-type service rates cannot reach the JMT engine.
+     *
+     * <p>JMT keys the ServiceStrategy array of a station by refClass, so its loader
+     * ({@code jmt.engine.simEngine.SimLoader}) keeps one strategy per class however
+     * many (type, class) entries are written, and every pool of a station ends up
+     * serving at the class rate. Pool sizes, class compatibilities and the assignment
+     * policy do cross; setService(class, type, distribution) rates do not.</p>
+     *
+     * @param ind the node index
+     */
+    public void warnHeteroRates(int ind) {
+        int istRates = (int) sn.nodeToStation.get(ind);
+        if (istRates < 0 || istRates >= sn.stations.size()) {
+            return;
+        }
+        Station station = sn.stations.get(istRates);
+        jline.lang.nodeparam.ServiceNodeParam snp = sn.getServiceParam(station);
+        if (snp == null || snp.heterorates == null || snp.heterorates.size() < 2) {
+            return;
+        }
+        Double first = null;
+        boolean distinct = false;
+        for (Map<Integer, Double> typeRates : snp.heterorates.values()) {
+            for (Double rate : typeRates.values()) {
+                if (rate == null || rate <= 0) {
+                    continue;
+                }
+                if (first == null) {
+                    first = rate;
+                } else if (Math.abs(rate - first) > 1e-12) {
+                    distinct = true;
+                }
+            }
+        }
+        if (!distinct) {
+            return;
+        }
+        System.err.format("Warning: JMT keys service strategies by job class, so the per-server-type "
+                + "service rates of station %s cannot be exported; every pool will serve at the class "
+                + "service rate. Use the LDES or CTMC solver for per-type rates.%n", station.getName());
     }
 
     /**
@@ -2763,10 +3272,12 @@ public class SaveHandlers {
      * @return updated document/section pair
      */
     public DocumentSectionPair saveHeterogeneousServerConfig(DocumentSectionPair documentSectionPair, int ind) {
+        documentSectionPair = saveClassParallelism(documentSectionPair, ind);
         documentSectionPair = saveServerTypeNames(documentSectionPair, ind);
         documentSectionPair = saveServersPerType(documentSectionPair, ind);
         documentSectionPair = saveServerCompatibilities(documentSectionPair, ind);
         documentSectionPair = saveHeteroSchedPolicy(documentSectionPair, ind);
+        warnHeteroRates(ind);
         return documentSectionPair;
     }
 

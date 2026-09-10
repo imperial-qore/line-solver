@@ -2,8 +2,11 @@ classdef WorkflowActivity < Element
     % A computational activity in a Workflow.
     %
     % WorkflowActivity represents a stage of computation in a standalone
-    % workflow model. Unlike Activity in LayeredNetwork, this class is
-    % designed for pure computational workflows without external calls.
+    % workflow model. Unlike Activity in LayeredNetwork, it carries no call
+    % list: an external call is represented as an activity whose host demand
+    % is the law of the call response time, so that a synchronous call and a
+    % local computation compose in the same way. An asynchronous call blocks
+    % the caller for no time and is simply left out of the workflow.
     %
     % Each activity has a service time distribution that can be any
     % phase-type compatible distribution (Exp, Erlang, APH, HyperExp, etc.).
@@ -75,6 +78,42 @@ classdef WorkflowActivity < Element
             else
                 line_error(mfilename, 'hostDemand must be a Distribution or numeric value.');
             end
+
+            % The parent caches the composed law, so the leaf must be marked
+            % dirty here as well as on a topology change
+            if ~isempty(obj.workflow) && ~isempty(obj.index)
+                obj.workflow.invalidateActivity(obj.index);
+            end
+        end
+
+        function obj = setHostDemandMean(obj, meanValue)
+            % SETHOSTDEMANDMEAN Change the mean, preserving the shape
+            %
+            % OBJ = SETHOSTDEMANDMEAN(OBJ, MEANVALUE)
+            %
+            % Scales the current law in time rather than refitting it, so the
+            % SCV, the skewness and the order are preserved and the cached
+            % series-parallel tree keeps its shape. Falls back to a plain
+            % exponential when the current law has no usable mean.
+
+            if ~isnumeric(meanValue) || ~isscalar(meanValue) || ~isfinite(meanValue) || meanValue <= 0
+                line_error(mfilename, 'The activity mean must be a positive finite scalar.');
+            end
+
+            oldMean = obj.hostDemandMean;
+            if isempty(obj.hostDemand) || isa(obj.hostDemand, 'Immediate') || ...
+                    ~isnumeric(oldMean) || ~isfinite(oldMean) || oldMean <= 0
+                obj.setHostDemand(Exp(1 / meanValue));
+                return;
+            end
+
+            factor = oldMean / meanValue;
+            obj.hostDemand = dist_scale_rate(obj.hostDemand, factor);
+            obj.hostDemandMean = meanValue;
+            % The SCV is invariant under a time scaling
+            if ~isempty(obj.workflow) && ~isempty(obj.index)
+                obj.workflow.rescaleActivityLeaf(obj.index, factor);
+            end
         end
 
         function [alpha, T] = getPHRepresentation(obj)
@@ -92,7 +131,7 @@ classdef WorkflowActivity < Element
             if isa(obj.hostDemand, 'Immediate')
                 % Immediate activity: single absorbing state
                 alpha = 1;
-                T = -1e10;  % Very high rate (essentially immediate)
+                T = -GlobalConstants.Immediate;  % zero-time activity
                 return;
             end
 

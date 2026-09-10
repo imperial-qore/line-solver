@@ -5,6 +5,7 @@ Builds per-node state spaces (sn.space) and global state space with hashing.
 Port from MATLAB ctmc_ssg.m + spaceGeneratorNodes.m + spaceGenerator.m.
 """
 
+import time
 import warnings
 import numpy as np
 from typing import Tuple, Optional, Dict, List
@@ -359,6 +360,38 @@ def ctmc_ssg(sn, cutoff, options=None):
     return state_space, state_space_aggr, state_space_hashed, sn
 
 
+def _initial_occupancy(sn, ind, isf, r):
+    """Class-r jobs held by node `ind` in the DECLARED initial state, else 0.
+
+    Bounds the enumerated local space from below so a zero-visit station that
+    nonetheless starts with jobs keeps its initial marking; the unreachable-state
+    pruning then removes whatever the chain cannot reach.
+    See _kb/11-conventions-and-gotchas.md.
+    """
+    # only a Place holds tokens in a class-indexed row; every other node type encodes
+    # its local state differently, so column r is not an occupancy there
+    nodetype = getattr(sn, 'nodetype', None)
+    if nodetype is None:
+        return 0
+    nt = nodetype[ind]
+    nt = int(nt.value) if hasattr(nt, 'value') else int(nt)
+    place_val = int(NodeType.PLACE.value) if hasattr(NodeType.PLACE, 'value') else int(NodeType.PLACE)
+    if nt != place_val:
+        return 0
+    state = getattr(sn, 'state', None)
+    if state is None:
+        return 0
+    row = state.get(isf) if hasattr(state, 'get') else (
+        state[isf] if isf < len(state) else None)
+    if row is None:
+        return 0
+    row = np.atleast_2d(np.asarray(row, dtype=float))
+    if row.size == 0:
+        return 0
+    row = row[0]
+    return float(row[r]) if r < row.shape[0] else 0.0
+
+
 def _space_generator_nodes(sn, cutoff_matrix, options):
     """
     Build per-node state spaces sn.space[isf] for each stateful node.
@@ -376,6 +409,19 @@ def _space_generator_nodes(sn, cutoff_matrix, options):
     R = sn.nclasses
     M = sn.nstations
     N = sn.njobs.flatten() if sn.njobs is not None else np.ones(R)
+
+    # Truncation level of the delayed-hit block B: a completing fetch releases its
+    # merged requests into the hit class in one transition, so 1+max_pending jobs
+    # of that class must fit the per station-class bound the rest of the state
+    # space is enumerated under. Closed models are bounded by the population.
+    nclosed = int(np.sum(N[np.isfinite(N)])) if N is not None else 0
+    if nclosed > 0:
+        max_pending = nclosed - 1
+    else:
+        cm = np.asarray(cutoff_matrix)
+        max_pending = (int(np.max(cm)) - 1) if cm.size > 0 and np.all(np.isfinite(cm)) else 0
+    if max_pending < 0:
+        max_pending = 0
 
     # MATLAB's spaceGeneratorNodes.m receives sn by value, so its local
     # substitution of inf nservers (for IS stations) by a finite job-count bound
@@ -411,7 +457,10 @@ def _space_generator_nodes(sn, cutoff_matrix, options):
                     # an exact 0, which an `== 0` test would miss — leaving the class
                     # erroneously enabled and over-generating the state space.
                     if v is not None and isf < v.shape[0] and abs(v[isf, r]) < 1e-12:
-                        capacityc[ind, r] = 0
+                        # a station never revisited can still HOLD jobs at time zero: an SPN
+                        # place with no input arc is a TRANSIENT state, not an absent one, and
+                        # zeroing it deletes the declared initial marking from the state space
+                        capacityc[ind, r] = _initial_occupancy(sn, ind, isf, r)
                         continue
 
                 # Check disabled process — Places (SPN buffers) hold tokens
@@ -635,15 +684,29 @@ def _space_generator_nodes(sn, cutoff_matrix, options):
                         sv = np.zeros(R, dtype=int)
                         sv[rr] = 1
                         serv_rows.append(sv)
-                state_bufsrv = np.array(serv_rows, dtype=int)
-                state_var = _space_local_vars(sn, ind)
+                # A completing fetch releases every merged secondary request in one
+                # immediate transition, so the hit classes momentarily hold the
+                # miss-class job plus up to max_pending delayed hits.
+                _hit_cols = _cache_hit_classes(sn, ind)
+                if max_pending > 0 and _hit_cols:
+                    for _mc in _cache_miss_classes(sn, ind) or [None]:
+                        for _hc in _hit_cols:
+                            for _cnt in range(1, max_pending + 1):
+                                sv = np.zeros(R, dtype=int)
+                                sv[_hc] = _cnt
+                                if _mc is not None:
+                                    sv[_mc] = 1
+                                serv_rows.append(sv)
+                                capacityc[ind, _hc] = max(int(capacityc[ind, _hc]), _cnt)
+                state_bufsrv = np.unique(np.array(serv_rows, dtype=int), axis=0)
+                state_var = _space_local_vars(sn, ind, max_pending=max_pending)
                 if state_var is not None and np.atleast_2d(state_var).size > 0:
                     sn.nvars[ind, 0] = int(np.atleast_2d(state_var).shape[1])
                     sn.space[isf] = _cartesian_2d(state_bufsrv, state_var)
                 else:
                     sn.space[isf] = state_bufsrv
                 sn.space[isf] = _filter_cache_states(
-                    sn, ind, sn.space[isf], state_bufsrv.shape[1])
+                    sn, ind, sn.space[isf], state_bufsrv.shape[1], max_pending)
                 continue
             elif nt_val == router_val:
                 # A Router holds a job only transiently (immediate pass-through),
@@ -684,7 +747,7 @@ def _space_generator_nodes(sn, cutoff_matrix, options):
 
             if nt_val == cache_val:
                 sn.space[isf] = _filter_cache_states(
-                    sn, ind, sn.space[isf], state_bufsrv.shape[1])
+                    sn, ind, sn.space[isf], state_bufsrv.shape[1], max_pending)
 
     # Restore IS nservers so the finite enumeration bound does not leak to the
     # caller's model (see snapshot note above).
@@ -692,7 +755,29 @@ def _space_generator_nodes(sn, cutoff_matrix, options):
     return capacityc
 
 
-def _filter_cache_states(sn, ind, value, lvs):
+def _cache_hit_classes(sn, ind):
+    """0-based hit-class indices of cache node ``ind``."""
+    nparam = sn.nodeparam[ind] if sn.nodeparam is not None and ind in sn.nodeparam else None
+    if nparam is None:
+        return []
+    hc = nparam.get('hitclass', None) if isinstance(nparam, dict) else getattr(nparam, 'hitclass', None)
+    if hc is None:
+        return []
+    return sorted({int(v) for v in np.atleast_1d(np.asarray(hc)).ravel() if int(v) >= 0})
+
+
+def _cache_miss_classes(sn, ind):
+    """0-based miss-class indices of cache node ``ind``."""
+    nparam = sn.nodeparam[ind] if sn.nodeparam is not None and ind in sn.nodeparam else None
+    if nparam is None:
+        return []
+    mc = nparam.get('missclass', None) if isinstance(nparam, dict) else getattr(nparam, 'missclass', None)
+    if mc is None:
+        return []
+    return sorted({int(v) for v in np.atleast_1d(np.asarray(mc)).ravel() if int(v) >= 0})
+
+
+def _filter_cache_states(sn, ind, value, lvs, max_pending=0):
     """
     Prune unreachable cache states for a retrieval-system cache.
 
@@ -731,17 +816,42 @@ def _filter_cache_states(sn, ind, value, lvs):
         return value
     missclass = np.atleast_1d(np.asarray(missclass, dtype=int)) if missclass is not None else np.array([], dtype=int)
 
+    _, rc_items, _ = cache_retrieval_class_map(sn, ind)
+    width_b = len(rc_items) if (value.shape[1] - lvs - tcc - n_items) == len(rc_items) else 0
+    hit_cols = set(_cache_hit_classes(sn, ind))
+    miss_cols = set(_cache_miss_classes(sn, ind))
+
     keep = []
     for row in range(value.shape[0]):
         st = value[row]
-        valid = np.sum(st[:lvs]) <= 1  # at most one class in the buffer/server region
+        # Only one job reads at a time. The single exception is the state a
+        # completing fetch lands in: one miss-class job (the fetch itself)
+        # together with the delayed hits it released.
+        srv = st[:lvs]
+        other = sum(srv[c] for c in range(lvs) if c not in hit_cols and c not in miss_cols)
+        nmiss = sum(srv[c] for c in range(lvs) if c in miss_cols)
+        valid = (np.sum(srv) <= 1) or (other == 0 and nmiss <= 1
+                                       and np.sum(srv) <= 1 + max_pending)
 
-        # Retrieval-system occupancy bitmap: column (lvs+tcc+item) is non-zero
-        # iff that item is currently being retrieved.
+        # Block A: column (lvs+tcc+item) is non-zero iff that item is being fetched.
         items_in_rs = set()
-        for col in range(lvs + tcc, st.shape[0]):
+        for col in range(lvs + tcc, lvs + tcc + n_items):
             if st[col] != 0:
                 items_in_rs.add(col - (lvs + tcc))  # 0-based item id
+
+        # Block B: a merged secondary request requires its item to be in flight.
+        if valid and width_b > 0:
+            npend = 0
+            for j in range(width_b):
+                cnt = st[lvs + tcc + n_items + j]
+                if cnt == 0:
+                    continue
+                npend += cnt
+                if st[lvs + tcc + rc_items[j] - 1] == 0:
+                    valid = False
+                    break
+            if valid and npend > max_pending:
+                valid = False
 
         # If an item is in the cache, retrievals for it cannot arrive or depart.
         if valid:
@@ -997,7 +1107,7 @@ def _from_marginal_bounds(sn, ind, ub, cap, options=None):
     return space
 
 
-def _space_local_vars(sn, ind, first_only=False):
+def _space_local_vars(sn, ind, first_only=False, max_pending=0):
     """
     Generate state space for local state variables at a node.
 
@@ -1006,6 +1116,8 @@ def _space_local_vars(sn, ind, first_only=False):
     Args:
         sn: NetworkStruct
         ind: Node index (0-based)
+        max_pending: bounds the number of secondary (delayed-hit) requests a
+            cache node may merge onto a single in-flight fetch (block B).
         first_only: when True, return only the first local-var row without
             enumerating the full cache space (used by SSA to seed one valid
             initial state). The cache component is built directly via
@@ -1029,9 +1141,10 @@ def _space_local_vars(sn, ind, first_only=False):
             m = nparam.get('itemcap', []) if isinstance(nparam, dict) else getattr(nparam, 'itemcap', [])
             rsc = nparam.get('retrieval_system_capacity', 0) if isinstance(nparam, dict) else getattr(nparam, 'retrieval_system_capacity', 0)
             m = np.atleast_1d(m).astype(int)
+            _, rc_items, _ = cache_retrieval_class_map(sn, ind)
             if n_items > 0 and len(m) > 0:
-                space = (_first_cache_state(n_items, m, rsc) if first_only
-                         else _space_cache(n_items, m, rsc))
+                space = (_first_cache_state(n_items, m, rsc, rc_items) if first_only
+                         else _space_cache(n_items, m, rsc, max_pending, rc_items))
 
     # Round-robin routing variables
     if hasattr(sn, 'routing') and sn.routing is not None:
@@ -1106,7 +1219,61 @@ def _space_local_vars(sn, ind, first_only=False):
     return space
 
 
-def _space_cache(n, m, retrieval_system_capacity=0):
+def cache_retrieval_class_map(sn, ind):
+    """Canonical ordering of the retrieval classes of cache node ``ind``.
+
+    Port of MATLAB State.cacheRetrievalClassMap. Block B of the cache local
+    variables is indexed by this ordering, so that the originating (arrival)
+    class of a merged secondary request -- hence its hit class -- is recoverable
+    when the fetch completes.
+
+    Returns:
+        (rc_list, rc_items, rc_orig_class): 0-based retrieval class indices in
+        ascending order, the 1-based item each serves, and the 0-based arrival
+        class each originates from. All empty when there is no retrieval system.
+    """
+    nparam = sn.nodeparam[ind] if sn.nodeparam is not None and ind in sn.nodeparam else None
+    if nparam is None:
+        return [], [], []
+    rc = nparam.get('retrieval_classes', None) if isinstance(nparam, dict) \
+        else getattr(nparam, 'retrieval_classes', None)
+    if rc is None or np.asarray(rc).size == 0:
+        return [], [], []
+    rc = np.atleast_2d(np.asarray(rc))
+    triples = []
+    for k in range(rc.shape[0]):
+        for c in range(rc.shape[1]):
+            if int(rc[k, c]) >= 0:
+                triples.append((int(rc[k, c]), k + 1, c))
+    triples.sort()
+    return ([t[0] for t in triples], [t[1] for t in triples], [t[2] for t in triples])
+
+
+def _space_cache_compositions(total, parts):
+    """Weak compositions of ``total`` into exactly ``parts`` non-negative parts."""
+    if parts == 1:
+        return [[total]]
+    out = []
+    for first in range(total + 1):
+        for tail in _space_cache_compositions(total - first, parts - 1):
+            out.append([first] + tail)
+    return out
+
+
+def _space_cache_pendings(s, max_pending):
+    """Ways of distributing up to ``max_pending`` merged requests over ``s`` fetches."""
+    if s == 0:
+        return [[]]
+    if max_pending <= 0:
+        return [[0] * s]
+    out = [[0] * s]
+    for total in range(1, max_pending + 1):
+        out.extend(_space_cache_compositions(total, s))
+    return out
+
+
+def _space_cache(n, m, retrieval_system_capacity=0, max_pending=0,
+                 retrieval_class_items=None):
     """
     Generate all cache state vectors.
 
@@ -1114,15 +1281,20 @@ def _space_cache(n, m, retrieval_system_capacity=0):
     Items are 1-indexed. Each position in the cache holds one item.
     The cache has h lists with sizes m[0], m[1], ..., m[h-1].
 
-    When ``retrieval_system_capacity`` > 0 each emitted row has
-    totalCacheCapacity + retrieval_system_capacity columns; the leading
-    totalCacheCapacity columns are the cache contents and the trailing
-    columns are retrieval-system slots (0 = empty, else a 1-based item id).
+    Layout when ``retrieval_system_capacity`` > 0:
+    ``[cache contents | block A | block B]``, where block A holds one column per
+    item (1 iff a fetch of that item is in flight) and block B one column per
+    retrieval class (the number of secondary, delayed-hit requests merged onto
+    the in-flight fetch of its item). ``max_pending`` bounds the total block-B
+    count; block B is part of the layout whenever a retrieval system exists, so
+    that the local-variable width matches sn.nvars.
 
     Args:
         n: Total number of items
         m: Array of list capacities
-        retrieval_system_capacity: extra retrieval-system slots (default 0)
+        retrieval_system_capacity: items retrievable simultaneously (default 0)
+        max_pending: delayed-hit truncation level (default 0)
+        retrieval_class_items: item served by each retrieval class
 
     Returns:
         Matrix where each row is a cache state (item IDs in positions)
@@ -1132,11 +1304,11 @@ def _space_cache(n, m, retrieval_system_capacity=0):
     m = np.atleast_1d(m).astype(int)
     total_slots = int(np.sum(m))
     rsc = int(retrieval_system_capacity)
-    # The retrieval system is encoded as a per-item occupancy bitmap (one column
-    # per item) appended after the cache contents; bit i is set iff item i+1 is
-    # being retrieved. When there is no retrieval system the bitmap is omitted.
-    retrieval_width = n if rsc > 0 else 0
-    n_vars = total_slots + retrieval_width
+    rc_items = list(retrieval_class_items) if retrieval_class_items is not None else []
+    width_a = n if rsc > 0 else 0
+    width_b = len(rc_items) if width_a > 0 else 0
+    max_pending = int(max_pending) if width_b > 0 else 0
+    n_vars = total_slots + width_a + width_b
 
     if total_slots == 0 or n == 0:
         return np.zeros((1, max(n_vars, 1)))
@@ -1150,15 +1322,21 @@ def _space_cache(n, m, retrieval_system_capacity=0):
         remaining = [it for it in items if it not in cached]
         cache_perms = list(permutations(cache_combo))
         # Retrieval-system occupancy: every subset of the remaining items of size
-        # <= rsc, encoded as a one-hot bitmap (membership is a set, so each
-        # physical configuration maps to exactly one bitmap row).
+        # <= rsc, each in-flight fetch carrying 0..max_pending merged requests.
         for s in range(0, rsc + 1):
             for retr_combo in combinations(remaining, s):
-                bitmap = [0] * retrieval_width
+                block_a = [0] * width_a
                 for it in retr_combo:
-                    bitmap[it - 1] = 1
-                for perm in cache_perms:
-                    states.append(list(perm) + bitmap)
+                    block_a[it - 1] = 1
+                # Only the retrieval classes of items being fetched can carry
+                # merged secondary requests; every other block-B slot is zero.
+                active = [j for j, it in enumerate(rc_items) if it in retr_combo] if width_b else []
+                for pend in _space_cache_pendings(len(active), max_pending):
+                    block_b = [0] * width_b
+                    for j, cnt in zip(active, pend):
+                        block_b[j] = cnt
+                    for perm in cache_perms:
+                        states.append(list(perm) + block_a + block_b)
 
     if not states:
         return np.zeros((1, n_vars))
@@ -1166,7 +1344,7 @@ def _space_cache(n, m, retrieval_system_capacity=0):
     return np.array(states, dtype=float)
 
 
-def _first_cache_state(n, m, retrieval_system_capacity=0):
+def _first_cache_state(n, m, retrieval_system_capacity=0, retrieval_class_items=None):
     """First cache state row, built directly without enumerating the space.
 
     Equivalent to ``_space_cache(n, m, rsc)[0:1]`` but O(total_slots) instead of
@@ -1181,11 +1359,13 @@ def _first_cache_state(n, m, retrieval_system_capacity=0):
     m = np.atleast_1d(m).astype(int)
     total_slots = int(np.sum(m))
     rsc = int(retrieval_system_capacity)
-    retrieval_width = n if rsc > 0 else 0
-    n_vars = total_slots + retrieval_width
+    width_a = n if rsc > 0 else 0
+    rc_items = list(retrieval_class_items) if retrieval_class_items is not None else []
+    width_b = len(rc_items) if width_a > 0 else 0
+    n_vars = total_slots + width_a + width_b
     if total_slots == 0 or n == 0 or total_slots > n:
         return np.zeros((1, max(n_vars, 1)))
-    row = list(range(1, total_slots + 1)) + [0] * retrieval_width
+    row = list(range(1, total_slots + 1)) + [0] * (width_a + width_b)
     return np.array([row], dtype=float)
 
 
@@ -1203,6 +1383,28 @@ def _raise_ctmc_too_large(nstates, cap):
         "simulation/approximate solver (SSA, LDES, FLD), tighten the cutoff, or "
         "raise options.ctmc_max_states to override."
         % (int(nstates) - 1, ('%d' % int(cap)) if np.isfinite(cap) else 'inf'))
+
+
+def _ssg_deadline(options):
+    """Monotonic deadline from options.timeout, or None when unbounded."""
+    _t = None
+    if options is not None:
+        _t = options.get('timeout', None) if isinstance(options, dict) \
+            else getattr(options, 'timeout', None)
+    if _t is None or not np.isfinite(_t) or _t <= 0:
+        return None
+    return time.monotonic() + float(_t)
+
+
+def _ssg_check_deadline(deadline):
+    """Abort the enumeration once the wall-clock budget is spent.
+
+    A partial state space gives silently wrong stationary probabilities, so the
+    budget aborts the solve rather than truncating it.
+    """
+    if deadline is not None and time.monotonic() > deadline:
+        raise RuntimeError('State space generation exceeded the wall-clock '
+                           'time budget (options.timeout).')
 
 
 def _build_global_states(sn, Np, is_open_class, capacityc, options=None, max_states=float('inf')):
@@ -1252,8 +1454,24 @@ def _build_global_states(sn, Np, is_open_class, capacityc, options=None, max_sta
     if has_transition:
         return _build_global_states_cartesian(sn, Np, is_open_class, max_states=max_states)
 
+    # Cooperative wall-clock budget (options.timeout). Established BEFORE the
+    # per-marginal loop below, which dominates for large buffers and which
+    # MATLAB spaceGenerator.m also checkpoints; a budget armed only around the
+    # final cartesian composition leaves that loop unbounded.
+    _deadline = _ssg_deadline(options)
+
     # Generate chain-station positions
-    chain_station_pos = _generate_chain_station_positions(sn, Np, is_open_class, is_closed_class, nstateful_p)
+    # THE POSITION ENUMERATION IS CAPACITY-BOUND, not just the per-node spaces.
+    # `capacityc` already zeroes a (node, class) pair the class never visits, and
+    # `_space_generator_nodes` uses it to prune sn.space -- but the position
+    # enumeration below used to distribute every class over every slot with no
+    # bound and let the `marg > capacityc` test below reject the impossible ones
+    # one at a time. On the class-switching chain Source->Q1(A)->Q2(B)->Q3(C)
+    # that is (cutoff+1)^(3*3) candidates for (cutoff+1)^3 reachable states, and
+    # the rejection is not free: each candidate costs a fromMarginal call.
+    slot_cap = _slot_capacities(sn, capacityc, nstateful_p)
+    chain_station_pos = _generate_chain_station_positions(sn, Np, is_open_class, is_closed_class, nstateful_p,
+                                                          deadline=_deadline, slot_cap=slot_cap)
 
     if chain_station_pos is None or len(chain_station_pos) == 0:
         # Fallback: simple cartesian product approach
@@ -1262,6 +1480,7 @@ def _build_global_states(sn, Np, is_open_class, capacityc, options=None, max_sta
     # For each chain-station position, find compatible per-node state hashes
     netstates = {}  # netstates[j][isf] = list of hash indices
     for j in range(chain_station_pos.shape[0]):
+        _ssg_check_deadline(_deadline)
         netstates[j] = {}
         for ind in range(sn.nnodes):
             if not sn.isstateful[ind]:
@@ -1361,15 +1580,8 @@ def _build_global_states(sn, Np, is_open_class, capacityc, options=None, max_sta
     # The enumeration is exhaustive: truncating the cartesian product would
     # silently change the stationary distribution (observed as RespT off by
     # 10x against MATLAB/JAR on multiserver phase-type stations). Runaway
-    # enumeration is bounded cooperatively by the wall-clock budget below
+    # enumeration is bounded cooperatively by the wall-clock budget armed above
     # (options['timeout']), matching the MATLAB spaceGenerator checkpoints.
-    import time as _time
-    _timeout = None
-    if options is not None:
-        _t = options.get('timeout', None) if isinstance(options, dict) \
-            else getattr(options, 'timeout', None)
-        if _t is not None and np.isfinite(_t) and _t > 0:
-            _timeout = _time.monotonic() + float(_t)
     _tochk = 0
 
     SS_rows = []
@@ -1407,10 +1619,7 @@ def _build_global_states(sn, Np, is_open_class, capacityc, options=None, max_sta
             _tochk += 1
             if _tochk >= 4096:
                 _tochk = 0
-                if _timeout is not None and _time.monotonic() > _timeout:
-                    raise RuntimeError(
-                        'State space generation exceeded the wall-clock time '
-                        'budget (options.timeout).')
+                _ssg_check_deadline(_deadline)
             skip = False
             u_row = []
             for isf_idx in range(nstateful):
@@ -1519,7 +1728,9 @@ def _filter_cache_queue_consistency(sn, ind, j, marg, matching, space_isf,
         st = space_isf[ri]
         valid = True
         items_in_rs = set()
-        for col in range(lvs + tcc, n_cols):
+        # only block A (one column per item) records in-flight fetches; block B
+        # holds the merged secondary requests
+        for col in range(lvs + tcc, min(n_cols, lvs + tcc + rc_mat.shape[0])):
             if st[col] == 0:
                 continue
             item = col - (lvs + tcc)
@@ -1762,7 +1973,41 @@ def _build_state_space_aggr(sn, state_space_hashed):
     return aggr
 
 
-def _generate_chain_station_positions(sn, Np, is_open, is_closed, nstateful_p):
+def _slot_capacities(sn, capacityc, nstateful_p):
+    """
+    Per (position slot, class) capacity, in the slot order the position vector
+    uses: ``row[r*nstateful_p + slot]`` with ``slot = isf - n_preceding_sources``,
+    the same indexing :func:`_extract_marginal` reads back.
+
+    Returns an ``(nstateful_p, R)`` integer array, or None when the mapping
+    cannot be built (in which case the enumeration stays unbounded, as before).
+    """
+    R = sn.nclasses
+    if nstateful_p <= 0 or capacityc is None:
+        return None
+    cap = np.full((nstateful_p, R), -1.0)
+    source_val = int(NodeType.SOURCE.value) if hasattr(NodeType.SOURCE, 'value') else int(NodeType.SOURCE)
+    n_preceding_sources = 0
+    for ind in range(sn.nnodes):
+        nt_val = _get_nodetype_val(sn, ind)
+        if nt_val == source_val:
+            n_preceding_sources += 1
+            continue
+        if not sn.isstateful[ind]:
+            continue
+        isf = int(sn.nodeToStateful[ind])
+        slot = isf - n_preceding_sources
+        if slot < 0 or slot >= nstateful_p:
+            return None
+        for r in range(R):
+            cap[slot, r] = capacityc[ind, r]
+    if np.any(cap < 0):
+        return None   # a slot went unmapped: do not bound what we cannot see
+    return cap
+
+
+def _generate_chain_station_positions(sn, Np, is_open, is_closed, nstateful_p,
+                                      deadline=None, slot_cap=None):
     """
     Generate all valid job distributions across stateful nodes.
 
@@ -1774,6 +2019,7 @@ def _generate_chain_station_positions(sn, Np, is_open, is_closed, nstateful_p):
         is_open: Boolean array for open classes
         is_closed: Boolean array for closed classes
         nstateful_p: Number of stateful nodes excluding sources
+        deadline: monotonic wall-clock deadline for the enumeration, or None
 
     Returns:
         Matrix of chain-station positions (n_positions x nstateful_p * R)
@@ -1793,6 +2039,7 @@ def _generate_chain_station_positions(sn, Np, is_open, is_closed, nstateful_p):
         ranges.append(range(int(Np_int[r]) + 1))
 
     for n_tuple in iproduct(*ranges):
+        _ssg_check_deadline(deadline)
         n = np.array(n_tuple, dtype=int)
         # Check closed class constraint: closed classes must have exact population
         if not np.all(n[is_closed] == Np_int[is_closed]):
@@ -1800,7 +2047,8 @@ def _generate_chain_station_positions(sn, Np, is_open, is_closed, nstateful_p):
 
         # Distribute n across nstateful_p nodes
         # Use spaceClosedMultiCS equivalent
-        node_dists = _distribute_across_nodes(n, nstateful_p, sn.chains if hasattr(sn, 'chains') else None)
+        node_dists = _distribute_across_nodes(n, nstateful_p, sn.chains if hasattr(sn, 'chains') else None,
+                                              slot_cap=slot_cap)
         for dist in node_dists:
             positions.append(dist)
 
@@ -1813,7 +2061,7 @@ def _generate_chain_station_positions(sn, Np, is_open, is_closed, nstateful_p):
     return pos_array
 
 
-def _distribute_across_nodes(n, nstateful_p, chains):
+def _distribute_across_nodes(n, nstateful_p, chains, slot_cap=None):
     """
     Distribute n jobs across nstateful_p nodes respecting chain constraints.
 
@@ -1872,7 +2120,16 @@ def _distribute_across_nodes(n, nstateful_p, chains):
             for idx, r in enumerate(cinchain):
                 subN[r] = int(split[idx])
         # spaceClosedMulti: distribute subN[r] of each class across the nodes.
-        per_class_dists = [_multichoose_constrained(int(subN[r]), nstateful_p) for r in range(R)]
+        # The per-slot cap is what keeps this from being the full lattice: a
+        # class that never visits a node has capacity 0 there and contributes
+        # only the zero slot, so a class-switching chain enumerates its own
+        # station per class rather than every station.
+        per_class_dists = [
+            _multichoose_constrained(int(subN[r]), nstateful_p,
+                                     caps=None if slot_cap is None else slot_cap[:, r])
+            for r in range(R)]
+        if any(len(d) == 0 for d in per_class_dists):
+            continue
         for combo in iproduct(*per_class_dists):
             row = np.zeros(nstateful_p * R)
             for r in range(R):
@@ -1884,22 +2141,32 @@ def _distribute_across_nodes(n, nstateful_p, chains):
     return results
 
 
-def _multichoose_constrained(n, k):
+def _multichoose_constrained(n, k, caps=None):
     """
     Generate all ways to distribute n identical items across k bins.
 
-    Returns list of arrays, each of length k, summing to n.
+    Returns list of arrays, each of length k, summing to n. When ``caps`` is
+    given it bounds each bin, which prunes the recursion at the branch rather
+    than after it -- a bin of capacity 0 takes only the zero item, so a class
+    that visits one station out of M enumerates M ways rather than
+    binomial(n+M-1, M-1).
     """
     if k == 0:
         return [np.array([])] if n == 0 else []
+    if caps is not None and len(caps) >= k and n > int(np.sum(caps[:k])):
+        return []
     if k == 1:
+        if caps is not None and n > int(caps[0]):
+            return []
         return [np.array([n])]
     if n == 0:
         return [np.zeros(k, dtype=int)]
 
+    hi = n if caps is None else min(n, int(caps[0]))
     results = []
-    for i in range(n + 1):
-        for rest in _multichoose_constrained(n - i, k - 1):
+    for i in range(hi + 1):
+        for rest in _multichoose_constrained(n - i, k - 1,
+                                             None if caps is None else caps[1:]):
             results.append(np.concatenate([[i], rest]).astype(int))
     return results
 

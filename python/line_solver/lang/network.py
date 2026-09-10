@@ -7,6 +7,7 @@ Ported from MATLAB implementation in matlab/src/lang/@MNetwork/
 
 from typing import Optional, Dict, List, Tuple, Union
 import numpy as np
+import scipy.sparse as sp
 
 from .base import (
     Element, ElementType, Network as NetworkBase, NetworkElement, Node, StatefulNode, Station,
@@ -16,7 +17,27 @@ from .region import Region
 from .routing import RoutingMatrix
 from ..api.sn.network_struct import NetworkStruct, DropStrategy as SnDropStrategy
 from ..api.sn.utils import sn_print_routing_matrix
+from ..api.io import console as _console
 from ..constants import ProcessType, GlobalConstants
+
+
+def lld_scaling_as_1d(ld):
+    """Reduce a user-supplied lldScaling to the 1-D alpha(n) the struct holds.
+
+    setLoadDependence takes a vector indexed by the station population, but a
+    caller may hand in a column, a row, or a (n, R) table with one column per
+    class. Everything that reads the scaling -- sn.lldscaling, the JSON wire
+    form -- has to reduce it the SAME way, or a model solves natively and
+    fails once it crosses a codebase boundary.
+    """
+    ld_array = np.asarray(ld)
+    if ld_array.ndim == 2:
+        # single row/column flattens; multi-column takes the first column
+        if ld_array.shape[1] == 1 or ld_array.shape[0] == 1:
+            ld_array = ld_array.flatten()
+        else:
+            ld_array = ld_array[:, 0]
+    return ld_array
 
 
 class Network(NetworkBase, Element):
@@ -43,6 +64,9 @@ class Network(NetworkBase, Element):
         self._connections = None  # Adjacency matrix (lazy-computed)
         self._routing_matrix = None  # Routing matrix
         self._sn = None  # Compiled NetworkStruct
+        self._gd_scaling = None  # global (Whittle) rate scaling phi(n); see set_global_dependence
+        self._gd_scaling_cutoff = 10  # open-class wire truncation of _gd_scaling; solving ignores it
+        self._gd_scaling_peak = None
         self._has_struct = False  # Whether struct is valid
         self._rates_dirty = False  # Whether service/arrival rates need refresh
         self._rewards = {}  # Dict[reward_name, reward_function]
@@ -465,7 +489,7 @@ class Network(NetworkBase, Element):
         if not getattr(self, '_do_checks', True):
             return
 
-        # structural (non-probability) outgoing entries (Fork/SPN incidence/Router pre-strategy) are exempt from the row-sum total; see _kb/04-networkstruct.md Routing-matrix validation.
+        # structural (non-probability) entries (Fork/SPN incidence/Router pre-strategy) skip row-sum; see _kb/04-networkstruct.md Routing-matrix validation.
         from .nodes import Fork, Place, Transition, Router
 
         nodes = self.get_nodes()
@@ -647,6 +671,8 @@ class Network(NetworkBase, Element):
         else:
             raise ValueError("[{0}] routing_matrix must be RoutingMatrix, dict, or 2D list/array".format(self.name))
 
+        self._sanitize()
+
         # inject deferred cache retrieval-system routing edges registered by Cache.set_retrieval_system; see _kb/09-ldes-and-cache.md.
         self._inject_retrieval_routing()
 
@@ -662,22 +688,25 @@ class Network(NetworkBase, Element):
         # reducible-routing (absorbing state) check via RoutingMatrix directly, to avoid triggering refresh_struct recursion.
         if self._routing_matrix is not None:
             try:
-                rt = self._routing_matrix.toMatrix()
-                nclasses = len(self._classes)
-                if rt.size > 0 and nclasses > 0 and rt.shape[0] % nclasses == 0:
-                    # node-indexed adjacency over ALL nodes, incl. non-stations, mirrors MATLAB isRoutingErgodic.m.
-                    nnodes_rt = rt.shape[0] // nclasses
-                    adj = np.zeros((nnodes_rt, nnodes_rt))
-                    for i in range(nnodes_rt):
-                        for j in range(nnodes_rt):
-                            block = rt[i*nclasses:(i+1)*nclasses, j*nclasses:(j+1)*nclasses]
-                            if np.any(block > 0):
-                                adj[i, j] = 1.0
+                # Read the sparse per-(class,class) node->node routes, NOT toMatrix(): that
+                # one is STATION-indexed and cached, so it goes stale as soon as link()
+                # adds classes (retrieval systems, auto class switches) or non-station
+                # nodes exist. Node-indexed adjacency mirrors MATLAB isRoutingErgodic.m.
+                nnodes_rt = len(self._nodes)
+                node_index = {id(node): i for i, node in enumerate(self._nodes)}
+                adj = np.zeros((nnodes_rt, nnodes_rt))
+                for routes in self._routing_matrix._routes.values():
+                    for (node_src, node_dst), prob in routes.items():
+                        i = node_index.get(id(node_src))
+                        j = node_index.get(id(node_dst))
+                        if i is not None and j is not None and prob > 0:
+                            adj[i, j] = 1.0
+                if nnodes_rt > 0 and np.any(adj > 0):
                     # absorbing station: routed but with no outgoing edge beyond a self-loop; unrouted stations and Sinks are exempt.
                     has_absorbing = False
                     from .nodes import Station as _Station
                     for i, node in enumerate(self._nodes):
-                        if i >= nnodes_rt or not isinstance(node, _Station):
+                        if not isinstance(node, _Station):
                             continue
                         outgoing = adj[i, :].copy()
                         outgoing[i] = 0
@@ -698,25 +727,126 @@ class Network(NetworkBase, Element):
         if getattr(self, '_do_checks', True):
             from .nodes import Queue as _Queue
             import warnings
-            K = len(self._classes)
-            Nvec = np.array([getattr(self._classes[r], 'population', np.inf) for r in range(K)], dtype=float)
-            for node in self._nodes:
-                if isinstance(node, _Queue) and getattr(node._sched_strategy, 'name', None) == 'OI' \
-                        and node._svc_rate_fun is not None:
-                    cap = getattr(node, '_capacity', np.inf)
-                    ok, badc, partial = node.check_perm_invariance(Nvec, cap)
-                    if not ok:
-                        raise ValueError(
-                            "Order-independent (OI) station '%s' has a service rate function that is "
-                            "not permutation-invariant: mu(c) differs for a reordering of the microstate "
-                            "%s. Use SchedStrategy.PAS for order-dependent service, or disable this check "
-                            "with model.set_checks(False)." % (node.get_name(), badc))
-                    elif partial:
-                        warnings.warn(
-                            "[link] Order-independent (OI) station '%s': the permutation-invariance check "
-                            "was only partial because the reachable population is large; a subset of "
-                            "microstates was verified. To skip this check, call model.set_checks(False) "
-                            "before link()." % node.get_name(), UserWarning)
+            oi_nodes = [nd for nd in self._nodes
+                        if isinstance(nd, _Queue)
+                        and getattr(nd._sched_strategy, 'name', None) == 'OI'
+                        and nd._svc_rate_fun is not None]
+            # only walk the class-switching graph when there is something to check
+            Nvec, ntot = self._oi_check_bounds() if oi_nodes else (None, np.inf)
+            for node in oi_nodes:
+                # ntot caps the microstate LENGTH: with Nvec now chain-wide,
+                # summing it would count each chain once per class and admit
+                # microstates longer than the network can produce.
+                cap = min(getattr(node, '_capacity', np.inf), ntot)
+                ok, badc, partial = node.check_perm_invariance(Nvec, cap)
+                if not ok:
+                    raise ValueError(
+                        "Order-independent (OI) station '%s' has a service rate function that is "
+                        "not permutation-invariant: mu(c) differs for a reordering of the microstate "
+                        "%s. Use SchedStrategy.PAS for order-dependent service, or disable this check "
+                        "with model.set_checks(False)." % (node.get_name(), badc))
+                # (1): per-job rates must be non-negative. Runs second because
+                # permutation invariance is what makes mu a function of the
+                # count vector, which is what the increment test walks.
+                okm, badm, badr, partialm = node.check_rate_monotonicity(Nvec, cap)
+                partial = partial or partialm
+                if not okm:
+                    raise ValueError(
+                        "Order-independent (OI) station '%s' has a service rate function with a "
+                        "negative per-job service rate: mu(c) DROPS when a class-%d job joins, at "
+                        "microstate %s. An OI rate must satisfy mu(c_1..c_j) >= mu(c_1..c_{j-1}), "
+                        "so that every mu_j(c) is non-negative. A processor-sharing total rate "
+                        "(sum_j mu_{c_j})/n has this shape whenever classes have different rates -- "
+                        "use SchedStrategy.PS for that station, or disable this check with "
+                        "model.set_checks(False)." % (node.get_name(), badr, badm))
+                if partial:
+                    warnings.warn(
+                        "[link] Order-independent (OI) station '%s': the permutation-invariance check "
+                        "was only partial because the reachable population is large; a subset of "
+                        "microstates was verified. To skip this check, call model.set_checks(False) "
+                        "before link()." % node.get_name(), UserWarning)
+
+    def _oi_check_bounds(self):
+        """Per-class job bound, and the total, for the OI permutation-invariance check.
+
+        The conserved quantity under class switching is the CHAIN population, not
+        the per-class one: a class reaches counts up to its chain's total, and a
+        class declared empty and filled only by a switch (a ClassSwitch target, a
+        Cache Hit/Miss class) reaches them from a declared population of 0.
+        Bounding each class by its OWN declared population therefore leaves
+        reachable microstates unenumerated -- every mixed one, when the declared
+        population is 0 -- and the check passes vacuously on rates that are
+        plainly order-dependent.
+
+        Union the classes over every class-switching edge and give each class its
+        component's total population. Returns (Nvec, ntot), ntot being the total
+        closed population, which bounds how many jobs one station can hold and so
+        the microstate length. Without class switching each component is a single
+        class and both fall back to what they were. An open class carries no
+        population attribute, so Inf propagates through its whole chain as before.
+        """
+        from .nodes import Cache as _Cache, ClassSwitch as _ClassSwitch
+        K = len(self._classes)
+        pop = np.array([getattr(c, 'population', np.inf) for c in self._classes], dtype=float)
+        index = {id(c): r for r, c in enumerate(self._classes)}
+
+        parent = list(range(K))
+
+        def find(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(x, y):
+            px, py = find(x), find(y)
+            if px != py:
+                parent[px] = py
+
+        def union_classes(src, dst):
+            r, t = index.get(id(src)), index.get(id(dst))
+            if r is not None and t is not None:
+                union(r, t)
+
+        # (a) routing entries that switch class -- present when link() has not
+        # rewritten them into an auto ClassSwitch node.
+        if self._routing_matrix is not None:
+            for key, routes in self._routing_matrix._routes.items():
+                src, dst = key[0], key[1]
+                if src is dst:
+                    continue
+                if any(prob > 0 for prob in routes.values()):
+                    union_classes(src, dst)
+
+        # (b) the switching nodes themselves, which is where link() puts it.
+        for node in self._nodes:
+            if isinstance(node, _ClassSwitch):
+                M = getattr(node, '_switch_matrix', None)
+                if M is None:
+                    continue
+                M = np.asarray(M, dtype=float)
+                if M.ndim != 2:
+                    continue
+                for r in range(min(K, M.shape[0])):
+                    for t in range(min(K, M.shape[1])):
+                        if r != t and M[r, t] > 0:
+                            union(r, t)
+            elif isinstance(node, _Cache):
+                for src, dst in list(getattr(node, '_hit_class', {}).items()) \
+                        + list(getattr(node, '_miss_class', {}).items()):
+                    union_classes(src, dst)
+                for src, dsts in getattr(node, '_item_classes', {}).items():
+                    for dst in dsts:
+                        union_classes(src, dst)
+                # keyed by (item, arriving class) -> retrieval class
+                for key, dst in getattr(node, '_retrieval_classes', {}).items():
+                    union_classes(key[1], dst)
+
+        Nvec = np.empty(K)
+        for r in range(K):
+            root = find(r)
+            Nvec[r] = np.sum(pop[[t for t in range(K) if find(t) == root]])
+        return Nvec, float(np.sum(pop))
 
     def is_routing_ergodic(self, P=None):
         """
@@ -856,6 +986,304 @@ class Network(NetworkBase, Element):
             info['isReducible'] = False
 
         return is_ergodic, info
+
+    def get_reducibility_info(self):
+        """Reducibility structure of the routing, with a suggested repair each.
+
+        Twin of the MATLAB ``@MNetwork/getReducibilityInfo``. Builds on
+        ``is_routing_ergodic``, which is the one adjacency build and SCC
+        decomposition; this adds ``isRoutingErgodic`` and ``suggestedFixes``.
+
+        Returns:
+            dict with isRoutingErgodic, isReducible, absorbingStations,
+            transientStations, numSCCs and suggestedFixes.
+        """
+        is_erg, info = self.is_routing_ergodic()
+        info = dict(info)
+        info['isRoutingErgodic'] = is_erg
+        info['suggestedFixes'] = []
+        if is_erg:
+            return info
+        target = self._default_ergodic_target(info['absorbingStations'])
+        for abs_name in info['absorbingStations']:
+            if target is not None and target != abs_name:
+                info['suggestedFixes'].append(
+                    'Route jobs from %s back to %s (e.g., P{class}(%s, %s) = 1.0)'
+                    % (abs_name, target, abs_name, target))
+        return info
+
+    def get_absorbing_stations(self):
+        """The stations that are absorbing: once a job enters, it never leaves.
+
+        Twin of the MATLAB ``@MNetwork/getAbsorbingStations``. The Sink is
+        excluded, being legitimately absorbing in an open network.
+
+        Returns:
+            Tuple of (stations, node_indices).
+        """
+        _, info = self.is_routing_ergodic()
+        stations = []
+        idxs = []
+        for name in info['absorbingStations']:
+            st = self.get_station_by_name(name)
+            if st is not None:
+                stations.append(st)
+                idxs.append(self.get_node_index(name))
+        return stations, idxs
+
+    def make_ergodic(self, target_node=None):
+        """A routing matrix that makes the network ergodic.
+
+        Twin of the MATLAB ``@MNetwork/makeErgodic``. Every absorbing station is
+        redirected to ``target_node``, defaulting to the first Delay and then to
+        the first non-absorbing station.
+
+        Does NOT relink: apply the result with ``model.link(P)``. That is
+        deliberate -- relinking rebuilds the struct, and the modeller should see
+        the repair before it is applied.
+        """
+        from line_solver.api.io.logging import line_warning
+        is_erg, info = self.is_routing_ergodic()
+        P = self.get_linked_routing_matrix()
+        if P is None:
+            P = self.init_routing_matrix()
+        P = [[None if blk is None else np.array(blk, dtype=float) for blk in row] for row in P]
+        if is_erg:
+            line_warning('makeErgodic', 'Routing is already ergodic. No changes needed.')
+            return P
+        if not info['absorbingStations']:
+            line_warning('makeErgodic', 'No absorbing stations found, but the network is not '
+                                        'ergodic. Manual intervention is required.')
+            return P
+
+        if target_node is None:
+            target_name = self._default_ergodic_target(info['absorbingStations'])
+        elif isinstance(target_node, str):
+            target_name = target_node
+        else:
+            target_name = target_node.name
+        if target_name is None:
+            raise ValueError('makeErgodic: cannot find a suitable target node for routing.')
+        # get_node_index is 1-BASED; the routing blocks are 0-based
+        target_idx = self.get_node_index(target_name) - 1
+        if target_idx < 0:
+            raise ValueError('makeErgodic: target node "%s" not found in the network.'
+                             % target_name)
+
+        nclasses = len(self._classes)
+        for abs_name in info['absorbingStations']:
+            abs_idx = self.get_node_index(abs_name) - 1
+            if abs_idx == target_idx:
+                line_warning('makeErgodic', 'Cannot route %s to itself. Skipping.' % abs_name)
+                continue
+            for r in range(nclasses):
+                for s in range(nclasses):
+                    if P[r][s] is not None and abs_idx < P[r][s].shape[0]:
+                        P[r][s][abs_idx, :] = 0.0
+                if P[r][r] is not None and abs_idx < P[r][r].shape[0] \
+                        and target_idx < P[r][r].shape[1]:
+                    P[r][r][abs_idx, target_idx] = 1.0
+        return P
+
+    def _default_ergodic_target(self, absorbing):
+        """First Delay, else the first station that is not itself absorbing."""
+        from line_solver.lang.nodes import Delay as _Delay
+        for node in self._nodes:
+            if isinstance(node, _Delay):
+                return node.name
+        first = None
+        for node in self._nodes:
+            if node not in self._stations:
+                continue
+            if first is None:
+                first = node.name
+            if node.name not in absorbing:
+                return node.name
+        return first
+
+    def _sanitize(self) -> None:
+        """Preprocess the model for consistent parameterization, as MATLAB `sanitize.m`.
+
+        Two parts, in the reference's own order.
+
+        (1) DEFAULTS, applied to every node whose per-class parameterization is
+        incomplete: an unconfigured class gets a Disabled service (Queue, Delay,
+        Place, Transition) or a Disabled arrival (Source), zero capacity and the
+        WAITQ drop rule, a Join admits every class without bound, a Sink routes
+        nothing, and a class a station cannot serve has its routing DISABLED
+        there so no visit is generated for it.
+
+        (2) CHECKS, skipped under `set_checks(False)`: a Queue or Delay must
+        serve some class, a closed class must be served somewhere, and SEPT/LEPT
+        need distinct means to order by. Cache, Petri-net and fork-join models
+        are exempt from the service checks because a station of theirs
+        legitimately carries no per-class service.
+
+        NOT MIRRORED, deliberately. MATLAB's Cache block materializes a default
+        `accessProb` (the per-item list-transition matrix) and rounds
+        `hitClass`/`missClass` to integers. Python resolves the absent access
+        graph at each consumer instead (`accost is None` -> the linear chain) and
+        carries hit/miss as JobClass objects rather than indices, so neither has
+        state to initialize here. See _kb/11-conventions-and-gotchas.md.
+        """
+        from .base import DropStrategy, RoutingStrategy, SchedStrategy, Station
+        from .nodes import (Cache, Delay, Fork, Join, Place, Queue, Sink, Source,
+                            Transition)
+        from ..distributions import Disabled
+
+        classes = list(self._classes)
+
+        def _disabled(dist) -> bool:
+            return dist is None or isinstance(dist, Disabled)
+
+        # ---- (1) defaults ------------------------------------------------
+        for node in self._nodes:
+            if isinstance(node, Join):
+                for k in classes:
+                    node.set_class_capacity(k, float('inf'))
+                    node.set_drop_rule(k, DropStrategy.WAITQ)
+            elif isinstance(node, Source):
+                for k in classes:
+                    if _disabled(getattr(node, '_arrival_process', {}).get(k)):
+                        node.set_arrival(k, Disabled())
+            elif isinstance(node, Sink):
+                for k in classes:
+                    node.set_routing(k, RoutingStrategy.DISABLED)
+            elif isinstance(node, (Queue, Delay)):
+                # Place and Transition are NOT filled here. MATLAB fills their
+                # internal `server.serviceProcess` cell, which Python does not
+                # model at all: a Place carries a service only once it is a
+                # QUEUEING place, and a Transition's timing lives on its modes.
+                for k in classes:
+                    if k not in node._service_process:
+                        node._service_process[k] = Disabled()
+                        # the capacity is written straight to the field, as
+                        # MATLAB does: set_class_capacity refuses 0, and 0 is
+                        # exactly what a class with no service must be capped at
+                        node._class_capacity[k] = 0
+                        node.set_drop_rule(k, DropStrategy.WAITQ)
+                        node._sched_param[k] = 0
+
+        # A class a station cannot serve must not be routed to it: MATLAB does
+        # this from sanitize, and it is what keeps the class out of the visit
+        # ratios. Fork/Join and Petri-net stations are exempt for the same
+        # reason they are exempt from the service check below.
+        special = any(isinstance(nd, (Cache, Place, Transition, Fork, Join))
+                      for nd in self._nodes)
+        if not special:
+            for node in self._nodes:
+                if not isinstance(node, (Queue, Delay)):
+                    continue
+                if getattr(node, '_hetero_service', None):
+                    continue
+                for k in classes:
+                    if _disabled(node._service_process.get(k)):
+                        node.set_routing(k, RoutingStrategy.DISABLED)
+
+        # Every station carries a per-class service slot, Disabled where the
+        # class is not served; the Source is exempt (its slot is the arrival).
+        source = next((nd for nd in self._nodes if isinstance(nd, Source)), None)
+        for node in self._nodes:
+            if not isinstance(node, Station) or node is source:
+                continue
+            if isinstance(node, Cache):
+                # a Cache never re-enters itself; the read is switched, not looped
+                for k in classes:
+                    try:
+                        node.set_prob_routing(k, node, 0.0)
+                    except Exception:
+                        pass
+                continue
+            store = getattr(node, '_service_process', None)
+            if store is None:
+                continue
+            for k in classes:
+                if k not in store:
+                    store[k] = Disabled()
+
+        if not getattr(self, '_do_checks', True):
+            return
+
+        # ---- (2) checks --------------------------------------------------
+        for node in self._nodes:
+            if not isinstance(node, (Queue, Delay)):
+                continue
+            hetero = bool(getattr(node, '_hetero_service', None))
+            enabled = any(not _disabled(d) for d in node._service_process.values())
+            if not enabled and not hetero and not special:
+                raise ValueError("[{0}] {1} '{2}' has no service configured for any "
+                                 "job class. Use setService() to configure service "
+                                 "times.".format(self.name,
+                                                 'Delay' if isinstance(node, Delay) else 'Queue',
+                                                 node.getName()))
+            self._sanitize_sept_lept(node, classes)
+
+        if special:
+            return
+
+        # A closed class must be served somewhere; an open class may route
+        # straight to the Sink, and a class read at a Cache is served there.
+        stations = [nd for nd in self._nodes if isinstance(nd, Station)]
+        for k in classes:
+            if type(k).__name__ == 'OpenClass':
+                continue
+            if any(not _disabled(getattr(nd, '_service_process', {}).get(k))
+                   for nd in stations):
+                continue
+            if any(isinstance(nd, Cache) and not _disabled(
+                    getattr(nd, '_read_process', {}).get(k)) for nd in self._nodes):
+                continue
+            raise ValueError("[{0}] Job class '{1}' has no service configured at any "
+                             "station. Every job class must have service configured at "
+                             "least one station using setService().".format(
+                                 self.name, k.getName()))
+
+    def _sanitize_sept_lept(self, node, classes) -> None:
+        """Rank the class service means for SEPT/LEPT, as MATLAB sanitize.m does.
+
+        SEPT and LEPT order the classes by expected processing time, so two
+        classes with the SAME mean leave the order undefined: the reference
+        refuses rather than break the tie arbitrarily, and a Queue is refused
+        here for the same reason. A Delay is not -- it has no queue to order,
+        and the reference only sorts its parameter there.
+        """
+        from .nodes import Delay
+        from ..distributions import Disabled
+
+        # compared by NAME: a node carries the user-facing SchedStrategy enum,
+        # which is a DIFFERENT object from lang.base's, so `is`/`==` on the
+        # members silently misses. See _kb/07-cross-language-parity.md.
+        sched = getattr(node, '_sched_strategy', None)
+        name = getattr(sched, 'name', None)
+        if name not in ('SEPT', 'LEPT'):
+            return
+        means = []
+        for k in classes:
+            d = node._service_process.get(k)
+            if d is None or isinstance(d, Disabled):
+                means.append(float('nan'))
+            else:
+                means.append(float(d.getMean()))
+        arr = np.asarray(means, dtype=float)
+        if isinstance(node, Delay):
+            # MATLAB sorts the Delay parameter and applies no distinctness test
+            for rank, idx in enumerate(np.argsort(arr, kind='stable')):
+                node._sched_param[classes[idx]] = rank + 1
+            return
+        # unique() counts NaN once, matching MATLAB's unique on a NaN column
+        finite = arr[~np.isnan(arr)]
+        n_unique = len(np.unique(finite)) + (1 if np.isnan(arr).any() else 0)
+        if n_unique != len(classes):
+            raise ValueError('%s does not support identical service time means.' % name)
+        order = np.sort(np.unique(finite))
+        if name == 'LEPT':
+            order = order[::-1]
+        order = list(order)
+        for idx, k in enumerate(classes):
+            if np.isnan(arr[idx]):
+                node._sched_param[k] = len(order) + 1
+            else:
+                node._sched_param[k] = order.index(arr[idx]) + 1
 
     def _inject_retrieval_routing(self) -> None:
         """
@@ -1111,7 +1539,7 @@ class Network(NetworkBase, Element):
         no item popularity), and linemodel_save serializes these strategies,
         where an absent entry is read back as RAND by the loaders.
 
-        Strategies other than RAND/PROB (RROBIN, WRROBIN, SQ, RL) are
+        Strategies other than RAND/PROB (RROBIN, WRROBIN, SQ) are
         left alone: they route without appearing in the probabilistic matrix.
 
         The disabling is scoped to non-Station nodes, as in MATLAB, where the
@@ -1408,10 +1836,11 @@ class Network(NetworkBase, Element):
         """
         Refresh and validate the routing matrix.
 
-        Checks that routing strategies are specified and that reference
-        stations are consistent within a chain. Matches MATLAB
-        refreshRoutingMatrix. Nonnegativity of the probabilities themselves is
-        asserted earlier, on the raw input, by _validate_routing_probabilities.
+        Checks that routing strategies are specified. Matches MATLAB
+        refreshRoutingMatrix; the per-chain reference-station check lives in
+        _refresh_chains, where inchain is freshly computed. Nonnegativity of
+        the probabilities themselves is asserted earlier, on the raw input, by
+        _validate_routing_probabilities.
         """
         if self._routing_matrix is None:
             return
@@ -1428,20 +1857,6 @@ class Network(NetworkBase, Element):
                         f"Routing strategy in class {r} is unspecified at all nodes.",
                         UserWarning)
 
-        # Validate reference station consistency within chains
-        if sn is not None and hasattr(sn, 'inchain') and sn.inchain is not None:
-            refstat = sn.refstat if hasattr(sn, 'refstat') else None
-            if refstat is not None:
-                refstat_flat = np.asarray(refstat).flatten()
-                for c, chain_classes in enumerate(sn.inchain):
-                    if chain_classes is not None and len(chain_classes) > 1:
-                        refs = [int(refstat_flat[r]) for r in chain_classes if r < len(refstat_flat)]
-                        if len(set(refs)) > 1:
-                            import warnings
-                            warnings.warn(
-                                f"Classes within chain {c} (classes: {chain_classes}) "
-                                f"have different reference stations.",
-                                UserWarning)
 
     def get_connection_matrix(self) -> np.ndarray:
         """
@@ -1790,15 +2205,22 @@ class Network(NetworkBase, Element):
     def _dist_feature_name(dist) -> str:
         """Feature name a distribution is marked under.
 
-        MATLAB (getUsedLangFeatures: dist.name) and the JAR
-        (Network.setUsedLangFeature(dist.getName())) both mark the name the
-        distribution DECLARES, so this reads the same accessor rather than the
-        Python class name. The two coincide for every distribution today, but
-        keying on the class name meant a class whose declared name differed
-        marked a feature the other codebases never mark: the solver gate would
-        then fire in one codebase and not the others, silently, for the same
-        model. Falls back to the class name for objects that declare no name.
+        MATLAB (getUsedLangFeatures: dist.getFeatureName) and the JAR
+        (Network.setUsedLangFeature(dist.getFeatureName())) both mark the name
+        the distribution DECLARES, so this reads the same accessor rather than
+        the Python class name. Keying on the class name meant a class whose
+        declared name differed marked a feature the other codebases never mark:
+        the solver gate would then fire in one codebase and not the others,
+        silently, for the same model. get_feature_name is preferred over name
+        because it resolves the SPECIALIZED registry entries (Cox2, Trace) that
+        name cannot express; it falls back to name, then to the class name, for
+        objects that define neither.
         """
+        getter = getattr(dist, 'get_feature_name', None)
+        if callable(getter):
+            name = getter()
+            if isinstance(name, str) and name:
+                return name
         name = getattr(dist, 'name', None)
         if isinstance(name, str) and name:
             return name
@@ -1815,6 +2237,138 @@ class Network(NetworkBase, Element):
         if feature in ('MarkedMAP', 'MarkedMMPP'):
             feature = 'MMAP'
         self._used_features.set_true(feature)
+
+
+    def findSolver(self, metric: str = '', showAll: bool = False):
+        """Which solvers and solver methods can analyze THIS model.
+
+            model.findSolver()                # every (solver, method) pair that runs
+            model.findSolver('cdf')           # ... that returns a passage-time law
+            model.findSolver('getCdfRespT')   # the same question, asked by accessor
+            model.findSolver('', True)        # also the pairs that are refused, and why
+
+        The returned DataFrame has one row per pair, with columns Solver,
+        Method, Runnable, Class ('exact', 'approx', 'bound' or 'simulation'),
+        Metrics and Reason. Method is the method name to pass as a solver method, so
+        a row can be acted on directly::
+
+            T = model.findSolver('cdf')
+            solver = LINE(model, T.Method[0])
+
+        findMethod and help are aliases of this method.
+
+        Args:
+            metric: measure group ('cdf') or accessor ('getCdfRespT') to narrow
+                the report to; '' or 'any' keeps every pair.
+            showAll: also list the refused pairs, with the reason each was
+                refused.
+
+        Returns:
+            pandas.DataFrame with the six columns above.
+        """
+        # The gate lives in SolverAUTO, which is the class that already knows
+        # every family, how to build one and what each refuses. Asking it here
+        # rather than reimplementing the walk is what keeps the model's answer
+        # and AUTO's own dispatch from being two opinions.
+        from ..solvers.solver_auto.solver_auto import SolverAUTO
+        # silenced() wraps the CONSTRUCTION too: it probes every candidate
+        # with supports(model), which warns on a model one of them refuses.
+        with SolverAUTO.silenced():
+            auto = SolverAUTO(self, verbose=False)
+        return auto.findSolver(metric, showAll)
+
+    def findMethod(self, metric: str = '', showAll: bool = False):
+        """Alias of findSolver: which solvers and solver methods can analyze
+        this model.
+
+        The two names exist because the question is asked both ways round --
+        "which solver do I use" and "which method do I pass" -- and the answer
+        is the same table, whose Method column carries the method name either caller
+        needs.
+        """
+        return self.findSolver(metric, showAll)
+
+    def help(self, metric: str = '', showAll: bool = False):
+        """Alias of findSolver: what can this model be solved with?"""
+        return self.findSolver(metric, showAll)
+
+    find_solver = findSolver
+    find_method = findMethod
+
+    def find_binding_capacity(self):
+        """The first station whose finite capacity can actually BIND, as
+        (binds, node, cap, r, is_open), or binds=False when no buffer in the
+        model can refuse a job. Port of MATLAB MNetwork.findBindingCapacity.
+
+        ONE PREDICATE, TWO CALLERS. NetworkSolver.checkBindingCapacity turns the
+        answer into the refusal the product-form solvers raise, and
+        get_used_lang_features marks the registry name 'FiniteCapacity' on it,
+        so a solver that does not declare the name refuses exactly the models
+        the structural gate refuses.
+
+        The test reads the node-level capacity / class capacity the user set and
+        the class populations from the CLASS OBJECTS, never sn.cap / sn.classcap:
+        _refresh_capacity derives a FINITE classcap (the chain population) for
+        every closed model, so an sn-level test would call every closed model
+        capped, and reading the struct from the recorder would trigger a refresh
+        on every feature query.
+
+        Only a capacity that can bind counts. A closed model whose station
+        capacity is at least the total population can never block a job, so the
+        declaration is a no-op (set_capacity(N) on a station of an N-job closed
+        model is a common idiom). The population of an open class is inf, so any
+        finite capacity an open class can reach binds. A Cache model is exempt:
+        Cache sets class_capacity=1 on the retrieval queues it builds, and the
+        cache analyzers solve those rather than treating them as a buffer
+        constraint.
+
+        r is the 0-BASED class index of a per-class buffer and -1 for a
+        station-level one; is_open says whether an open class reaches the
+        buffer, which decides the fallback advice.
+        """
+        from .base import JobClassType
+        nodes = getattr(self, '_nodes', []) or []
+        for node in nodes:
+            if type(node).__name__ == 'Cache':
+                return False, None, np.inf, -1, False
+        # get_number_of_jobs() returns 0 for an open class, so the population
+        # vector is rebuilt here with the inf the test needs.
+        njobs = np.zeros(len(self._classes))
+        for i, jobclass in enumerate(self._classes):
+            if jobclass.jobclass_type == JobClassType.OPEN:
+                njobs[i] = np.inf
+            elif jobclass.jobclass_type == JobClassType.CLOSED:
+                njobs[i] = jobclass.getNumberOfJobs()
+        total_jobs = float(np.sum(njobs))  # inf as soon as one class is open
+        any_open = bool(np.any(np.isinf(njobs)))
+        for node in nodes:
+            tname = type(node).__name__
+            # Mirror MATLAB's isa(node,'Station') && ~isa(node,'Source'/'Sink')
+            # filter. Today only Stations carry _capacity, but do not rely on
+            # that: a future node type with the attribute must not be gated here.
+            is_station = any(b.__name__ == 'Station' for b in type(node).__mro__)
+            if not is_station or tname in ('Source', 'Sink') or not hasattr(node, '_capacity'):
+                continue
+            cap = getattr(node, '_capacity', np.inf)
+            if cap is not None and np.isfinite(cap) and cap >= 0 and cap < total_jobs:
+                return True, node, float(cap), -1, any_open
+            ccap = getattr(node, '_class_capacity', None) or {}
+            for jobclass, v in ccap.items():
+                if v is None or not np.isfinite(v) or v <= 0:
+                    continue
+                if isinstance(jobclass, int):
+                    idx = jobclass
+                elif hasattr(jobclass, 'get_index0'):
+                    idx = jobclass.get_index0()
+                else:
+                    continue
+                if idx is None or idx >= njobs.size:
+                    continue
+                if v < njobs[idx]:
+                    return True, node, float(v), int(idx), bool(np.isinf(njobs[idx]))
+        return False, None, np.inf, -1, False
+
+    findBindingCapacity = find_binding_capacity
 
     def get_used_lang_features(self):
         """
@@ -1834,6 +2388,16 @@ class Network(NetworkBase, Element):
                 self.set_used_lang_feature('OpenClass')
             elif jobclass.jobclass_type == JobClassType.CLOSED:
                 self.set_used_lang_feature('ClosedClass')
+
+        # A self-looping class is a closed class whose routing returns to its own
+        # reference station. It was declared by eight solvers and never marked, so
+        # a solver that omitted the name (the bounds, RCAT, QNS) was never asked;
+        # it is now refused unless it declares the name.
+        from .classes import SelfLoopingClass as _SelfLoopingClass
+        for jobclass in self._classes:
+            if isinstance(jobclass, _SelfLoopingClass):
+                self.set_used_lang_feature('SelfLoopingClass')
+                break
 
         # Signal may still be an unresolved placeholder (pre-refresh_struct) so all three signal subtypes are inspected.
         from .classes import Signal, OpenSignal, ClosedSignal, SignalType, RemovalPolicy
@@ -1931,6 +2495,9 @@ class Network(NetworkBase, Element):
                 # Check replacement strategy
                 if hasattr(node, '_replacement_strategy') and node._replacement_strategy is not None:
                     self.set_used_lang_feature(ReplacementStrategy.to_feature(node._replacement_strategy))
+                # per-list storage cost caps with per-item sizes
+                if getattr(node, '_cost_cap', None) is not None:
+                    self.set_used_lang_feature('CacheItemSize')
                 # delayed-hit retrieval classes are unsupported by JMT; mirrors MATLAB getUsedLangFeatures.
                 if getattr(node, '_retrieval_class_indices', None):
                     self.set_used_lang_feature('CacheRetrieval')
@@ -1942,6 +2509,14 @@ class Network(NetworkBase, Element):
             elif node_type == 'Fork':
                 self.set_used_lang_feature('Fork')
                 self.set_used_lang_feature('Forker')
+                # variable forking levels: a name declared but never marked is a
+                # name no solver can ever refuse, so mark all three here
+                if getattr(node, '_tasks_per_link_by_dest', None):
+                    self.set_used_lang_feature('ForkFanoutVector')
+                if getattr(node, '_tasks_per_link_dist', None):
+                    self.set_used_lang_feature('ForkFanoutRandom')
+                if getattr(node, '_branch_prob', None):
+                    self.set_used_lang_feature('ForkBranchProbability')
 
             elif node_type == 'Join':
                 self.set_used_lang_feature('Join')
@@ -1974,6 +2549,67 @@ class Network(NetworkBase, Element):
                             self.set_used_lang_feature('Inhibiting')
                             break
 
+        # A finite-server station serving several jobs at once. A Delay carries
+        # inf here and is NOT one: the single-server recursions (aql, mvac, rqna,
+        # explicit, the aba..scb bounds, RCAT, the M/G/1 closed forms) answered a
+        # c-server station as one server of the same rate, and only a structural
+        # predicate could say so.
+        for node in self._nodes:
+            if type(node).__name__ not in ('Queue', 'Delay'):
+                continue
+            nserv = getattr(node, '_number_of_servers', None)
+            if nserv is not None and np.isfinite(nserv) and nserv > 1:
+                self.set_used_lang_feature('MultiServer')
+                break
+
+        # Batch arrivals (Source.set_arrival_batch): a batch releases several jobs
+        # at one arrival epoch, which changes the arrival stream itself. Only the
+        # LDES engine reads sn.arrivalbatch; every other solver would serve the
+        # single-arrival stream of the same rate, so the name is marked and left
+        # to LDES to declare.
+        for node in self._nodes:
+            if type(node).__name__ != 'Source':
+                continue
+            batches = getattr(node, '_arrival_batch', None) or {}
+            if any(b is not None for b in batches.values()):
+                self.set_used_lang_feature('BatchArrival')
+                break
+
+        # A retrial orbit (Queue.set_retrial / set_orbit): the same per-class test
+        # _refresh_balking_retrial makes for sn.retrialProc, a configured delay
+        # that is not the Disabled placeholder. A solver that reads no sn.retrial*
+        # field would answer the model with the refused jobs simply lost, so the
+        # orbit is gated by name.
+        for node in self._nodes:
+            if type(node).__name__ != 'Queue':
+                continue
+            delays = getattr(node, '_retrial_delays', None) or {}
+            if any(d is not None and type(d).__name__ != 'Disabled' for d in delays.values()):
+                self.set_used_lang_feature('Retrial')
+                break
+
+        # A station or per-class buffer that can BIND: the one predicate
+        # NetworkSolver.checkBindingCapacity refuses on (node-level caps against
+        # the class populations, open classes always bind, Cache models exempt),
+        # asked here so the refusal has a registry name and a solver method that
+        # does not declare it is gated on exactly the models the structural gate
+        # refuses.
+        if self.find_binding_capacity()[0]:
+            self.set_used_lang_feature('FiniteCapacity')
+
+        # Limited load-dependent scaling (set_load_dependence): registered so that a
+        # solver which never reads sn.lldscaling rejects the model instead of returning
+        # the alpha == 1 answer. It was declared by SolverMVA/NC/CTMC/SSA/LDES and never
+        # emitted here, so the gate could not fire and SolverMAM and the fluid methods
+        # outside the closing family silently dropped the scaling.
+        for node in self._nodes:
+            get_ld = getattr(node, 'get_load_dependence', None)
+            if get_ld is not None:
+                lld = get_ld()
+                if lld is not None and np.asarray(lld).size > 0:
+                    self.set_used_lang_feature('LoadDependence')
+                    break
+
         # class-dependence scaling registered so non-supporting solvers (e.g. JMT) reject rather than silently ignore it.
         for node in self._nodes:
             get_cd = getattr(node, 'get_class_dependence', None)
@@ -1988,12 +2624,26 @@ class Network(NetworkBase, Element):
             if get_jd is not None and get_jd() is not None:
                 self.set_used_lang_feature('JointDependence')
                 break
+        # Globally state-dependent scaling phi(n) over the full network state, the
+        # Whittle primitive. Only SolverCTMC plumbs it, so every other solver must
+        # reject the model rather than solve it unscaled.
+        if self._gd_scaling is not None:
+            self.set_used_lang_feature('GlobalDependence')
 
         # setup/delay-off registered so non-supporting solvers reject rather than silently solve setup-free.
         for node in self._nodes:
             is_enabled = getattr(node, 'is_delay_off_enabled', None)
             if is_enabled is not None and is_enabled():
                 self.set_used_lang_feature('SetupDelayOff')
+                break
+
+        # A job seizing n>1 servers changes the effective capacity of the station,
+        # so a solver that cannot honour it must reject the model rather than solve
+        # it as if every job seized one server.
+        for node in self._nodes:
+            has_par = getattr(node, 'has_server_parallelism', None)
+            if has_par is not None and has_par():
+                self.set_used_lang_feature('ServerParallelism')
                 break
 
         # impatience registered so non-supporting solvers (MVA/NC/MAM/FLD) reject rather than return the impatience-free rho/(1-rho).
@@ -2013,6 +2663,66 @@ class Network(NetworkBase, Element):
             has_bd = getattr(node, 'has_breakdown', None)
             if has_bd is not None and has_bd():
                 self.set_used_lang_feature('Breakdown')
+                break
+
+        # A genuine QUORUM join (PARTIAL, k of n siblings with k < n) fires on the
+        # k-th branch completion, which is not their maximum, and the n-k stragglers
+        # are discarded on arrival: a solver that serves it as a full join returns a
+        # silent wrong answer, so the rule is gated by its own name. k >= n and
+        # k <= 0 are full joins and are not flagged.
+        from .nodes import Join as _Join, Fork as _Fork
+        from .base import JoinStrategy as _JoinStrategy
+        if self._nodes:
+            conn = self.get_connection_matrix()
+            for node_idx, node in enumerate(self._nodes):
+                if not isinstance(node, _Join):
+                    continue
+                # siblings are counted at the FORK, as the engines do: its out-degree
+                # times tasksPerLink. The join in-degree is the fallback.
+                nsib = int(np.count_nonzero(conn[:, node_idx]))
+                fork = node.get_fork()
+                if isinstance(fork, _Fork):
+                    fork_idx = self._nodes.index(fork)
+                    tpl = fork.get_tasks_per_link()
+                    w = 1
+                    if tpl is not None:
+                        tpl = np.atleast_1d(tpl)
+                        if tpl.size > 0:
+                            w = max(1, int(round(float(tpl.flat[0]))))
+                    nsib = int(np.count_nonzero(conn[fork_idx, :])) * w
+                for jobclass in self._classes:
+                    if node.get_strategy(jobclass) == _JoinStrategy.STD:
+                        continue
+                    kreq = node.get_required(jobclass)
+                    if kreq is None or kreq <= 0:
+                        continue
+                    if nsib <= 0 or kreq < nsib:
+                        self.set_used_lang_feature('JoinPartial')
+
+        # Heterogeneous server pools (Queue.add_server_type): the station is
+        # served by several pools with their own counts, class compatibilities
+        # and per-(type,class) rates. A solver that reads only sn.nservers
+        # answers for a homogeneous station of the same total size, which is a
+        # different system, so the pools are gated by their own name rather than
+        # silently flattened.
+        for node in self._nodes:
+            is_hetero = getattr(node, 'is_heterogeneous', None)
+            if is_hetero is not None and is_hetero():
+                self.set_used_lang_feature('HeteroServers')
+                break
+
+        # A FIFO depository (Place.set_departure_discipline) releases a served
+        # token only after the tokens that entered service before it, so which
+        # output transitions are enabled depends on the arrival order and not
+        # only on the marking. No solver implements it, hence a clean refusal
+        # instead of a NORMAL depository's answer under the user's name.
+        from ..constants import DepartureDiscipline as _DepartureDiscipline
+        for node in self._nodes:
+            disc = getattr(node, '_departure_discipline', None)
+            if not disc:
+                continue
+            if any(d != _DepartureDiscipline.NORMAL for d in disc.values()):
+                self.set_used_lang_feature('DepartureDiscipline')
                 break
 
         return self._used_features
@@ -2240,10 +2950,16 @@ class Network(NetworkBase, Element):
         self._sn.nclasses = len(self._classes)
         self._sn.nnodes = len(self._nodes)
 
+        _console.compiling(str(self.getName()))
+        _console.compile_detail('reading the routing strategies of %s and %s',
+                                _console._plural(self._sn.nnodes, 'node'),
+                                _console._plural(self._sn.nclasses, 'class', 'classes'))
+
         # Build node mappings
         self._refresh_node_mappings()
 
         # Extract service/arrival rates
+        _console.compile_detail('refreshing service and arrival processes')
         self._refresh_rates()
 
         # Extract load-dependent scaling
@@ -2253,27 +2969,35 @@ class Network(NetworkBase, Element):
         self._refresh_class_dependence()
 
         # Extract scheduling strategies
+        _console.compile_detail('refreshing the scheduling strategies')
         self._refresh_scheduling()
 
         # Build routing matrix
+        _console.compile_detail('computing the routing table')
         self._refresh_routing()
 
         # Compute chains and visits
+        _console.compile_detail('computing the chains and the visit ratios')
         self._refresh_chains()
+        _console.compile_detail('found %s over %s',
+                                _console._plural(self._sn.nchains, 'chain'),
+                                _console._plural(self._sn.nclasses, 'class', 'classes'))
 
         # Extract capacity (must be after _refresh_chains since capacity depends on chain info)
         self._refresh_capacity()
 
         # Extract node parameters (for transitions, caches, etc.)
+        _console.compile_detail('refreshing node parameters and state-dependent routing')
         self._refresh_nodeparam()
 
         # state-dependent routing params exposed in sn.nodeparam; must run after _refresh_nodeparam rebuilds it.
         self._refresh_statedep_routing_params()
+        self._refresh_state_dep_routing()
 
         # Build fork-join relationship matrix
         self._refresh_fork_joins()
 
-        # struct marked built before fork-join nodevisits adjustment, to break the mmt() -> get_linked_routing_matrix() -> _build_struct_from_scratch() recursion.
+        # struct marked built before fork-join nodevisits adjustment, to break mmt() -> get_linked_routing_matrix() -> _build_struct_from_scratch() recursion.
         self._has_struct = True
 
         # MMT nodevisits adjustment skipped on FJ tag-augmented copies (ModelAdapter.fjtag already overwrote them).
@@ -2284,6 +3008,7 @@ class Network(NetworkBase, Element):
         self._refresh_state()
 
         # Populate finite capacity region information
+        _console.compile_detail('refreshing finite capacity regions')
         self._refresh_regions()
 
         # Populate balking, retrial, and varsparam fields
@@ -2297,6 +3022,66 @@ class Network(NetworkBase, Element):
         # blocked-server declaration sn.replyblock. Needs rtnodes and sched, so
         # it runs after routing and scheduling.
         self._refresh_syncreply()
+
+        # Local-variable widths. Runs after scheduling and nodeparam, both of
+        # which the polling controller's width is read from.
+        self._refresh_local_vars()
+
+        # Needs both classprio and sched, so it runs last.
+        self._warn_priorities_ignored()
+
+        # Needs the visit ratios, so it runs after _refresh_chains.
+        self._check_service_reachable()
+
+    #: The policies that read sn.classprio. Priority-awareness is a property of
+    #: the DECLARED policy, never inferred from the data: a base policy is never
+    #: upgraded because the classes it was handed carry unequal priorities.
+    #: See _kb/11-conventions-and-gotchas.md.
+    _PRIO_SCHEDS = (
+        SchedStrategy.PSPRIO, SchedStrategy.DPSPRIO, SchedStrategy.GPSPRIO,
+        SchedStrategy.HOL, SchedStrategy.FCFSPRIO, SchedStrategy.LCFSPRIO,
+        SchedStrategy.LCFSPRPRIO, SchedStrategy.LCFSPIPRIO,
+        SchedStrategy.FCFSPRPRIO, SchedStrategy.FCFSPIPRIO,
+        SchedStrategy.SRPTPRIO,
+    )
+
+    def _warn_priorities_ignored(self) -> None:
+        """Warn when class priorities are declared but no station honors them.
+
+        Twin of the block at the tail of MATLAB @MNetwork/refreshStruct.m and of
+        Network.refreshStruct in the JAR: unequal priorities with no *PRIO
+        station mean the priorities change nothing, which is worth saying once
+        rather than letting the user read the resulting metrics as priority ones.
+
+        References:
+            MATLAB: matlab/src/lang/@MNetwork/refreshStruct.m
+        """
+        from ..api.io.logging import line_printf, line_warning
+
+        classprio = getattr(self._sn, 'classprio', None)
+        if classprio is None or len(classprio) == 0:
+            return
+        classprio = np.asarray(classprio).flatten()
+        if np.all(classprio == classprio[0]):
+            return
+
+        sched = getattr(self._sn, 'sched', None) or {}
+        prio_values = set(s.value for s in Network._PRIO_SCHEDS)
+        declared = set(s.value if hasattr(s, 'value') else s for s in sched.values())
+        if not (declared & prio_values):
+            line_warning('refresh_struct',
+                         'Priority classes are specified but no priority-aware scheduling policy '
+                         '(PSPRIO, DPSPRIO, GPSPRIO, HOL, FCFSPRIO, FCFSPRPRIO, FCFSPIPRIO, '
+                         'LCFSPRIO, LCFSPRPRIO, LCFSPIPRIO, SRPTPRIO) is used in the model. '
+                         'Priorities will be ignored.')
+            return
+
+        # A LOWER classprio value is the more urgent one in LINE.
+        names = getattr(self._sn, 'classnames', None) or \
+            ['Class%d' % (j + 1) for j in range(len(classprio))]
+        high = ','.join(names[j] for j in np.flatnonzero(classprio == classprio.min()))
+        low = ','.join(names[j] for j in np.flatnonzero(classprio == classprio.max()))
+        line_printf('Priority: highest=%s, lowest=%s\n', high, low)
 
     def _refresh_syncreply(self) -> None:
         """Populate sn.syncreply and sn.replyblock (synchronous calls).
@@ -2370,24 +3155,111 @@ class Network(NetworkBase, Element):
                 if _enum(sn.sched[ist]) != _enum(SchedStrategy.FCFS):
                     raise RuntimeError(
                         "Synchronous calls (REPLY signals) are supported only at FCFS stations, "
-                        "but %s uses %s. Holding a server across a call has no representation in "
-                        "the state of the other disciplines."
-                        % (sn.nodenames[ind], str(sn.sched[ist])))
+                        "but %s uses %s. A held server is encoded as a per-class counter, which is "
+                        "exact only where servers are interchangeable (FCFS) or unlimited (INF); the "
+                        "other disciplines are not yet encoded rather than infeasible. Set this station "
+                        "to FCFS or INF, or simulate the layered model directly with SolverLDES."
+                        % (sn.nodenames[ind], SchedStrategy(sn.sched[ist]).name.lower()))
                 replyblock[ind, r] = 1
 
+    def _refresh_state_dep_routing(self) -> None:
+        """Build sn.sdr, the station-indexed Krzesinski SDR structure.
+
+        The node-indexed twin stays in sn.nodeparam[ind][r]['sdr'], where the
+        routing closure of refresh_sync reads it. A network admits one
+        subnetwork Q(V,V): the routing probabilities of Krzesinski (1987) are
+        chain independent, so every class routed by it must declare the same
+        branches, nesting and coefficients.
+        """
+        import numpy as _np
+        from .base import RoutingStrategy
+        sdr_val = int(RoutingStrategy.SDR)
+        self._sn.sdr = None
+        decl, declnode = None, None
+        for i, node in enumerate(self._nodes):
+            strategies = getattr(node, '_routing_strategies', None)
+            if not strategies:
+                continue
+            for jobclass, strategy in strategies.items():
+                sv = strategy.value if hasattr(strategy, 'value') else int(strategy)
+                if sv != sdr_val:
+                    continue
+                params = getattr(node, '_routing_params', {}).get(jobclass, ())
+                if not params or not isinstance(params[0], dict):
+                    raise ValueError('node %s declares SDR routing without a '
+                                     'structure; use set_state_dep_routing'
+                                     % self._sn.nodenames[i])
+                cand = dict(params[0])
+                cand['entry'] = node
+                if decl is None:
+                    decl, declnode = cand, i
+                elif not _sdr_same(decl, cand):
+                    raise ValueError(
+                        'two different state-dependent routing structures are declared '
+                        '(nodes %s and %s); the routing probabilities of Krzesinski (1987) '
+                        'are chain independent, so a network admits one subnetwork Q(V,V)'
+                        % (self._sn.nodenames[declnode], self._sn.nodenames[i]))
+                class_idx = jobclass._index if hasattr(jobclass, '_index') else self._classes.index(jobclass)
+                nodeidx = {
+                    'entry': i,
+                    'departure': self._nodes.index(cand['departure']),
+                    'branch': [None] + [[self._nodes.index(x) for x in cand['branch'][b]]
+                                        for b in range(1, len(cand['branch']))],
+                    'entryOf': [0] + [self._nodes.index(cand['entryOf'][b])
+                                      for b in range(1, len(cand['branch']))],
+                    'departureOf': [0] + [self._nodes.index(cand['departureOf'][b])
+                                          for b in range(1, len(cand['branch']))],
+                    'level': list(cand['level']),
+                    'C': list(cand['C']),
+                    'd': _np.asarray(cand['d'], dtype=float),
+                }
+                if self._sn.nodeparam is None:
+                    self._sn.nodeparam = {}
+                if i not in self._sn.nodeparam or self._sn.nodeparam[i] is None:
+                    self._sn.nodeparam[i] = {}
+                entry = self._sn.nodeparam[i]
+                if isinstance(entry, dict):
+                    if not isinstance(entry.get(class_idx), dict):
+                        entry[class_idx] = {}
+                    entry[class_idx]['sdr'] = nodeidx
+        if decl is None:
+            return
+
+        def nd2station(ind):
+            ist = int(self._sn.nodeToStation[ind])
+            if ist < 0:
+                raise ValueError('node %s takes part in state-dependent routing but '
+                                 'is not a station: the product form is over queue '
+                                 'lengths, and a stateless node holds none'
+                                 % self._sn.nodenames[ind])
+            return ist
+
+        B = len(decl['branch'])
+        sdr = {
+            'entry': nd2station(self._nodes.index(decl['entry'])),
+            'departure': nd2station(self._nodes.index(decl['departure'])),
+            'branch': [None] + [[nd2station(self._nodes.index(x)) for x in decl['branch'][b]]
+                                for b in range(1, B)],
+            'entryOf': [0] + [nd2station(self._nodes.index(decl['entryOf'][b])) for b in range(1, B)],
+            'departureOf': [0] + [nd2station(self._nodes.index(decl['departureOf'][b])) for b in range(1, B)],
+            'level': list(decl['level']),
+            'C': list(decl['C']),
+            'd': _np.asarray(decl['d'], dtype=float),
+        }
+        from ..api.pfqn.sdr import pfqn_sdrcoeff
+        pfqn_sdrcoeff(sdr)  # validates the declaration and its population bounds
+        self._sn.sdr = sdr
+
     def _refresh_statedep_routing_params(self) -> None:
-        """Expose per-class SQ/RL routing parameters in sn.nodeparam.
+        """Expose per-class SQ routing parameters in sn.nodeparam.
 
         Mirrors MATLAB, where refreshRoutingMatrix closures read d/m
-        from sn.nodeparam{ind}{r} and the RL value function from the node's
-        outputStrategy. The python refresh_sync closures read the same data
-        from sn.nodeparam[ind][r]:
+        from sn.nodeparam{ind}{r}. The python refresh_sync closures read the
+        same data from sn.nodeparam[ind][r]:
           SQ: 'd'
-          RL:       'valuefn', 'nodesNeedAction', 'stateSize'
         """
         from .base import RoutingStrategy
         kch_val = int(RoutingStrategy.SQ)
-        rl_val = int(RoutingStrategy.RL)
         wrr_val = int(RoutingStrategy.WRROBIN)
         for i, node in enumerate(self._nodes):
             strategies = getattr(node, '_routing_strategies', None)
@@ -2395,7 +3267,7 @@ class Network(NetworkBase, Element):
                 continue
             for jobclass, strategy in strategies.items():
                 sv = strategy.value if hasattr(strategy, 'value') else int(strategy)
-                if sv not in (kch_val, rl_val, wrr_val):
+                if sv not in (kch_val, wrr_val):
                     continue
                 class_idx = jobclass._index if hasattr(jobclass, '_index') else self._classes.index(jobclass)
                 params = getattr(node, '_routing_params', {}).get(jobclass, ())
@@ -2423,25 +3295,9 @@ class Network(NetworkBase, Element):
                         weighted.extend([di] * max(1, idx_weight[di]))
                     entry[class_idx]['outlinks'] = outlinks
                     entry[class_idx]['weighted_outlinks'] = weighted
-                elif sv == kch_val:
-                    if len(params) >= 1 and params[0] is not None:
-                        entry[class_idx]['d'] = int(params[0])
                 else:
                     if len(params) >= 1 and params[0] is not None:
-                        entry[class_idx]['valuefn'] = params[0]
-                    if len(params) >= 2 and params[1] is not None:
-                        nna = params[1]
-                        if not isinstance(nna, (list, tuple)):
-                            nna = [nna]
-                        idxs = []
-                        for x in nna:
-                            if isinstance(x, (int, np.integer)):
-                                idxs.append(int(x))
-                            elif x in self._nodes:
-                                idxs.append(self._nodes.index(x))
-                        entry[class_idx]['nodesNeedAction'] = idxs
-                    if len(params) >= 3 and params[2] is not None:
-                        entry[class_idx]['stateSize'] = int(params[2])
+                        entry[class_idx]['d'] = int(params[0])
 
     def _refresh_heterogeneous_servers(self) -> None:
         """Populate per-station heterogeneous-server fields into sn.nodeparam.
@@ -2456,6 +3312,25 @@ class Network(NetworkBase, Element):
         if sn is None or sn.stationToNode is None:
             return
         nclasses = int(sn.nclasses)
+        # Job parallelism is independent of the pools: a homogeneous station may
+        # declare it, and a heterogeneous one may not.
+        for ist, station in enumerate(self._stations):
+            if not isinstance(station, Queue) or not station.has_server_parallelism():
+                continue
+            if sn.nodeparam is None:
+                sn.nodeparam = {}
+            node_idx = int(sn.stationToNode[ist])
+            param = sn.nodeparam.get(node_idx)
+            if param is None:
+                param = {}
+                sn.nodeparam[node_idx] = param
+            par = np.ones(nclasses)
+            for r in range(nclasses):
+                par[r] = max(1, station.get_server_parallelism(self._classes[r]))
+            if isinstance(param, dict):
+                param['serverparallelism'] = par
+            else:
+                setattr(param, 'serverparallelism', par)
         for ist, station in enumerate(self._stations):
             if not isinstance(station, Queue) or not station.is_heterogeneous():
                 continue
@@ -2474,18 +3349,27 @@ class Network(NetworkBase, Element):
             compat = np.zeros((n_types, nclasses))
             names = []
             spt = np.zeros(n_types)
+            # heterorates(t,r) = service rate of class r on a type-t server
+            # (1/mean; 0 where incompatible or unset - falls back to base rate).
+            heterorates = np.zeros((n_types, nclasses))
             for t, st in enumerate(server_types):
                 names.append(st.get_name())
                 spt[t] = st.get_num_of_servers()
                 for r in range(nclasses):
                     if st.is_compatible(self._classes[r]):
                         compat[t, r] = 1.0
+                        dist = station.get_hetero_service(self._classes[r], st)
+                        if dist is not None:
+                            mval = dist.get_mean()
+                            if mval > 0:
+                                heterorates[t, r] = 1.0 / mval
             policy = station.get_hetero_sched_policy()
             fields = {
                 'nservertypes': n_types,
                 'servertypenames': names,
                 'serverspertype': spt,
                 'servercompat': compat,
+                'heterorates': heterorates,
             }
             if policy is not None:
                 fields['heteroschedpolicy'] = policy
@@ -2718,6 +3602,102 @@ class Network(NetworkBase, Element):
                 if dmean > 0:
                     sn.downServiceRates[ist, r] = 1.0 / dmean
 
+    def _refresh_local_vars(self) -> None:
+        """`sn.nvars`: the width of each node's LOCAL-VARIABLE block.
+
+        A state row is [buffer | server | vars], sliced FROM THE RIGHT, so every
+        reader of a row has to know how many trailing columns are local
+        variables. `sn.nvars` is that width, and this port carried the field but
+        never filled it -- it stayed None, every reader took V = 0, and a row
+        with local variables was decoded one block off.
+
+        WHAT IT COST. A POLLING station's controller occupies three columns
+        (position, switchover phase, k-limited counter; `polling_info(...).width`
+        is the single definition). `State.toMarginal` therefore read the
+        controller's own values as job counts: on polling_klimited the row
+        `[0 0 0 0 2 1 0]` -- an EMPTY station whose controller is at position 2
+        -- decoded as one class-1 job present, so the JMT writer emitted
+        `<classPopulation population="1">` and preloaded a job that is not
+        there. The MATLAB row reported QLen 1.3909 and the [M2P] row 1.5025 for
+        the same model at the same seed. It only bites once a state EXISTS,
+        which is why it was invisible until a solver ran before JMT and left one
+        on the model.
+
+        Mirrors `@MNetwork/refreshLocalVars.m`, whose polling arm is
+        `nvars(ind, 2R+1) = State.pollingInfo(sn, ind).width`. Only the polling
+        width is derived here; the MAP-restart and cache columns of the
+        reference belong to their own refreshes and are added when their
+        readers need them.
+        """
+        sn = self._sn
+        R = int(sn.nclasses)
+        nnodes = int(sn.nnodes)
+        # The reference's shape: 3R + 1 columns, the last one shared by the
+        # controllers that cannot coexist (polling, BAS blocking, breakdown).
+        nvars = np.zeros((nnodes, 3 * R + 1), dtype=int)
+        for ind in range(nnodes):
+            if sn.isstation is None or ind >= len(sn.isstation) or not sn.isstation[ind]:
+                continue
+            ist = int(sn.nodeToStation[ind]) if sn.nodeToStation is not None else -1
+            if ist < 0 or sn.sched is None or ist >= len(sn.sched):
+                continue
+            sched = sn.sched[ist]
+            sched = int(sched.value) if hasattr(sched, 'value') else int(sched)
+            if sched != int(SchedStrategy.POLLING.value):
+                continue
+            from ..api.state.polling import polling_info
+            try:
+                pinfo = polling_info(sn, ind)
+            except Exception:
+                continue  # a controller this port cannot describe declares no width
+            width = pinfo.get('width') if isinstance(pinfo, dict) else getattr(pinfo, 'width', 0)
+            nvars[ind, 2 * R] = int(width or 0)
+        sn.nvars = nvars
+        self._widen_polling_state(nvars)
+
+    def _widen_polling_state(self, nvars) -> None:
+        """Give a polling station's DEFAULT state row its controller columns.
+
+        `sn.state` is a full local row, `[buffer | server | vars]`, and the
+        default this port builds for a polling station stops after the server
+        block. That was self-consistent only while `sn.nvars` was None and every
+        reader assumed no local variables; now that the width is declared, a row
+        that omits the block decodes to nothing at all (`toMarginal` slices the
+        three controller columns off a four-column row and finds no server
+        block left).
+
+        The controller's initial value is `polling_init`, the same row
+        `polling_blocks` enumerates, so the state stays a member of the space the
+        generator builds. A row that already carries the block -- one that came
+        from a solver, or across the JSON bridge from the reference -- is left
+        alone.
+        """
+        sn = self._sn
+        if sn.state is None or sn.nodeToStateful is None:
+            return
+        R = int(sn.nclasses)
+        from ..api.state.polling import polling_init
+        for ind in range(int(sn.nnodes)):
+            if int(nvars[ind, 2 * R]) <= 0:
+                continue
+            isf = int(np.asarray(sn.nodeToStateful).flatten()[ind])
+            if isf < 0 or isf >= len(sn.state) or sn.state[isf] is None:
+                continue
+            row = np.ravel(np.asarray(sn.state[isf], dtype=float))
+            ist = int(sn.nodeToStation[ind])
+            srvw = int(np.sum(np.asarray(sn.phasessz)[ist])) if sn.phasessz is not None else R
+            want = R + srvw + int(nvars[ind, 2 * R])
+            if len(row) >= want:
+                continue  # already carries the block
+            nbuf = row[:R] if len(row) >= R else np.zeros(R)
+            try:
+                ctrl = np.ravel(np.asarray(polling_init(sn, ind, nbuf, -1), dtype=float))
+            except Exception:
+                continue  # a controller this port cannot initialize keeps the short row
+            if ctrl.size == 0:
+                continue
+            sn.state[isf] = np.concatenate([row, ctrl])
+
     def _refresh_varsparam(self) -> None:
         """Initialize sn.varsparam for cache item state tracking. Mirrors JAR
         Network.java:4745-4747 (unconditional init). -1 indicates no specific
@@ -2727,12 +3707,28 @@ class Network(NetworkBase, Element):
         # Marked (MMAP) source arrivals: mark index (1-based) of class r at
         # source station i; -1 = not a marked class (mirrors MATLAB sn.markidx)
         self._sn.markidx = -np.ones((self._sn.nstations, self._sn.nclasses), dtype=int)
+        any_marked = False
         for i, station in enumerate(self._stations):
             marked = getattr(station, '_marked_classes', None)
             if marked:
+                any_marked = True
                 for k, cls in enumerate(marked):
                     j = self._classes.index(cls)
                     self._sn.markidx[i, j] = k + 1
+
+        # Marked (MMAP) source classes share the carrier's modulating chain, so a
+        # non-carrier mark contributes a single always-zero state column rather
+        # than its own phase block (refreshProcessRepresentations.m). Applied
+        # here because markidx is only known after _refresh_rates has run; without
+        # it the carrier's phase never enters the state space and every marked
+        # class reports the UNWEIGHTED sum of its per-phase arrival rates.
+        if any_marked and self._sn.phasessz is not None:
+            self._sn.phasessz = np.asarray(self._sn.phasessz).astype(int)
+            self._sn.phasessz[self._sn.markidx > 1] = 1
+            self._sn.phaseshift = np.hstack([
+                np.zeros((self._sn.nstations, 1), dtype=int),
+                np.cumsum(self._sn.phasessz, axis=1)
+            ]).astype(int)
 
     def _refresh_regions(self) -> None:
         """Populate finite capacity region information in NetworkStruct."""
@@ -2828,8 +3824,17 @@ class Network(NetworkBase, Element):
         self._sn.nodenames = [node.name for node in self._nodes]
         self._sn.classnames = [cls.name for cls in self._classes]
 
-        # Node types
-        self._sn.nodetype = [node.node_type for node in self._nodes]
+        # Node types. A QUEUE WITH INFINITE SERVERS IS A DELAY STATION, as
+        # MATLAB's getNodeTypes and the JAR's Network.getNodeTypes both report
+        # it: the analyzers partition the stations on this field, and a station
+        # that serves every job on arrival belongs with the delays whichever
+        # class built it.
+        from .base import NodeType as _NT
+        self._sn.nodetype = [
+            _NT.DELAY if (node.node_type == _NT.QUEUE
+                          and np.isinf(getattr(node, 'number_of_servers', 1)))
+            else node.node_type
+            for node in self._nodes]
 
         # Station classification
         self._sn.isstation = np.array([node.is_station() for node in self._nodes], dtype=bool)
@@ -2849,7 +3854,7 @@ class Network(NetworkBase, Element):
         # Station-indexed mask of queues carrying setup/delay-off times, as in
         # MATLAB refreshStruct.m.
         from .nodes import Queue
-        self._sn.isfunction = np.array(
+        self._sn.hassetup = np.array(
             [isinstance(station, Queue) and bool(getattr(station, '_setup_time', None))
              for station in self._stations], dtype=bool)
         # FJ tag-augmented copy marker (see ModelAdapter.fjtag): Join/Fork
@@ -3156,6 +4161,15 @@ class Network(NetworkBase, Element):
 
         # phasessz/phaseshift: disabled class still takes one slot; mirrors MATLAB refreshProcessPhases.
         self._sn.phasessz = np.maximum(self._sn.phases, 1).astype(int)
+        # A Join keeps its true phase count, including the zero of a class it
+        # never serves; mirrors refreshProcessRepresentations.m.
+        if self._sn.nodetype is not None:
+            for ind in range(self._sn.nnodes):
+                if self._sn.nodetype[ind] != NodeType.JOIN:
+                    continue
+                ist = int(self._sn.nodeToStation[ind])
+                if 0 <= ist < nstations:
+                    self._sn.phasessz[ist, :] = self._sn.phases[ist, :].astype(int)
         self._sn.phaseshift = np.hstack([
             np.zeros((nstations, 1), dtype=int),
             np.cumsum(self._sn.phasessz, axis=1)
@@ -3196,7 +4210,7 @@ class Network(NetworkBase, Element):
         from ..distributions.markovian import MAP, MMPP2, PH, APH, Coxian, Cox2, BMAP, MarkedMAP, ME, RAP
         from ..distributions.continuous import (
             Exp, Erlang, HyperExp, Gamma, Uniform, Det, Pareto, Weibull, Lognormal, Immediate,
-            NHPP
+            NHPP, MAPt, PHt
         )
         from ..distributions.discrete import Geometric, Bernoulli, Binomial, Poisson
 
@@ -3213,6 +4227,17 @@ class Network(NetworkBase, Element):
         elif isinstance(dist, MarkedMAP):
             self._sn.procid[station_idx, class_idx] = ProcessType.MMAP
             self._sn.proc[station_idx][class_idx] = dist.to_m3a()
+
+        # Discrete-time (D0,D1): the pair already has MAP shape, so it reaches
+        # sn.proc verbatim. Without this branch a DMAP fell through to the
+        # Replayer catch-all and reached sn.proc as None, while sn.rates still
+        # looked right. It must precede MAP even though DMAP does not subclass
+        # it, so the reading stays symmetric with the MATLAB and JAR arms.
+        elif type(dist).__name__ == 'DMAP':
+            self._sn.procid[station_idx, class_idx] = ProcessType.DMAP
+            self._sn.proc[station_idx][class_idx] = [
+                np.atleast_2d(np.asarray(dist.getD0(), dtype=float)),
+                np.atleast_2d(np.asarray(dist.getD1(), dtype=float))]
 
         # Check for MMPP2 first (more specific than MAP)
         elif isinstance(dist, MMPP2):
@@ -3238,19 +4263,24 @@ class Network(NetworkBase, Element):
             self._sn.proc[station_idx][class_idx] = [dist.getD0(), dist.getD1()]
 
         # Coxian/Cox2 branch ordering: see _kb/04-networkstruct.md Python native network.py section (class-hierarchy trap).
+        # Stored as (D0,D1) like every other Markovian family, not as (alpha,T):
+        # the two are indistinguishable by shape, so a reader that assumed the
+        # pair was a MAP read alpha as D0.
         elif isinstance(dist, Cox2):
             self._sn.procid[station_idx, class_idx] = ProcessType.COX2
             alpha = dist.getInitProb() if hasattr(dist, 'getInitProb') else None
             T = dist.getD0() if hasattr(dist, 'getD0') else None
             if alpha is not None and T is not None:
-                self._sn.proc[station_idx][class_idx] = [alpha, T]
+                from ..api.sn.proc_form import map_from_ph
+                self._sn.proc[station_idx][class_idx] = list(map_from_ph(alpha, T))
 
         elif isinstance(dist, Coxian):
             self._sn.procid[station_idx, class_idx] = ProcessType.COXIAN
             alpha = dist.getInitProb() if hasattr(dist, 'getInitProb') else None
             T = dist.getD0() if hasattr(dist, 'getD0') else None
             if alpha is not None and T is not None:
-                self._sn.proc[station_idx][class_idx] = [alpha, T]
+                from ..api.sn.proc_form import map_from_ph
+                self._sn.proc[station_idx][class_idx] = list(map_from_ph(alpha, T))
 
         # Check for Phase-Type distributions
         elif isinstance(dist, (PH, APH)):
@@ -3262,32 +4292,34 @@ class Network(NetworkBase, Element):
             alpha = dist.getInitProb() if hasattr(dist, 'getInitProb') else None
             T = dist.getD0() if hasattr(dist, 'getD0') else None
             if alpha is not None and T is not None:
-                self._sn.proc[station_idx][class_idx] = [alpha, T]
+                from ..api.sn.proc_form import map_from_ph
+                self._sn.proc[station_idx][class_idx] = list(map_from_ph(alpha, T))
 
         # Check for HyperExp
         elif isinstance(dist, HyperExp):
             self._sn.procid[station_idx, class_idx] = ProcessType.HYPEREXP
             # Store parameters for HyperExp (uses _probs and _rates arrays)
             if hasattr(dist, '_probs') and hasattr(dist, '_rates'):
-                self._sn.proc[station_idx][class_idx] = {
-                    'probs': dist._probs, 'rates': dist._rates
-                }
+                from ..api.sn.proc_form import map_from_hyperexp
+                self._sn.proc[station_idx][class_idx] = list(
+                    map_from_hyperexp(dist._probs, dist._rates))
 
         # Check for Erlang
         elif isinstance(dist, Erlang):
             self._sn.procid[station_idx, class_idx] = ProcessType.ERLANG
             # Erlang uses _phases and _phase_rate attributes
             if hasattr(dist, '_phases') and hasattr(dist, '_phase_rate'):
-                self._sn.proc[station_idx][class_idx] = {
-                    'k': dist._phases, 'mu': dist._phase_rate
-                }
+                from ..api.sn.proc_form import map_from_erlang
+                self._sn.proc[station_idx][class_idx] = list(
+                    map_from_erlang(dist._phases, dist._phase_rate))
 
         # Check for Exponential
         elif isinstance(dist, Exp):
             self._sn.procid[station_idx, class_idx] = ProcessType.EXP
             # For Exp, proc can remain None or store rate
             if hasattr(dist, '_rate'):
-                self._sn.proc[station_idx][class_idx] = {'rate': dist._rate}
+                from ..api.sn.proc_form import map_from_exp
+                self._sn.proc[station_idx][class_idx] = list(map_from_exp(dist._rate))
 
         # non-Markovian distributions: raw params stored in sn.proc (MATLAB layout) so sn_nonmarkov_toph can refit the PDF.
         elif isinstance(dist, Gamma):
@@ -3331,6 +4363,25 @@ class Network(NetworkBase, Element):
                 np.atleast_2d(np.asarray(dist.rates, dtype=float)),
                 bool(dist.cyclic),
             ]
+        elif isinstance(dist, MAPt):
+            self._sn.procid[station_idx, class_idx] = ProcessType.MAPT
+            # flat layout [breakpoints, D0_1..D0_n, D1_1..D1_n, cyclic], so the
+            # JAR MatrixCell (which cannot nest) carries the same slot; n follows
+            # from (len-2)//2.
+            self._sn.proc[station_idx][class_idx] = (
+                [np.atleast_2d(np.asarray(dist.breakpoints, dtype=float))]
+                + [np.asarray(M, dtype=float) for M in dist.D0]
+                + [np.asarray(M, dtype=float) for M in dist.D1]
+                + [bool(dist.cyclic)])
+        elif isinstance(dist, PHt):
+            self._sn.procid[station_idx, class_idx] = ProcessType.PHT
+            # flat layout [breakpoints, alpha_1..alpha_n, S_1..S_n, cyclic], each
+            # alpha as a 1-by-h row so every element of the cell is a matrix.
+            self._sn.proc[station_idx][class_idx] = (
+                [np.atleast_2d(np.asarray(dist.breakpoints, dtype=float))]
+                + [np.atleast_2d(np.asarray(a, dtype=float)) for a in dist.alpha]
+                + [np.asarray(M, dtype=float) for M in dist.S]
+                + [bool(dist.cyclic)])
 
         else:
             # Check for Replayer (import locally to avoid circular imports)
@@ -3366,8 +4417,18 @@ class Network(NetworkBase, Element):
         # Get the name of the scheduling strategy
         if hasattr(sched, 'name'):
             name = sched.name
+        elif isinstance(sched, int):
+            # a raw native enum value, e.g. from LayeredNetworkStruct.sched
+            return SchedStrategy(sched)
         else:
             name = str(sched).split('.')[-1]
+
+        # Case-insensitive: callers may pass a lowercase/mixed-case string
+        # (e.g. Queue(model, name, "fcfs")) alongside a canonical enum/name;
+        # every SchedStrategy member name is uppercase, so this only widens
+        # what's accepted -- it never changes the outcome for already-correct
+        # casing.
+        name = name.upper()
 
         # OI is a PAS specialization with an empty swap graph; normalized to PAS so all dispatch sites share one code path.
         if name == 'OI':
@@ -3381,8 +4442,8 @@ class Network(NetworkBase, Element):
         try:
             return SchedStrategy[name]
         except KeyError:
-            # Fallback to FCFS if unknown
-            return SchedStrategy.FCFS
+            raise ValueError("Unknown scheduling strategy %r; it cannot be normalized to a "
+                             "native SchedStrategy." % (sched,))
 
     def _get_process_type_id(self, dist) -> int:
         """
@@ -3457,15 +4518,7 @@ class Network(NetworkBase, Element):
         """
         nstations = len(self._stations)
 
-        def _as_1d(ld):
-            ld_array = np.asarray(ld)
-            if ld_array.ndim == 2:
-                # single row/column flattens; multi-column takes the first column
-                if ld_array.shape[1] == 1 or ld_array.shape[0] == 1:
-                    ld_array = ld_array.flatten()
-                else:
-                    ld_array = ld_array[:, 0]
-            return ld_array
+        _as_1d = lld_scaling_as_1d
 
         # Lattice width = longest configured scaling vector (MATLAB maxsize)
         maxsize = 0
@@ -3573,6 +4626,96 @@ class Network(NetworkBase, Element):
             self._sn.jdscaling = None
             self._sn.jdscalingpeak = None
 
+        # Network-level global dependence phi(n) over the FULL population matrix
+        # (the Whittle primitive); see set_global_dependence.
+        self._sn.gdscaling = self._gd_scaling
+        self._sn.gdscalingpeak = self.get_global_dependence_peak()
+        self._sn.gdscalingcutoff = self.get_global_dependence_cutoff()
+
+    def set_global_dependence(self, phi, peak, cutoff=10) -> None:
+        """Declare a globally state-dependent service-rate scaling phi(n).
+
+        n is the FULL (nstations, nclasses) population matrix, not the population
+        local to one station. This is the Whittle-network primitive: when phi
+        satisfies phi_s(n) phi_t(n-e_s) = phi_t(n) phi_s(n-e_t) the chain is
+        reversible with pi(n) ~ Phi(n) prod rho_s**n_s and is insensitive. It also
+        expresses bandwidth sharing, where one route holds several links at once
+        and no per-station scaling can reproduce the coupling.
+
+        phi returns a scalar (broadcast), an (nstations,) column (per station) or
+        an (nstations, nclasses) matrix. The effective rate of class r at station i
+        is its base rate times phi[i, r], composing multiplicatively with any
+        load-, class- or joint-dependence. Only SolverCTMC supports it.
+
+        Args:
+            phi: callable over the full population matrix
+            peak: REQUIRED peak scaling (scalar, (nstations,) or (nstations, nclasses)),
+                  normalizing utilization as Util = T*S/peak
+            cutoff: per-slot OPEN-class truncation used when phi is materialized
+                  onto the JSON wire (closed classes are tabulated up to their own
+                  population). It plays no part in solving, and exists because a
+                  handle cannot cross a language boundary: the writer needs to know
+                  how far the lattice extends. Set it to the cutoff the model is
+                  solved at.
+        """
+        if not callable(phi):
+            raise ValueError("Global dependence must be specified through a callable.")
+        if peak is None:
+            raise ValueError(
+                "Global dependence requires an explicit peak rate: "
+                "set_global_dependence(phi, peak).")
+        peak_arr = np.atleast_1d(np.asarray(peak, dtype=float))
+        if np.any(peak_arr <= 0):
+            raise ValueError("peak must be positive.")
+        M = len(self._stations)
+        K = len(self._classes)
+        # Probe now so a wrong output shape is refused at declaration time rather
+        # than midway through state-space generation.
+        for probe in (np.zeros((M, K)), np.ones((M, K))):
+            v = np.asarray(phi(probe), dtype=float)
+            if not np.all(np.isfinite(v)) or np.any(v < 0):
+                raise ValueError(
+                    "The global dependence handle must return finite nonnegative scalings.")
+            if v.size != 1 and v.shape != (M,) and v.shape != (M, 1) and v.shape != (M, K):
+                raise ValueError(
+                    "The global dependence handle must return a scalar, an (%d,) column "
+                    "or an (%d, %d) matrix." % (M, M, K))
+        if not isinstance(cutoff, (int, np.integer)) or int(cutoff) < 1:
+            raise ValueError("cutoff must be a positive integer.")
+        self._gd_scaling = phi
+        self._gd_scaling_peak = peak_arr
+        self._gd_scaling_cutoff = int(cutoff)
+        self.reset_struct()
+
+    def get_global_dependence(self):
+        """Network-level global dependence handle, or None if the model declares none."""
+        return self._gd_scaling
+
+    def get_global_dependence_cutoff(self):
+        """Per-slot open-class wire truncation of the global dependence, or None if none is declared."""
+        if self._gd_scaling is None:
+            return None
+        return int(getattr(self, '_gd_scaling_cutoff', 10) or 10)
+
+    def get_global_dependence_peak(self):
+        """(nstations, nclasses) peak of the global dependence, or None if none is declared."""
+        if self._gd_scaling is None:
+            return None
+        M = len(self._stations)
+        K = len(self._classes)
+        pk = np.asarray(self._gd_scaling_peak, dtype=float)
+        out = np.ones((M, K))
+        if pk.size == 1:
+            out[:, :] = float(pk.ravel()[0])
+        elif pk.shape == (M,) or pk.shape == (M, 1):
+            out[:, :] = pk.reshape(M, 1)
+        elif pk.shape == (M, K):
+            out[:, :] = pk
+        else:
+            raise ValueError(
+                "peak must be a scalar, an (%d,) column or an (%d, %d) matrix." % (M, M, K))
+        return out
+
     def _refresh_scheduling(self) -> None:
         """Extract scheduling strategies from stations."""
         nstations = len(self._stations)
@@ -3619,6 +4762,66 @@ class Network(NetworkBase, Element):
                     getattr(station, '_lps_limit', None) is not None:
                 self._sn.schedparam[i, 0] = station._lps_limit
 
+    def _quorum_join_classes(self) -> set:
+        """Class indices whose Join fires on a STRICT quorum, i.e. on fewer siblings
+        than are forked. Such a class is not population-conserving at the sibling level.
+
+        Siblings are counted at the FORK, as the engines count them: its out-degree
+        times tasksPerLink, with the join in-degree as the fallback.
+        """
+        from .nodes import Join as _JoinNode, Fork as _ForkNode
+        from .base import JoinStrategy as _JS
+
+        out = set()
+        if not self._nodes:
+            return out
+        conn = self.get_connection_matrix()
+        for node_idx, node in enumerate(self._nodes):
+            if not isinstance(node, _JoinNode):
+                continue
+            nsib = int(np.count_nonzero(conn[:, node_idx]))
+            fork = node.get_fork()
+            if isinstance(fork, _ForkNode):
+                fork_idx = self._nodes.index(fork)
+                tpl = fork.get_tasks_per_link()
+                w = 1
+                if tpl is not None:
+                    tpl = np.atleast_1d(tpl)
+                    if tpl.size > 0:
+                        w = max(1, int(round(float(tpl.flat[0]))))
+                nsib = int(np.count_nonzero(conn[fork_idx, :])) * w
+            for r, jobclass in enumerate(self._classes):
+                if node.get_strategy(jobclass) == _JS.STD:
+                    continue
+                kreq = node.get_required(jobclass)
+                if kreq is None or kreq <= 0:
+                    continue
+                if nsib <= 0 or kreq < nsib:
+                    out.add(int(r))
+        return out
+
+    def _fork_tasks_per_link_factor(self) -> int:
+        """Product of tasksPerLink over every Fork, the factor by which a fork can
+        multiply the jobs a branch station holds per circulating parent.
+
+        The PRODUCT rather than the max, because a fork nested in another's branch
+        multiplies again; for forks in series it over-bounds, and a cap that never
+        binds costs nothing.
+        """
+        from .nodes import Fork as _ForkNode
+
+        factor = 1
+        for node in self._nodes:
+            if not isinstance(node, _ForkNode):
+                continue
+            tpl = node.get_tasks_per_link()
+            if tpl is None:
+                continue
+            tpl = np.atleast_1d(np.asarray(tpl, dtype=float))
+            if tpl.size > 0 and np.isfinite(tpl.flat[0]):
+                factor *= max(1, int(round(float(tpl.flat[0]))))
+        return factor
+
     def _refresh_capacity(self) -> None:
         """Extract capacity limits from stations.
 
@@ -3648,6 +4851,24 @@ class Network(NetworkBase, Element):
         inchain = self._sn.inchain if hasattr(self._sn, 'inchain') and self._sn.inchain else None
         rates = self._sn.rates if hasattr(self._sn, 'rates') and self._sn.rates is not None else None
 
+        # a chain routed through a QUORUM join is not population-conserving either, and for the
+        # same reason as a spawn-target chain: the join releases the parent at the k-th of n
+        # siblings and the n-k stragglers stay in the branches, so the parent forks again while
+        # they are still in flight. Nothing bounds that backlog, so a branch station holds no
+        # more than the class population only under a STANDARD join; capping it at sum(njobs)
+        # makes a simulator drop a closed job. Read off the node objects, not off sn.nodeparam:
+        # _refresh_capacity runs before _refresh_local_vars rebuilds it.
+        # see _kb/05-solvers-overview.md
+        quorum_classes = self._quorum_join_classes()
+        # a fork with tasksPerLink = w > 1 puts w tasks of the SAME parent on one link,
+        # so a branch station can hold w jobs per circulating parent and the chain
+        # population is no longer its bound. The multiplier is the PRODUCT over the
+        # forks, because a fork nested in another's branch multiplies again; that is an
+        # upper bound for forks in series, where a cap that never binds costs nothing,
+        # and exact for the single-fork case. Without it a simulator drops a closed job
+        # at a branch station. see _kb/04-networkstruct.md
+        fork_task_factor = self._fork_tasks_per_link_factor()
+
         # Compute chain-based capacities
         for c in range(nchains):
             # Get classes in this chain
@@ -3657,7 +4878,7 @@ class Network(NetworkBase, Element):
                 classes_in_chain = list(range(nclasses))
 
             # chain capacity is the summed population, including Inf for any open class in the chain.
-            chain_cap = np.sum([njobs[r] for r in classes_in_chain])
+            chain_cap = np.sum([njobs[r] for r in classes_in_chain]) * fork_task_factor
 
             # a chain holding a spawn-target class is not population-conserving and must not get a finite capacity.
             for jc in self._classes:
@@ -3666,6 +4887,9 @@ class Network(NetworkBase, Element):
                         self._classes.index(spawn_cls) in list(classes_in_chain):
                     chain_cap = np.inf
                     break
+
+            if any(int(r) in quorum_classes for r in classes_in_chain):
+                chain_cap = np.inf
 
             for r in classes_in_chain:
                 for ist in range(nstations):
@@ -3955,12 +5179,32 @@ class Network(NetworkBase, Element):
                     if not isinstance(node, (ClassSwitch, Router)):
                         continue
 
-                # a class DISABLED at this node gets no default route (keeps REPLY signals off nodes they never visit); mirrors MATLAB getRoutingMatrix.
+                # A DISABLED class still leaves the node uniformly over its
+                # connected edges, sink included: MATLAB getRoutingMatrix.m
+                # gives the DISABLED case its own arm writing 1/sum(conn(ind,:))
+                # ("we set this to be non-zero as otherwise the classes that do
+                # not visit a classswitch are misconfigured in JMT"), which is
+                # what fills the identity pass-through rows of an auto-added
+                # CS_i_to_j node. Only a SelfLoopingClass and the Signal family
+                # get a zero row, and that exception is what keeps a REPLY
+                # signal off the nodes it never visits.
                 jobclass = self._classes[k]
                 strat = getattr(node, '_routing_strategies', {}).get(jobclass)
                 if strat is not None:
                     strat_value = strat.value if hasattr(strat, 'value') else int(strat)
                     if strat_value == RoutingStrategy.DISABLED.value:
+                        from .classes import (SelfLoopingClass as _SelfLooping,
+                                              Signal as _Signal,
+                                              OpenSignal as _OpenSignal,
+                                              ClosedSignal as _ClosedSignal)
+                        if not isinstance(jobclass, (_SelfLooping, _Signal,
+                                                     _OpenSignal, _ClosedSignal)):
+                            num_connections = np.sum(self._sn.connmatrix[ind, :])
+                            if num_connections > 0:
+                                for jnd in range(nnodes):
+                                    if self._sn.connmatrix[ind, jnd] > 0:
+                                        self._sn.rtnodes[ind * nclasses + k,
+                                                         jnd * nclasses + k] = 1.0 / num_connections
                         continue
 
                 # For nodes/classes without explicit routing, add default RAND routing
@@ -4194,7 +5438,7 @@ class Network(NetworkBase, Element):
                         if component:
                             chains_list.append(component)
 
-        # rt = stochastic complement of rtnodes with Sink->Source folded in FIRST, else open rows are substochastic (unbounded fluid-closing mass); mirrors MATLAB/JAR.
+        # rt = stochastic complement of rtnodes, Sink->Source folded FIRST, else open rows substochastic (unbounded fluid-closing mass); mirrors MATLAB/JAR.
         from ..api.mc.dtmc import dtmc_stochcomp
 
         # stateful node index list mirrors MATLAB find(sn.isstateful).
@@ -4263,11 +5507,11 @@ class Network(NetworkBase, Element):
             if hasattr(node, '_prob_routing') and node._prob_routing:
                 for jobclass in node._prob_routing.keys():
                     class_idx = jobclass._index if hasattr(jobclass, '_index') else self._classes.index(jobclass)
-                    # Don't override explicit routing strategy (RROBIN, WRROBIN, etc.)
+                    # Don't override an explicit strategy; RAND was demoted here, and JMT writes Random for it and Empirical for PROB, which draw differently.
                     if hasattr(node, '_routing_strategies') and jobclass in node._routing_strategies:
                         explicit = node._routing_strategies[jobclass]
                         ev = explicit.value if hasattr(explicit, 'value') else int(explicit)
-                        if ev != int(RoutingStrategy.RAND) and ev != int(RoutingStrategy.PROB):
+                        if ev != int(RoutingStrategy.PROB):
                             continue  # keep the explicit strategy
                     self._sn.routing[i, class_idx] = int(RoutingStrategy.PROB)
 
@@ -4290,6 +5534,244 @@ class Network(NetworkBase, Element):
                         # Get destination node index
                         dest_idx = dest_node._index if hasattr(dest_node, '_index') else self._nodes.index(dest_node)
                         self._sn.routingweights[key][dest_idx] = weight
+
+    def _holdsReplyFor(self, sn, ind: int, r: int) -> bool:
+        """Whether node `ind` holds a server across a synchronous call whose
+        reply class is `r`, i.e. `r` returns there to RELEASE a server rather
+        than to be served by one. Both indices are 0-based.
+
+        `sn.syncreply` is indexed by the CALLING class and holds the 0-based
+        reply class, -1 where no reply is expected; `sn.replyblock` marks the
+        (node, calling class) pairs that hold a server across the call.
+        """
+        block = getattr(sn, 'replyblock', None)
+        reply = getattr(sn, 'syncreply', None)
+        if block is None or reply is None:
+            return False
+        block = np.asarray(block)
+        reply = np.asarray(reply).ravel()
+        if block.ndim != 2 or ind >= block.shape[0]:
+            return False
+        for k in range(min(reply.size, block.shape[1])):
+            if int(reply[k]) == r and block[ind, k] != 0:
+                return True
+        return False
+
+    def _check_service_reachable(self) -> None:
+        """Refuse a class that is ROUTED TO a station which cannot serve it.
+
+        `sanitize` disables the OUTGOING routing of a class a station cannot
+        serve, which is what keeps it out of that station's visit ratios -- but
+        nothing stopped the class being routed IN, and a class that arrives
+        where it cannot be served is a flow sink: it enters and never leaves.
+        The existing guard could not see this because it asks whether the
+        station serves ANY class, not whether it serves the classes that reach
+        it.
+
+        What the three solvers did with such a model, on a closed cycle
+        D <-> Q whose class C2 has no service at Q, is why this raises rather
+        than warns -- one model, three different wrong answers, none flagged:
+
+            MVA   Q/C2 ArvR 1, Tput 0        (flow not conserved)
+            CTMC  drops class C2 entirely
+            SSA   D/C2 QLen 2e-06, Q rows absent
+
+        An absent slot and an explicit `Disabled()` are treated ALIKE. The
+        distinction is real at the model level -- `Disabled()` declares "this
+        class does not come here" -- but it does not separate the broken models
+        from the sound ones: `sanitize` fills an absent slot with `Disabled()`
+        and both then produce the identical struct and the identical wrong
+        numbers. What separates them is whether anything actually routes the
+        class in, which is what this tests. A class marked `Disabled()` at a
+        station it never visits -- the normal marker in a class-switching model,
+        where each queue serves exactly one class -- has no incoming flow there
+        and is untouched.
+
+        READS `sn.rtnodes`, WALKED FORWARD FROM THE FEED POINTS -- not
+        `sn.nodevisits`, which this guard read until 2026-09-02 and which
+        94d5570f3 had made blind to the very case it exists for. That commit
+        extended the `served` mask of sn_refresh_visits from the station chain
+        to the NODE chain, and it had to: on a materialised LQN replica the
+        unserved states close into a whole spurious cycle. But the mask zeroes
+        exactly the (station, class) cell a flow sink shows up in. On
+        Source -> Q -> Sink with class B unservable at Q, B's chain went from
+        Q = 1 to Q = 0 and the guard fell silent, while the Sink still read 1 --
+        flow arriving downstream of a node it never visited. A MASKED VISIT
+        VECTOR CANNOT ANSWER THIS QUESTION, because the mask IS the answer being
+        looked for. Do not route this guard back through `nodevisits` or
+        `visits`; both carry that mask.
+
+        `rtnodes` on its own over-approximates -- it says where a class WOULD go
+        if one existed -- and the WALK is what removes the slack. It starts only
+        at (Source, class) pairs whose arrival is not Disabled, and at the
+        reference station of each closed class with a positive population, so
+        the Disabled-arrival row a class-switching Source carries is never
+        entered. Three rules keep it honest, each answering a case the old visit
+        solve got right for free:
+
+        - A SINK IS ABSORBING. `rtnodes` wraps the Sink back to the Source to
+          close the kernel; following that wrap re-enters every Source row,
+          including the Disabled ones the seeding just excluded.
+        - A SOURCE IS EXPANDED ONLY AS A SEED, for that same reason.
+        - AN UNSERVABLE (station, class) IS REACHED BUT NOT EXPANDED. Nothing
+          leaves it -- that is the whole complaint -- so nothing downstream of
+          it is evidence of anything.
+
+        This SUBSUMES the fed-chain precondition the guard used to carry
+        separately: a chain no job can enter has no seed, so its rows are never
+        walked at all. That is strictly finer than the per-chain test it
+        replaces, which admitted every class of a chain any one of whose classes
+        was fed.
+
+        A SYNCHRONOUS REPLY IS NOT SERVED BY THE STATION IT RETURNS TO: it
+        releases the server that station held across the call, which is the
+        whole content of set_sync_reply. Its Disabled service there is the
+        marker of the feature, not a flow sink, so the (station, reply class)
+        pairs `sn.replyblock` marks are exempt.
+        """
+        if not getattr(self, '_do_checks', True):
+            return
+        sn = self._sn
+        reached = self._reachedNodeClasses(sn)
+        if reached is None or reached.size == 0:
+            return
+        from ..distributions import Disabled
+        from .nodes import Cache, Delay, Fork, Join, Place, Queue, Transition
+        # Same exemption as the sanitize checks: a station of a cache, Petri-net
+        # or fork-join model legitimately carries no per-class service.
+        if any(isinstance(nd, (Cache, Place, Transition, Fork, Join))
+               for nd in self._nodes):
+            return
+        R = len(self._classes)
+        if R == 0:
+            return
+        for ind, node in enumerate(self._nodes):
+            if not isinstance(node, (Queue, Delay)):
+                continue
+            if getattr(node, '_hetero_service', None):
+                continue
+            store = getattr(node, '_service_process', None)
+            if store is None:
+                continue
+            if ind >= reached.shape[0]:
+                continue
+            for r, k in enumerate(self._classes):
+                svc = store.get(k)
+                if svc is not None and not isinstance(svc, Disabled):
+                    continue
+                if r >= reached.shape[1] or not reached[ind, r]:
+                    continue
+                # A SYNCHRONOUS REPLY is not served by the station it returns
+                # to: it releases the server that station held across the call,
+                # which is the whole content of set_sync_reply.
+                if self._holdsReplyFor(sn, ind, r):
+                    continue
+                raise ValueError(
+                    "[{0}] {1} '{2}' has no service configured for job class "
+                    "'{3}', but the class is routed to it. Jobs would arrive "
+                    "and never leave. Call setService() for that class, or "
+                    "route it elsewhere.".format(
+                        self.name,
+                        'Delay' if isinstance(node, Delay) else 'Queue',
+                        node.getName(), k.getName()))
+
+    def _servesClass(self, sn, ind: int, node, r: int, k) -> bool:
+        """Whether a job of class `r` can LEAVE node `ind` again.
+
+        True for anything that is not a service station, and for a station that
+        serves `r`, declares heterogeneous server types (its per-class slot is
+        empty by construction) or holds a server across a synchronous call whose
+        reply class is `r`. False only for the flow sink itself, which is what
+        stops the walk in `_reachedNodeClasses` -- the same three exemptions the
+        guard applies, kept in one place so the walk and the verdict cannot
+        drift apart.
+        """
+        from ..distributions import Disabled
+        from .nodes import Delay, Queue
+        if not isinstance(node, (Queue, Delay)):
+            return True
+        if getattr(node, '_hetero_service', None):
+            return True
+        store = getattr(node, '_service_process', None)
+        if store is None:
+            return True
+        svc = store.get(k)
+        if svc is not None and not isinstance(svc, Disabled):
+            return True
+        return self._holdsReplyFor(sn, ind, r)
+
+    def _reachedNodeClasses(self, sn):
+        """The (node, class) pairs a job can actually ARRIVE at, as an (N, R) bool array.
+
+        A forward walk of `sn.rtnodes` from the feed points. See
+        `_check_service_reachable` for why the evidence is the UNMASKED routing
+        kernel rather than `sn.nodevisits`, and for the three rules -- absorbing
+        Sink, Source expanded only as a seed, unservable pair reached but not
+        expanded -- that keep the walk from over-approximating.
+
+        Returns None when `rtnodes` is unreadable or not the expected
+        (N*R, N*R), which leaves the caller checking nothing, as before.
+        """
+        from ..distributions import Disabled
+        from .classes import ClosedClass
+        from .nodes import Sink, Source
+        rt = getattr(sn, 'rtnodes', None)
+        if rt is None:
+            return None
+        try:
+            rt = np.asarray(rt, dtype=float)
+        except (TypeError, ValueError):
+            return None
+        N = len(self._nodes)
+        R = len(self._classes)
+        if N == 0 or R == 0 or rt.ndim != 2 or rt.shape[0] < N * R or rt.shape[1] < N * R:
+            return None
+        reached = np.zeros((N, R), dtype=bool)
+        seeds = set()
+        for ind, node in enumerate(self._nodes):
+            if not isinstance(node, Source):
+                continue
+            store = getattr(node, '_arrival_process', {}) or {}
+            for r, k in enumerate(self._classes):
+                dist = store.get(k)
+                if dist is not None and not isinstance(dist, Disabled):
+                    seeds.add((ind, r))
+        for r, k in enumerate(self._classes):
+            if not isinstance(k, ClosedClass):
+                continue
+            try:
+                if float(k.getNumberOfJobs()) <= 0:
+                    continue
+            except (TypeError, ValueError):
+                continue
+            ref = getattr(k, '_refstat', None)
+            if ref is None:
+                continue
+            for ind, node in enumerate(self._nodes):
+                if node is ref:
+                    seeds.add((ind, r))
+                    break
+        stack = []
+        for ind, r in seeds:
+            if not reached[ind, r]:
+                reached[ind, r] = True
+                stack.append((ind, r))
+        while stack:
+            ind, r = stack.pop()
+            node = self._nodes[ind]
+            if isinstance(node, Sink):
+                continue
+            if isinstance(node, Source) and (ind, r) not in seeds:
+                continue
+            if not self._servesClass(sn, ind, node, r, self._classes[r]):
+                continue
+            row = rt[ind * R + r]
+            for t in np.nonzero(row[:N * R] > GlobalConstants.Zero)[0]:
+                j, sIdx = divmod(int(t), R)
+                if not reached[j, sIdx]:
+                    reached[j, sIdx] = True
+                    stack.append((j, sIdx))
+        return reached
 
     def _refresh_chains(self) -> None:
         """
@@ -4389,8 +5871,8 @@ class Network(NetworkBase, Element):
         self._sn.chains = chains
         self._sn.inchain = inchain
 
-        # Force all classes in a chain to have the same reference station
-        # (matches MATLAB sn_refresh_visits.m lines 48-53)
+        # All classes in a chain must share one reference station
+        # (matches the hard error in MATLAB refreshRoutingMatrix.m)
         refstat = self._sn.refstat.flatten() if self._sn.refstat is not None else np.zeros(nclasses, dtype=int)
         for chain_id in range(nchains):
             classes_in_chain = inchain[chain_id]
@@ -4398,12 +5880,10 @@ class Network(NetworkBase, Element):
                 first_refstat = int(refstat[classes_in_chain[0]]) if classes_in_chain[0] < len(refstat) else 0
                 for k in classes_in_chain:
                     if k < len(refstat) and int(refstat[k]) != first_refstat:
-                        refstat[k] = first_refstat
-        # Update sn.refstat
-        if self._sn.refstat is not None:
-            self._sn.refstat = refstat.reshape(self._sn.refstat.shape)
-        else:
-            self._sn.refstat = refstat
+                        raise ValueError(
+                            f"Classes within chain {chain_id} "
+                            f"(classes: {[int(x) for x in classes_in_chain]}) "
+                            f"have different reference stations.")
 
         # Compute visit ratios for each chain
         self._sn.visits = {}
@@ -4460,6 +5940,10 @@ class Network(NetworkBase, Element):
         if rt is not None and rt.size > 0:
             from ..api.mc import dtmc_solve
 
+            # sparsify once; the per-chain routing matrices are slices of this
+            from ..api.sn.transforms import _csr_normalize_rows, _csr_threshold_mask
+            rt_sparse = sp.csr_matrix(rt)
+
             for chain_id in range(nchains):
                 classes_in_chain = inchain[chain_id]
                 n_chain_classes = len(classes_in_chain)
@@ -4482,7 +5966,8 @@ class Network(NetworkBase, Element):
                         indices.append(isf * nclasses + k)
 
                 if len(indices) > 0:
-                    P_chain = rt[np.ix_(indices, indices)]
+                    # the per-chain routing matrix is kept in sparse storage
+                    P_chain = sp.csr_matrix(rt_sparse[indices, :][:, indices])
 
                     # Use DTMC solver for both open and closed chains
                     # This matches MATLAB's sn_refresh_visits.m which uses dtmc_solve for all chains
@@ -4490,8 +5975,35 @@ class Network(NetworkBase, Element):
                     from .base import NodeType
 
                     n = len(indices)
-                    row_sums = P_chain.sum(axis=1)
-                    visited = row_sums > 1e-10
+
+                    # the routing matrix carries a JMT-oriented uniform fill on DISABLED (node,class)
+                    # pairs; a class with no service at a station cannot be there -- see _kb/06-solver-catalog.md
+                    if self._sn.rates is not None:
+                        from .base import NodeType as _NTv
+                        from ..api.sn.transforms import _sn_has_server_types
+                        _served = np.ones(P_chain.shape[0])
+                        for isf in range(nstateful):
+                            _sti = int(self._sn.statefulToStation[isf]) if self._sn.statefulToStation is not None else -1
+                            if _sti < 0 or _sti >= self._sn.nstations:
+                                continue
+                            # a Place, and a station declaring server types, carry NaN station rates by construction
+                            if self._sn.nodetype[int(self._sn.stationToNode[_sti])] in (_NTv.PLACE, _NTv.TRANSITION):
+                                continue
+                            if _sn_has_server_types(self._sn, _sti):
+                                continue
+                            for _ik, _k in enumerate(classes_in_chain):
+                                if not np.isnan(self._sn.rates[_sti, int(_k)]):
+                                    continue
+                                _idx = isf * n_chain_classes + _ik
+                                if _idx < _served.shape[0]:
+                                    _served[_idx] = 0.0
+                        if _served.size and not _served.all():
+                            _D = sp.diags(_served)
+                            P_chain = sp.csr_matrix(_D @ P_chain @ _D)
+                            P_chain.eliminate_zeros()
+
+                    row_sums = np.asarray(P_chain.sum(axis=1)).ravel()
+                    visited = row_sums > 0
 
                     # Check for fork nodes
                     has_fork = False
@@ -4521,21 +6033,19 @@ class Network(NetworkBase, Element):
                     # open fork networks use the same DTMC path as closed forks now that rt_visits folds Sink->Source routing.
 
                     if np.sum(visited) > 0:
-                        P_visited = P_chain[np.ix_(np.where(visited)[0], np.where(visited)[0])]
+                        _vidx = np.where(visited)[0]
+                        P_visited = P_chain[_vidx, :][:, _vidx]
 
                         # Fork rows (sum>1) normalized before dtmc_solve_reducible, with fanout correction applied after; mirrors MATLAB sn_refresh_visits.m:88-98.
                         row_sums_visited = np.ones(P_visited.shape[0])
                         if has_fork:
-                            row_sums_visited = P_visited.sum(axis=1).flatten()
-                            nonzero = (row_sums_visited > 1e-10)
-                            if np.any(nonzero):
-                                P_visited[nonzero] = P_visited[nonzero] / row_sums_visited[nonzero][:, np.newaxis]
+                            row_sums_visited = _csr_normalize_rows(P_visited, 1e-10)
 
                         # dtmc_solve is primary, dtmc_solve_reducible the fallback for reducible chains; see _kb/11-conventions-and-gotchas.md DTMC solver order.
                         from scipy.sparse.csgraph import connected_components
                         from scipy.sparse import csc_matrix
                         n_components, _ = connected_components(
-                            csc_matrix(P_visited > 1e-10), directed=True, connection='strong', return_labels=True
+                            csc_matrix(_csr_threshold_mask(P_visited, 1e-10)), directed=True, connection='strong', return_labels=True
                         )
                         is_reducible = n_components > 1
 
@@ -4605,6 +6115,10 @@ class Network(NetworkBase, Element):
 
         if self._sn.rtnodes is not None and self._sn.rtnodes.size > 0:
             from ..api.mc.dtmc import dtmc_solve, dtmc_solve_reducible
+            from ..api.sn.transforms import _csr_fill_nan_rows, _csr_normalize_rows
+
+            # sparsify once; the per-chain node routing matrices are slices of this
+            rtnodes_sparse = sp.csr_matrix(self._sn.rtnodes)
 
             for chain_id in range(nchains):
                 if chain_id not in self._sn.inchain:
@@ -4623,33 +6137,56 @@ class Network(NetworkBase, Element):
 
                 # Extract routing submatrix for this chain
                 if len(nodes_cols) > 0:
-                    nodes_Pchain = self._sn.rtnodes[np.ix_(nodes_cols, nodes_cols)].copy()
+                    # the per-chain node routing matrix is kept in sparse storage
+                    nodes_Pchain = sp.csr_matrix(rtnodes_sparse[nodes_cols, :][:, nodes_cols])
 
                     # Handle NaN values in routing matrix
-                    for row in range(nodes_Pchain.shape[0]):
-                        nan_cols = np.isnan(nodes_Pchain[row, :])
-                        if np.any(nan_cols):
-                            non_nan_sum = np.sum(nodes_Pchain[row, ~nan_cols])
-                            remaining_prob = max(0, 1 - non_nan_sum)
-                            n_nan = np.sum(nan_cols)
-                            if n_nan > 0 and remaining_prob > 0:
-                                nodes_Pchain[row, nan_cols] = remaining_prob / n_nan
-                            else:
-                                nodes_Pchain[row, nan_cols] = 0
+                    _csr_fill_nan_rows(nodes_Pchain)
+
+                    # THE SAME DISABLED-PAIR MASK THE STATION BLOCK APPLIES ABOVE,
+                    # and it matters more here: at station level a (station,class)
+                    # the class cannot be served at is a dead end, while the node
+                    # kernel keeps the class-switch nodes between the stations, so
+                    # the disabled states close into a whole spurious CYCLE. A
+                    # materialised LQN replica is exactly that -- replica 2's
+                    # stations still carry replica 1's classes in rtnodes -- and
+                    # dtmc_solve_reducible then splits the mass between the real
+                    # chain and the phantom one, giving every node of replica 2 a
+                    # visit in replica 1's classes.
+                    if self._sn.rates is not None:
+                        from .base import NodeType as _NTn
+                        from ..api.sn.transforms import _sn_has_server_types as _has_st
+                        _nserved = np.ones(nodes_Pchain.shape[0])
+                        for _ind in range(nnodes):
+                            _sti = int(self._sn.nodeToStation[_ind]) if self._sn.nodeToStation is not None else -1
+                            if _sti < 0 or _sti >= self._sn.nstations:
+                                continue
+                            # a Place, and a station declaring server types, carry NaN station rates by construction
+                            if self._sn.nodetype[_ind] in (_NTn.PLACE, _NTn.TRANSITION):
+                                continue
+                            if _has_st(self._sn, _sti):
+                                continue
+                            for _ik, _k in enumerate(classes_in_chain):
+                                if not np.isnan(self._sn.rates[_sti, int(_k)]):
+                                    continue
+                                _idx = _ind * n_chain_classes + _ik
+                                if _idx < _nserved.shape[0]:
+                                    _nserved[_idx] = 0.0
+                        if _nserved.size and not _nserved.all():
+                            _Dn = sp.diags(_nserved)
+                            nodes_Pchain = sp.csr_matrix(_Dn @ nodes_Pchain @ _Dn)
+                            nodes_Pchain.eliminate_zeros()
 
                     # Find visited nodes
-                    nodes_visited = np.sum(nodes_Pchain, axis=1) > 1e-10
+                    nodes_visited = np.asarray(nodes_Pchain.sum(axis=1)).ravel() > 0
 
                     if np.sum(nodes_visited) > 0:
-                        nodes_Pchain_visited = nodes_Pchain[np.ix_(np.where(nodes_visited)[0],
-                                                                   np.where(nodes_visited)[0])]
+                        _nvidx = np.where(nodes_visited)[0]
+                        nodes_Pchain_visited = nodes_Pchain[_nvidx, :][:, _nvidx]
 
                         # Normalize rows, recording original row sums for fork correction
                         # (matches MATLAB sn_refresh_visits.m lines 198-209)
-                        nodes_row_sums_visited = nodes_Pchain_visited.sum(axis=1).flatten()
-                        nonzero = (nodes_row_sums_visited > 1e-10)
-                        if np.any(nonzero):
-                            nodes_Pchain_visited[nonzero] = nodes_Pchain_visited[nonzero] / nodes_row_sums_visited[nonzero][:, np.newaxis]
+                        nodes_row_sums_visited = _csr_normalize_rows(nodes_Pchain_visited, 1e-10)
 
                         # Solve DTMC for node visits
                         try:
@@ -4961,6 +6498,11 @@ class Network(NetworkBase, Element):
                     actualhitproblist: Optional[np.ndarray] = None
                     actualitemprob: Optional[np.ndarray] = None
                     actualresidt: Optional[np.ndarray] = None
+                    actuallistcost: Optional[np.ndarray] = None
+                    # per-item storage costs and per-list cost caps (ton21cache Sec. IX)
+                    itemsize: Optional[np.ndarray] = None
+                    costcap: Optional[np.ndarray] = None
+                    costcapglobal: bool = False
                     replacestrat: Any = None  # Renamed from 'replacement' to match MATLAB
                     qlru: float = 1.0  # q-LRU admission probability on a miss
                     accost: Optional[np.ndarray] = None
@@ -4989,6 +6531,9 @@ class Network(NetworkBase, Element):
                 else:
                     param.itemcap = np.array([0])
                     param.cap = 0
+                param.itemsize = getattr(node, '_item_size', None)
+                param.costcap = getattr(node, '_cost_cap', None)
+                param.costcapglobal = bool(getattr(node, '_cost_cap_global', False))
                 param.replacestrat = node._replacement_strategy if hasattr(node, '_replacement_strategy') else None
                 param.qlru = float(getattr(node, '_admission_prob', 1.0))
 
@@ -5058,6 +6603,29 @@ class Network(NetworkBase, Element):
                     param.replacestrat = _RS.FIFO
                     param.accost = None
 
+                # SOLVER RESULTS ARE RE-DERIVED FROM THE NODE, not dropped.
+                # A CacheParam is rebuilt from scratch on every refresh, so a
+                # hit/miss split an analyzer had already computed vanished from
+                # sn.nodeparam the moment anything refreshed the struct, and the
+                # quantities derived from it (the visits carrying the hit and
+                # miss classes) silently fell back to the 0.5/0.5 routing guess.
+                # MATLAB copies them back off the node here, so the struct a
+                # caller holds never disagrees with the node; mirrors
+                # refreshLocalVars.m ("Store actual hit/miss/latency from
+                # solver results"). The node is the durable home of the result.
+                _ahp = getattr(node, '_actual_hit_prob', None)
+                if _ahp is not None and np.size(_ahp) > 0:
+                    param.actualhitprob = np.asarray(_ahp)
+                    _amp = getattr(node, '_actual_miss_prob', None)
+                    if _amp is not None and np.size(_amp) > 0:
+                        param.actualmissprob = np.asarray(_amp)
+                _adhp = getattr(node, '_actual_delayed_hit_prob', None)
+                if _adhp is not None and np.size(_adhp) > 0:
+                    param.actualdelayedhitprob = np.asarray(_adhp)
+                _art = getattr(node, '_actual_residt', None)
+                if _art is not None and np.size(_art) > 0:
+                    param.actualresidt = np.asarray(_art)
+
                 nodeparam[node_idx] = param
 
         # Handle Logger nodes
@@ -5091,19 +6659,128 @@ class Network(NetworkBase, Element):
 
                 nodeparam[node_idx] = param
 
+        # Handle Join nodes: their strategy and quorum lived only on the node
+        # object, so every consumer that read sn (sn_fj_validate, the exact
+        # tag construction, the JMT export) saw a Join with no strategy at all
+        # and treated a PARTIAL one as standard. MATLAB's refreshLocalVars puts
+        # both in nodeparam; this is that twin.
+        from .nodes import Join
+        for node_idx, node in enumerate(self._nodes):
+            if isinstance(node, Join):
+                K = len(self._classes)
+                join_strategy = {}
+                fan_in = {}
+                for r, cls in enumerate(self._classes):
+                    st = node._join_strategy.get(cls, None)
+                    if st is not None:
+                        join_strategy[r] = st
+                    req = node._required.get(cls, None)
+                    if req is not None:
+                        fan_in[r] = req
+                entry = nodeparam.get(node_idx)
+                if not isinstance(entry, dict):
+                    entry = {}
+                    nodeparam[node_idx] = entry
+                entry['joinStrategy'] = join_strategy
+                entry['fanIn'] = fan_in
+
         # Handle Fork nodes with tasks per link (fanOut)
         from .nodes import Fork
         for node_idx, node in enumerate(self._nodes):
             if isinstance(node, Fork):
                 tasks_per_link = node.get_tasks_per_link()
                 if tasks_per_link is not None:
-                    # Convert to numpy array for consistent handling
                     tasks_per_link = np.atleast_1d(tasks_per_link)
-                    # Use the first value (or max if multiple values exist)
-                    fanout_val = int(tasks_per_link.flat[0]) if tasks_per_link.size > 0 else 1
+                    # float, not int: MATLAB stores the double and lets
+                    # sn_fj_validate refuse a non-integer fanout by name. An
+                    # int() here turned 1.5 into 1 and answered instead.
+                    fanout_val = float(tasks_per_link.flat[0]) if tasks_per_link.size > 0 else 1.0
                 else:
-                    fanout_val = 1
-                nodeparam[node_idx] = {'fanOut': fanout_val}
+                    fanout_val = 1.0
+                # merge, do not replace: another producer may already hold this slot
+                if isinstance(nodeparam.get(node_idx), dict):
+                    entry = nodeparam[node_idx]
+                else:
+                    entry = {}
+                    nodeparam[node_idx] = entry
+                entry['fanOut'] = fanout_val
+
+                # Variable forking levels. fanOut stays the scalar every
+                # existing consumer reads; the three matrices beside it are
+                # (nnodes x nclasses), indexed by DESTINATION NODE rather than
+                # link ordinal so a relink cannot silently permute them.
+                I = len(self._nodes)
+                K = len(self._classes)
+                connrc = np.zeros((I, K), dtype=bool)
+                if self._sn.connmatrix is not None:
+                    for kdest in range(I):
+                        if self._sn.connmatrix[node_idx, kdest] > 0:
+                            connrc[kdest, :] = True
+                fan_out_link = np.zeros((I, K))
+                fan_out_prob = np.zeros((I, K))
+                fan_out_dist = [[None] * K for _ in range(I)]
+                fan_out_link[connrc] = fanout_val
+                fan_out_prob[connrc] = 1.0
+
+                name_to_idx = {n.get_name(): i for i, n in enumerate(self._nodes)}
+
+                def _dests(dest_name):
+                    if not dest_name:
+                        return [k for k in range(I) if connrc[k, :].any()]
+                    if dest_name not in name_to_idx:
+                        raise ValueError(
+                            'Fork override names destination "%s", which is not '
+                            'a node of this model.' % dest_name)
+                    return [name_to_idx[dest_name]]
+
+                for dest, cls_idx, value in node._tasks_per_link_by_dest:
+                    for kdest in _dests(dest):
+                        fan_out_link[kdest, cls_idx] = value
+                for dest, cls_idx, value in node._branch_prob:
+                    for kdest in _dests(dest):
+                        fan_out_prob[kdest, cls_idx] = value
+                for dest, cls_idx, dist in node._tasks_per_link_dist:
+                    for kdest in _dests(dest):
+                        fan_out_dist[kdest][cls_idx] = dist
+                        # the scalar slot carries the mean, so a consumer that
+                        # only reads fanOutLink still sees E[tasks per link]
+                        fan_out_link[kdest, cls_idx] = dist.getMean()
+
+                entry['fanOutLink'] = fan_out_link
+                entry['fanOutProb'] = fan_out_prob
+                entry['fanOutDist'] = fan_out_dist
+                if (node._tasks_per_link_dist or node._tasks_per_link_by_dest
+                        or node._branch_prob):
+                    # Keep the scalar consistent with the per-link mean, so a
+                    # solver that has not been taught the matrices degrades to
+                    # E[.] rather than to a value the fork never emits. The
+                    # branch probability is folded in here and NOT into
+                    # fanOutLink, because JMT and LDES read the two separately:
+                    # fanOutLink is the count GIVEN the branch fires,
+                    # fanOutProb is whether it fires at all.
+                    nz = (fan_out_link * fan_out_prob)[connrc]
+                    if nz.size > 0:
+                        entry['fanOut'] = float(nz.mean())
+
+        # Handle Join nodes: the per-class join rule and its quorum. fanIn is
+        # the JMT numRequired of a STANDARD join (-1 = every sibling),
+        # joinRequired the quorum k of a PARTIAL one: the two read the same
+        # field but are written to different JMT elements, so both are carried.
+        from .nodes import Join
+        from .base import JoinStrategy
+        nclasses = len(self._classes)
+        for node_idx, node in enumerate(self._nodes):
+            if isinstance(node, Join):
+                join_strategy = []
+                join_required = []
+                for r in range(nclasses):
+                    jobclass = self._classes[r]
+                    join_strategy.append(node.get_strategy(jobclass))
+                    req = node.get_required(jobclass)
+                    join_required.append(-1 if req is None else int(req))
+                nodeparam[node_idx] = {'joinStrategy': join_strategy,
+                                       'fanIn': list(join_required),
+                                       'joinRequired': join_required}
 
         # Store in NetworkStruct
         self._sn.nodeparam = nodeparam if nodeparam else None
@@ -5156,19 +6833,10 @@ class Network(NetworkBase, Element):
         if sn.fj is None or not np.any(sn.fj):
             return
 
-        # Check for advanced join strategies (QUORUM, CANDJOIN) which are not fully supported
-        from .base import JoinStrategy
-        for node in self._nodes:
-            if hasattr(node, '_join_strategy') and node._join_strategy:
-                for cls, strategy in node._join_strategy.items():
-                    if strategy != JoinStrategy.STD:
-                        import warnings
-                        warnings.warn(
-                            f"Join node '{node.name}' uses {strategy.name} strategy which "
-                            f"has limited analytical support. Use SolverJMT for reliable results.",
-                            UserWarning
-                        )
-                        break
+        # A quorum join needs no warning here: it is declared as the JoinPartial
+        # feature by get_used_lang_features, so a solver that cannot serve it
+        # refuses the model by name, and the MMT fixed point that can charges the
+        # k-th branch completion through fj_ordstat_exp.
 
         # Import ModelAdapter for MMT transformation
         try:
@@ -5262,12 +6930,16 @@ class Network(NetworkBase, Element):
                 Vaux = VauxMapped
 
             # fanOut read from the original fork's nodeparam (fanout of the fork itself is already baked into fsn via mmt).
+            # nodeparam holds a DICT for a Fork, so the attribute read this used
+            # to do returned None on every model and pinned fanOut_val at 1: the
+            # correction silently dropped tasksPerLink. Accept both shapes.
             fanOut_val = 1
-            if sn.nodeparam is not None and orig_fork < len(sn.nodeparam):
-                if sn.nodeparam[orig_fork] is not None:
-                    np_fanOut = getattr(sn.nodeparam[orig_fork], 'fanOut', None)
-                    if np_fanOut is not None and np_fanOut > 0:
-                        fanOut_val = np_fanOut
+            fp = sn.nodeparam.get(orig_fork) if sn.nodeparam is not None else None
+            if fp is not None:
+                np_fanOut = fp.get('fanOut', None) if isinstance(fp, dict) \
+                    else getattr(fp, 'fanOut', None)
+                if np_fanOut is not None and np_fanOut > 0:
+                    fanOut_val = np_fanOut
 
             # original chain's pre-mmt visits captured BEFORE the inner loop writes back, so every jaux iteration reads the same X.
             X = sn.nodevisits[orig_chain].copy()
@@ -5393,6 +7065,32 @@ class Network(NetworkBase, Element):
 
         return visits_chain
 
+    def _is_declared_state_node(self, node) -> bool:
+        """True when this node's state row is an INPUT rather than a default.
+
+        A partial state is dropped whole (see `_refresh_state`), which is right
+        for a station whose row `initDefault` would have written anyway. Two
+        kinds of node carry a row nothing else can reconstruct:
+
+        - a PAS station, whose ORDERED placement is a required input;
+        - an SPN Place, whose INITIAL MARKING is the model. Dropping it left
+          `spn_open_sevenplaces` exporting a net whose downstream places never
+          receive a token: JMT reported P1 throughput 1.0111 against 2.8376 and
+          P5, P6 and P7 vanished from the table entirely.
+        """
+        if self._is_pas_node(node):
+            return True
+        return type(node).__name__ == 'Place'
+
+    def _is_pas_node(self, node) -> bool:
+        """A PAS station's ordered placement is an input, not a default state."""
+        sched = node.get_sched_strategy() if hasattr(node, 'get_sched_strategy') else None
+        if sched is None:
+            return False
+        # BY NAME: a node can carry either SchedStrategy enum, and the two
+        # disagree numerically (PAS is 41 in one and 37 in the other).
+        return str(getattr(sched, 'name', sched)) == 'PAS'
+
     def _refresh_state(self) -> None:
         """
         Extract initial state from stateful nodes.
@@ -5425,6 +7123,11 @@ class Network(NetworkBase, Element):
         # Track which stateful nodes had their state explicitly set
         explicit_node_set = set()
 
+        # full local rows as stored on the nodes; sn.state carries these, not the
+        # per-class marginal, matching MATLAB getState (State.toMarginal exists
+        # precisely because sn.state{isf} is the unreduced row)
+        full_rows = {}
+
         # a state on a strict subset of stateful nodes is not an initialization; see _kb/11-conventions-and-gotchas.md (partial initial state).
         fully_initialized = self.has_init_state()
 
@@ -5438,10 +7141,25 @@ class Network(NetworkBase, Element):
                 if stateful_idx is not None and stateful_idx >= 0 and stateful_idx < len(state):
                     # Check if this node had setState() called explicitly
                     explicitly_set = fully_initialized and getattr(node, '_state_explicitly_set', False)
-                    # Get node state
-                    node_state = node.get_state() if hasattr(node, 'get_state') else node._state if hasattr(node, '_state') else None
+                    # Get node state. A PARTIAL state is dropped whole, as
+                    # MATLAB drops it: getState runs initDefault when
+                    # hasInitState is false, so the default marking answers and
+                    # the rows that happen to be set are not mixed into it.
+                    # Copying them left Q1=2 with the reference station emptied
+                    # to 0, a third reading of the same model beside MATLAB's
+                    # (Think=2, Q1=0) and the C++ reader's (Think=2, Q1=2).
+                    # A PAS placement survives it, exactly as initDefault.m keeps
+                    # the user row (its `hasUser` branch) while defaulting every
+                    # other station: the ordering is a required input there, not
+                    # a default, and dropping it raises the refusal instead.
+                    keep_row = fully_initialized or self._is_declared_state_node(node)
+                    node_state = None
+                    if keep_row:
+                        node_state = node.get_state() if hasattr(node, 'get_state') else node._state if hasattr(node, '_state') else None
                     if node_state is not None:
                         node_state = np.asarray(node_state).flatten()
+                        if node_state.size:
+                            full_rows[stateful_idx] = node_state.copy()
                         if explicitly_set:
                             # Use the full state as-is (including zeros)
                             for k in range(min(nclasses, len(node_state))):
@@ -5502,16 +7220,49 @@ class Network(NetworkBase, Element):
                         if 0 <= stateful_idx < len(state):
                             state[stateful_idx][r] = placed[ist, r]
 
-        # per-class marginal counts recomputed after init so sn.state matches MATLAB's State.toMarginal inside getStruct/getState.
-        state_marginal = getattr(self, '_state_marginal', None)
-        if state_marginal is not None and stationToStateful is not None:
+        # sn.state{isf} is the FULL local row (buffer order, server phases), never
+        # the per-class marginal: State.toMarginal reduces it on demand, and the
+        # CTMC seed lookup matches it against a row of sn.space. Storing the
+        # marginal here made that lookup fail on every ordered-buffer station, which
+        # silently skipped the reachability pruning and left a reducible generator
+        # to be split equally across its recurrent classes. See _kb/11.
+        if stationToStateful is not None:
+            from ..api.state.marginal import fromMarginal
             nstations = len(self._stations) if hasattr(self, '_stations') else 0
-            marginal_2d = state_marginal.reshape(nstations, nclasses) if len(state_marginal) == nstations * nclasses else None
-            if marginal_2d is not None:
-                for ist in range(nstations):
-                    isf = int(stationToStateful[ist])
-                    if isf >= 0 and isf < len(state):
-                        state[isf] = marginal_2d[ist, :].copy()
+            stationToNode = getattr(self._sn, 'stationToNode', None)
+            stationToNode = np.asarray(stationToNode).flatten() if stationToNode is not None else None
+            sched = getattr(self._sn, 'sched', None)
+            for ist in range(nstations):
+                isf = int(stationToStateful[ist])
+                if isf < 0 or isf >= len(state):
+                    continue
+                if isf in full_rows:
+                    state[isf] = full_rows[isf]
+                    continue
+                # No row on the node: the model was never initialized, so expand the
+                # placement marginal the way initDefault would. PAS is excluded because
+                # its ordering is a required input rather than a default -- expanding it
+                # would fabricate the placement that picks the recurrent component, and
+                # silence the refusal that must be raised instead.
+                if stationToNode is None or ist >= len(stationToNode):
+                    continue
+                sched_i = (sched.get(ist) if hasattr(sched, 'get') else
+                           (sched[ist] if sched is not None else None))
+                if sched_i is not None and sched_i == SchedStrategy.PAS:
+                    continue
+                # Only the seed row is kept, so ask for it alone: enumerating the
+                # whole local space here is binomial in the population and
+                # exhausts memory before any solver gate can price the chain.
+                try:
+                    space_i = fromMarginal(self._sn, int(stationToNode[ist]),
+                                           state[isf], top_row_only=True)
+                except Exception:
+                    continue
+                if space_i is None:
+                    continue
+                space_i = np.atleast_2d(np.asarray(space_i, dtype=float))
+                if space_i.size:
+                    state[isf] = space_i[0, :].copy()
 
         self._sn.state = state
 
@@ -5627,7 +7378,7 @@ class Network(NetworkBase, Element):
         nclasses = len(self._classes)
         nstations = len(self._stations)
 
-        # initial marginal: all closed jobs at reference station, spilling over other stations if its capacity is < N; Place-referenced classes keep all-at-ref (SPN tokens).
+        # initial marginal: all closed jobs at reference station, spilling to others if capacity < N; Place-referenced classes keep all-at-ref (SPN tokens).
         n0 = np.zeros((nstations, nclasses))
         sn = self.get_struct()
         classcap = sn.classcap if getattr(sn, 'classcap', None) is not None \
@@ -5801,22 +7552,7 @@ class Network(NetworkBase, Element):
                 # Get node index for this station
                 node_idx = self._nodes.index(station) if station in self._nodes else i
 
-                # a closed PAS station with a nonempty swap graph and >1 initial job has a reducible generator; initial placement is a required input, not a fabricated default. See _kb/11-conventions-and-gotchas.md (closed PAS ordering).
-                sched_name = getattr(station.get_sched_strategy(), 'name', None) \
-                    if hasattr(station, 'get_sched_strategy') else None
-                if sched_name == 'PAS' and np.sum(n_row) > 1:
-                    sg = None
-                    if sn.nodeparam is not None and node_idx in sn.nodeparam \
-                            and isinstance(sn.nodeparam[node_idx], dict):
-                        sg = sn.nodeparam[node_idx].get('swapGraph')
-                    has_swap = sg is not None and np.any(np.asarray(sg, dtype=float) != 0)
-                    is_closed = any(np.isfinite(getattr(jc, '_njobs', np.inf))
-                                    for jc in self._classes)
-                    if has_swap and is_closed:
-                        raise RuntimeError(
-                            "A closed pass-and-swap station with a non-empty swapping graph "
-                            "requires an explicit initial job placement. Call setState on the "
-                            "station with the ordered class list (oldest first) before solving.")
+                self._assert_pas_placement_given(sn, station, node_idx, n_row)
 
                 # Generate state space for this station
                 # Use fromMarginalAndStarted if started jobs specified, otherwise fromMarginal
@@ -5825,27 +7561,7 @@ class Network(NetworkBase, Element):
                 else:
                     state_space = fromMarginal(sn, node_idx, n_row)
 
-                if state_space is not None and len(state_space) > 0:
-                    # Set state space on the station
-                    if hasattr(station, 'set_state_space'):
-                        station.set_state_space(state_space)
-
-                    # Set state prior: first state has probability 1
-                    if hasattr(station, 'setStatePrior'):
-                        if len(state_space) == 1:
-                            station.setStatePrior(np.array([1.0]))
-                        else:
-                            # Multiple states: first state gets probability 1
-                            prior = np.zeros(len(state_space))
-                            prior[0] = 1.0
-                            station.setStatePrior(prior)
-
-                    # Set current state to first state in space
-                    station.set_state(state_space[0])
-                else:
-                    # Fallback to simple state generation
-                    state_vec = self._state_from_marginal_and_started(station, n_row, s_row)
-                    station.set_state(state_vec)
+                self._assign_station_state(station, state_space, n_row, s_row)
 
         self._has_state = True
         self._reset_struct()
@@ -5853,29 +7569,232 @@ class Network(NetworkBase, Element):
     # PascalCase alias
     initFromMarginalAndStarted = init_from_marginal_and_started
 
-    def init_from_marginal(self, n) -> None:
+    def init_from_marginal_and_running(self, n, s, options=None) -> None:
+        """
+        Initialize network state from marginal queue lengths and RUNNING jobs.
+
+        Mirrors MATLAB ``@MNetwork/initFromMarginalAndRunning``. It is not
+        ``initFromMarginalAndStarted``: 'started' counts the jobs that have
+        BEGUN service (so a preempted job still counts), while 'running' counts
+        the jobs holding a server right now, which is what a load-dependent or
+        multiserver station needs to reproduce a mid-service snapshot.
+
+        Args:
+            n: Marginal queue lengths (nstations x nclasses, or nnodes rows);
+                n[i][r] is the number of jobs of class r at station i.
+            s: Running jobs, same shape as n.
+            options: unused, accepted for MATLAB call compatibility.
+
+        Raises:
+            ValueError: if the pair (n, s) is not a valid state of this model,
+                or if a stateful node ends up with no state.
+        """
+        from ..api.state.marginal import fromMarginalAndRunning
+        from .state import State
+
+        n = np.atleast_2d(np.asarray(n, dtype=float))
+        s = np.atleast_2d(np.asarray(s, dtype=float))
+        sn = self.getStruct()
+
+        nstations = len(self._stations)
+        nnodes = len(self._nodes)
+        if nstations < nnodes:
+            # A row per STATION or a row per NODE both reach here; the state
+            # generator is node-indexed, so a station-indexed matrix is lifted.
+            if n.shape[0] == nstations:
+                n_nodes = np.zeros((nnodes, n.shape[1]))
+                s_nodes = np.zeros((nnodes, s.shape[1]))
+                for ist in range(nstations):
+                    ind = int(np.asarray(sn.stationToNode).ravel()[ist])
+                    n_nodes[ind, :] = n[ist, :]
+                    s_nodes[ind, :] = s[ist, :]
+                n_by_node, s_by_node = n_nodes, s_nodes
+            elif n.shape[0] == nnodes:
+                n_by_node, s_by_node = n, s
+            else:
+                raise ValueError(
+                    'The supplied matrix of marginal states does not have the '
+                    'correct number of rows. One either per station or per node.')
+        else:
+            n_by_node, s_by_node = n, s
+
+        if not State.isValid(sn, n, s):
+            raise ValueError('Initial state is not valid.')
+
+        nclasses = len(self._classes)
+        self._state_marginal = np.asarray(
+            [n_by_node[self._nodes.index(st), :nclasses] if st in self._nodes
+             else np.zeros(nclasses) for st in self._stations], dtype=float).flatten()
+
+        for i, station in enumerate(self._stations):
+            if not hasattr(station, 'set_state'):
+                continue
+            node_idx = self._nodes.index(station) if station in self._nodes else i
+            n_row = n_by_node[node_idx, :nclasses]
+            s_row = s_by_node[node_idx, :nclasses]
+            self._assert_pas_placement_given(sn, station, node_idx, n_row)
+            state_i = fromMarginalAndRunning(sn, node_idx, n_row, s_row)
+            if state_i is None or len(np.atleast_2d(state_i)) == 0:
+                raise ValueError('Invalid state assignment for station %d' % i)
+            self._assign_station_state(station, state_i, n_row, s_row)
+
+        self._has_state = True
+        self._reset_struct()
+
+    initFromMarginalAndRunning = init_from_marginal_and_running
+
+    def init_from_avg_qlen(self, AvgQLen) -> None:
+        """
+        Initialize the state from mean queue lengths, rounded to integers.
+
+        Mirrors MATLAB ``@MNetwork/initFromAvgQLen``. Rounding each entry
+        independently can overshoot the closed population -- round([0.5,0.5])
+        is [1,1] -- so a class whose rounded total exceeds its mean total gives
+        one job back at its fullest station. A marginal that still does not
+        validate falls back to the default initialization, as MATLAB's does.
+
+        Args:
+            AvgQLen: mean queue lengths (nstations x nclasses).
+        """
+        AvgQLen = np.atleast_2d(np.asarray(AvgQLen, dtype=float))
+        n = np.round(AvgQLen)
+        for r in range(AvgQLen.shape[1]):
+            # error at most by 1
+            if n[:, r].sum() > AvgQLen[:, r].sum():
+                i = int(np.argmax(n[:, r]))
+                n[i, r] -= 1
+        try:
+            self.init_from_marginal(n)
+        except Exception:
+            self.initDefault()
+
+    initFromAvgQLen = init_from_avg_qlen
+
+    def init_from_avg_table_qlen(self, AvgTable) -> None:
+        """
+        Initialize the state from the QLen column of an average table.
+
+        Mirrors MATLAB ``@MNetwork/initFromAvgTableQLen``: the column is stored
+        class-major, so it reshapes to (nclasses, nstations) and transposes.
+
+        Args:
+            AvgTable: a DataFrame carrying a 'QLen' column, as getAvgTable returns.
+        """
+        qlen = np.asarray(AvgTable['QLen'], dtype=float)
+        QN = qlen.reshape(len(self._classes), len(self._stations)).T
+        self.init_from_avg_qlen(QN)
+
+    initFromAvgTableQLen = init_from_avg_table_qlen
+
+    def init_from_marginal(self, n, options=None) -> None:
         """
         Initialize network state from marginal queue lengths only.
 
-        This is equivalent to calling init_from_marginal_and_started with
-        a zero matrix for started jobs.
+        Mirrors MATLAB ``@MNetwork/initFromMarginal``, which is NOT
+        ``initFromMarginalAndStarted`` with a zero started matrix: it validates
+        the marginal first, and it admits a PURPOSELY FRACTIONAL one.
+
+        A fractional row is a fluid initial condition, and it is kept as the
+        state verbatim. Routing it through the discrete state-space generator
+        instead truncates it per station (``astype(int)``), which silently DROPS
+        JOBS: SolverENV hands a fluid stage the fractional Qentry, so a closed
+        model of 5 jobs was written out holding 4, and MATLAB then refused the
+        document with "Chain 1 is initialized with an incorrect number of jobs".
 
         Args:
             n: Marginal queue lengths. Can be:
                - 1D list/array with one value per station (single class)
                - 2D list/array (nstations x nclasses)
         """
-        n = np.atleast_2d(n)
+        from ..api.state.marginal import fromMarginal
+        from ..constants import GlobalConstants
+        from .state import State
+
+        n = np.atleast_2d(np.asarray(n, dtype=float))
+
+        nstations = len(self._stations)
+        nclasses = len(self._classes)
 
         # Handle 1D input (single class - vector of length nstations)
-        if n.shape[0] == 1 and len(self._stations) > 1:
+        if n.shape[0] == 1 and nstations > 1:
             # If shape is (1, nstations), transpose to (nstations, 1)
             n = n.T
+        if n.shape[1] < nclasses:
+            n = np.hstack([n, np.zeros((n.shape[0], nclasses - n.shape[1]))])
 
-        # Create zero started matrix
-        s = np.zeros_like(n)
+        sn = self.getStruct()
 
-        self.init_from_marginal_and_started(n, s)
+        # One recovery attempt, then reject, exactly as MATLAB does: a marginal
+        # that is not a state of this network is a caller error, and carrying it
+        # silently produces a model whose chain populations are not its own.
+        if not State.isValid(sn, n, None):
+            n = np.round(n)
+            if not State.isValid(sn, n, None):
+                raise ValueError(
+                    "Initial state not contained in the state space and not "
+                    "recoverable by rounding.")
+
+        self._state_marginal = n[:nstations, :nclasses].flatten()
+
+        for i, station in enumerate(self._stations):
+            if not hasattr(station, 'set_state'):
+                continue
+            node_idx = self._nodes.index(station) if station in self._nodes else i
+            n_row = n[i, :nclasses]
+            self._assert_pas_placement_given(sn, station, node_idx, n_row)
+            if np.max(np.abs(n_row - np.round(n_row))) < GlobalConstants.CoarseTol:
+                state_space = fromMarginal(sn, node_idx, np.round(n_row))
+            else:
+                # Purposely fractional, e.g. a fluid solver initialization
+                state_space = np.atleast_2d(n_row)
+            self._assign_station_state(station, state_space, n_row,
+                                       np.zeros(nclasses))
+
+        self._has_state = True
+        self._reset_struct()
+
+    def _assert_pas_placement_given(self, sn, station, node_idx, n_row) -> None:
+        """A closed PAS station with a nonempty swap graph and >1 initial job has
+        a reducible generator; initial placement is a required input, not a
+        fabricated default. See _kb/11-conventions-and-gotchas.md (closed PAS
+        ordering).
+        """
+        sched_name = getattr(station.get_sched_strategy(), 'name', None) \
+            if hasattr(station, 'get_sched_strategy') else None
+        if sched_name != 'PAS' or np.sum(n_row) <= 1:
+            return
+        sg = None
+        if sn.nodeparam is not None and node_idx in sn.nodeparam \
+                and isinstance(sn.nodeparam[node_idx], dict):
+            sg = sn.nodeparam[node_idx].get('swapGraph')
+        has_swap = sg is not None and np.any(np.asarray(sg, dtype=float) != 0)
+        is_closed = any(np.isfinite(getattr(jc, '_njobs', np.inf))
+                        for jc in self._classes)
+        if has_swap and is_closed:
+            raise RuntimeError(
+                "A closed pass-and-swap station with a non-empty swapping graph "
+                "requires an explicit initial job placement. Call setState on the "
+                "station with the ordered class list (oldest first) before solving.")
+
+    def _assign_station_state(self, station, state_space, n_row, s_row) -> None:
+        """Install a station's state space, its prior and its current state.
+
+        The three are one unit: initDefault, initFromMarginal and
+        initFromMarginalAndStarted all set them together, and a node carrying
+        any two of them is not a state any solver can start from.
+        """
+        if state_space is not None and len(state_space) > 0:
+            if hasattr(station, 'set_state_space'):
+                station.set_state_space(state_space)
+            if hasattr(station, 'setStatePrior'):
+                prior = np.zeros(len(state_space))
+                prior[0] = 1.0
+                station.setStatePrior(prior)
+            station.set_state(state_space[0])
+        else:
+            # Fallback to simple state generation
+            station.set_state(
+                self._state_from_marginal_and_started(station, n_row, s_row))
 
     # PascalCase alias
     initFromMarginal = init_from_marginal
@@ -6322,7 +8241,7 @@ class Network(NetworkBase, Element):
 
         References:
             MATLAB: matlab/src/lang/JNetwork.m
-            Java: jar/src/main/kotlin/jline/lang/Network.java
+            Java: jar/src/main/java/jline/lang/Network.java
         """
         from .nodes import Queue, Delay
         from .classes import ClosedClass
@@ -6419,7 +8338,7 @@ class Network(NetworkBase, Element):
 
         References:
             MATLAB: matlab/src/lang/JNetwork.m
-            Java: jar/src/main/kotlin/jline/lang/Network.java
+            Java: jar/src/main/java/jline/lang/Network.java
         """
         # Convert to numpy arrays
         D = np.atleast_2d(D)
@@ -6482,7 +8401,7 @@ class Network(NetworkBase, Element):
 
         References:
             MATLAB: matlab/src/lang/JNetwork.m
-            Java: jar/src/main/kotlin/jline/lang/Network.java
+            Java: jar/src/main/java/jline/lang/Network.java
         """
         D = np.atleast_2d(D)
         M = D.shape[0]
@@ -6550,7 +8469,7 @@ class Network(NetworkBase, Element):
 
         References:
             MATLAB: matlab/src/lang/JNetwork.m
-            Java: jar/src/main/kotlin/jline/lang/Network.java
+            Java: jar/src/main/java/jline/lang/Network.java
         """
         D = np.atleast_2d(D)
         M = D.shape[0]
@@ -7047,6 +8966,101 @@ class Network(NetworkBase, Element):
 
         return model
 
+    @staticmethod
+    def cluster_mixed(lambda_rates: np.ndarray, N: np.ndarray, Z: np.ndarray,
+                      D: np.ndarray, strategies: List, S: Optional[np.ndarray] = None,
+                      dispatching: 'RoutingStrategy' = None) -> 'Network':
+        """
+        Create a mixed cluster network sharing dispatcher and servers between
+        open and closed classes: open classes flow Source -> Dispatcher ->
+        Servers -> Sink, closed classes cycle Think -> Dispatcher -> Servers ->
+        Think.
+
+        Classes are ordered open first, so columns 0..Ro-1 of D refer to the
+        open classes and columns Ro..Ro+Rc-1 to the closed ones.
+
+        Args:
+            lambda_rates: Per-class arrival rates of the open classes (Ro,)
+            N: Per-class population of the closed classes (Rc,)
+            Z: Per-class think times of the closed classes (Rc,)
+            D: Service time matrix (M, Ro+Rc)
+            strategies: Per-server scheduling strategies (length M)
+            S: Optional per-server multiplicity (M,)
+            dispatching: Dispatching policy (defaults to RAND)
+        """
+        from .nodes import Source, Queue, Sink, Delay, Router
+        from .classes import OpenClass, ClosedClass
+        from ..distributions import Exp, Disabled
+
+        if dispatching is None:
+            dispatching = RoutingStrategy.RAND
+
+        D = np.atleast_2d(D)
+        M, R = D.shape
+        lambda_arr = np.atleast_1d(np.asarray(lambda_rates, dtype=float).reshape(-1))
+        N = np.atleast_1d(np.asarray(N).reshape(-1))
+        Z = np.atleast_1d(np.asarray(Z, dtype=float).reshape(-1))
+        Ro, Rc = lambda_arr.size, N.size
+        if R != Ro + Rc:
+            raise ValueError("D must have len(lambda_rates)+len(N) columns")
+        if Z.size != Rc:
+            raise ValueError("N and Z must have the same length")
+
+        if S is None:
+            S = np.ones(M, dtype=int)
+        else:
+            S = np.asarray(S).reshape(-1)
+
+        model = Network('Cluster')
+
+        source = Source(model, 'Source')
+        think = Delay(model, 'Think')
+        dispatcher = Router(model, 'Dispatcher')
+        servers = []
+        for i in range(M):
+            q = Queue(model, f'Station{i+1}', strategies[i])
+            if int(S[i]) > 1:
+                q.set_number_of_servers(int(S[i]))
+            servers.append(q)
+        sink = Sink(model, 'Sink')
+
+        jobclasses = []
+        for r in range(Ro):
+            cls = OpenClass(model, f'Class{r+1}', 0)
+            jobclasses.append(cls)
+            source.set_arrival(cls, Exp.fit_mean(1.0 / float(lambda_arr[r])))
+            think.set_service(cls, Disabled())
+            for i in range(M):
+                servers[i].set_service(cls, Exp.fit_mean(D[i, r]))
+        for c in range(Rc):
+            r = Ro + c
+            cls = ClosedClass(model, f'Class{r+1}', int(N[c]), think, 0)
+            jobclasses.append(cls)
+            think.set_service(cls, Exp.fit_mean(float(Z[c])))
+            for i in range(M):
+                servers[i].set_service(cls, Exp.fit_mean(D[i, r]))
+
+        model.add_link(source, dispatcher)
+        model.add_link(think, dispatcher)
+        for q in servers:
+            model.add_link(dispatcher, q)
+            model.add_link(q, sink)
+            model.add_link(q, think)
+
+        # Class-specific exits: the servers feed the sink for open classes and
+        # the delay for closed ones, so the shared arcs carry explicit
+        # per-class probabilities.
+        for r, cls in enumerate(jobclasses):
+            dispatcher.set_routing(cls, dispatching)
+            is_open = 1.0 if r < Ro else 0.0
+            for q in servers:
+                q.set_prob_routing(cls, sink, is_open)
+                q.set_prob_routing(cls, think, 1.0 - is_open)
+            source.set_prob_routing(cls, dispatcher, is_open)
+            think.set_prob_routing(cls, dispatcher, 1.0 - is_open)
+
+        return model
+
     # Snake_case aliases
     tandem_ps_inf = tandemPsInf
     tandem_ps = tandemPs
@@ -7062,6 +9076,17 @@ class Network(NetworkBase, Element):
     clusterPs = cluster_ps
     clusterFcfs = cluster_fcfs
     clusterClosed = cluster_closed
+    clusterMixed = cluster_mixed
 
 
 __all__ = ['Network']
+
+
+def _sdr_same(a, b):
+    """Structural equality of two SDR declarations, ignoring the entry node."""
+    import numpy as _np
+    keys = ('departure', 'branch', 'entryOf', 'departureOf', 'level', 'C')
+    for k in keys:
+        if a.get(k) != b.get(k):
+            return False
+    return _np.array_equal(_np.asarray(a['d']), _np.asarray(b['d']))

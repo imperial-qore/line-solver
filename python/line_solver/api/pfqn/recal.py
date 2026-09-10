@@ -62,7 +62,7 @@ def pfqn_recal(L: np.ndarray, N: np.ndarray,
 
     # Detect and consolidate replicated stations
     result = pfqn_unique(L)
-    L = result.L
+    L = result.L_unique
     mapping = result.mapping
 
     M = L.shape[0]

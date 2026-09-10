@@ -4,6 +4,7 @@ Mirror of matlab/src/solvers/{NC,MVA}/solver_{nc,mva}_retrieval_analyzer.m and
 java/.../Solver_{nc,mva}_retrieval_analyzer.java.
 """
 import time
+import warnings
 from types import SimpleNamespace
 
 import numpy as np
@@ -12,6 +13,7 @@ from ..sn import NodeType
 from .cache_retrieval_inputs import cache_retrieval_inputs
 from .retrieval_nc import retrieval_nc
 from .retrieval_metrics import retrieval_metrics
+from .retrieval_rayint import retrieval_rayint
 from .retrieval_fpi import retrieval_fpi
 from .retrieval_fpi_latency import retrieval_fpi_latency
 
@@ -130,14 +132,68 @@ def _result(sn, inp, hit, miss, delayed, pdh, lG, latency_val, method, phit=None
 
 
 def solver_nc_retrieval_analyzer(sn, options=None):
+    """Exact delayed-hit analysis via retrieval_nc + retrieval_metrics.
+
+    Those recurrences are exponential in the item count, so ``options.method =
+    'rayint'`` selects instead the ray (WKB) approximation of ``retrieval_rayint``,
+    which is polynomial.  It applies only when every fetch station is
+    infinite-server, where the delayed-hit constant factorizes exactly as
+    ``prod_k D_k`` times the plain cache constant with access factors
+    ``gamma_{k,j}/D_k``; elsewhere it warns and falls back to the exact path.
+    """
     t0 = time.time()
     inp = cache_retrieval_inputs(sn)
     r = inp['eta'].shape[1] - 1
-    E = retrieval_nc(np.zeros(r), inp['m'], inp['lambda'], inp['eta'], inp['gamma'])
-    lG = float(np.log(E))
-    pmiss, phit, pdh = retrieval_metrics(inp['m'], inp['lambda'], inp['eta'], inp['gamma'])
+
+    method = str(getattr(options, 'method', '') or '').lower()
+    useray = method in ('rayint', 'ray')
+    if useray:
+        # The ray expansion needs the delayed-hit constant to factorize.  It does,
+        # EXACTLY, when every fetch station is infinite-server: dividing the
+        # retrieval_nc recurrence by prod_k D_k with D_k = 1 + lambda_k eta_{0,k}
+        # collapses it onto cache_erec with theta_{k,j} = gamma_{k,j}/D_k, so the
+        # delayed-hit cache IS a plain cache with fetch-inflated access factors.
+        # A queueing (PS) fetch station breaks this: the (v_s+1) multiplicity ties
+        # E(0,m) to the whole moment tower E(1_s,m), E(2_s,m), ..., and replacing it
+        # by the retrieval_fpi mean field overestimates E by 13%/140%/830% at
+        # n=6/8/10 (measured), growing with n.  Refuse rather than return a
+        # confident wrong number.
+        reason = None
+        nitems = len(inp['lambda'])
+        if r > 0 and np.any(inp['eta'][:, 1:] != 0):
+            reason = "the retrieval system has a queueing (non infinite-server) fetch station"
+        elif float(np.sum(inp['m'])) >= nitems:
+            reason = "the cache is full (sum(m) >= n), where the saddle point escapes to infinity"
+        if reason is not None:
+            warnings.warn("solver_nc_retrieval_analyzer: method 'rayint' does not apply because "
+                          "%s; falling back to the exact recurrences." % reason, RuntimeWarning)
+            useray = False
+
+    if useray:
+        # --- ray (WKB) approximation, infinite-server fetch ---
+        lam = np.asarray(inp['lambda'], dtype=float).ravel()
+        D = 1.0 + lam * np.asarray(inp['eta'], dtype=float)[:, 0]
+        theta = np.asarray(inp['gamma'], dtype=float) / D[:, None]
+        _, lGcache, rayout = retrieval_rayint(theta, inp['m'])
+        lG = float(np.sum(np.log(D)) + lGcache)
+
+        # Same saddle as the constant, so the ratios are consistent with lG:
+        # pi_{i,j} = theta_{i,j} xi_j / (1 + sum_l theta_{i,l} xi_l), and the
+        # out-of-cache mass 1 - sum_j pi_{i,j} splits between a true miss (weight 1)
+        # and an outstanding fetch (weight lambda_i eta_{0,i}) in proportion 1:D_i-1.
+        txi = theta * rayout.xi
+        phit = (txi / (1.0 + txi.sum(axis=1))[:, None]).T
+        pmiss = (1.0 - phit.sum(axis=0)) / D
+        pdh = (lam * np.asarray(inp['eta'], dtype=float)[:, 0] * pmiss)[None, :]
+        used = "rayint"
+    else:
+        E = retrieval_nc(np.zeros(r), inp['m'], inp['lambda'], inp['eta'], inp['gamma'])
+        lG = float(np.log(E))
+        pmiss, phit, pdh = retrieval_metrics(inp['m'], inp['lambda'], inp['eta'], inp['gamma'])
+        used = "exact"
+
     hit, miss, delayed = _agg(inp, pmiss, phit, pdh)
-    res = _result(sn, inp, hit, miss, delayed, pdh, lG, np.nan, "exact", phit=phit, pmiss=pmiss)
+    res = _result(sn, inp, hit, miss, delayed, pdh, lG, np.nan, used, phit=phit, pmiss=pmiss)
     res.runtime = time.time() - t0
     return res
 

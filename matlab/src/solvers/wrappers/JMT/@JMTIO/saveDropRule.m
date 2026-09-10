@@ -33,7 +33,7 @@ for r=1:numOfClasses
     subParameterNode.setAttribute('name', 'dropRule');
     
     valueNode2 = simDoc.createElement('value');    
-    valueNode2.appendChild(simDoc.createTextNode(DropStrategy.toText(sn.droprule(i,r))));     
+    valueNode2.appendChild(simDoc.createTextNode(jmtDropStrategyText(sn, i, r)));     
     subParameterNode.appendChild(valueNode2);
     schedStrategyNode.appendChild(subParameterNode);
     section.appendChild(schedStrategyNode);

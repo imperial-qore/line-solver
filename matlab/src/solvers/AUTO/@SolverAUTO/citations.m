@@ -7,20 +7,15 @@ function entries = citations(self)
 %
 % SolverAUTO performs no numerical work of its own, so it cites only how the
 % solver was chosen. The algorithms that produced the numbers belong to the
-% delegate: ask it with getSolver().citations() when the run has one. The
-% default heuristic policy is hand-written and has no reference; the learned
-% policy ('method','tree') does.
+% delegate: ask it with getSolver().citations() when the run has one. Every
+% selection policy is hand-written and has no reference, so the list is empty.
 %
 % Copyright (c) 2012-2026, Imperial College London
 % All rights reserved.
 
-tokens = {};
-if strcmp(self.selectionMode, 'tree')
-    tokens{end+1} = 'auto.tree';
-    tokens{end+1} = 'cart';
-end
+methodNames = {};
 
-entries = line_citations(tokens);
+entries = line_citations(methodNames);
 
 if nargout == 0
     if isempty(entries)

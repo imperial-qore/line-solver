@@ -64,6 +64,53 @@ public class ClusterTest {
     }
 
     @Test
+    void testMixedFarmTopology() {
+        Network model = new Cluster().setNumStations(2).setServiceRate(2.0)
+                .setMixed(new double[]{0.5}, new int[]{3}, new double[]{1.0})
+                .setScheduling(SchedStrategy.PS)
+                .build();
+
+        // Source + Think + Dispatcher + 2 servers + Sink = 6 nodes
+        assertEquals(6, model.getNumberOfNodes());
+        assertEquals(2, model.getNumberOfClasses());
+        assertNotNull(model.getNodeByName("Source"));
+        assertNotNull(model.getNodeByName("Think"));
+        assertNotNull(model.getNodeByName("Dispatcher"));
+        assertNotNull(model.getNodeByName("Sink"));
+        // Open classes come first in the class order.
+        assertTrue(model.getClasses().get(0) instanceof jline.lang.OpenClass);
+        assertTrue(model.getClasses().get(1) instanceof jline.lang.ClosedClass);
+    }
+
+    @Test
+    void testMixedFarmBalancesFlow() {
+        // The open class leaves through the sink at its arrival rate and the
+        // closed population is conserved between the delay and the servers.
+        Network model = new Cluster().setNumStations(2)
+                .setMixed(new double[]{0.5}, new int[]{3}, new double[]{1.0})
+                .setServiceRates(new double[][]{{2.0, 1.5}, {2.0, 1.5}})
+                .setScheduling(SchedStrategy.PS)
+                .build();
+        NetworkAvgTable table = new SolverMVA(model).getAvgTable();
+
+        // Rows: Source/Class1, Think/Class2, Station1/Class1, Station1/Class2, ...
+        double openTput = table.getTput().get(2) + table.getTput().get(4);
+        assertEquals(0.5, openTput, 1e-6, "open class throughput must equal lambda");
+
+        double closedJobs = table.getQLen().get(1) + table.getQLen().get(3)
+                + table.getQLen().get(5);
+        assertEquals(3.0, closedJobs, 1e-6, "closed population must be conserved");
+    }
+
+    @Test
+    void testMixedFarmRejectsSingleFamily() {
+        assertThrows(IllegalArgumentException.class, () ->
+                new Cluster().setMixed(new double[]{}, new int[]{3}, new double[]{1.0}));
+        assertThrows(IllegalArgumentException.class, () ->
+                new Cluster().setMixed(new double[]{0.5}, new int[]{}, new double[]{}));
+    }
+
+    @Test
     void testAllDispatchingPoliciesAccepted() {
         // KCHOICES is rejected by jline.lang.OutputStrategy, so it is excluded.
         RoutingStrategy[] policies = {

@@ -83,7 +83,7 @@ end
 function cite = ackCitation(toolName)
 % One-line reference to the canonical paper of each tool. It describes the same
 % work as the BibTeX entry returned by LINE_CITATION (keys BerCS07 and
-% fran.ea09 in doc/latex/biblio.bib), which is where the citation key belongs:
+% FraAWDD09 in doc/latex/biblio.bib), which is where the citation key belongs:
 % the printed line is for the reader, not for a .bib file.
 switch upper(toolName)
     case 'JMT'

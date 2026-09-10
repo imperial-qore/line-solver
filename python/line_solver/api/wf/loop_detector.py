@@ -8,7 +8,7 @@ iteration structures in business process analysis and workflow mining.
 Based on AUTO_Loop_Detector.m from the MDN toolbox.
 
 References:
-    Original Kotlin: jar/src/main/kotlin/jline/api/wf/Wf_loop_detector.kt
+    Original JAR: jar/src/main/java/jline/api/wf/Wf_loop_detector.java
 """
 
 import numpy as np

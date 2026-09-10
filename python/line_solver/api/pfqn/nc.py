@@ -12,8 +12,12 @@ References:
 
 import numpy as np
 from math import log, exp, factorial, lgamma, ldexp
+# largest log-scale value whose exponential is still a finite double
+_LOG_DBL_MAX = log(np.finfo(float).max)
 from typing import Tuple, Dict, Any
 from functools import lru_cache
+import itertools
+from math import comb
 
 
 def _factln(n: float) -> float:
@@ -164,32 +168,32 @@ def pfqn_ca(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None
 
     # see _kb/03-api-layer.md for rationale
     Nt = int(N.sum())
-    lGest = float('-inf')
-    for i in range(M):
-        t = 0.0
-        ok = True
-        for r in range(R):
-            if N[r] > 0:
-                if L[i, r] > 0:
-                    t += N[r] * log(L[i, r])
-                else:
-                    ok = False
-                    break
-        if ok:
-            lGest = max(lGest, t)
-    if np.any(Z > 0):  # all jobs at the delay
-        t = 0.0
-        ok = True
-        for r in range(R):
-            if N[r] > 0:
-                Zr = float(Z[r])
-                if Zr > 0:
-                    t += N[r] * log(Zr) - _factln(N[r])
-                else:
-                    ok = False
-                    break
-        if ok:
-            lGest = max(lGest, t)
+    # Each class independently takes whichever station -- or the delay -- gives it
+    # its largest factor. The mixed state so named has term at least the product of
+    # those factors, because a station holding several classes carries a multinomial
+    # coefficient of at least one, so this is still a LOWER bound on log G. It
+    # dominates the per-configuration maximum it replaces, which asked ONE station
+    # (or the delay) to hold every class at once and so dropped the delay entirely
+    # as soon as a single class had no think time. That collapse is what made the
+    # scaling scale UP: on L=[1e-9,1], N=[99,1], Z=[1,0] the old estimate was the
+    # all-at-the-queue -2051.6 against a true log G of -359.1, giving kscale=-30,
+    # and Z/2^-30 = 1.07e9 overflowed the delay column Z^n/n! at n=[40,0].
+    lGest = 0.0
+    for r in range(R):
+        if N[r] <= 0:
+            continue
+        best = float('-inf')
+        for i in range(M):
+            if L[i, r] > 0:
+                best = max(best, N[r] * log(L[i, r]))
+        Zr = float(Z[r])
+        if Zr > 0:
+            best = max(best, N[r] * log(Zr) - _factln(N[r]))
+        if not np.isfinite(best):
+            # no station and no delay can hold class r, so G(N) is exactly zero
+            lGest = float('-inf')
+            break
+        lGest += best
     if not np.isfinite(lGest):
         kscale = 0
     else:
@@ -237,7 +241,12 @@ def pfqn_ca(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None
     else:
         lGn = float('-inf')
     # see _kb/03-api-layer.md for rationale
-    Gn = float(np.ldexp(G_final, int(Nt * kscale)))
+    # Undoing the scaling can leave the double range; lGn is then the only usable
+    # form, so report the linear-scale G as infinite rather than overflowing ldexp.
+    if lGn > _LOG_DBL_MAX:
+        Gn = float('inf')
+    else:
+        Gn = float(np.ldexp(G_final, int(Nt * kscale)))
 
     return Gn, lGn
 
@@ -296,6 +305,22 @@ def pfqn_is(L, N, Z=None, options=None):
     return res.G, res.lG
 
 
+def _nc_G(lG: float) -> float:
+    """exp(lG) for the un-logged constant, saturating instead of raising.
+
+    math.exp raises OverflowError above ~709, so a perfectly good lG (862 nats
+    on a 12-station model with N = 1100) turned a correct result into an
+    exception. G simply does not fit a double there; inf is the honest value and
+    lG carries the answer.
+    """
+    if not np.isfinite(lG):
+        return 0.0
+    try:
+        return exp(lG)
+    except OverflowError:
+        return float('inf')
+
+
 def pfqn_nc_resolved_method(method: str) -> str:
     """The algorithm pfqn_nc actually runs for METHOD.
 
@@ -330,18 +355,26 @@ def pfqn_nc(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
         method: Algorithm to use:
             - 'ca', 'exact': Convolution algorithm
             - 'default': Auto-select based on problem size
-            - 'le': Leading eigenvalue asymptotic
+            - 'le': Logistic expansion (Cas17 eq. 34 as published)
+            - 'ble': Logistic expansion plus the empirical eps->0 correction (BLE)
+            - 'aghq': adaptive Gauss-Hermite over the simplex; q=1 is 'le'
             - 'cub': Controllable upper bound
             - 'imci': Importance sampling Monte Carlo integration
-            - 'panacea': PANACEA asymptotic expansion (load-independent)
+            - 'pana': PANACEA asymptotic expansion (load-independent)
             - 'propfair': Proportionally fair allocation
+            - 'rgf': Recursion by generating functions (grouped stations; multiclass
+              by iterated residues, with think times)
             - 'mmint2': Gauss-Legendre quadrature
             - 'gleint': Gauss-Legendre integration
             - 'sampling': Monte Carlo sampling
             - 'kt': Knessl-Tier expansion
+            - 'bkt': Knessl-Tier expansion minus the Stirling remainder of each Laplaced class (BKT)
+            - 'lekt': the estimator 'ble' and 'bkt' both compute, on the cheaper side
             - 'comom': Conditional moments
             - 'rd': Reduction heuristic
-            - 'ls': Linearizer
+            - 'ls': Logistic sampling
+            - 'mcmc': Chen-O'Cinneide regularization (Markov chain Monte Carlo on the
+              regularized network); supplies X and Q, not a constant of its own
 
     Returns:
         Tuple (G, lG) - normalizing constant and its log
@@ -410,6 +443,11 @@ def pfqn_nc(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
     M, R = L.shape
     Ntot = int(np.sum(N))
 
+    # The algorithm the 'default' branch settles on is not derivable from the
+    # arguments alone, so it is recorded here and handed back through OPTIONS
+    # rather than through the return tuple, whose arity callers depend on.
+    resolved = {'method': method}
+
     # Dispatch to method
     def _compute_nc(L, N, Z, method):
         M, R = L.shape
@@ -422,50 +460,186 @@ def pfqn_nc(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
             # Choudhury-Leung-Whitt generating function inversion: each
             # single-server station is a multiplicity-1 queue, delay is the IS term
             return pfqn_clw(L, N, Z_row)
-        elif method == 'panacea':
+        elif method == 'ger':
+            # Residue closed form of the same generating function 'clw' inverts
+            # numerically. A class eliminated by residues enters only as a pole ORDER,
+            # so its population is free: this is the cheap route when one population
+            # dwarfs the others, and the expensive one when the classes are many, since
+            # the term count grows as C(S+M-1,M-1) per further elimination. maxterms
+            # REFUSES rather than truncating, so an oversized model errors here instead
+            # of returning a wrong lG. The solver options are deliberately not
+            # forwarded: pfqn_gerasimov's tol is a pole-merging threshold, not the
+            # iterative tolerance options.tol carries.
+            from .gerasimov import pfqn_gerasimov
+            return pfqn_gerasimov(L, N, Z_row)
+        elif method == 'pana':
             return pfqn_panacea(L, N, Z_row)
         elif method == 'propfair':
             G, lG, _ = pfqn_propfair(L, N, Z_row)
             return G, lG
+        elif method == 'divdiff':
+            # Divided-difference closed form, Casale (SIGMETRICS 2017), Eqs. (15)
+            # and (16). Load-independent single-server queues only: a think time
+            # needs the integral form of Corollary 3.4, which is not implemented.
+            # Unlike the default route below this one keeps pfqn_explicit's
+            # warnings, since a caller that named the method has no fallback.
+            from .explicit import pfqn_explicit
+            if float(np.sum(Z_row)) > 0:
+                raise ValueError("pfqn_nc: the 'divdiff' method requires a model without think "
+                                 "time, which needs the integral form of Corollary 3.4. Use "
+                                 "'ca' or 'default'.")
+            lG, G, expr, _ = pfqn_explicit(L, N)
+            resolved['method'] = 'divdiff/' + expr
+            return G, lG
+        elif method == 'rgf':
+            # Recursion by generating functions. Single class: one sequence per
+            # group of identically loaded stations (Coury-Harrison 1997, Property 1).
+            # Multiclass: iterated residues (Harrison-Coury 2002, Thm 1) with think
+            # times carried by the Bertozzi-McKenna truncation, which neither RGF
+            # paper has. That sum is ALTERNATING, so pfqn_rgfmc refuses when the
+            # cancellation leaves no significant digits rather than returning a
+            # confidently wrong lG; the exact convolution answers those, and says so.
+            from .rgf import pfqn_rgf, pfqn_rgfmc
+            if L.shape[1] > 1:
+                try:
+                    return pfqn_rgfmc(L, N, Z_row)
+                except ValueError:
+                    resolved['method'] = 'rgf/ca'
+                    return pfqn_ca(L, N, Z_row)
+            G, lG, _ = pfqn_rgf(L[:, 0], N[0], float(np.sum(Z_row)))
+            return G, lG
         elif method == 'le':
+            # pfqn_le returns (Gn, lGn): taking [0] fed Gn in as lGn and exp() overflowed
             from .asymptotic import pfqn_le
             result = pfqn_le(L, N, Z_row)
-            lG = result[0] if isinstance(result, tuple) else result
-            G = exp(lG) if np.isfinite(lG) else 0.0
+            lG = result[1] if isinstance(result, tuple) else result
+            G = _nc_G(lG)
+            return G, lG
+        elif method == 'ble':
+            # LE plus the empirical eps->0 correction; see _kb/03-api-layer.md
+            from .asymptotic import pfqn_ble
+            result = pfqn_ble(L, N, Z_row)
+            lG = result[1] if isinstance(result, tuple) else result
+            G = _nc_G(lG)
+            return G, lG
+        elif method == 'aghq':
+            # adaptive Gauss-Hermite over the simplex; q=1 would be 'le'.
+            # options.config.aghq_nodes overrides the node count; the rule costs
+            # q^(M-1) evaluations, so the default stays small.
+            from .asymptotic import pfqn_aghq
+            aghq_nodes = 3
+            cfg = getattr(options, 'config', None) if options is not None else None
+            if cfg is None and isinstance(options, dict):
+                cfg = options.get('config')
+            if cfg is not None:
+                q = cfg.get('aghq_nodes') if isinstance(cfg, dict) else getattr(cfg, 'aghq_nodes', None)
+                if q is not None:
+                    aghq_nodes = max(1, int(round(float(q))))
+            result = pfqn_aghq(L, N, Z_row, aghq_nodes)
+            lG = result[1] if isinstance(result, tuple) else result
+            G = _nc_G(lG)
             return G, lG
         elif method in ['cub', 'gm']:
             from .asymptotic import pfqn_cub
             order = int(np.ceil((Ntot - 1) / 2))
             result = pfqn_cub(L, N, Z_row, order=order, atol=1e-8)
             lG = result[1] if isinstance(result, tuple) else result
-            G = exp(lG) if np.isfinite(lG) else 0.0
+            G = _nc_G(lG)
             return G, lG
         elif method == 'is':
             # see _kb/03-api-layer.md for rationale
             return pfqn_is(L, N, Z_row, options)
+        elif method == 'mci':
+            from .asymptotic import pfqn_mci
+            # plain Monte Carlo integration: pfqn_mci defaults to the 'imci' tilt
+            result = pfqn_mci(L, N, Z_row, variant='mci')
+            lG = result[1] if isinstance(result, tuple) else result
+            G = _nc_G(lG)
+            return G, lG
         elif method == 'imci':
             from .asymptotic import pfqn_mci
+            # pfqn_mci returns (G, lG, lZ): taking [0] fed G in as lG
             result = pfqn_mci(L, N, Z_row)
-            lG = result[0] if isinstance(result, tuple) else result
-            G = exp(lG) if np.isfinite(lG) else 0.0
+            lG = result[1] if isinstance(result, tuple) else result
+            G = _nc_G(lG)
             return G, lG
         elif method in ['mmint2', 'gleint']:
             from .quadrature import pfqn_mmint2, pfqn_mmint2_gausslegendre
+            if L.shape[0] > 1:
+                # THE EMPTY CONSTANT IS THE REFERENCE'S ANSWER, NOT A WORKAROUND.
+                # pfqn_nc.m:287 has this exact arm: on more than one queueing
+                # station it warns, sets lG = [] and returns, and getAvg then
+                # renders a table of ZEROS while reporting a completed analysis.
+                # The warning is verbose-gated there and the return is NOT, which
+                # is why line_warning (verbosity-aware) sits above an
+                # unconditional return here.
+                #
+                # A zero table is a poor answer and the reference knows it. It is
+                # still the right one to reproduce, for three reasons. It is what
+                # MATLAB, the ground truth, does. The support gate no longer
+                # OFFERS this pair -- nc_method_refusal refuses it for the report
+                # -- so nobody reaches it through model.help() or SolverAUTO; only
+                # a caller naming the method does, and that caller gets what the
+                # reference gives. And the alternative is what this port did
+                # until now: quadrature on a multi-station L returned a
+                # PLAUSIBLE WRONG NUMBER (QLen 2.9037/0.6578/0.4385 against the
+                # exact 1.5548/1.6109/0.8343), which is strictly worse because
+                # nothing distinguishes it from an answer.
+                #
+                # So do not "fix" this back into a silent wrong number, and do not
+                # turn it forward into a refusal either: the run path is ruled
+                # (2026-07-25), and cpp/tests/test_nc.cpp pins the zero table.
+                from ..io.logging import line_warning
+                line_warning('pfqn_nc', 'The %s method requires a model with a delay '
+                                        'and a single queueing station.' % method)
+                return float('nan'), float('nan')
             if method == 'gleint':
                 lG, _ = pfqn_mmint2_gausslegendre(L, N, Z_row)
             else:
                 lG, _ = pfqn_mmint2(L, N, Z_row)
-            G = exp(lG) if np.isfinite(lG) else 0.0
+            G = _nc_G(lG)
             return G, lG
         elif method == 'sampling':
             from .quadrature import pfqn_mmsample2
             lG, _ = pfqn_mmsample2(L, N, Z_row)
-            G = exp(lG) if np.isfinite(lG) else 0.0
+            G = _nc_G(lG)
             return G, lG
         elif method == 'kt':
             from .kt import pfqn_kt
-            lG, _ = pfqn_kt(L, N, Z_row)
-            G = exp(lG) if np.isfinite(lG) else 0.0
+            # pfqn_kt returns (G, lG, X, Q): unpacking two names raised
+            # ValueError, so the advertised method could never run
+            G, lG = pfqn_kt(L, N, Z_row)[:2]
+            return G, lG
+        elif method == 'bkt':
+            # KT minus the exact Stirling remainder of each Laplaced class; see _kb/03-api-layer.md
+            from .kt import pfqn_bkt
+            G, lG = pfqn_bkt(L, N, Z_row)
+            return G, lG
+        elif method == 'lekt':
+            # the estimator ble and bkt both compute, on the cheaper side; see _kb/03-api-layer.md
+            from .asymptotic import pfqn_lekt
+            G, lG = pfqn_lekt(L, N, Z_row)
+            return G, lG
+        elif method == 'bk':
+            from .bk import pfqn_bk
+            G, lG = pfqn_bk(L, N, Z_row)[:2]
+            return G, lG
+        elif method == 'bkue':
+            # The uniform expansion is single chain by construction; the
+            # multichain fallback is the saddle point of the same paper, which
+            # is also how the analyzer reaches this branch when it conditions
+            # on a station population with an auxiliary class.
+            from .bk import pfqn_bk, pfqn_bkue
+            if L.shape[1] > 1:
+                G, lG = pfqn_bk(L, N, Z_row)[:2]
+            else:
+                G, lG = pfqn_bkue(L, float(N[0]), float(np.sum(Z_row)))
+            return G, lG
+        elif method in ('lc', 'lc.ue'):
+            # Algorithm 2 returns mean values, not a multichain constant; the
+            # saddle point that seeds it supplies lG on the same asymptotics
+            from .bk import pfqn_bk
+            G, lG = pfqn_bk(L, N, Z_row)[:2]
             return G, lG
         elif method == 'comom':
             # see _kb/03-api-layer.md for rationale
@@ -475,25 +649,65 @@ def pfqn_nc(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
             result = pfqn_rd(L, N, Z_row)
             # pfqn_rd returns a tuple (lGN, Cgamma)
             lG = result[0] if isinstance(result, tuple) else result.lGN
-            G = exp(lG) if np.isfinite(lG) else 0.0
+            G = _nc_G(lG)
             return G, lG
+        elif method == 'mcmc':
+            # Chen-O'Cinneide REGULARIZATION (TOMACS 8(3), 1998) estimates the RATIOS
+            # G(N-e_r)/G(N) and the queue lengths, never G, so it supplies no constant of
+            # its own. lG here is the BLE expansion and is NOT part of the paper: it
+            # cancels out of every mean value the analyzer reports, and only
+            # getProbNormConstAggr reads it. The mean values themselves are taken from
+            # pfqn_mcmc by the NC handler, which is where the simulation is run.
+            if M > 1:
+                from .asymptotic import pfqn_ble
+                _, lG = pfqn_ble(L, N, Z_row)[:2]
+            else:
+                # MATLAB reaches CoMoM-RM here. This port substitutes convolution for the
+                # same reason the 'comom' branch above does (see
+                # pfqn_nc_resolved_method): the native pfqn_comomrm is not numerically
+                # robust for R>1, and pfqn_ca is EXACT on the single-station models
+                # CoMoM-RM targets, so the substitution can only improve this lG.
+                return pfqn_ca(L, N, Z_row)
+            return _nc_G(lG), lG
         elif method == 'ls':
             from .ls import pfqn_ls
             return pfqn_ls(L, N, Z_row)
         elif method == 'nrl':
             from .laplace import pfqn_nrl
             lG = pfqn_nrl(L, N, Z_row)
-            G = exp(lG) if np.isfinite(lG) else 0.0
+            G = _nc_G(lG)
             return G, lG
         elif method == 'nrp':
             from .laplace import pfqn_nrp
             lG = pfqn_nrp(L, N, Z_row)
-            G = exp(lG) if np.isfinite(lG) else 0.0
+            G = _nc_G(lG)
+            return G, lG
+        elif method == 'nre':
+            from .nre import pfqn_nre
+            lG = pfqn_nre(L, N, Z_row)
+            G = _nc_G(lG)
             return G, lG
         elif method == 'default':
             from math import comb
-            from .asymptotic import pfqn_cub, pfqn_le
+            from .asymptotic import pfqn_cub, pfqn_le, pfqn_cub_evals, CUB_MAX_EVALS
+            # Single class and no think time: the divided-difference closed form
+            # of Casale (SIGMETRICS 2017), Eqs. (15) and (16), is exact, costs
+            # O(M^2) at any population and is evaluated in the log domain, so it
+            # neither truncates like the cubature past sum(N)~33 nor leaves the
+            # range of a double like the convolution. Demands that are exactly
+            # tied fix a multiplicity and cost nothing; demands that are close
+            # but distinct spend digits on cancellation instead, so the closed
+            # form is told to REFUSE rather than warn once it would burn half of
+            # double precision, and the general route below picks those up.
+            if M > 1 and R == 1 and float(np.sum(Z_row)) == 0:
+                from .explicit import pfqn_explicit
+                maxLossDigits = 8  # half the ~16 digits a double carries
+                lGe, Ge, expr, _ = pfqn_explicit(L, N, None, 'auto', maxLossDigits)
+                if np.isfinite(lGe):
+                    resolved['method'] = 'divdiff/' + expr
+                    return Ge, lGe
             if M > 1:
+                order = -1
                 if Ntot < 1000:
                     # CUB with order selection matching MATLAB cost budget
                     Cmax = M * R * (50 ** 3)
@@ -507,40 +721,74 @@ def pfqn_nc(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
                             totCost += nextCost
                         else:
                             break
+                # Cmax above prices neither the Grundmann-Moeller node count nor
+                # the think-time v-integration that repeats the whole rule, so the
+                # order is re-priced here and lowered until it fits the budget.
+                # Lowering the order keeps the cubature; switching to le instead
+                # would hand these models to a Laplace expansion whose mode sits
+                # on the simplex boundary when L has near-zero rows, which is
+                # exactly the flat-layer case that trips the budget.
+                while order > 0 and pfqn_cub_evals(M, order, Z_row) > CUB_MAX_EVALS:
+                    order -= 1
+                if order >= 0:
                     result = pfqn_cub(L, N, Z_row, order=order, atol=1e-8)
                     lG = result[1] if isinstance(result, tuple) else result
-                    G = exp(lG) if np.isfinite(lG) else 0.0
+                    G = _nc_G(lG)
+                    resolved['method'] = 'cub'
                     return G, lG
                 else:
-                    result = pfqn_le(L, N, Z_row)
-                    lG = result[0] if isinstance(result, tuple) else result
-                    G = exp(lG) if np.isfinite(lG) else 0.0
+                    # BLE on the default path: strictly better on lG and it
+                    # cancels in G(N-e_r)/G(N). 'le' stays the published form.
+                    from .asymptotic import pfqn_ble
+                    result = pfqn_ble(L, N, Z_row)
+                    lG = result[1] if isinstance(result, tuple) else result
+                    G = _nc_G(lG)
+                    resolved['method'] = 'ble'
+                    # Birman-Kogan Algorithm 2 supplies the MEAN VALUES here.
+                    # The caller's fallback differences lG at R+M*R reduced
+                    # populations, which on many stations is both dearer and
+                    # ~300x less accurate than the load concealment fixed point. Gated
+                    # on the station count, since load concealment is mean
+                    # field in M: see _kb/06-solver-catalog.md. The fixed point
+                    # itself runs in the NC handler, which owns X and Q.
+                    if M >= 10 and R > 1 and np.all(N >= 0) and np.sum(N) > 0:
+                        resolved['method'] = 'ble/lc'
                     return G, lG
             elif M == 1:
                 Z_sum = np.sum(Z_row)
                 if Z_sum < 1e-12:
                     # Single queue, no delay: exact formula
                     lG = float(-np.dot(N, np.log(L[0, :])))
-                    G = exp(lG) if np.isfinite(lG) else 0.0
+                    G = _nc_G(lG)
+                    resolved['method'] = 'exact'
                     return G, lG
                 else:
                     if Ntot < 10000:
+                        resolved['method'] = 'ca'
                         return pfqn_ca(L, N, Z_row)
                     else:
-                        result = pfqn_le(L, N, Z_row)
-                        lG = result[0] if isinstance(result, tuple) else result
-                        G = exp(lG) if np.isfinite(lG) else 0.0
+                        from .asymptotic import pfqn_ble
+                        result = pfqn_ble(L, N, Z_row)
+                        lG = result[1] if isinstance(result, tuple) else result
+                        G = _nc_G(lG)
+                        resolved['method'] = 'ble'
                         return G, lG
             else:
+                resolved['method'] = 'ca'
                 return pfqn_ca(L, N, Z_row)
         else:
-            return pfqn_ca(L, N, Z_row)
+            # An unrecognized method name must not alias onto exact convolution: the
+            # caller reports the analysis under the requested method name, so
+            # the substitution is invisible in the result.
+            raise ValueError("pfqn_nc: unrecognized method: %s" % method)
 
     G, lG = _compute_nc(L, N, Z, method)
+    if isinstance(options, dict):
+        options['resolved_method'] = resolved['method']
 
     # Scale back: lG += N * log(scalevec)
     lG = lG + float(np.dot(N, np.log(scalevec)))
-    G = exp(lG) if np.isfinite(lG) else 0.0
+    G = _nc_G(lG)
     return G, lG
 
 
@@ -783,7 +1031,13 @@ def pfqn_ls(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
 
     # Handle empty network
     if L.size == 0 or np.sum(L) < 1e-4 or N.size == 0 or np.sum(N) == 0:
-        lGn = -np.sum([_factln(n) for n in N]) + np.sum(N * np.log(np.maximum(np.sum(Z) if Z is not None else 1e-300, 1e-300)))
+        # Per-class Z, as MATLAB's sum(Z,1) is, and an empty class contributes 0
+        # rather than 0*log(0). Z may also be absent altogether on this branch.
+        Zt = np.zeros(len(N)) if Z is None else np.asarray(Z, dtype=float).ravel()
+        lGn = -np.sum([_factln(n) for n in N])
+        for r in range(len(N)):
+            if N[r] > 0:
+                lGn += N[r] * np.log(Zt[r] if r < Zt.size else 0.0)
         return np.exp(lGn), lGn
 
     if Z is None or len(Z) == 0:
@@ -930,7 +1184,9 @@ def _pfqn_le_fpiZ(L: np.ndarray, N: np.ndarray, Z: np.ndarray):
     M, R = L.shape
     eta = np.sum(N) + M
     u = np.ones(M) / M
-    v = eta + 1
+    # eq. (35) in the SIGMETRICS 2017 paper has a spurious +1 in the v equation;
+    # the correct stationary point is v = eta - sum_r xi_r*Z_r.
+    v = eta
 
     for iteration in range(1000):
         u_prev = u.copy()
@@ -949,7 +1205,7 @@ def _pfqn_le_fpiZ(L: np.ndarray, N: np.ndarray, Z: np.ndarray):
             if denom > 0:
                 xi[r] = N[r] / denom
 
-        v = eta + 1 - np.dot(xi, Z)
+        v = eta - np.dot(xi, Z)
 
         if np.linalg.norm(u - u_prev, 1) + abs(v - v_prev) < 1e-10:
             return u, v, True
@@ -1062,9 +1318,87 @@ def _multinomialln(n: np.ndarray) -> float:
     return _factln(np.sum(n)) - np.sum([_factln(ni) for ni in n])
 
 
+def _clw_euler_weights(n: int, mm: int) -> np.ndarray:
+    """
+    Euler weights of eq. (2.22): E(m,n) = sum_i w_i (-1)^i a_i.
+
+    E(m,n) = 2^-m sum_{k=0}^{m} C(m,k) S_{n+k} with S_t = sum_{i<=t} (-1)^i a_i,
+    so a_i carries the mass of every partial sum that contains it.
+    """
+    b = np.empty(mm + 1)
+    b[0] = 1.0
+    for k in range(1, mm + 1):
+        b[k] = b[k - 1] * (mm - k + 1) / k         # C(mm,k)
+    b = b * (2.0 ** (-mm))
+    tail = np.cumsum(b[::-1])[::-1]                # tail[k] = 2^-mm sum_{j>=k} C(mm,j)
+    w = np.ones(n + mm + 1)
+    w[n + 1:] = tail[1:mm + 1]
+    return w
+
+
+def _clw_components(adj: np.ndarray, mask: np.ndarray):
+    """Connected components of adj with the nodes in mask removed."""
+    p = adj.shape[0]
+    lab = -np.ones(p, dtype=int)
+    nc = 0
+    for s in range(p):
+        if mask[s] or lab[s] >= 0:
+            continue
+        lab[s] = nc
+        stack = [s]
+        while stack:
+            v = stack.pop()
+            for u in range(p):
+                if adj[v, u] and not mask[u] and lab[u] < 0:
+                    lab[u] = nc
+                    stack.append(u)
+        nc += 1
+    return [np.where(lab == c)[0] for c in range(nc)]
+
+
+def _clw_dimred(L: np.ndarray, enabled: bool, maxd: int):
+    """
+    Interdependence graph of the factors of (4.5) and the subset D minimizing
+    the inversion dimension |D| + max_i |S_i(D)| (eqs. 3.1-3.3), by enumeration
+    in increasing cardinality.
+    """
+    p = L.shape[1]
+    if not enabled or p <= 2:
+        return np.zeros(0, dtype=int), [np.arange(p)]
+    adj = np.zeros((p, p), dtype=bool)
+    for i in range(L.shape[0]):
+        v = np.where(L[i, :] != 0)[0]
+        if v.size:
+            adj[np.ix_(v, v)] = True               # each factor is a clique (eq. 3.1)
+    np.fill_diagonal(adj, False)
+    bestC = _clw_components(adj, np.zeros(p, dtype=bool))
+    best = max(len(c) for c in bestC)              # |D| = 0
+    bestD = np.zeros(0, dtype=int)
+    for dd in range(1, min(maxd, p - 1) + 1):
+        if dd >= best:
+            break                                  # dimension is at least |D|
+        if comb(p, dd) > 2e5:
+            break                                  # (3.3) is solved by enumeration only
+        for sub in itertools.combinations(range(p), dd):
+            mask = np.zeros(p, dtype=bool)
+            mask[list(sub)] = True
+            cc = _clw_components(adj, mask)
+            mx = max((len(c) for c in cc), default=0)
+            if dd + mx < best:
+                best = dd + mx
+                bestD = np.array(sub, dtype=int)
+                bestC = cc
+    if best < p:
+        return bestD, bestC
+    return np.zeros(0, dtype=int), [np.arange(p)]
+
+
 def pfqn_clw(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
              m: np.ndarray = None, l: np.ndarray = None,
-             gamma: np.ndarray = None) -> Tuple[float, float]:
+             gamma: np.ndarray = None, euler: bool = True, euler_n: int = 11,
+             euler_m: int = 20, euler_tol: float = 1e-10, euler_maxm: int = 160,
+             beta: np.ndarray = None, dimred: bool = True,
+             dimred_maxd: int = 4) -> Tuple[float, float]:
     """
     Choudhury-Leung-Whitt normalization constant by numerical inversion of the
     generating function (JACM 42(5):935-970, 1995).
@@ -1076,25 +1410,43 @@ def pfqn_clw(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
         G(z) = exp(sum_j rho_{j0} z_j) / prod_i (1 - sum_j rho_{ji} z_j)^{m_i}
 
     where j=1..p indexes chains, i=1..q' the distinct single-server queues with
-    multiplicity m_i. g(K) is recovered by p nested one-dimensional
-    lattice-Poisson inversions (eq. 2.3) with restrictive static scaling
-    (eqs. 5.41-5.46) and log-domain recovery (eq. 7.1).
+    multiplicity m_i. g(K) is recovered by nested one-dimensional lattice-Poisson
+    inversions (eq. 2.3) with restrictive static scaling (eqs. 5.41-5.46) and
+    log-domain recovery (eq. 7.1).
+
+    Both of the paper's accelerations are applied. Dimension reduction by
+    decomposition (Sec. 3, Sec. 5.4) removes from the interdependence graph of
+    the factors the subset D minimizing |D| + max_i |S_i(D)| (eq. 3.3): with the
+    D variables fixed on their contours the remaining factors share no variable,
+    so each connected component is inverted separately and the results
+    multiplied. Euler summation (Sec. 2.4, eq. 2.22) replaces the nearly
+    alternating inner sum of (2.3) by the Euler sum of its first n+m+1 terms,
+    applied once for k >= 0 and once for k < 0, so prod_j K_j becomes
+    prod_j min(n+m+1, K_j) in the cost (eq. 2.26); the order m is doubled until
+    the paper's own estimate |E(m,n) - E(m,n+1)| falls under euler_tol.
 
     Args:
         L: (q' x p) single-server relative traffic intensities, L[i,j]=rho_{ji}.
         N: (p,) closed-chain population vector K.
         Z: (p,) aggregate infinite-server relative intensities rho_{j0}. Default 0.
         m: (q',) queue multiplicities m_i. Default ones.
-        l: (p,) inner lattice parameters l_j. Default 1,2,2,3,3,...
-        gamma: (p,) aliasing parameters gamma_j. Default 11,13,13,15,15,...
+        l: (p,) inner lattice parameters l_j indexed by chain. Default by
+           inversion depth: 1 at depth 1, 2 at depths 2-3, 3 deeper.
+        gamma: (p,) aliasing parameters gamma_j. Default by depth: 11, 13, 13, 15.
+        euler: apply Euler summation where K_j > euler_n + euler_m.
+        euler_n: terms summed exactly before averaging (n in eq. 2.22).
+        euler_m: starting order of the Euler averaging (m in eq. 2.22).
+        euler_tol: relative tolerance on |E(m,n) - E(m,n+1)|.
+        euler_maxm: largest Euler order reached by doubling.
+        beta: (p,) multipliers on the scale parameters alpha_j, the manual tuning
+           of page 956 (the paper uses 0.8 <= beta <= 1.2 on its largest
+           examples). Default ones.
+        dimred: apply dimension reduction by decomposition.
+        dimred_maxd: largest |D| examined when minimizing (3.3).
 
     Returns:
         Tuple (G, lG): normalization constant (inf if it overflows double) and
         its natural logarithm (always finite).
-
-    Note: exact nested inversion of cost prod_j 2 l_j K_j; practical for moderate
-    populations and few chains. The paper's Euler summation and dimension
-    reduction speed-ups are not applied here.
     """
     L = np.asarray(L, dtype=np.float64)
     if L.ndim == 1:
@@ -1109,30 +1461,39 @@ def pfqn_clw(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
         m = np.ones(qd)
     else:
         m = np.asarray(m, dtype=np.float64).flatten()
-    if l is None:
-        l = np.full(p, 3)
-        l[0] = 1
-        if p >= 2:
-            l[1] = 2
-        if p >= 3:
-            l[2] = 2
+
+    if beta is None:
+        beta = np.ones(p)
     else:
-        l = np.round(np.asarray(l, dtype=np.float64).flatten()).astype(int)
-    l = np.asarray(l, dtype=int)
-    if gamma is None:
-        gamma = np.full(p, 15.0)
-        gamma[0] = 11
-        if p >= 2:
-            gamma[1] = 13
-        if p >= 3:
-            gamma[2] = 13
-    else:
-        gamma = np.asarray(gamma, dtype=np.float64).flatten()
+        beta = np.asarray(beta, dtype=np.float64).flatten()
 
     if np.any(N < 0):
         return 0.0, -np.inf
     if np.all(N == 0):
         return 1.0, 0.0
+
+    # dimension reduction (Section 3): D is inverted first, then each connected
+    # component of the interdependence graph minus D, independently
+    ordD, comps = _clw_dimred(L, dimred, dimred_maxd)
+    d = ordD.size
+    order = np.concatenate([ordD] + comps).astype(int)
+
+    # depth of each chain: D occupies depths 1..d and every component restarts at
+    # depth d+1, since components are inverted in parallel
+    depth = np.zeros(p, dtype=int)
+    depth[ordD] = np.arange(1, d + 1)
+    for c in comps:
+        depth[c] = d + np.arange(1, c.size + 1)
+
+    if l is None:
+        l = np.where(depth == 1, 1, np.where(depth <= 3, 2, 3))
+    else:
+        l = np.round(np.asarray(l, dtype=np.float64).flatten()).astype(int)
+    l = np.asarray(l, dtype=int)
+    if gamma is None:
+        gamma = np.where(depth == 1, 11.0, np.where(depth <= 3, 13.0, 15.0))
+    else:
+        gamma = np.asarray(gamma, dtype=np.float64).flatten()
 
     # contour radii r_j = 10^{-gamma_j/(2 l_j K_j)} (eq. 2.7)
     r = np.ones(p)
@@ -1140,85 +1501,199 @@ def pfqn_clw(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
         if N[j] > 0:
             r[j] = 10.0 ** (-gamma[j] / (2 * l[j] * N[j]))
 
-    # restrictive static scaling (eqs. 5.41-5.46), outer vars at |z_k| = r_k
+    # restrictive static scaling (eqs. 5.41-5.46), outer vars at |z_k| = r_k.
+    # The loop runs in inversion order, which is what dimension reduction changes
+    # (Section 5.4); chains of distinct components never deflate one another,
+    # because they share no queue.
     alpha = np.ones(p)
     used = np.zeros(qd)
     eta = (L != 0).astype(float)
-    for j in range(p):
+    for t in range(p):
+        j = int(order[t])
         Kj = int(N[j])
         lj = int(l[j])
+        if Kj == 0:
+            continue        # empty chain: no lattice, and 2*lj*Kj = 0 below
         denom = 1.0 - used
         denom[denom <= 0] = np.finfo(float).eps
         e = L[:, j] / denom
         posq = np.where(L[:, j] > 0)[0]
         aj = np.inf
         if posq.size > 0:
-            order = np.argsort(-e[posq])
-            qs = posq[order]
+            srt = np.argsort(-e[posq])
+            qs = posq[srt]
             es = e[qs]
             ms = m[qs]
             cumrho = np.cumsum(es) / np.arange(1, es.size + 1)
             cummb = np.cumsum(ms)
+            inner = order[t + 1:]
             for n in range(es.size):
                 qi = qs[n]
-                Nn = int(round(cummb[n] - 1 + np.sum(N[j + 1:p] * eta[qi, j + 1:p])))
+                # N_{ij} = mbar_n - 1 + sum_{k inside j} K_k eta_{k,qi} (eq. 5.43)
+                Nn = int(round(cummb[n] - 1 + np.sum(N[inner] * eta[qi, inner])))
                 if Nn <= 0:
                     an = 1.0
                 else:
+                    # in the log domain: the product runs over N_{ij} factors
+                    # below one and underflows to zero at a few hundred of them,
+                    # which would silently set alpha_j = 0 and lG = NaN
                     ll = np.arange(1, Nn + 1)
-                    an = np.prod((Kj + ll) / (Kj + 2 * lj * Kj + ll)) ** (1.0 / (2 * lj * Kj))
+                    an = np.exp(np.sum(np.log((Kj + ll) / (Kj + 2 * lj * Kj + ll)))
+                                / (2 * lj * Kj))
                 aj = min(aj, an / cumrho[n])
         if Z[j] > 0:
             aj = min(aj, Kj / Z[j])
         if not np.isfinite(aj):
             aj = 1.0
-        alpha[j] = aj
-        used = used + aj * L[:, j] * r[j]
+        alpha[j] = beta[j] * aj          # page 956: manual tuning of alpha_j
+        used = used + alpha[j] * L[:, j] * r[j]
 
     arho0 = alpha * Z          # (p,)
     rhoS = L * alpha           # (q' x p)
     chunk = 2000000
 
-    def gbar_eval(W):
-        # Gbar(w) = exp(sum_j arho0_j (w_j-1)) / prod_i (1 - sum_j rhoS_ij w_j)^{m_i}
-        expo = (W - 1.0) @ arho0
-        A = W @ rhoS.T
-        logden = np.log(1.0 - A) @ m
-        return np.exp(expo - logden)
+    # split the factors of (4.5) over D and the components: a queue whose chains
+    # all lie in D is constant during the component inversions, and every other
+    # queue has all of its non-D chains inside a single component
+    inD = np.zeros(p, dtype=bool)
+    inD[ordD] = True
+    compOf = np.zeros(p, dtype=int)
+    for c in range(len(comps)):
+        compOf[comps[c]] = c
+    qBucket = -np.ones(qd, dtype=int)
+    for i in range(qd):
+        v = np.where(L[i, :] != 0)[0]
+        v = v[~inD[v]]
+        if v.size:
+            qBucket[i] = compOf[v[0]]
+    qD = np.where(qBucket == -1)[0]
+    qC = [np.where(qBucket == c)[0] for c in range(len(comps))]
 
-    def invert(j, wfixed):
+    # per-group normalization (Section 2.2, page 944): the scaling normalizes the
+    # whole generating function, not each group, and a decomposition multiplies
+    # the groups together. Every factor has nonnegative coefficients, so a group's
+    # modulus is maximized at w = r; that constant cancels in the recovery and is
+    # left at zero on the undecomposed path, which is thus unchanged.
+    def group_bound(queues, chains):
+        off = 0.0
+        if chains.size:
+            off += float(np.sum(arho0[chains] * (r[chains] - 1.0)))
+        if queues.size:
+            pole = 1.0 - rhoS[queues, :] @ r
+            pole = np.maximum(pole, np.finfo(float).tiny)
+            off -= float(np.sum(m[queues] * np.log(pole)))
+        return off
+
+    offD = 0.0
+    offC = np.zeros(len(comps))
+    if d > 0 or len(comps) > 1:
+        offD = group_bound(qD, ordD)
+        offC = np.array([group_bound(qC[c], comps[c]) for c in range(len(comps))])
+
+    def gbar_sub(W, queues, chains, off=0.0):
+        # Gbar_S(w) = exp(sum_{j in chains} arho0_j (w_j-1))
+        #             / prod_{i in queues} (1 - sum_j rhoS_ij w_j)^{m_i}
+        if chains.size:
+            expo = (W[:, chains] - 1.0) @ arho0[chains]
+        else:
+            expo = np.zeros(W.shape[0])
+        if queues.size:
+            A = W @ rhoS[queues, :].T
+            logden = np.log(1.0 - A) @ m[queues]
+        else:
+            logden = np.zeros(W.shape[0])
+        return np.exp(expo - logden - off)
+
+    def evalpts(j, kk, Kj, lj, k1, rj, W, fn, vec):
+        theta = np.pi * (k1 + lj * kk) / (lj * Kj)
+        wj = rj * np.exp(1j * theta)
+        nk = wj.size
+        out = np.empty(nk, dtype=complex)
+        if vec:
+            for a in range(0, nk, chunk):
+                b = min(a + chunk, nk)
+                Wn = np.repeat(W, b - a, axis=0)
+                Wn[:, j] = wj[a:b]
+                out[a:b] = fn(Wn)
+        else:
+            for t in range(nk):
+                Wn = W.copy()
+                Wn[:, j] = wj[t]
+                out[t] = fn(Wn)
+        return out
+
+    def inner_sum(j, Kj, lj, k1, rj, W, fn, vec):
+        # the sum splits at k = 0 into two nearly alternating series (Section 2.4);
+        # each is replaced by its Euler sum, refined until it stops moving
+        mCur = euler_m
+        while True:
+            T = euler_n + mCur
+            if (not euler) or Kj <= T + 1:
+                kk = np.arange(-Kj, Kj)
+                v = evalpts(j, kk, Kj, lj, k1, rj, W, fn, vec)
+                return np.sum(((-1.0) ** kk) * v)
+            kk = np.arange(-(T + 2), T + 2)
+            v = evalpts(j, kk, Kj, lj, k1, rj, W, fn, vec)
+            vpos = v[T + 2:]                   # k =  s     , s = 0..T+1
+            vneg = v[T + 1::-1]                # k = -(s+1) , s = 0..T+1
+            w1 = _clw_euler_weights(euler_n, mCur)
+            w2 = _clw_euler_weights(euler_n + 1, mCur)
+            sg = (-1.0) ** np.arange(T + 2)
+            dv = vpos - vneg
+            E1 = np.sum(sg[:T + 1] * w1 * dv[:T + 1])
+            E2 = np.sum(sg * w2 * dv)
+            if abs(E1 - E2) <= euler_tol * abs(E2) or mCur >= euler_maxm:
+                return E2
+            mCur *= 2
+
+    def lattice(j, W, fn, vec):
         Kj = int(N[j])
         lj = int(l[j])
         rj = r[j]
-        kk = np.arange(-Kj, Kj)
-        signs = (-1.0) ** kk
+        if Kj == 0:
+            # [w_j^0] Gbar = Gbar(w_j=0): the K=0 lattice is the single point 0,
+            # and exp(-arho0_j) there cancels the +arho0_j added back into lG
+            Wn = W.copy()
+            Wn[:, j] = 0.0
+            v = fn(Wn)
+            return np.sum(v) if vec else v
         acc = 0.0 + 0.0j
         for k1 in range(lj):
             ph = np.exp(-1j * np.pi * k1 / lj)
-            theta = np.pi * (k1 + lj * kk) / (lj * Kj)
-            wj = rj * np.exp(1j * theta)
-            if j == p - 1:
-                inner = 0.0 + 0.0j
-                nk = wj.size
-                for a in range(0, nk, chunk):
-                    b = min(a + chunk, nk)
-                    W = np.empty((b - a, p), dtype=complex)
-                    if j > 0:
-                        W[:, :j] = wfixed
-                    W[:, j] = wj[a:b]
-                    inner += np.sum(signs[a:b] * gbar_eval(W))
-            else:
-                inner = 0.0 + 0.0j
-                for t in range(wj.size):
-                    inner += signs[t] * invert(j + 1, np.concatenate([wfixed, [wj[t]]]))
-            acc += ph * inner
-        val = acc / (2 * lj * Kj * rj ** Kj)
-        if j == 0:
+            acc += ph * inner_sum(j, Kj, lj, k1, rj, W, fn, vec)
+        return acc / (2 * lj * Kj * rj ** Kj)
+
+    def invert_c(c, s, W):
+        vars_ = comps[c]
+        if s >= vars_.size:
+            return gbar_sub(W, qC[c], vars_, offC[c])[0]
+        j = int(vars_[s])
+        if s == vars_.size - 1:
+            val = lattice(j, W, lambda Wn: gbar_sub(Wn, qC[c], vars_, offC[c]), True)
+        else:
+            val = lattice(j, W, lambda Wn: invert_c(c, s + 1, Wn), False)
+        if d == 0 and s == 0:
+            # with D empty every component is an independent subnetwork, so its
+            # coefficient is real
             val = val.real
         return val
 
-    gbar = invert(0, np.array([], dtype=complex))
-    lG = np.log(gbar) + np.sum(arho0) - np.sum(N * np.log(alpha))
+    def invert_d(t, W):
+        if t >= d:
+            # D fixed: the remaining factors have no variable in common, so the
+            # coefficient of the inner monomial is the product of the components'
+            val = gbar_sub(W, qD, ordD, offD)[0]
+            for c in range(len(comps)):
+                val = val * invert_c(c, 0, W)
+            return val
+        j = int(ordD[t])
+        val = lattice(j, W, lambda Wn: invert_d(t + 1, Wn), False)
+        if t == 0:
+            val = val.real
+        return val
+
+    gbar = invert_d(0, np.zeros((1, p), dtype=complex))
+    lG = np.log(gbar) + offD + float(np.sum(offC)) + np.sum(arho0) - np.sum(N * np.log(alpha))
     G = np.inf if lG > 709 else np.exp(lG)
     return float(G), float(lG)
 
@@ -1354,6 +1829,8 @@ def pfqn_clw_lld(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
     for j in range(p):
         Kj = int(N[j])
         lj = int(l[j])
+        if Kj == 0:
+            continue        # empty chain: no lattice, and 2*lj*Kj = 0 below
         denom = 1.0 - used
         denom[denom <= 0] = np.finfo(float).eps
         e = Lt[:, j] / denom
@@ -1371,8 +1848,12 @@ def pfqn_clw_lld(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
                 if Nn <= 0:
                     an = 1.0
                 else:
+                    # in the log domain: the product runs over N_{ij} factors
+                    # below one and underflows to zero at a few hundred of them,
+                    # which would silently set alpha_j = 0 and lG = NaN
                     ll = np.arange(1, Nn + 1)
-                    an = np.prod((Kj + ll) / (Kj + 2 * lj * Kj + ll)) ** (1.0 / (2 * lj * Kj))
+                    an = np.exp(np.sum(np.log((Kj + ll) / (Kj + 2 * lj * Kj + ll)))
+                                / (2 * lj * Kj))
                 aj = min(aj, an / cumrho[n])
         if Z[j] > 0:
             aj = min(aj, Kj / Z[j])
@@ -1403,6 +1884,17 @@ def pfqn_clw_lld(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
         Kj = int(N[j])
         lj = int(l[j])
         rj = r[j]
+        if Kj == 0:
+            # [w_j^0] Gbar = Gbar(w_j=0): the K=0 lattice is the single point 0,
+            # and exp(-arho0_j) there cancels the +arho0_j added back into lG
+            if j == p - 1:
+                W = np.zeros((1, p), dtype=complex)
+                if j > 0:
+                    W[:, :j] = wfixed
+                val = complex(np.sum(gbar_eval(W)))
+            else:
+                val = invert(j + 1, np.concatenate([wfixed, [0.0 + 0.0j]]))
+            return val.real if j == 0 else val
         kk = np.arange(-Kj, Kj)
         signs = (-1.0) ** kk
         acc = 0.0 + 0.0j
@@ -1431,9 +1923,61 @@ def pfqn_clw_lld(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
         return val
 
     gbar = invert(0, np.array([], dtype=complex))
+    # No group offsets here: the lld form keeps ONE contour over all stations,
+    # so there is no decomposition bound to add back (matlab pfqn_clw_lld.m:211).
     lG = np.log(gbar) + np.sum(arho0) - np.sum(N * np.log(alpha))
     G = np.inf if lG > 709 else np.exp(lG)
     return float(G), float(lG)
+
+
+def pfqn_perm(A: np.ndarray, m: np.ndarray = None) -> float:
+    """
+    Permanent of a demand matrix, with optional column multiplicities.
+
+    The pfqn_ entry point of the permanent library. It exists because the
+    product-form joint queue-length probability of the per-station TOTAL
+    populations is a permanent of the demand matrix replicated once per job,
+    which is a normalizing-constant quantity rather than a general-purpose
+    linear algebra one; see pfqn_jointmarg.
+
+    Orientation is chosen before repeated lines are grouped. That is a
+    correctness concern, not an optimisation: perm(A) is transpose-invariant
+    but the Ryser sum is not, and exploiting repeated rows silently expands the
+    transpose.
+
+    Args:
+        A: Square matrix, or the matrix of distinct columns when m is given
+        m: Multiplicity of each column of A; sum(m) must be the order of the
+           expanded matrix
+
+    Returns:
+        The permanent value; 1.0 for the empty matrix
+
+    References:
+        H. J. Ryser, "Combinatorial Mathematics", Carus Mathematical
+        Monographs 14, Mathematical Association of America, 1963.
+    """
+    from ..perm import compute_permanent
+
+    A = np.atleast_2d(np.asarray(A, dtype=float))
+    if A.shape[0] == 0 and (A.shape[1] == 0 or m is None):
+        return 1.0
+
+    if m is not None:
+        m = np.asarray(m, dtype=int).ravel()
+        if m.size != A.shape[1]:
+            raise ValueError(
+                "pfqn_perm: the multiplicity vector has %d entries but A has %d columns."
+                % (m.size, A.shape[1]))
+        cols = [A[:, j] for j in range(A.shape[1]) for _ in range(int(m[j]))]
+        A = np.column_stack(cols) if cols else np.zeros((A.shape[0], 0))
+        if A.shape[0] == 0 and A.shape[1] == 0:
+            return 1.0
+
+    if A.shape[0] != A.shape[1]:
+        raise ValueError("pfqn_perm: the matrix must be square, got %d by %d."
+                         % (A.shape[0], A.shape[1]))
+    return float(compute_permanent(A))
 
 
 __all__ = [
@@ -1444,4 +1988,5 @@ __all__ = [
     'pfqn_ls',
     'pfqn_clw',
     'pfqn_clw_lld',
+    'pfqn_perm',
 ]

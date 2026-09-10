@@ -22,6 +22,14 @@ import pandas as pd
 
 from ....api.io.logging import line_debug, line_ack
 from ...base import Solver
+from ....layered import LayeredNetworkElement
+
+# The kinds lqn.type stores, under the names parseXMLResults.m uses for them.
+LQN_HOST = int(LayeredNetworkElement.PROCESSOR)
+LQN_TASK = int(LayeredNetworkElement.TASK)
+LQN_ENTRY = int(LayeredNetworkElement.ENTRY)
+LQN_ACTIVITY = int(LayeredNetworkElement.ACTIVITY)
+LQN_CALL = int(LayeredNetworkElement.CALL)
 
 
 @dataclass
@@ -101,9 +109,11 @@ class SolverLQNS(Solver):
         The 'lqns' and 'lqsim' commands must be available in the system PATH.
         Install from: http://www.sce.carleton.ca/rads/lqns/
 
-        Alternatively, use remote execution via Docker:
-          1. Pull and run: docker run -d -p 8080:8080 imperialqore/line-lqns-rest:latest
-          2. Configure: options.config.remote = True; options.config.remote_url = 'http://localhost:8080'
+        LINE ships no LQNS binary and runs none from a container image: LQNS is
+        distributed under an evaluation agreement that forbids redistribution.
+
+        Alternatively, point LINE at a host that already runs LQNS:
+          options.config.remote = True; options.config.remote_url = 'http://localhost:8080'
 
     Note:
         Model serialization to LQNX format
@@ -140,11 +150,20 @@ class SolverLQNS(Solver):
     @staticmethod
     def isAvailable() -> bool:
         """
-        Check if lqns is available in the system PATH.
+        Check if lqns can be run: a native binary is on the PATH.
+
+        LINE never runs LQNS from a container image, because its licence forbids
+        redistribution. To exercise a containerised build, put a shim on the PATH
+        with run-tests.sh --lqns-docker.
 
         Returns:
-            True if lqns is available, False otherwise
+            True if a native lqns binary is available, False otherwise
         """
+        return SolverLQNS._has_native_lqns()
+
+    @staticmethod
+    def _has_native_lqns() -> bool:
+        """Check if a native lqns binary is available in the system PATH."""
         try:
             if platform.system() == 'Windows':
                 process = subprocess.Popen(
@@ -201,13 +220,31 @@ class SolverLQNS(Solver):
         """
         line_ack('LQNS', self.options.verbose)
         multiserver = self.options.multiserver or 'default'
+
+        # Solver console: SolverLQNS extends Solver, not NetworkSolver, so it
+        # never reaches the shared run hook in solvers/base.py and opens its
+        # own run here, as the MATLAB wrapper does.
+        from line_solver.api.io import console as _console
+        with _console.run_scope(self, self.options):
+            return self._runAnalyzerBody(multiserver)
+
+    def _runAnalyzerBody(self, multiserver: str) -> LQNSResult:
+        """Write the model, run the binary, parse what came back."""
+        from line_solver.api.io import console as _console
         line_debug("LQNS: starting (method=%s, multiserver=%s)", self.options.method, multiserver, options=self.options)
 
         import time
         start_time = time.time()
 
-        # Create temporary directory
-        temp_dir = tempfile.mkdtemp(prefix='lqns_')
+        # LINE_WORKSPACE_ROOT relocates the staging dir; run-tests.sh sets it when
+        # a solver is wrapped in a container, so the path is bind-mountable.
+        workspace_root = os.environ.get('LINE_WORKSPACE_ROOT', '').strip()
+        if workspace_root:
+            base = os.path.join(workspace_root, 'line_workspace', 'lqns')
+            os.makedirs(base, exist_ok=True)
+            temp_dir = tempfile.mkdtemp(prefix='lqns_', dir=base)
+        else:
+            temp_dir = tempfile.mkdtemp(prefix='lqns_')
 
         try:
             # Write model to LQNX format
@@ -215,6 +252,7 @@ class SolverLQNS(Solver):
 
             # Check if model is native LayeredNetwork
             model_type = type(self.model).__name__
+            _console.step('writing the LQN model to %s', lqnx_file)
             if model_type == 'LayeredNetwork' or hasattr(self.model, 'processors'):
                 # Use native writeXML
                 self.model.writeXML(lqnx_file, False)
@@ -227,16 +265,21 @@ class SolverLQNS(Solver):
             # Check for remote execution
             if self.options.remote:
                 line_debug("LQNS: using remote execution at %s", self.options.remote_url, options=self.options)
-                if self.options.verbose:
+                if self.options.verbose and not _console.is_active():
                     print(f"Using remote LQNS at: {self.options.remote_url}")
+                _console.step('running the lqns service at %s', self.options.remote_url)
                 self._run_remote_lqns(lqnx_file)
             else:
                 # Build and execute command locally
                 cmd = self._build_command(lqnx_file)
                 line_debug("LQNS: using local execution, command: %s", cmd, options=self.options)
 
-                if self.options.verbose:
+                # the console already reports the command through the routed
+                # line_debug above, so printing it again would duplicate it
+                if self.options.verbose and not _console.is_active():
                     print(f"LQNS command: {cmd}")
+
+                _console.step('running the lqns binary as a subprocess')
 
                 # Execute
                 if platform.system() == 'Windows':
@@ -264,6 +307,7 @@ class SolverLQNS(Solver):
 
             # Parse results from .lqxo file
             lqxo_file = lqnx_file.replace('.lqnx', '.lqxo')
+            _console.step('parsing the lqns XML results')
             self._parse_xml_results(lqxo_file)
 
         finally:
@@ -276,6 +320,7 @@ class SolverLQNS(Solver):
             self._result.runtime = runtime
 
         return self._result
+
 
     def _build_command(self, filename: str) -> str:
         """Build the LQNS/LQSIM command line."""
@@ -431,10 +476,11 @@ class SolverLQNS(Solver):
 
         # Try to get names from model first
         names = self._get_node_names()
+        types = self._get_node_types()
 
         # If names is empty, build names mapping from the XML itself
         if not names:
-            names = self._build_names_from_xml(root)
+            names, types = self._build_names_from_xml(root)
 
         # Get structure info
         try:
@@ -474,7 +520,7 @@ class SolverLQNS(Solver):
         # Parse processors
         for proc_elem in root.findall('.//processor'):
             proc_name = proc_elem.get('name')
-            proc_pos = self._find_name_position(names, proc_name)
+            proc_pos = self._find_lqn_elem(names, types, proc_name, LQN_HOST)
 
             # Get processor utilization
             for proc_result in proc_elem.findall('result-processor'):
@@ -485,7 +531,7 @@ class SolverLQNS(Solver):
             # Parse tasks
             for task_elem in proc_elem.findall('task'):
                 task_name = task_elem.get('name')
-                task_pos = self._find_name_position(names, task_name)
+                task_pos = self._find_lqn_elem(names, types, task_name, LQN_TASK)
 
                 for task_result in task_elem.findall('result-task'):
                     if task_pos >= 0 and task_pos < len(utilization):
@@ -502,7 +548,7 @@ class SolverLQNS(Solver):
                 # Parse entries
                 for entry_elem in task_elem.findall('.//entry'):
                     entry_name = entry_elem.get('name')
-                    entry_pos = self._find_name_position(names, entry_name)
+                    entry_pos = self._find_lqn_elem(names, types, entry_name, LQN_ENTRY)
 
                     for entry_result in entry_elem.findall('result-entry'):
                         if entry_pos >= 0 and entry_pos < len(utilization):
@@ -528,7 +574,7 @@ class SolverLQNS(Solver):
                     for epa in entry_elem.findall('entry-phase-activities'):
                         for activity in epa.findall('activity'):
                             act_name = activity.get('name')
-                            act_pos = self._find_name_position(names, act_name)
+                            act_pos = self._find_lqn_elem(names, types, act_name, LQN_ACTIVITY)
                             if act_pos < 0 or act_pos >= len(utilization):
                                 continue
                             for act_result in activity.findall('result-activity'):
@@ -560,17 +606,72 @@ class SolverLQNS(Solver):
             for activity in task_acts.findall('activity'):
                 # Activities under task-activities (already filtered by findall)
                 act_name = activity.get('name')
-                act_pos = self._find_name_position(names, act_name)
+                act_pos = self._find_lqn_elem(names, types, act_name, LQN_ACTIVITY)
 
                 for act_result in activity.findall('result-activity'):
                     if act_pos >= 0 and act_pos < len(utilization):
                         utilization[act_pos] = float(act_result.get('utilization', 0))
-                        phase1_st[act_pos] = float(act_result.get('service-time', 0))
+                        st_raw = act_result.get('service-time', '')
+                        # absent means UNREPORTED, not zero -- MATLAB's str2double('')
+                        # is NaN and the unanimity rule below must read the same thing
+                        phase1_st[act_pos] = float(st_raw) if st_raw else np.nan
                         throughput[act_pos] = float(act_result.get('throughput', 0))
                         pw = act_result.get('proc-waiting', '')
                         if pw:
                             proc_waiting[act_pos] = float(pw)
                         proc_util[act_pos] = float(act_result.get('proc-utilization', 0))
+
+        # Processor utilization of an entry, aggregated from its activity graph.
+        # lqns credits host work to whichever level carries the host demand: in
+        # the activity-graph form an entry declares none, so lqns reports
+        # result-entry proc-utilization as a literal 0 and the work sits on the
+        # result-activity rows. The entry value is the sum over the activities
+        # reachable from the entry within its own task, which is what actsof
+        # holds. In PH1PH2 form the same sum runs over the phase activities and
+        # reproduces the value lqns reports there, so no form test is needed. An
+        # entry with no activities, or any activity lqns left unreported, keeps
+        # the raw attribute rather than a partial sum.
+        lqn = self._lqn
+        if lqn is not None and getattr(lqn, 'actsof', None):
+            for eoff in range(int(lqn.nentries)):
+                eidx = int(lqn.eshift) + eoff
+                acts = [a for a in lqn.actsof.get(eidx, []) if a < num_nodes]
+                if not acts or len(acts) != len(lqn.actsof.get(eidx, [])):
+                    continue
+                pu_acts = proc_util[acts]
+                if not np.any(np.isnan(pu_acts)):
+                    proc_util[eidx] = float(np.sum(pu_acts))
+
+        # Phase-1 service time of an entry lqns never invoked.
+        # lqns omits phase1-service-time from result-entry exactly when the entry's
+        # throughput is zero: nothing was served, so there is no per-invocation mean
+        # to report. LINE then carried a NaN where the table says an entry HAS a
+        # response time and every other solver reports one, breaking the NaN mask --
+        # see _kb/06-solver-catalog.md. The value is taken from the activity rows,
+        # and ONLY where they are unanimous: if every activity reachable from the
+        # entry reports a zero service time then every aggregation law agrees on
+        # zero -- the serial sum, the branch-weighted mean of an OrFork, the order
+        # statistic of an AndFork -- so the derivation does not depend on which one
+        # applies.
+        # It is deliberately NOT generalised the way proc_util is above.
+        # Utilizations add over an activity graph; response times do not. Measured
+        # over the example corpus, sum(actsof) reproduces phase1-service-time on
+        # serial chains only and misses it wherever the graph branches
+        # (lqn_workflows `Entry`: 12.5667 reported against 8.5667 summed,
+        # lqn_fork_open_arrival `SE`: 0.841667 against 1.0), so a summed fallback
+        # would answer with a number lqns contradicts. An entry whose activities are
+        # unreported, absent, or not all zero keeps NaN.
+        if lqn is not None and getattr(lqn, 'actsof', None):
+            for eoff in range(int(lqn.nentries)):
+                eidx = int(lqn.eshift) + eoff
+                if not np.isnan(phase1_st[eidx]):
+                    continue
+                acts = [a for a in lqn.actsof.get(eidx, []) if a < num_nodes]
+                if not acts or len(acts) != len(lqn.actsof.get(eidx, [])):
+                    continue
+                st_acts = phase1_st[acts]
+                if not np.any(np.isnan(st_acts)) and np.all(st_acts == 0):
+                    phase1_st[eidx] = 0.0
 
         # Build result
         self._result = LQNSResult(
@@ -587,16 +688,24 @@ class SolverLQNS(Solver):
             iterations=iterations
         )
 
-    def _build_names_from_xml(self, root) -> Dict[int, str]:
-        """Build node names mapping by parsing the LQXO XML structure."""
+    def _build_names_from_xml(self, root) -> Tuple[Dict[int, str], Dict[int, int]]:
+        """
+        Build the node name and node kind mappings by walking the .lqxo itself.
+
+        This is the fallback used when the struct carries no names. The kind is
+        the tag being walked, so it is known exactly here and is returned
+        alongside the name; see _find_lqn_elem for why the pair is the key.
+        """
         names = {}
-        idx = 1  # 1-based indexing
+        types = {}
+        idx = 0  # 0-based, in step with the struct index space
 
         # Parse processors
         for proc_elem in root.findall('.//processor'):
             proc_name = proc_elem.get('name')
             if proc_name:
                 names[idx] = proc_name
+                types[idx] = LQN_HOST
                 idx += 1
 
             # Parse tasks
@@ -604,6 +713,7 @@ class SolverLQNS(Solver):
                 task_name = task_elem.get('name')
                 if task_name:
                     names[idx] = task_name
+                    types[idx] = LQN_TASK
                     idx += 1
 
                 # Parse entries
@@ -611,6 +721,7 @@ class SolverLQNS(Solver):
                     entry_name = entry_elem.get('name')
                     if entry_name:
                         names[idx] = entry_name
+                        types[idx] = LQN_ENTRY
                         idx += 1
 
                 # Parse activities from task-activities
@@ -619,9 +730,10 @@ class SolverLQNS(Solver):
                         act_name = activity.get('name')
                         if act_name:
                             names[idx] = act_name
+                            types[idx] = LQN_ACTIVITY
                             idx += 1
 
-        return names
+        return names, types
 
     def _get_node_names(self) -> Dict[int, str]:
         """Get mapping of node index to node name."""
@@ -632,8 +744,13 @@ class SolverLQNS(Solver):
                 return names
             # Native Python struct has names as numpy array
             if hasattr(lqn, 'names') and lqn.names is not None:
-                # lqn.names is a numpy array with 1-based indexing (index 0 is empty)
-                for idx in range(1, len(lqn.names)):
+                # THE STRUCT INDEX SPACE IS 0-BASED (778978b66), so element 0 is
+                # a real node -- the first processor -- and skipping it drops
+                # that node from every result and shifts each remaining one down
+                # a slot. On lqn_twotasks that lost the P1 row outright and left
+                # a table that still READ correctly, because the same map labels
+                # the rows it mis-indexes.
+                for idx in range(len(lqn.names)):
                     name = lqn.names[idx]
                     if name is not None and name != '':
                         names[idx] = str(name)
@@ -641,16 +758,45 @@ class SolverLQNS(Solver):
             pass
         return names
 
-    def _find_name_position(self, names: Dict[int, str], target: str) -> int:
-        """Find position of a name in the names dictionary."""
+    def _get_node_types(self) -> Dict[int, int]:
+        """Get mapping of node index to LayeredNetworkElement kind."""
+        types = {}
+        lqn = self._lqn
+        if lqn is None or not hasattr(lqn, 'type') or lqn.type is None:
+            return types
+        # lqn.type is 0-based, in step with lqn.names.
+        for idx in range(len(lqn.type)):
+            types[idx] = int(lqn.type[idx])
+        return types
+
+    def _find_lqn_elem(self, names: Dict[int, str], types: Dict[int, int],
+                       target: str, elem_type: int) -> int:
+        """
+        0-based position of the element called TARGET whose kind is ELEM_TYPE,
+        or -1 when no such element exists.
+
+        THE KIND IS PART OF THE KEY, and has to be. A LINE-generated layered
+        model routinely gives a processor, its task and that task's entry the
+        SAME name, and lqn.names holds all three, so a name-only lookup returns
+        whichever one it meets first and the .lqxo rows for the other two are
+        written into it: one result file then yields three different wrong
+        answers. The document states which kind each row describes -- it is the
+        tag being read -- so the ambiguity does not have to exist. On a model
+        whose names are unique this agrees element for element with the
+        name-only lookup it replaces.
+        """
         for pos, name in names.items():
-            if name == target:
-                return pos - 1  # 0-based index
+            if name == target and types.get(pos) == elem_type:
+                return pos
         return -1
 
     def getAvg(self) -> LQNSResult:
         """Get average performance metrics."""
         if self._result is None:
+            # runAnalyzer, NOT the NetworkSolver _ensureAvgResults funnel:
+            # SolverLQNS extends Solver, not NetworkSolver, so that helper is
+            # not inherited, and its MAP/MMPP random-environment gate has no
+            # meaning for a LayeredNetwork anyway.
             self.runAnalyzer()
 
         # Copy result and swap QN/UN/RN
@@ -668,31 +814,11 @@ class SolverLQNS(Solver):
             iterations=self._result.iterations
         )
 
-        # LQNS reports proc-utilization summed over all instances of the host
-        # processor; LN reports the per-server fraction. Rescale UN to match LN.
-        lqn = getattr(self, '_lqn', None) or self.getStruct()
-        if lqn is not None and hasattr(lqn, 'nidx') and hasattr(lqn, 'type') \
-                and hasattr(lqn, 'mult') and hasattr(lqn, 'parent'):
-            nidx = int(lqn.nidx)
-            for idx in range(1, nidx + 1):
-                cur = idx
-                host_mult = 1.0
-                for _ in range(nidx + 1):
-                    if cur < 1 or cur > nidx:
-                        break
-                    if int(lqn.type[cur]) == 0:  # LayeredNetworkElement.PROCESSOR
-                        m = float(lqn.mult[0, cur])
-                        if m > 0 and not np.isinf(m) and m < 2147483647:
-                            host_mult = m
-                        break
-                    p = int(lqn.parent[cur, 0])
-                    if p <= 0 or p == cur:
-                        break
-                    cur = p
-                if host_mult > 1.0:
-                    i = idx - 1
-                    if i < len(result.UN) and not np.isnan(result.UN[i]):
-                        result.UN[i] = result.UN[i] / host_mult
+        # UN is lqns' proc-utilization, verbatim for hosts, tasks and
+        # activities and aggregated over the activity graph for entries, which
+        # lqns itself reports as 0 in the activity-graph form. Both lqns and LN
+        # report the processor utilization summed over the host's servers, so no
+        # rescaling by the host multiplicity applies.
         return result
 
     def getAvgTable(self) -> pd.DataFrame:
@@ -724,7 +850,7 @@ class SolverLQNS(Solver):
         # Build rows for all nodes (preserves NaN for values not computed)
         rows = []
         for idx, name in names.items():
-            i = idx - 1  # Convert to 0-based index
+            i = idx
             if i < len(QN):
                 # Determine node type from the model structure
                 node_type = self._get_node_type(idx)
@@ -765,9 +891,9 @@ class SolverLQNS(Solver):
                 return 'Unknown'
 
             # Check if model has type information
-            # Note: lqn.type uses 1-based indexing (matching lqn.names)
+            # Note: lqn.type is 0-based, matching lqn.names
             if hasattr(lqn, 'type') and idx < len(lqn.type):
-                elem_type = int(lqn.type[idx])  # 1-based indexing
+                elem_type = int(lqn.type[idx])
                 # Native Python uses integer values:
                 # 0=PROCESSOR, 1=TASK, 2=ENTRY, 3=ACTIVITY
                 if elem_type == 0:
@@ -804,7 +930,7 @@ class SolverLQNS(Solver):
         # Build average table rows (preserves NaN for values not computed)
         rows = []
         for idx, name in names.items():
-            i = idx - 1
+            i = idx
             if i < len(result.QN):
                 node_type = self._get_node_type(idx)
                 rows.append({

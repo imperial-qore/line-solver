@@ -249,6 +249,57 @@ class RoutingMatrix:
                         if pmatrix[k][i][j] != 0:
                             self.set(jc, jc, nodes[i], nodes[j], pmatrix[k][i][j])
 
+    def get_cell(self) -> List[List[np.ndarray]]:
+        """
+        Return the routing probabilities as a class-by-class table of
+        node-by-node matrices, twin of MATLAB RoutingMatrix.getCell.
+
+        The matrices are freshly built, matching the MATLAB cell array being
+        returned by value: mutating them does not alter this routing matrix.
+
+        Returns:
+            cell[r][s]: the node-by-node probabilities from class r to class s,
+            with r and s 0-based class indices.
+        """
+        classes = self.network.get_classes()
+        nodes = self.network.get_nodes()
+        node_index = {node: idx for idx, node in enumerate(nodes)}
+        nclasses = len(classes)
+        nnodes = len(nodes)
+
+        cell = [[np.zeros((nnodes, nnodes)) for _ in range(nclasses)]
+                for _ in range(nclasses)]
+        for (class_src, class_dst), edges in self._routes.items():
+            r = classes.index(class_src)
+            s = classes.index(class_dst)
+            for (node_src, node_dst), prob in edges.items():
+                cell[r][s][node_index[node_src], node_index[node_dst]] = prob
+        return cell
+
+    getCell = get_cell
+
+    @staticmethod
+    def rtnodes2rtorig(sn) -> Tuple[Dict[Tuple[int, int], np.ndarray], np.ndarray]:
+        """
+        Recover the routing matrix as declared by the user, before the class
+        switch nodes were materialised. Twin of the static MATLAB
+        RoutingMatrix.rtnodes2rtorig, the same computation as
+        sn_rtnodes_to_rtorig: this is the class-level name for it and delegates
+        rather than duplicating it.
+
+        Note this is NOT sn.rtorig: the stochastic complement also fills the
+        rows of a station a class never visits, which is why MATLAB
+        refreshRoutingMatrix.m does not use it to populate that field.
+
+        Args:
+            sn: Network structure
+
+        Returns:
+            Tuple of (rtorigcell, rtorig), rtorigcell keyed by (r, s).
+        """
+        from ..api.sn.utils import sn_rtnodes_to_rtorig
+        return sn_rtnodes_to_rtorig(sn)
+
     def toMatrix(self) -> np.ndarray:
         """
         Convert the routing to a dense matrix.

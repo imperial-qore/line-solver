@@ -16,6 +16,13 @@ function RD = getCdfPT(self, R)
 % Copyright (c) 2012-2026, Imperial College London
 % All rights reserved.
 
+
+% lang='cpp' cannot serve this getter; the reason is named, not blanket.
+if isfield(self.options,'lang') && strcmp(self.options.lang,'cpp')
+    CPPLINE.cppUnsupported(self.name, 'getCdfPT', ...
+        ['the C++ fluid port carries no passage-time law']);
+end
+
 if nargin < 2
     RD = self.getCdfPassT();
 else

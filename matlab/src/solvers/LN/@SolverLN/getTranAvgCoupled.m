@@ -160,12 +160,12 @@ function demand = local_recompute_demand(self, traj, tgrid, layerSn)
 % Recompute the time-varying inter-layer demands from the layer trajectories,
 % pointwise in t, mirroring the scalar updateThinkTimes / updateMetricsDefault
 % formulas. Returns struct with:
-%   thinkt : containers.Map tidx -> (ng x 1) think-time trajectory
-%   callservt : containers.Map cidx -> (ng x 1) call service-time trajectory
+%   thinkt : dictionary tidx -> (ng x 1) think-time trajectory
+%   callservt : dictionary cidx -> (ng x 1) call service-time trajectory
 lqn = self.lqn;
 ng = numel(tgrid);
-thinkt = containers.Map('KeyType','double','ValueType','any');
-callservt = containers.Map('KeyType','double','ValueType','any');
+thinkt = configureDictionary('double','cell');
+callservt = configureDictionary('double','cell');
 
 % Task think times: from the task's own server-layer utilization/throughput.
 for t = 1:lqn.ntasks
@@ -173,8 +173,7 @@ for t = 1:lqn.ntasks
     if isnan(self.idxhash(tidx)) || lqn.isref(tidx)
         continue
     end
-    e = self.idxhash(tidx);
-    sIdx = self.ensemble{e}.attribute.serverIdx;
+    [e, sIdx] = self.layerOf(tidx);
     K = layerSn{e}.nclasses;
     Uti = zeros(ng,1); Tti = zeros(ng,1);
     for r = 1:K
@@ -182,7 +181,9 @@ for t = 1:lqn.ntasks
         Tti = Tti + squeeze(traj{e}.T(sIdx,r,:));
     end
     njobs = max(self.njobs(tidx,:));
-    userthink = lqn.think{tidx}.getMean;
+    % same closure as updateThinkTimes, so the same gate: only a reference
+    % task's think time is a per-request delay -- see lqn_ref_thinktime
+    userthink = lqn_ref_thinktime(lqn, tidx);
     Tsafe = max(Tti, GlobalConstants.FineTol);
     if lqn.sched(tidx) == SchedStrategy.INF
         tk = (njobs - Uti) ./ Tsafe - userthink;
@@ -190,7 +191,7 @@ for t = 1:lqn.ntasks
         tk = njobs .* abs(1 - Uti) ./ Tsafe - userthink;
     end
     tk = max(GlobalConstants.Zero, tk) + userthink; % total mean incl. user think
-    thinkt(tidx) = tk;
+    thinkt{tidx} = tk;
 end
 
 % Synchronous-call service demands: callee entry response time * call mean.
@@ -203,8 +204,7 @@ for cidx = 1:lqn.ncalls
     if isnan(self.idxhash(tidx))
         continue
     end
-    e = self.idxhash(tidx);
-    sIdx = self.ensemble{e}.attribute.serverIdx;
+    [e, sIdx] = self.layerOf(tidx);
     % response time of the callee at its server, summed over the entry classes
     K = layerSn{e}.nclasses;
     Rc = zeros(ng,1);
@@ -222,7 +222,7 @@ for cidx = 1:lqn.ncalls
     if ~isempty(lqn.callproc{cidx}) && isa(lqn.callproc{cidx},'Distribution')
         callmean = lqn.callproc{cidx}.getMean;
     end
-    callservt(cidx) = Rc * callmean;
+    callservt{cidx} = Rc * callmean;
 end
 
 demand = struct('thinkt', thinkt, 'callservt', callservt);
@@ -256,7 +256,7 @@ if any(strcmp(channels, {'both','thinkt'}))
         end
         if lqn.type(aidx) == LayeredNetworkElement.TASK && lqn.sched(aidx) ~= SchedStrategy.REF ...
                 && isKey(demand.thinkt, aidx)
-            d = demand.thinkt(aidx);
+            d = demand.thinkt{aidx};
             schedByLayer{e} = local_add_sched(schedByLayer{e}, layerSn{e}, nodeidx, classidx, tgrid, d);
         end
     end
@@ -272,7 +272,7 @@ if any(strcmp(channels, {'both','callservt'}))
             continue
         end
         if isKey(demand.callservt, cidx)
-            d = demand.callservt(cidx);
+            d = demand.callservt{cidx};
             schedByLayer{e} = local_add_sched(schedByLayer{e}, layerSn{e}, nodeidx, classidx, tgrid, d);
         end
     end

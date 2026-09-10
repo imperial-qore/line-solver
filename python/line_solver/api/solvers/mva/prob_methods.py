@@ -108,8 +108,13 @@ def get_prob_aggr(
     for r in range(K):
         N[r] = sn.njobs[r] if r < len(sn.njobs) else 0
 
-    # Compute probability
+    # Compute probability: the closed classes' binomials, plus the open classes'
+    # product-form terms at this station when the model is mixed.
     log_prob, prob = schmidt_binomial_prob_aggr(result.Q, N, nir, i)
+    open_classes = [r for r in range(K) if not np.isfinite(N[r])]
+    if open_classes and np.isfinite(log_prob):
+        log_prob += _open_prob_aggr_terms(sn, result, i, nir, open_classes)
+        prob = float(np.exp(log_prob)) if np.isfinite(log_prob) else 0.0
 
     # Cache result
     if result.prob is None:
@@ -192,6 +197,87 @@ def get_prob_marg(
     return states, probs
 
 
+def _open_prob_aggr_terms(sn, result, i, nir, open_classes) -> float:
+    """
+    The open classes' contribution to log P(state at station i), per the mixed
+    branch of `@SolverMVA/getProbAggr.m` and `@SolverFLD/getProbAggr.m`.
+
+    Same laws as `_open_prob_sys_terms`, restricted to one station: Poisson at a
+    Delay, multinomial-geometric at a queueing station, nothing at a Source.
+    """
+    from ...sn import SchedStrategy
+    from scipy.special import gammaln
+
+    sched = sn.sched.get(i) if hasattr(sn.sched, 'get') else sn.sched[i]
+    if sched == SchedStrategy.EXT:
+        return 0.0
+    U = np.atleast_2d(result.U if result.U is not None else np.zeros_like(result.Q))
+    total = 0.0
+    if sched == SchedStrategy.INF:
+        for r in open_classes:
+            n_r = float(nir[r])
+            if result.Q[i, r] > 0:
+                total += n_r * np.log(result.Q[i, r]) - result.Q[i, r] - gammaln(n_r + 1)
+            elif n_r > 0:
+                return -np.inf
+        return total
+    rho_total = float(np.sum(U[i, open_classes]))
+    n_total = float(np.sum([nir[r] for r in open_classes]))
+    if not (rho_total < 1.0):
+        return -np.inf
+    total += np.log(1.0 - rho_total) + gammaln(n_total + 1)
+    for r in open_classes:
+        n_r = float(nir[r])
+        if n_r <= 0:
+            continue
+        if U[i, r] <= 0:
+            return -np.inf
+        total += n_r * np.log(U[i, r]) - gammaln(n_r + 1)
+    return total
+
+
+def _open_prob_sys_terms(sn, result, state_matrix, open_classes) -> float:
+    """
+    The open classes' contribution to log P(system state), per
+    `@SolverMVA/getProbSysAggr.m`'s mixed branch.
+
+    A Delay station carries an independent Poisson per open class; a queueing
+    station carries the multinomial-geometric product form in its utilizations.
+    An EXT (Source) station carries neither: its population is the environment's
+    and not the model's.
+    """
+    from ...sn import SchedStrategy
+    from scipy.special import gammaln
+
+    U = np.atleast_2d(result.U if result.U is not None else np.zeros_like(result.Q))
+    total = 0.0
+    for i in range(int(sn.nstations)):
+        sched = sn.sched.get(i) if hasattr(sn.sched, 'get') else sn.sched[i]
+        if sched == SchedStrategy.EXT:
+            continue
+        if sched == SchedStrategy.INF:
+            for r in open_classes:
+                n_r = float(state_matrix[i, r])
+                if result.Q[i, r] > 0:
+                    total += n_r * np.log(result.Q[i, r]) - result.Q[i, r] - gammaln(n_r + 1)
+                elif n_r > 0:
+                    return -np.inf
+            continue
+        rho_total = float(np.sum(U[i, open_classes]))
+        n_total = float(np.sum(state_matrix[i, open_classes]))
+        if not (rho_total < 1.0):
+            return -np.inf
+        total += np.log(1.0 - rho_total) + gammaln(n_total + 1)
+        for r in open_classes:
+            n_r = float(state_matrix[i, r])
+            if n_r <= 0:
+                continue
+            if U[i, r] <= 0:
+                return -np.inf
+            total += n_r * np.log(U[i, r]) - gammaln(n_r + 1)
+    return total
+
+
 def get_prob_sys_aggr(
     sn: NetworkStruct,
     result: SolverResults,
@@ -204,9 +290,10 @@ def get_prob_sys_aggr(
     at station i, using product of station marginals.
 
     Algorithm:
-        Binomial approximation assumes independence across stations:
-        P(state) = ∏_{i=1}^M ∏_{r=1}^K Binomial(N[r], p_{i,r}, n_i^r)
-        where p_{i,r} = Q[i,r] / N[r]
+        Schmidt's approximation: one multinomial per closed class over the
+        stations, log P = sum_r factln(N[r]) + sum_i sum_r [n_i^r
+        log(Q[i,r]/N[r]) - factln(n_i^r)], plus the open classes' product-form
+        terms per station when the model is mixed.
 
     Args:
         sn: Network structure with state
@@ -238,24 +325,46 @@ def get_prob_sys_aggr(
             if not np.isnan(log_prob):
                 return log_prob, prob
 
-    # Reconstruct state matrix if needed
     M = sn.nstations
     K = sn.nclasses
+    # THE STATE HAS TO BE DECODED, not hoped for. `sn.state` is canonically a
+    # list of per-stateful-node vectors (buffer|phases|vars), and the ndarray
+    # branch below only ever matched a legacy (M x K) form -- so on every real
+    # model the matrix stayed all zeros and this getter answered for the EMPTY
+    # system whatever state the model was in. It is decoded through toMarginal
+    # here, exactly as get_prob_aggr does one station at a time.
     state_matrix = np.zeros((M, K))
-
-    if isinstance(sn.state, np.ndarray):
+    if isinstance(sn.state, (list, tuple)):
+        from ...state.marginal import toMarginal
+        station_to_node = getattr(sn, 'stationToNode', None)
+        node_to_stateful = getattr(sn, 'nodeToStateful', None)
+        for i in range(M):
+            ind = i if station_to_node is None else int(
+                np.asarray(station_to_node).flatten()[i])
+            isf = ind if node_to_stateful is None else int(
+                np.asarray(node_to_stateful).flatten()[ind])
+            if isf < 0 or isf >= len(sn.state):
+                continue
+            state_i = np.atleast_2d(np.asarray(sn.state[isf], dtype=float))
+            _, nir_m, _, _ = toMarginal(sn, ind, state_i)
+            state_matrix[i, :] = np.asarray(nir_m).reshape(-1)[:K]
+    elif isinstance(sn.state, np.ndarray):
         if sn.state.ndim == 2 and sn.state.shape == (M, K):
             state_matrix = sn.state.copy()
-        elif sn.state.ndim == 1:
-            # Need to reconstruct from flat state
-            # This depends on state encoding; use a simple reconstruction
-            pass
+        elif sn.state.ndim == 1 and len(sn.state) >= K:
+            state_matrix[0, :] = sn.state[:K]
 
     # Get population
-    N = np.array([sn.njobs[r] if r < len(sn.njobs) else 0 for r in range(K)])
+    N = np.array([sn.njobs[r] if r < len(sn.njobs) else 0 for r in range(K)],
+                 dtype=float)
 
-    # Compute system probability
+    # Compute system probability: the closed classes' multinomial, plus the open
+    # classes' product-form contribution per station when the model is mixed.
     log_prob, prob = schmidt_binomial_prob_sys(result.Q, N, state_matrix)
+    open_classes = [r for r in range(K) if not np.isfinite(N[r])]
+    if open_classes and np.isfinite(log_prob):
+        log_prob += _open_prob_sys_terms(sn, result, state_matrix, open_classes)
+        prob = float(np.exp(log_prob)) if np.isfinite(log_prob) else 0.0
 
     # Cache result
     if result.prob is None:

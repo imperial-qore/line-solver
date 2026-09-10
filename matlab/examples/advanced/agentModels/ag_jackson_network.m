@@ -1,7 +1,7 @@
-%% Jackson Network with MAM
+%% Jackson Network with AG
 %
-% This example demonstrates MAM with RCAT methods on an open Jackson network with
-% probabilistic routing. The RCAT algorithm models job transfers between
+% This example demonstrates SolverAG, the agent-based solver, on an open Jackson network with
+% probabilistic routing. The solver models job transfers between
 % queues as synchronization actions between interacting processes.
 %
 % Reference: Jackson, J.R. (1957). "Networks of waiting lines"
@@ -51,8 +51,8 @@ P{1,1}(queue2, sink) = p2s;
 P{1,1}(queue3, sink) = p3s;
 model.link(P);
 
-%% Solve with MAM using INAP method (default)
-solverINAP = MAM(model, 'method', 'inap');
+%% Solve with AG using INAP method (default)
+solverINAP = AG(model, 'method', 'inap');
 avgTableINAP = solverINAP.getAvgTable()
 
 %% Solve with MVA for comparison

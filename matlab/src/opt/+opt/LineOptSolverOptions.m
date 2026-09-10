@@ -17,6 +17,10 @@ classdef LineOptSolverOptions < handle
         scenarioAggregation = 'worst';
         optimizer = 'evolution';
         fdStep = 1e-6;
+        % Step for a differencing that RE-SOLVES a LayeredNetwork: the SolverLN
+        % fixed point is smooth only above its own noise floor, which
+        % penaltyWeight amplifies by 1e6. See _kb/05-solvers-overview.md.
+        fdStepLayered = 1e-4;
         gradientRestarts = 4;
         % LayeredNetwork (LQN) gradient source (used only when the model is a
         % LayeredNetwork and the gradient path is taken):
@@ -50,6 +54,7 @@ classdef LineOptSolverOptions < handle
         function obj = setScenarioAggregation(obj, v), obj.scenarioAggregation = v; end
         function obj = setOptimizer(obj, v), obj.optimizer = v; end
         function obj = setFdStep(obj, v), obj.fdStep = v; end
+        function obj = setFdStepLayered(obj, v), obj.fdStepLayered = v; end
         function obj = setGradientRestarts(obj, v), obj.gradientRestarts = v; end
         function obj = setLqnGradient(obj, v)
             if ~any(strcmp(v, {'fd','partial_sens','partial_plus_fd'}))

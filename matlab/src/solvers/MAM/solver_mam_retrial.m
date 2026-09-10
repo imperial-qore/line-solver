@@ -14,8 +14,9 @@ function [QN,UN,RN,TN,CN,XN,totiter,perf] = solver_mam_retrial(sn, options)
 % Copyright (c) 2012-2026, Imperial College London
 % All rights reserved.
 
-% Check for reneging (queue abandonment) first
-[isReneging, renegingInfo] = detectRenegingTopology(sn);
+% Check for reneging (queue abandonment) first. The shape predicate is the
+% one MAM_RETRIAL_APPLICABLE and SolverMAM.supportsModelMethod ask as well.
+[isReneging, renegingInfo] = mam_reneging_applicable(sn);
 if isReneging
     [QN,UN,RN,TN,CN,XN,totiter] = solveReneging(sn, options, renegingInfo);
     perf = struct('analyzer','LINE:solver_mam_reneging');
@@ -350,123 +351,6 @@ end
 end
 
 %% Reneging (MAPMsG) helper functions
-
-function [isReneging, info] = detectRenegingTopology(sn)
-% DETECTRENGINGTOPOLOGY Detect if model is suitable for MAPMsG solver
-%
-% Requirements:
-% - Open model, single class
-% - Single queue station with reneging/patience configured
-% - MAP/BMAP arrival at source
-% - Exponential service at queue (single-phase PH)
-% - FCFS scheduling
-
-info = struct();
-info.sourceIdx = [];
-info.queueIdx = [];
-info.classIdx = [];
-info.nServers = [];
-info.serviceRate = [];
-info.errorMsg = '';
-isReneging = false;
-
-% Check open model
-if ~sn_is_open_model(sn)
-    info.errorMsg = 'MAPMsG requires open queueing model.';
-    return;
-end
-
-% Check single class (current limitation)
-if sn.nclasses > 1
-    info.errorMsg = 'MAPMsG currently supports single class only.';
-    return;
-end
-info.classIdx = 1;
-
-% Find source and queue stations
-sourceIdx = [];
-queueIdx = [];
-for ist = 1:sn.nstations
-    nodeIdx = sn.stationToNode(ist);
-    if sn.nodetype(nodeIdx) == NodeType.Source
-        sourceIdx = ist;
-    elseif sn.nodetype(nodeIdx) == NodeType.Queue
-        if isempty(queueIdx)
-            queueIdx = ist;
-        else
-            % Multiple queues - not supported
-            info.errorMsg = 'MAPMsG requires single queue station.';
-            return;
-        end
-    end
-end
-
-if isempty(sourceIdx)
-    info.errorMsg = 'No Source node found.';
-    return;
-end
-if isempty(queueIdx)
-    info.errorMsg = 'No Queue node found.';
-    return;
-end
-
-info.sourceIdx = sourceIdx;
-info.queueIdx = queueIdx;
-
-% Check for reneging patience configuration
-if ~isfield(sn, 'impatienceClass') || isempty(sn.impatienceClass)
-    info.errorMsg = 'No patience/impatience configuration found.';
-    return;
-end
-
-if sn.impatienceClass(queueIdx, info.classIdx) ~= ImpatienceType.RENEGING
-    info.errorMsg = 'Queue does not have reneging configured.';
-    return;
-end
-
-% Check patience distribution exists
-if ~isfield(sn, 'patienceProc') || isempty(sn.patienceProc)
-    info.errorMsg = 'No patience distribution found.';
-    return;
-end
-if isempty(sn.patienceProc{queueIdx, info.classIdx})
-    info.errorMsg = 'No patience distribution for this class.';
-    return;
-end
-
-% Check FCFS scheduling
-if sn.sched(queueIdx) ~= SchedStrategy.FCFS
-    info.errorMsg = 'MAPMsG requires FCFS scheduling.';
-    return;
-end
-
-% Check exponential service (single-phase)
-serviceProc = sn.proc{queueIdx}{info.classIdx};
-if isempty(serviceProc) || ~iscell(serviceProc) || length(serviceProc) < 2
-    info.errorMsg = 'Invalid service process.';
-    return;
-end
-% For exponential, the service process should be 1x1 matrices
-if size(serviceProc{1}, 1) ~= 1
-    info.errorMsg = 'MAPMsG requires exponential service (single-phase).';
-    return;
-end
-
-% Extract service rate
-info.serviceRate = -serviceProc{1}(1,1);
-info.nServers = sn.nservers(queueIdx);
-
-% Check MAP arrival process
-arrivalProc = sn.proc{sourceIdx}{info.classIdx};
-if isempty(arrivalProc) || ~iscell(arrivalProc) || length(arrivalProc) < 2
-    info.errorMsg = 'Invalid arrival process.';
-    return;
-end
-
-% All checks passed
-isReneging = true;
-
-end
 
 function [QN,UN,RN,TN,CN,XN,totiter] = solveReneging(sn, options, info)
 % SOLVERENEGING Solve MAP/M/s+G queue using MAPMsG library

@@ -16,10 +16,15 @@ function [W_red, state_map] = eliminate_immediate_matrix(W, sn, options)
 % All rights reserved.
 
 % Get immediate detection threshold
-if isfield(options.config, 'immediate_tol')
+% Same rule as ODE_ELIMINATE_IMMEDIATE, so the matrix route and the event-set
+% routes call the same coordinates immediate: the threshold sits just under
+% GlobalConstants.Immediate, so only the InfRate sentinel qualifies and a
+% genuinely fast rate the user wrote does not.
+if isfield(options,'config') && isfield(options.config,'immediate_tol') ...
+        && ~isempty(options.config.immediate_tol)
     imm_tol = options.config.immediate_tol;
 else
-    imm_tol = GlobalConstants.Immediate / 10; % Default: 1e7
+    imm_tol = GlobalConstants.Immediate * (1 - 1e-2);
 end
 
 % Identify immediate states (those with very high outgoing rates)

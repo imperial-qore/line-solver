@@ -36,7 +36,7 @@ Z = retrieval_fpi_latency(m, lambda, gamma, alpha, T, R, station_type);
 ci = find(sn.nodetype == NodeType.Cache);
 ch = sn.nodeparam{ci};
 rk = keys(ch.retrievalSystemQueueIndices);
-jobinClass = double(rk{1}) + 1;
+jobinClass = double(rk(1)) + 1;
 w = lambda(:) / sum(lambda);
 hitAgg = sum(w .* pih(:));
 missAgg = sum(w .* pi0(:));
@@ -75,7 +75,7 @@ if hc > 0, XN(hc) = sourceRate(jobinClass) * (hitAgg + delayedAgg); end
 if mc > 0, XN(mc) = sourceRate(jobinClass) * missAgg; end
 
 % --- retrieval-station mean occupancy (QLen) and throughput ---
-queueNodes = double(ch.retrievalSystemQueueIndices(rk{1}));
+queueNodes = double(ch.retrievalSystemQueueIndices{rk(1)});
 S = numel(queueNodes);
 psIdx = find(station_type == "PS" | station_type == "SIRO" | station_type == "FCFS" | station_type == "LCFSPR");   % SIRO/FCFS/LCFSPR as PS
 for s = 1:S

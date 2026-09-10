@@ -9,6 +9,7 @@ This module contains the core solving algorithms for SolverMAM:
 - mna_open: Matrix-normalizing approximation (open networks)
 - mna_closed: Matrix-normalizing approximation (closed networks)
 - ldqbd_solver: Level-dependent QBD (single-class closed)
+- bgchain: closed classes as a background modulating chain, open classes as QBDs
 - rcat_*: RCAT and AutoCAT methods
 """
 
@@ -80,9 +81,8 @@ from .dec_poisson import DecPoissonAlgorithm
 from .dec_source_mmap import DecSourceMMAPAlgorithm
 from .mna_open import MNAOpenAlgorithm
 from .mna_closed import MNAClosedAlgorithm
-from .ag_builder import RCATModel, RCATSolver, build_rcat_model
-from .ag_inap import INAPAlgorithm, INAPPlusAlgorithm, INAPInfAlgorithm
 from .ldqbd_solver import LDQBDAlgorithm, ldqbd_is_closed_delay_queue
+from .bgchain import BgchainAlgorithm
 
 __all__ = [
     'MAMResult',
@@ -95,10 +95,5 @@ __all__ = [
     'DecSourceMMAPAlgorithm',
     'MNAOpenAlgorithm',
     'MNAClosedAlgorithm',
-    'RCATModel',
-    'RCATSolver',
-    'build_rcat_model',
-    'INAPAlgorithm',
-    'INAPPlusAlgorithm',
-    'INAPInfAlgorithm',
+    'BgchainAlgorithm',
 ]

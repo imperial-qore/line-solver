@@ -135,10 +135,10 @@ public class APH extends Markovian {
         return ((Matrix) this.getParam(2).getValue()).copy();
     }
 
-    // =================== KOTLIN-STYLE PROPERTY ALIASES ===================
+    // =================== PROPERTY ALIASES ===================
 
     /**
-     * Kotlin-style property alias for getInitProb()
+     * Property alias for getInitProb
      */
     public Matrix initProb() {
         return getInitProb();

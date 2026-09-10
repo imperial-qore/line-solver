@@ -9,6 +9,7 @@ Key algorithms:
     cache_erec: Exact recursive normalizing constant
     cache_prob_erec: Exact recursive state probabilities
     cache_spm: Singular perturbation method
+    cache_spm_size: Ray (WKB) asymptotics of the cost-capped constant
     cache_miss: Miss rate computation
     cache_is: Importance sampling
     cache_ttl_*: TTL-based cache analysis
@@ -19,7 +20,13 @@ from .erec import (
     cache_erec,
     cache_erec_aux,
     cache_prob_erec,
+    cache_cost,
+    cache_cost_pathcheck,
     cache_mva,
+)
+
+from .spm_size import (
+    cache_spm_size,
 )
 
 from .spm import (
@@ -35,6 +42,7 @@ from .miss import (
     cache_miss_fpi,
     cache_miss_spm,
     cache_mva_miss,
+    cache_miss_asy,
 )
 
 from .sampling import (
@@ -55,6 +63,7 @@ from .ttl import (
 
 from .rmf import (
     cache_miss_rmf,
+    cache_rmf_lna,
 )
 from .rmf_sfifo import (
     cache_miss_sfifo_rmf,
@@ -67,6 +76,7 @@ from .rrm import (
     cache_rrm_meanfield_ode,
     cache_rrm_meanfield,
     cache_gamma_lp,
+    cache_gamma,
 )
 
 __all__ = [
@@ -77,7 +87,11 @@ __all__ = [
     'cache_erec',
     'cache_erec_aux',
     'cache_prob_erec',
+    'cache_cost',
+    'cache_cost_pathcheck',
     'cache_mva',
+    # Ray (WKB) asymptotics of the cost-capped constant
+    'cache_spm_size',
     # SPM methods
     'cache_xi_iter',
     'cache_spm',
@@ -89,7 +103,9 @@ __all__ = [
     'cache_miss_fpi',
     'cache_miss_spm',
     'cache_mva_miss',
+    'cache_miss_asy',
     'cache_miss_rmf',
+    'cache_rmf_lna',
     'cache_miss_sfifo_rmf',
     'cache_miss_fifo_rmf',
     # Importance sampling
@@ -105,4 +121,5 @@ __all__ = [
     'cache_rrm_meanfield_ode',
     'cache_rrm_meanfield',
     'cache_gamma_lp',
+    'cache_gamma',
 ]

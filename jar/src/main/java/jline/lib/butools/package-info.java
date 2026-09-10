@@ -6,7 +6,7 @@
 /**
  * Port of BuTools library for phase-type distributions and MAP processes.
  *
- * <p>This package contains a Java/Kotlin port of the BuTools library, providing
+ * <p>This package contains a Java port of the BuTools library, providing
  * algorithms for manipulating and fitting phase-type distributions and
  * Markovian Arrival Processes (MAPs).
  *

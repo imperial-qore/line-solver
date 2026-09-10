@@ -68,6 +68,13 @@ classdef GlobalConstants
             tol = LINEZero;
         end
 
+        function tol=ArcTol()
+            % Magnitude above which an off-diagonal generator entry counts as an arc.
+            % Sign is NOT a criterion: an ME generator embeds genuinely negative
+            % off-diagonal entries -- see _kb/11-conventions-and-gotchas.md
+            tol = 1e-12;
+        end
+
         function tol=CoarseTol()
             global LINECoarseTol
             tol = LINECoarseTol;
@@ -76,6 +83,11 @@ classdef GlobalConstants
         function tol=FineTol()
             global LINEFineTol
             tol = LINEFineTol;
+        end
+
+        function n=CubMaxEvals()
+            % integrand-evaluation budget above which pfqn_nc prefers le over cub
+            n = 1e7;
         end
 
         function verbose=Verbose()
@@ -136,6 +148,20 @@ classdef GlobalConstants
         function verbose = getVerbose()
             global LINEVerbose
             verbose = LINEVerbose;
+        end
+
+        function guard = pushVerbose(val)
+            % GUARD = PUSHVERBOSE(VAL) sets the verbosity for a bounded scope
+            % Sets the global verbosity to VAL and returns an onCleanup handle
+            % that restores the previous level when it goes out of scope. The
+            % caller MUST keep the handle alive for as long as VAL should hold:
+            % dropping the output restores immediately. Use this rather than
+            % setVerbose whenever the new level belongs to a nested activity
+            % (e.g. an ensemble stage solved at verbose=0), which must not
+            % silence its caller after it returns.
+            prev = GlobalConstants.getVerbose();
+            GlobalConstants.setVerbose(val);
+            guard = onCleanup(@() GlobalConstants.setVerbose(prev));
         end
 
         function setVersion(val)

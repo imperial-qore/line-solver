@@ -209,11 +209,13 @@ def qbd_depproc_jointmom(MAPa, MAPs, iset):
     # Service rate
     lambdaS = map_lambda(MAPs[0], MAPs[1])
 
-    # Initial vectors for the 3-level representation
+    # Initial vectors for the 3-level representation. Departure epochs are the B
+    # transitions, so the embedded vector weighs the level probabilities by B and
+    # not by the arrival matrix F.
     I = np.eye(R.shape[0])
-    v0D = (1.0 / lambdaS) * v0 @ R @ F
-    v1D = (1.0 / lambdaS) * v0 @ R @ R @ F
-    v2Dp = (1.0 / lambdaS) * v0 @ np.linalg.matrix_power(R, 3) @ inv(I - R) @ F
+    v0D = (1.0 / lambdaS) * v0 @ R @ B
+    v1D = (1.0 / lambdaS) * v0 @ R @ R @ B
+    v2Dp = (1.0 / lambdaS) * v0 @ np.linalg.matrix_power(R, 3) @ inv(I - R) @ B
 
     z = np.hstack([v0D, v1D, v2Dp])
     z = z / z.sum()  # normalize to probability distribution

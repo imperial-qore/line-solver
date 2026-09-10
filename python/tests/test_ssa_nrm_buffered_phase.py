@@ -14,7 +14,8 @@ distribution; the phase expansion must instead reproduce
     Erlang (SCV<1)  <  Exp (SCV=1)  <  HyperExp / Coxian (SCV>1)
 at the same mean. An all-exponential model is BLIND to the phase machinery
 (nph == 1 makes svcph degenerate), so a non-exponential service is required to
-exercise it at all (see _kb/log.md [2026-07-17], buffered-PH entry).
+exercise it at all (see git show 449847e7b:_kb/log.md [2026-07-17],
+buffered-PH entry).
 
 Fixture: closed 1-class Delay(Exp mean 1.0) -> Queue FCFS, N = 3, service
 mean 0.5. Tolerance is 2% against the same-codebase CTMC oracle, several sd

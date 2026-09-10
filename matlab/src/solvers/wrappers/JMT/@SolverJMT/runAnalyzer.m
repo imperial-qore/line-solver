@@ -14,20 +14,32 @@ line_ack('JMT', options.verbose);
 
 line_debug(options, 'JMT analyzer starting: lang=%s, samples=%d, seed=%d', options.lang, options.samples, options.seed);
 
-self.runAnalyzerChecks(options);
+verboseGuard = self.runAnalyzerChecks(options); %#ok<NASGU> restores the caller verbosity on return
 
 sn = self.getStruct();
-if isfield(sn,'immfeed') && ~isempty(sn.immfeed) && any(sn.immfeed(:))
-    line_warning(mfilename,'SolverJMT does not support immediate feedback (immfeed); no solution returned.\n');
-    runtime = toc(Tstart);
-    return
+% The structural rules of the gate, asked again for a caller running with
+% enableChecks off. Immediate feedback used to WARN here and return no
+% solution, so the run ended with an empty table under this solver's name.
+structural = jmtMethodRefusal(sn, options.method, options);
+if ~isempty(structural)
+    line_error(mfilename, structural);
 end
 
 Solver.resetRandomGeneratorSeed(options.seed);
 
 switch options.lang
     case 'python'
-        line_error(mfilename, 'SolverJMT does not support lang=''python'' (no native-Python JMT backend). Use lang=''java'' or lang=''matlab'', or SolverSSA/SolverLDES for simulation.');
+        % Native Python carries a full SolverJMT
+        % (line_solver.solvers.wrappers.solver_jmt), which writes the same JSIM
+        % document and runs the same JMT.jar as this wrapper does. It used to be
+        % refused here as "no native-Python JMT backend", which was true when
+        % the branch was written and had stopped being true: the refusal cost 41
+        % failures in one lang='python' suite run, every one of them an example
+        % that merely names SolverJMT.
+        line_debug(options, 'JMT: using lang=python, delegating to native line_solver');
+        [QN,UN,RN,TN,AN,WN,runtime] = PYLINE.getAvg(self.name, self.model, options);
+        self.setAvgResults(QN,UN,RN,TN,AN,WN,[],[],runtime,options.method,NaN);
+        return
     case 'java'
         line_debug(options, 'JMT: using lang=java, delegating to JLINE SolverJMT');
         jmodel = LINE2JLINE(self.model);
@@ -35,7 +47,12 @@ switch options.lang
         R = jmodel.getNumberOfClasses;
         jsolver = JLINE.SolverJMT(jmodel, options);
         T0=tic;
-        [QN,UN,RN,WN,AN,TN] = JLINE.arrayListToResults(jsolver.getAvgTable);
+        % getAvgTable(true) is the UNFILTERED grid, and the reshape below needs it:
+        % the no-argument getter DROPS every (station,class) cell whose six metrics
+        % are all zero, so on a model with a disabled pair it returns fewer than M*R
+        % entries and reshape(...,R,M) errors out. MATLAB applies its own filter when
+        % the table is PRINTED, so the bridge must carry the whole grid, zeros included.
+        [QN,UN,RN,WN,AN,TN] = JLINE.arrayListToResults(jsolver.getAvgTable(true));
         runtime = toc(T0);
         CN = [];
         XN = [];
@@ -51,6 +68,12 @@ switch options.lang
         self.result.Prob.logNormConstAggr = lG;
         self.result.solverSpecific.sn = JLINE.from_jline_struct(jmodel);
         self.result.Prob.logNormConstAggr = lG;
+        return
+    case 'cpp'
+        % line-cli -s jmt writes the JSIM document from model.json and runs the same JMT.jar; without this case the switch fell through with no results set.
+        line_debug(options, 'JMT: using lang=cpp, delegating to the C++ line-cli');
+        [QN,UN,RN,TN,AN,WN,runtime] = CPPLINE.getAvg(self.name, self.model, options);
+        self.setAvgResults(QN,UN,RN,TN,AN,WN,[],[],runtime,options.method,NaN);
         return
     case 'matlab'
         line_debug(options, 'JMT: using lang=matlab');
@@ -125,19 +148,22 @@ switch options.lang
                     line_debug(options, 'JMT: default method resolved to JSIM');
                 end
                 line_debug(options, 'JMT: using JSIM method (discrete-event simulation), samples=%d, seed=%d', options.samples, options.seed);
+                LineConsole.step('writing the JSIM model file');
                 fname = self.writeJSIM(sn);
-                cmd = ['java -cp "',getJMTJarPath(self),filesep,'JMT.jar" jmt.commandline.Jmt sim "',fname,'" -seed ',num2str(options.seed),' --illegal-access=permit'];
-                if options.verbose
+                if LineConsole.isActive()
+                    LineConsole.substep('model written to %s', fname);
+                elseif options.verbose
                     line_printf('JMT model: %s\n',fname);
                 end
-                if options.verbose == VerboseLevel.DEBUG
-                    line_printf('JMT command: %s\n',cmd);
-                end
-                [status, cmdoutput] = system(cmd);
+                LineConsole.step('running the JMT simulation engine as a subprocess');
+                % Local JVM by default; a REST server if options.rest_url is set,
+                % and Docker only when no JVM exists and the user consents.
+                [status, cmdoutput] = self.jmtRun('sim', fname, options.seed, options);
                 runtime = toc(Tstart);
                 if status ~= 0 && options.verbose
                     line_printf('\nJMT command failed with status %d. Output:\n%s\n', status, cmdoutput);
                 end
+                LineConsole.step('parsing the JMT result files');
                 self.getResults;
                 if ~options.keep && isfolder(getFilePath(self))
                     rmdir(getFilePath(self),'s');
@@ -175,6 +201,15 @@ switch options.lang
                 end
             case {'replication'}
                 line_debug(options, 'JMT: using replication method (transient simulation), iter_max=%d', options.iter_max);
+                % A transient mean over an unstated horizon is not a quantity.
+                % Asked of jmtMethodRefusal, the same predicate
+                % supportsModelMethod asks, so a caller who reaches this arm
+                % with enableChecks off gets the gate's own sentence instead of
+                % an undefined-variable error further down.
+                structural = jmtMethodRefusal(sn, 'replication', options);
+                if ~isempty(structural)
+                    line_error(mfilename, structural);
+                end
                 options = self.getOptions;
                 initSeed = self.options.seed;
                 initTimeSpan = self.options.timespan;
@@ -274,18 +309,20 @@ switch options.lang
                 %if options.verbose
                 %   line_printf('\nJMT analysis (seed: %d) completed. Runtime: %f seconds.\n',options.seed,runtime);
                 %end
+            % 'jmva.ls'/'jmt.jmva.ls' are unreachable: listValidMethods dropped
+            % them in b345d7d4e and the name gate refuses them here. Restoring
+            % the pair means listValidMethods, the writeJMVA 'Logistic Sampling'
+            % arm and jmtJmvaIsClosedOnly TOGETHER; listing alone runs exact MVA
+            % under the ls label, since writeJMVA's otherwise emits 'MVA'.
             case {'jmva','jmva.amva','jmva.mva','jmva.recal','jmva.comom','jmva.chow','jmva.bs','jmva.aql','jmva.lin','jmva.dmlin','jmva.ls',...
                     'jmt.jmva','jmt.jmva.mva','jmt.jmva.amva','jmt.jmva.recal','jmt.jmva.comom','jmt.jmva.chow','jmt.jmva.bs','jmt.jmva.aql','jmt.jmva.lin','jmt.jmva.dmlin','jmt.jmva.ls'}
                 line_debug(options, 'JMT: using JMVA method: %s', options.method);
                 fname = self.writeJMVA(sn, getJMVATempPath(self), self.options);
-                cmd = ['java -cp "',getJMTJarPath(self),filesep,'JMT.jar" jmt.commandline.Jmt mva "',fname,'" -seed ',num2str(options.seed),' --illegal-access=permit'];
                 if options.verbose
                     line_printf('JMT model: %s\n',fname);
                 end
-                if options.verbose == VerboseLevel.DEBUG
-                    line_printf('JMT command: %s\n',cmd);
-                end
-                [status, cmdoutput] = system(cmd);
+                % Same backend selection as the JSIM branch; see jmtRun.
+                [status, cmdoutput] = self.jmtRun('mva', fname, options.seed, options);
                 runtime = toc(Tstart);
                 if status ~= 0 && options.verbose
                     line_printf('\nJMT command failed with status %d. Output:\n%s\n', status, cmdoutput);
@@ -308,5 +345,9 @@ switch options.lang
                 self.options.method  = 'default';
                 runAnalyzer(self);
         end
+    otherwise
+        % An unrecognised lang used to fall out with no results set, reported as "unable to return results for this model": a dispatch hole.
+        line_error(mfilename, sprintf(['SolverJMT does not know lang=''%s''. Use ' ...
+            'lang=''matlab'', lang=''java'' or lang=''cpp''.'], char(options.lang)));
 end
 end

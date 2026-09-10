@@ -2,7 +2,7 @@
 LINE Model Evaluator for Optimization
 
 This module provides the interface between the optimization solver and
-LINE's SolverAuto for model evaluation.
+LINE's SolverAUTO for model evaluation.
 
 Key Classes:
     - LineEvaluator: Wraps LINE model evaluation for optimization
@@ -29,7 +29,7 @@ class LineEvaluator:
     """
     Wraps LINE model evaluation for optimization.
 
-    Applies decision variable values to a model copy, solves with SolverAuto,
+    Applies decision variable values to a model copy, solves with SolverAUTO,
     and extracts performance metrics.
 
     This class handles the mapping between continuous optimization vectors
@@ -71,7 +71,7 @@ class LineEvaluator:
 
         # LayeredNetwork (LQN) models take a distinct evaluation path: solved
         # with SolverLN and read from the per-LQN-node average table instead of
-        # SolverAuto and the per-station table (see opt/layered.py).
+        # SolverAUTO and the per-station table (see opt/layered.py).
         from .layered import is_layered
         self._is_layered = is_layered(model)
 
@@ -89,7 +89,7 @@ class LineEvaluator:
             if self._is_layered:
                 from line_solver import SolverLN  # noqa: F401
             else:
-                from line_solver import SolverAuto  # noqa: F401
+                from line_solver import SolverAUTO  # noqa: F401
             self._line_available = True
         except ImportError:
             pass
@@ -200,7 +200,7 @@ class LineEvaluator:
         This method:
         1. Creates a model copy
         2. Applies fixed variables, then the given values
-        3. Solves with SolverAuto
+        3. Solves with SolverAUTO
         4. Extracts per-station and system performance metrics
 
         Args:
@@ -239,9 +239,9 @@ class LineEvaluator:
                 # so they are computed lazily by the gradient path only, not on
                 # every evaluation. See LineOptSolver._lqnAnalyticGradient.
             else:
-                # Flat path: SolverAuto + per-station table.
-                from line_solver import SolverAuto
-                solver = SolverAuto(model)
+                # Flat path: SolverAUTO + per-station table.
+                from line_solver import SolverAUTO
+                solver = SolverAUTO(model)
                 avg_table = solver.getAvgTable()
 
                 result.feasible = True
@@ -288,7 +288,7 @@ class LineEvaluator:
         """
         Extract performance metrics from LINE's average metric table.
 
-        Parses the DataFrame returned by ``SolverAuto.getAvgTable()``, which is
+        Parses the DataFrame returned by ``SolverAUTO.getAvgTable()``, which is
         indexed by Station/JobClass name (columns RespT, Tput, Util, QLen). This
         is robust to solver internals, unlike positional index access.
 
@@ -347,7 +347,7 @@ class LineEvaluator:
         Absence of the table is logged, not fatal.
 
         Args:
-            solver: SolverAuto instance after solving
+            solver: SolverAUTO instance after solving
             model: The solved model (for the chain-to-class mapping)
             result: EvaluationResult to populate
         """

@@ -41,14 +41,30 @@ for n=0:na
     end
 end
 % algorithm
+% Uniformization: V(n,k) is the sub-stochastic matrix of paths making exactly
+% n arrivals in k STEPS of the uniformized chain, so the Poisson weight that
+% mixes the terms is that of the STEP count k, not of the arrival count n.
+%   V(0,0) = I,  V(0,k) = V(0,k-1)*K,
+%   V(n,k) = V(n,k-1)*K + V(n-1,k-1)*K1,
+%   P_n(t) = sum_k br(tau,t,k) * V(n,k).
+% This previously weighted by br(tau,t,n) and never propagated V(0,k) past
+% k = 0. A POISSON PROCESS CANNOT SEE EITHER FAULT: there K = D0/tau + I = 0,
+% V(n,k) collapses to delta(n,k), and the two weights coincide on the only
+% surviving term -- so the Poisson pmf came out right to 1e-10 while every
+% multi-phase MAP was wrong. Checked instead against the identities any
+% counting law obeys: P_0(t) = expm(D0*t) and sum_n P_n(t) = expm((D0+D1)*t).
 V{0+1,0+1}=I;
 P{0+1}=V{0+1,0+1}*br(tau,t,0);
+for k=1:N
+    V{0+1,k+1}=V{0+1,k-1+1}*K;
+    P{0+1}=P{0+1}+V{0+1,k+1}*br(tau,t,k);
+end
 for n=1:na
     V{n+1,0+1}=0*I;
     P{n+1}=0*I;
     for k=1:N
         V{n+1,k+1}=V{n+1,k-1+1}*K+V{n-1+1,k-1+1}*K1;
-        P{n+1}=P{n+1}+V{n+1,k+1}*br(tau,t,n);
+        P{n+1}=P{n+1}+V{n+1,k+1}*br(tau,t,k);
     end
 end
 Pnt=P{na+1};

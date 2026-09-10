@@ -1,6 +1,11 @@
 function stationStateAggr = sampleAggr(self, node, numEvents, markActivePassive)
 % SAMPLE = SAMPLEAGGR(NODE, NUMSAMPLES)
 
+
+% The trajectory is the C++ engine's; markActivePassive below is a rearrangement
+% of the event cell and applies to it unchanged.
+useCpp = isfield(self.options,'lang') && strcmp(self.options.lang,'cpp');
+
 if GlobalConstants.DummyMode
     stationStateAggr = NaN;
     return
@@ -14,6 +19,10 @@ end
     %line_warning(mfilename,'SolveSSA does not support the numsamples parameter, use instead the samples option upon instantiating the solver.');
 %end
 
+if useCpp
+    stationStateAggr = CPPLINE.nodeSamplePath(self.name, self.model, self.options, ...
+        node, numEvents, true);
+else
 options = self.getOptions;
 switch options.method
     case {'default','serial'}
@@ -43,6 +52,7 @@ switch options.method
         stationStateAggr.isaggregate = true;
     otherwise
         line_error(mfilename,'sampleAggr is not available in SolverSSA with the chosen method.');
+end
 end
 %stationStateAggr.t = [0; stationStateAggr.t(2:end)];
 if markActivePassive

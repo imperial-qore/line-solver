@@ -13,8 +13,8 @@ import java.util.List;
 /**
  * Examples demonstrating CDF (Cumulative Distribution Function) of response times.
  * 
- * This class provides Java implementations corresponding to the Kotlin notebooks
- * in jline.examples.kotlin.advanced.cdfRespT package.
+ * This class provides Java implementations corresponding to the example notebooks
+ * in jline.examples.java.advanced.cdfRespT package.
  */
 public class CDFRespTExamples {
 
@@ -108,7 +108,13 @@ public class CDFRespTExamples {
                 
                 if (solver instanceof JMT) {
                     JMT jmtSolver = (JMT) solver;
-                    SolverOptions options = JMT.defaultOptions();
+                    // The solver's OWN options, not a fresh defaultOptions(): the latter
+                    // draws a RANDOM seed in its constructor (SolverOptions ->
+                    // RandomManager.generateRandomSeed), so replacing the object wholesale
+                    // discards the seed passed to the constructor above and makes this
+                    // example irreproducible -- which is what left the ld_multiserver_ps
+                    // parity row disagreeing with its golden on a Monte-Carlo margin.
+                    SolverOptions options = jmtSolver.getOptions();
                     options.samples = 100000;
                     jmtSolver.setOptions(options);
                 }

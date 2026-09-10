@@ -32,8 +32,9 @@ end
 NK = sn.njobs';  % initial population per class
 
 % Mixed open/closed load-dependent networks are handled below through the exact
-% chain-level MVALDMX algorithm (Bruell-Balbo-Afshari effective capacity); the
-% closed-only convolution path is retained for purely closed models.
+% chain-level normalizing constant (pfqn_ncldmx, Bruell-Balbo-Afshari effective
+% capacity); the closed-only convolution path is retained for purely closed
+% models.
 
 sched = sn.sched;
 %chains = sn.chains;
@@ -130,8 +131,11 @@ while max(abs(1-eta./eta_1)) > options.iter_tol & iter < options.iter_max
     end
     openChains = find(isinf(Nchain));
     if ~isempty(openChains)
-    % Mixed limited load-dependent network: exact chain-level MVALDMX; see
-    % _kb/06-solver-catalog.md (NC section, convolution/beta scaling)
+    % Mixed limited load-dependent network: the chain-level normalizing constant
+    % of Bruell-Balbo-Afshari effective capacity (pfqn_ncldmx), which carries the
+    % closed subnetwork as a purely closed load-dependent one with rates
+    % 1/EC_i(n) and never enumerates the closed population lattice; see
+    % _kb/06-solver-catalog.md (NC section, mixed load-dependent route)
     sourceStations = unique(refstatchain(openChains))';
     delayStations = setdiff(infServers, sourceStations);
     queueStations = setdiff(1:M, [delayStations, sourceStations]);
@@ -144,15 +148,28 @@ while max(abs(1-eta./eta_1)) > options.iter_tol & iter < options.iter_max
         end
     end
     Dq = Lchain(queueStations,:);
+    % pfqn_ldmx_ec reads the limited-load-dependence level b_i off the rate row
+    % itself -- the first column equal to the LAST one -- and treats every rate
+    % past it as saturated. Cutting the row at the closed population Ncl thus
+    % declares a c-server station saturated at min(n,c) with n<c whenever c
+    % exceeds Ncl, understating the capacity the open chains see (and with no
+    % closed class at all it flattens the row to mu(1)). Keep every column up to
+    % the start of each row's trailing constant run.
+    lldWidth = size(lldscaling,2);
     ncol = max(1,Ncl);
-    muq = ones(nq,ncol);
-    avail = min(ncol, size(lldscaling,2));
     for qi=1:nq
-        if avail > 0
-            muq(qi,1:avail) = lldscaling(queueStations(qi),1:avail);
+        ncol = max(ncol, lld_saturation_level(lldscaling(queueStations(qi),:)));
+    end
+    muq = ones(nq,ncol);
+    for qi=1:nq
+        ist = queueStations(qi);
+        if lldWidth > 0
+            avail = min(ncol, lldWidth);
+            muq(qi,1:avail) = lldscaling(ist,1:avail);
+            muq(qi,(avail+1):ncol) = lldscaling(ist,lldWidth); % saturated tail
         end
     end
-    [Xchain,QN_mx,~,~,lG] = pfqn_mvaldmx(lambda, Dq, Nchain, Zvec, muq, ones(nq,1));
+    [lG,~,~,Xchain,QN_mx] = pfqn_ncldmx(lambda, Dq, Nchain, Zvec, muq, ones(nq,1), options);
     lG = real(lG);
     Qchain = zeros(M,C);
     Qchain(queueStations,:) = QN_mx;
@@ -272,13 +289,13 @@ for ist=1:M
         for r=closedClasses
             c = find(sn.chains(:,r));
             if X(r) > 0
-                U(ist,r) = X(r) * sn.visits{c}(ist,r) / sn.visits{c}(sn.refstat(r),r) * ST(ist,r)/sn.nservers(ist);
+                U(ist,r) = X(r) * sn.visits{c}(sn.stationToStateful(ist),r) / sn.visits{c}(sn.stationToStateful(sn.refstat(r)),r) * ST(ist,r)/sn.nservers(ist);
             end
         end
         for r=openClasses
             c = find(sn.chains(:,r));
             if lambda(r)>0
-                U(ist,r) = lambda(r) * sn.visits{c}(ist,r) / sn.visits{c}(sn.refstat(r),r) * ST(ist,r)/sn.nservers(ist);
+                U(ist,r) = lambda(r) * sn.visits{c}(sn.stationToStateful(ist),r) / sn.visits{c}(sn.stationToStateful(sn.refstat(r)),r) * ST(ist,r)/sn.nservers(ist);
             end
         end
     elseif isinf(sn.nservers(ist))
@@ -287,13 +304,13 @@ for ist=1:M
         for r=closedClasses
             if X(r) > 0
                 c = find(sn.chains(:,r));
-                U(ist,r) = X(r) * sn.visits{c}(ist,r) / sn.visits{c}(sn.refstat(r),r) * ST(ist,r);
+                U(ist,r) = X(r) * sn.visits{c}(sn.stationToStateful(ist),r) / sn.visits{c}(sn.stationToStateful(sn.refstat(r)),r) * ST(ist,r);
             end
         end
         for r=openClasses
             if lambda(r)>0
                 c = find(sn.chains(:,r));
-                U(ist,r) = lambda(r) * sn.visits{c}(ist,r) / sn.visits{c}(sn.refstat(r),r) * ST(ist,r);
+                U(ist,r) = lambda(r) * sn.visits{c}(sn.stationToStateful(ist),r) / sn.visits{c}(sn.stationToStateful(sn.refstat(r)),r) * ST(ist,r);
             end
         end
     else
@@ -346,4 +363,19 @@ for ist=1:M
     end
 end
 tf = true;
+end
+
+function b = lld_saturation_level(murow)
+% First column of the trailing constant run of a limited load-dependence row,
+% i.e. the level b with mu(n)=mu(b) for every n>=b; 1 on a flat or empty row.
+% This is the level pfqn_ldmx_ec infers, so a row cut below it is read as a
+% different, slower station.
+b = numel(murow);
+if b == 0
+    b = 1;
+    return
+end
+while b > 1 && murow(b-1) == murow(b)
+    b = b - 1;
+end
 end

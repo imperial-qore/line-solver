@@ -32,6 +32,8 @@ import static jline.api.cache.Cache_miss_is.cache_miss_is;
 import static jline.api.cache.Cache_ttl_lrua.cache_ttl_lrua;
 import jline.api.cache.Cache_miss.CacheMissResult;
 import jline.api.cache.CacheMissFpiResult;
+import jline.api.cache.CacheRrmMeanfieldResult;
+import static jline.api.cache.Cache_rrm_meanfield.cache_rrm_meanfield;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -836,6 +838,47 @@ class CacheAPITest {
         assertThrows(IllegalArgumentException.class, () -> {
             cache_ttl_lrua(lambda, R, null);
         }, "Should throw for null m");
+    }
+
+    /**
+     * Steady state of the RANDOM(m) mean field against MATLAB.
+     *
+     * <p>The expected values come from the body of
+     * matlab/src/api/cache/cache_rrm_meanfield.m, which is a script:
+     * ode23s on cache_rrm_meanfield_ode over [0,10000] from x(:,1)=1. The same
+     * numbers pin the C++ twin in cpp/tests/test_cache_rmf.cpp.</p>
+     */
+    @Test
+    void test_cache_rrm_meanfield() {
+        Matrix lambda = new Matrix(1, 7);
+        double[] b = {49, 49, 49, 49, 7, 1, 1};
+        for (int i = 0; i < 7; i++) {
+            lambda.set(0, i, b[i] / 205.0);
+        }
+        CacheRrmMeanfieldResult r = cache_rrm_meanfield(lambda, new Matrix("[1,1,3]"));
+        assertEquals(0.0254753216627099, r.missrate, 1e-8);
+        assertEquals(0.0254753216627099, r.missratio, 1e-8);
+        assertEquals(0.00707147033548331, r.x.get(0, 0), 1e-7);
+        assertEquals(0.310786439499164, r.x.get(4, 0), 1e-7);
+        assertEquals(0.830463839303598, r.x.get(5, 0), 1e-7);
+        // The four equally popular items must stay equal.
+        for (int i = 1; i < 4; i++) {
+            assertEquals(r.x.get(0, 0), r.x.get(i, 0), 1e-9);
+        }
+
+        Matrix lambda2 = new Matrix("[0.4,0.3,0.15,0.1,0.05]");
+        CacheRrmMeanfieldResult r2 = cache_rrm_meanfield(lambda2, new Matrix("[2]"));
+        assertEquals(0.494488965618057, r2.missrate, 1e-8);
+        assertEquals(0.381995504598189, r2.x.get(0, 0), 1e-7);
+        assertEquals(0.451798950150968, r2.x.get(1, 0), 1e-7);
+        assertEquals(0.831788299222618, r2.x.get(4, 0), 1e-7);
+        // Each item is somewhere, and the list holds exactly its capacity.
+        double occupied = 0.0;
+        for (int i = 0; i < 5; i++) {
+            assertEquals(1.0, r2.x.get(i, 0) + r2.x.get(i, 1), 1e-8);
+            occupied += r2.x.get(i, 1);
+        }
+        assertEquals(2.0, occupied, 1e-6);
     }
 
 }

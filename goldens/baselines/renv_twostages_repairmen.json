@@ -1,0 +1,26 @@
+{
+  "class": {
+    "ENV": "deterministic"
+  },
+  "example": "renv_twostages_repairmen",
+  "solvers": {
+    "ENV": [
+      {
+        "JobClass": "Class1",
+        "QLen": 0.55556,
+        "RespT": 0.80363,
+        "Station": "Queue1",
+        "Tput": 0.69131,
+        "Util": 0.55556
+      },
+      {
+        "JobClass": "Class1",
+        "QLen": 0.44444,
+        "RespT": 0.64291,
+        "Station": "Queue2",
+        "Tput": 0.6913,
+        "Util": 0.44444
+      }
+    ]
+  }
+}

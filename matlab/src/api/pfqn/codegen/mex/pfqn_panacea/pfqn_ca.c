@@ -24,13 +24,30 @@
 #include "mwmathutil.h"
 #include "omp.h"
 #include <emmintrin.h>
-#include <math.h>
 
 /* Variable Definitions */
 static emlrtRSInfo
+    qc_emlrtRSI =
+        {
+            62,        /* lineNo */
+            "pfqn_ca", /* fcnName */
+            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
+            "pfqn_ca.m" /* pathName */
+};
+
+static emlrtRSInfo
+    rc_emlrtRSI =
+        {
+            59,        /* lineNo */
+            "pfqn_ca", /* fcnName */
+            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
+            "pfqn_ca.m" /* pathName */
+};
+
+static emlrtRSInfo
     sc_emlrtRSI =
         {
-            142,       /* lineNo */
+            53,        /* lineNo */
             "pfqn_ca", /* fcnName */
             "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
             "pfqn_ca.m" /* pathName */
@@ -39,7 +56,7 @@ static emlrtRSInfo
 static emlrtRSInfo
     tc_emlrtRSI =
         {
-            136,       /* lineNo */
+            47,        /* lineNo */
             "pfqn_ca", /* fcnName */
             "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
             "pfqn_ca.m" /* pathName */
@@ -48,7 +65,7 @@ static emlrtRSInfo
 static emlrtRSInfo
     uc_emlrtRSI =
         {
-            131,       /* lineNo */
+            46,        /* lineNo */
             "pfqn_ca", /* fcnName */
             "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
             "pfqn_ca.m" /* pathName */
@@ -57,7 +74,7 @@ static emlrtRSInfo
 static emlrtRSInfo
     vc_emlrtRSI =
         {
-            125,       /* lineNo */
+            45,        /* lineNo */
             "pfqn_ca", /* fcnName */
             "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
             "pfqn_ca.m" /* pathName */
@@ -66,7 +83,7 @@ static emlrtRSInfo
 static emlrtRSInfo
     wc_emlrtRSI =
         {
-            119,       /* lineNo */
+            43,        /* lineNo */
             "pfqn_ca", /* fcnName */
             "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
             "pfqn_ca.m" /* pathName */
@@ -75,7 +92,7 @@ static emlrtRSInfo
 static emlrtRSInfo
     xc_emlrtRSI =
         {
-            118,       /* lineNo */
+            36,        /* lineNo */
             "pfqn_ca", /* fcnName */
             "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
             "pfqn_ca.m" /* pathName */
@@ -84,7 +101,7 @@ static emlrtRSInfo
 static emlrtRSInfo
     yc_emlrtRSI =
         {
-            117,       /* lineNo */
+            30,        /* lineNo */
             "pfqn_ca", /* fcnName */
             "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
             "pfqn_ca.m" /* pathName */
@@ -93,34 +110,7 @@ static emlrtRSInfo
 static emlrtRSInfo
     ad_emlrtRSI =
         {
-            115,       /* lineNo */
-            "pfqn_ca", /* fcnName */
-            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
-            "pfqn_ca.m" /* pathName */
-};
-
-static emlrtRSInfo
-    bd_emlrtRSI =
-        {
-            111,       /* lineNo */
-            "pfqn_ca", /* fcnName */
-            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
-            "pfqn_ca.m" /* pathName */
-};
-
-static emlrtRSInfo
-    cd_emlrtRSI =
-        {
-            109,       /* lineNo */
-            "pfqn_ca", /* fcnName */
-            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
-            "pfqn_ca.m" /* pathName */
-};
-
-static emlrtRSInfo
-    dd_emlrtRSI =
-        {
-            93,        /* lineNo */
+            25,        /* lineNo */
             "pfqn_ca", /* fcnName */
             "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
             "pfqn_ca.m" /* pathName */
@@ -129,8 +119,8 @@ static emlrtRSInfo
 static emlrtRSInfo
     ed_emlrtRSI =
         {
-            85,        /* lineNo */
-            "pfqn_ca", /* fcnName */
+            73,        /* lineNo */
+            "hashpop", /* fcnName */
             "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
             "pfqn_ca.m" /* pathName */
 };
@@ -138,8 +128,8 @@ static emlrtRSInfo
 static emlrtRSInfo
     fd_emlrtRSI =
         {
-            78,        /* lineNo */
-            "pfqn_ca", /* fcnName */
+            118,  /* lineNo */
+            "Fz", /* fcnName */
             "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
             "pfqn_ca.m" /* pathName */
 };
@@ -147,93 +137,13 @@ static emlrtRSInfo
 static emlrtRSInfo
     gd_emlrtRSI =
         {
-            36,        /* lineNo */
-            "pfqn_ca", /* fcnName */
-            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
-            "pfqn_ca.m" /* pathName */
-};
-
-static emlrtRSInfo
-    hd_emlrtRSI =
-        {
-            30,        /* lineNo */
-            "pfqn_ca", /* fcnName */
-            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
-            "pfqn_ca.m" /* pathName */
-};
-
-static emlrtRSInfo
-    id_emlrtRSI =
-        {
-            25,        /* lineNo */
-            "pfqn_ca", /* fcnName */
-            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
-            "pfqn_ca.m" /* pathName */
-};
-
-static emlrtRSInfo jd_emlrtRSI = {
-    13,                                                         /* lineNo */
-    "any",                                                      /* fcnName */
-    "/usr/local/MATLAB/R2025a/toolbox/eml/lib/matlab/ops/any.m" /* pathName */
-};
-
-static emlrtRSInfo kd_emlrtRSI = {
-    143,        /* lineNo */
-    "allOrAny", /* fcnName */
-    "/usr/local/MATLAB/R2025a/toolbox/eml/eml/+coder/+internal/allOrAny.m" /* pathName
-                                                                            */
-};
-
-static emlrtRSInfo ld_emlrtRSI = {
-    12,                                                            /* lineNo */
-    "pow2",                                                        /* fcnName */
-    "/usr/local/MATLAB/R2025a/toolbox/eml/lib/matlab/elfun/pow2.m" /* pathName
-                                                                    */
-};
-
-static emlrtRSInfo md_emlrtRSI = {
-    48,                    /* lineNo */
-    "applyScalarFunction", /* fcnName */
-    "/usr/local/MATLAB/R2025a/toolbox/eml/eml/+coder/+internal/"
-    "applyScalarFunction.m" /* pathName */
-};
-
-static emlrtRSInfo nd_emlrtRSI =
-    {
-        12,     /* lineNo */
-        "pow2", /* fcnName */
-        "/usr/local/MATLAB/R2025a/toolbox/eml/eml/+coder/+internal/+scalar/"
-        "pow2.m" /* pathName */
-};
-
-static emlrtRSInfo
-    sd_emlrtRSI =
-        {
-            153,       /* lineNo */
-            "hashpop", /* fcnName */
-            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
-            "pfqn_ca.m" /* pathName */
-};
-
-static emlrtRSInfo
-    td_emlrtRSI =
-        {
-            198,  /* lineNo */
-            "Fz", /* fcnName */
-            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
-            "pfqn_ca.m" /* pathName */
-};
-
-static emlrtRSInfo
-    ud_emlrtRSI =
-        {
-            176,     /* lineNo */
+            96,      /* lineNo */
             "pprod", /* fcnName */
             "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
             "pfqn_ca.m" /* pathName */
 };
 
-static emlrtRSInfo vd_emlrtRSI = {
+static emlrtRSInfo hd_emlrtRSI = {
     15,    /* lineNo */
     "sum", /* fcnName */
     "/usr/local/MATLAB/R2025a/toolbox/eml/lib/matlab/datafun/sum.m" /* pathName
@@ -241,17 +151,85 @@ static emlrtRSInfo vd_emlrtRSI = {
 };
 
 static emlrtBCInfo
-    l_emlrtBCI =
+    k_emlrtBCI =
         {
             -1,        /* iFirst */
             -1,        /* iLast */
-            142,       /* lineNo */
-            17,        /* colNo */
-            "G",       /* aName */
-            "pfqn_ca", /* fName */
+            73,        /* lineNo */
+            29,        /* colNo */
+            "N",       /* aName */
+            "hashpop", /* fName */
             "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
             "pfqn_ca.m", /* pName */
             0            /* checkKind */
+};
+
+static emlrtECInfo
+    d_emlrtECI =
+        {
+            2,       /* nDims */
+            96,      /* lineNo */
+            8,       /* colNo */
+            "pprod", /* fName */
+            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
+            "pfqn_ca.m" /* pName */
+};
+
+static emlrtBCInfo
+    l_emlrtBCI =
+        {
+            -1,   /* iFirst */
+            -1,   /* iLast */
+            124,  /* lineNo */
+            10,   /* colNo */
+            "Z",  /* aName */
+            "Fz", /* fName */
+            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
+            "pfqn_ca.m", /* pName */
+            0            /* checkKind */
+};
+
+static emlrtECInfo
+    e_emlrtECI =
+        {
+            2,         /* nDims */
+            25,        /* lineNo */
+            34,        /* colNo */
+            "pfqn_ca", /* fName */
+            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
+            "pfqn_ca.m" /* pName */
+};
+
+static emlrtDCInfo
+    emlrtDCI =
+        {
+            43,        /* lineNo */
+            10,        /* colNo */
+            "pfqn_ca", /* fName */
+            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
+            "pfqn_ca.m", /* pName */
+            1            /* checkKind */
+};
+
+static emlrtDCInfo
+    b_emlrtDCI =
+        {
+            43,        /* lineNo */
+            14,        /* colNo */
+            "pfqn_ca", /* fName */
+            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
+            "pfqn_ca.m", /* pName */
+            1            /* checkKind */
+};
+
+static emlrtRTEInfo
+    j_emlrtRTEI =
+        {
+            48,        /* lineNo */
+            11,        /* colNo */
+            "pfqn_ca", /* fName */
+            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
+            "pfqn_ca.m" /* pName */
 };
 
 static emlrtBCInfo
@@ -259,8 +237,8 @@ static emlrtBCInfo
         {
             -1,        /* iFirst */
             -1,        /* iLast */
-            136,       /* lineNo */
-            17,        /* colNo */
+            61,        /* lineNo */
+            6,         /* colNo */
             "G",       /* aName */
             "pfqn_ca", /* fName */
             "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
@@ -273,8 +251,8 @@ static emlrtBCInfo
         {
             -1,        /* iFirst */
             -1,        /* iLast */
-            136,       /* lineNo */
-            13,        /* colNo */
+            61,        /* lineNo */
+            10,        /* colNo */
             "G",       /* aName */
             "pfqn_ca", /* fName */
             "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
@@ -282,178 +260,12 @@ static emlrtBCInfo
             0            /* checkKind */
 };
 
-static emlrtRTEInfo
-    k_emlrtRTEI =
-        {
-            120,       /* lineNo */
-            11,        /* colNo */
-            "pfqn_ca", /* fName */
-            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
-            "pfqn_ca.m" /* pName */
-};
-
-static emlrtDCInfo
-    emlrtDCI =
-        {
-            115,       /* lineNo */
-            14,        /* colNo */
-            "pfqn_ca", /* fName */
-            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
-            "pfqn_ca.m", /* pName */
-            1            /* checkKind */
-};
-
-static emlrtDCInfo
-    b_emlrtDCI =
-        {
-            115,       /* lineNo */
-            10,        /* colNo */
-            "pfqn_ca", /* fName */
-            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
-            "pfqn_ca.m", /* pName */
-            1            /* checkKind */
-};
-
-static emlrtECInfo
-    d_emlrtECI =
-        {
-            2,         /* nDims */
-            25,        /* lineNo */
-            34,        /* colNo */
-            "pfqn_ca", /* fName */
-            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
-            "pfqn_ca.m" /* pName */
-};
-
 static emlrtBCInfo
     o_emlrtBCI =
         {
-            -1,   /* iFirst */
-            -1,   /* iLast */
-            204,  /* lineNo */
-            10,   /* colNo */
-            "Z",  /* aName */
-            "Fz", /* fName */
-            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
-            "pfqn_ca.m", /* pName */
-            0            /* checkKind */
-};
-
-static emlrtECInfo
-    e_emlrtECI =
-        {
-            2,       /* nDims */
-            176,     /* lineNo */
-            8,       /* colNo */
-            "pprod", /* fName */
-            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
-            "pfqn_ca.m" /* pName */
-};
-
-static emlrtBCInfo
-    p_emlrtBCI =
-        {
             -1,        /* iFirst */
             -1,        /* iLast */
-            153,       /* lineNo */
-            29,        /* colNo */
-            "N",       /* aName */
-            "hashpop", /* fName */
-            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
-            "pfqn_ca.m", /* pName */
-            0            /* checkKind */
-};
-
-static emlrtBCInfo
-    q_emlrtBCI =
-        {
-            -1,        /* iFirst */
-            -1,        /* iLast */
-            83,        /* lineNo */
-            14,        /* colNo */
-            "N",       /* aName */
-            "pfqn_ca", /* fName */
-            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
-            "pfqn_ca.m", /* pName */
-            0            /* checkKind */
-};
-
-static emlrtBCInfo
-    r_emlrtBCI =
-        {
-            -1,        /* iFirst */
-            -1,        /* iLast */
-            84,        /* lineNo */
-            18,        /* colNo */
-            "L",       /* aName */
-            "pfqn_ca", /* fName */
-            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
-            "pfqn_ca.m", /* pName */
-            0            /* checkKind */
-};
-
-static emlrtBCInfo
-    s_emlrtBCI =
-        {
-            -1,        /* iFirst */
-            -1,        /* iLast */
-            84,        /* lineNo */
-            20,        /* colNo */
-            "L",       /* aName */
-            "pfqn_ca", /* fName */
-            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
-            "pfqn_ca.m", /* pName */
-            0            /* checkKind */
-};
-
-static emlrtBCInfo
-    t_emlrtBCI =
-        {
-            -1,        /* iFirst */
-            -1,        /* iLast */
-            85,        /* lineNo */
-            36,        /* colNo */
-            "L",       /* aName */
-            "pfqn_ca", /* fName */
-            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
-            "pfqn_ca.m", /* pName */
-            0            /* checkKind */
-};
-
-static emlrtBCInfo
-    u_emlrtBCI =
-        {
-            -1,        /* iFirst */
-            -1,        /* iLast */
-            85,        /* lineNo */
-            38,        /* colNo */
-            "L",       /* aName */
-            "pfqn_ca", /* fName */
-            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
-            "pfqn_ca.m", /* pName */
-            0            /* checkKind */
-};
-
-static emlrtBCInfo
-    v_emlrtBCI =
-        {
-            -1,        /* iFirst */
-            -1,        /* iLast */
-            85,        /* lineNo */
-            27,        /* colNo */
-            "N",       /* aName */
-            "pfqn_ca", /* fName */
-            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
-            "pfqn_ca.m", /* pName */
-            0            /* checkKind */
-};
-
-static emlrtBCInfo
-    w_emlrtBCI =
-        {
-            -1,        /* iFirst */
-            -1,        /* iLast */
-            119,       /* lineNo */
+            47,        /* lineNo */
             9,         /* colNo */
             "G",       /* aName */
             "pfqn_ca", /* fName */
@@ -465,7 +277,7 @@ static emlrtBCInfo
 static emlrtDCInfo
     c_emlrtDCI =
         {
-            119,       /* lineNo */
+            47,        /* lineNo */
             9,         /* colNo */
             "pfqn_ca", /* fName */
             "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
@@ -474,11 +286,11 @@ static emlrtDCInfo
 };
 
 static emlrtBCInfo
-    x_emlrtBCI =
+    p_emlrtBCI =
         {
             -1,        /* iFirst */
             -1,        /* iLast */
-            153,       /* lineNo */
+            73,        /* lineNo */
             39,        /* colNo */
             "n",       /* aName */
             "hashpop", /* fName */
@@ -488,14 +300,126 @@ static emlrtBCInfo
 };
 
 static emlrtBCInfo
-    y_emlrtBCI =
+    q_emlrtBCI =
         {
             -1,   /* iFirst */
             -1,   /* iLast */
-            207,  /* lineNo */
+            127,  /* lineNo */
             14,   /* colNo */
             "n",  /* aName */
             "Fz", /* fName */
+            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
+            "pfqn_ca.m", /* pName */
+            0            /* checkKind */
+};
+
+static emlrtBCInfo
+    r_emlrtBCI =
+        {
+            -1,        /* iFirst */
+            -1,        /* iLast */
+            49,        /* lineNo */
+            23,        /* colNo */
+            "G",       /* aName */
+            "pfqn_ca", /* fName */
+            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
+            "pfqn_ca.m", /* pName */
+            0            /* checkKind */
+};
+
+static emlrtBCInfo
+    s_emlrtBCI =
+        {
+            -1,        /* iFirst */
+            -1,        /* iLast */
+            49,        /* lineNo */
+            27,        /* colNo */
+            "G",       /* aName */
+            "pfqn_ca", /* fName */
+            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
+            "pfqn_ca.m", /* pName */
+            0            /* checkKind */
+};
+
+static emlrtBCInfo
+    t_emlrtBCI =
+        {
+            -1,        /* iFirst */
+            -1,        /* iLast */
+            49,        /* lineNo */
+            11,        /* colNo */
+            "G",       /* aName */
+            "pfqn_ca", /* fName */
+            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
+            "pfqn_ca.m", /* pName */
+            0            /* checkKind */
+};
+
+static emlrtBCInfo
+    u_emlrtBCI =
+        {
+            -1,        /* iFirst */
+            -1,        /* iLast */
+            49,        /* lineNo */
+            13,        /* colNo */
+            "G",       /* aName */
+            "pfqn_ca", /* fName */
+            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
+            "pfqn_ca.m", /* pName */
+            0            /* checkKind */
+};
+
+static emlrtBCInfo
+    v_emlrtBCI =
+        {
+            -1,        /* iFirst */
+            -1,        /* iLast */
+            51,        /* lineNo */
+            18,        /* colNo */
+            "n",       /* aName */
+            "pfqn_ca", /* fName */
+            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
+            "pfqn_ca.m", /* pName */
+            0            /* checkKind */
+};
+
+static emlrtBCInfo
+    w_emlrtBCI =
+        {
+            -1,        /* iFirst */
+            -1,        /* iLast */
+            52,        /* lineNo */
+            26,        /* colNo */
+            "n",       /* aName */
+            "pfqn_ca", /* fName */
+            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
+            "pfqn_ca.m", /* pName */
+            0            /* checkKind */
+};
+
+static emlrtBCInfo
+    x_emlrtBCI =
+        {
+            -1,        /* iFirst */
+            -1,        /* iLast */
+            54,        /* lineNo */
+            26,        /* colNo */
+            "n",       /* aName */
+            "pfqn_ca", /* fName */
+            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
+            "pfqn_ca.m", /* pName */
+            0            /* checkKind */
+};
+
+static emlrtBCInfo
+    y_emlrtBCI =
+        {
+            -1,        /* iFirst */
+            -1,        /* iLast */
+            55,        /* lineNo */
+            31,        /* colNo */
+            "G",       /* aName */
+            "pfqn_ca", /* fName */
             "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
             "pfqn_ca.m", /* pName */
             0            /* checkKind */
@@ -506,8 +430,8 @@ static emlrtBCInfo
         {
             -1,        /* iFirst */
             -1,        /* iLast */
-            121,       /* lineNo */
-            23,        /* colNo */
+            55,        /* lineNo */
+            33,        /* colNo */
             "G",       /* aName */
             "pfqn_ca", /* fName */
             "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
@@ -520,9 +444,9 @@ static emlrtBCInfo
         {
             -1,        /* iFirst */
             -1,        /* iLast */
-            121,       /* lineNo */
-            27,        /* colNo */
-            "G",       /* aName */
+            55,        /* lineNo */
+            43,        /* colNo */
+            "L",       /* aName */
             "pfqn_ca", /* fName */
             "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
             "pfqn_ca.m", /* pName */
@@ -534,9 +458,9 @@ static emlrtBCInfo
         {
             -1,        /* iFirst */
             -1,        /* iLast */
-            121,       /* lineNo */
-            11,        /* colNo */
-            "G",       /* aName */
+            55,        /* lineNo */
+            47,        /* colNo */
+            "L",       /* aName */
             "pfqn_ca", /* fName */
             "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
             "pfqn_ca.m", /* pName */
@@ -548,8 +472,8 @@ static emlrtBCInfo
         {
             -1,        /* iFirst */
             -1,        /* iLast */
-            121,       /* lineNo */
-            13,        /* colNo */
+            55,        /* lineNo */
+            52,        /* colNo */
             "G",       /* aName */
             "pfqn_ca", /* fName */
             "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
@@ -562,119 +486,7 @@ static emlrtBCInfo
         {
             -1,        /* iFirst */
             -1,        /* iLast */
-            123,       /* lineNo */
-            18,        /* colNo */
-            "n",       /* aName */
-            "pfqn_ca", /* fName */
-            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
-            "pfqn_ca.m", /* pName */
-            0            /* checkKind */
-};
-
-static emlrtBCInfo
-    fb_emlrtBCI =
-        {
-            -1,        /* iFirst */
-            -1,        /* iLast */
-            124,       /* lineNo */
-            26,        /* colNo */
-            "n",       /* aName */
-            "pfqn_ca", /* fName */
-            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
-            "pfqn_ca.m", /* pName */
-            0            /* checkKind */
-};
-
-static emlrtBCInfo
-    gb_emlrtBCI =
-        {
-            -1,        /* iFirst */
-            -1,        /* iLast */
-            126,       /* lineNo */
-            26,        /* colNo */
-            "n",       /* aName */
-            "pfqn_ca", /* fName */
-            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
-            "pfqn_ca.m", /* pName */
-            0            /* checkKind */
-};
-
-static emlrtBCInfo
-    hb_emlrtBCI =
-        {
-            -1,        /* iFirst */
-            -1,        /* iLast */
-            127,       /* lineNo */
-            31,        /* colNo */
-            "G",       /* aName */
-            "pfqn_ca", /* fName */
-            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
-            "pfqn_ca.m", /* pName */
-            0            /* checkKind */
-};
-
-static emlrtBCInfo
-    ib_emlrtBCI =
-        {
-            -1,        /* iFirst */
-            -1,        /* iLast */
-            127,       /* lineNo */
-            33,        /* colNo */
-            "G",       /* aName */
-            "pfqn_ca", /* fName */
-            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
-            "pfqn_ca.m", /* pName */
-            0            /* checkKind */
-};
-
-static emlrtBCInfo
-    jb_emlrtBCI =
-        {
-            -1,        /* iFirst */
-            -1,        /* iLast */
-            127,       /* lineNo */
-            43,        /* colNo */
-            "L",       /* aName */
-            "pfqn_ca", /* fName */
-            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
-            "pfqn_ca.m", /* pName */
-            0            /* checkKind */
-};
-
-static emlrtBCInfo
-    kb_emlrtBCI =
-        {
-            -1,        /* iFirst */
-            -1,        /* iLast */
-            127,       /* lineNo */
-            47,        /* colNo */
-            "L",       /* aName */
-            "pfqn_ca", /* fName */
-            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
-            "pfqn_ca.m", /* pName */
-            0            /* checkKind */
-};
-
-static emlrtBCInfo
-    lb_emlrtBCI =
-        {
-            -1,        /* iFirst */
-            -1,        /* iLast */
-            127,       /* lineNo */
-            52,        /* colNo */
-            "G",       /* aName */
-            "pfqn_ca", /* fName */
-            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
-            "pfqn_ca.m", /* pName */
-            0            /* checkKind */
-};
-
-static emlrtBCInfo
-    mb_emlrtBCI =
-        {
-            -1,        /* iFirst */
-            -1,        /* iLast */
-            127,       /* lineNo */
+            55,        /* lineNo */
             54,        /* colNo */
             "G",       /* aName */
             "pfqn_ca", /* fName */
@@ -686,7 +498,7 @@ static emlrtBCInfo
 static emlrtDCInfo
     d_emlrtDCI =
         {
-            127,       /* lineNo */
+            55,        /* lineNo */
             54,        /* colNo */
             "pfqn_ca", /* fName */
             "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
@@ -695,11 +507,11 @@ static emlrtDCInfo
 };
 
 static emlrtBCInfo
-    nb_emlrtBCI =
+    fb_emlrtBCI =
         {
             -1,        /* iFirst */
             -1,        /* iLast */
-            127,       /* lineNo */
+            55,        /* lineNo */
             19,        /* colNo */
             "G",       /* aName */
             "pfqn_ca", /* fName */
@@ -709,11 +521,11 @@ static emlrtBCInfo
 };
 
 static emlrtBCInfo
-    ob_emlrtBCI =
+    gb_emlrtBCI =
         {
             -1,        /* iFirst */
             -1,        /* iLast */
-            127,       /* lineNo */
+            55,        /* lineNo */
             21,        /* colNo */
             "G",       /* aName */
             "pfqn_ca", /* fName */
@@ -723,11 +535,11 @@ static emlrtBCInfo
 };
 
 static emlrtBCInfo
-    pb_emlrtBCI =
+    hb_emlrtBCI =
         {
             -1,      /* iFirst */
             -1,      /* iLast */
-            182,     /* lineNo */
+            102,     /* lineNo */
             16,      /* colNo */
             "n",     /* aName */
             "pprod", /* fName */
@@ -737,11 +549,11 @@ static emlrtBCInfo
 };
 
 static emlrtBCInfo
-    qb_emlrtBCI =
+    ib_emlrtBCI =
         {
             -1,      /* iFirst */
             -1,      /* iLast */
-            182,     /* lineNo */
+            102,     /* lineNo */
             22,      /* colNo */
             "N",     /* aName */
             "pprod", /* fName */
@@ -751,11 +563,11 @@ static emlrtBCInfo
 };
 
 static emlrtBCInfo
-    rb_emlrtBCI =
+    jb_emlrtBCI =
         {
             -1,      /* iFirst */
             -1,      /* iLast */
-            183,     /* lineNo */
+            103,     /* lineNo */
             7,       /* colNo */
             "n",     /* aName */
             "pprod", /* fName */
@@ -765,11 +577,11 @@ static emlrtBCInfo
 };
 
 static emlrtBCInfo
-    sb_emlrtBCI =
+    kb_emlrtBCI =
         {
             -1,      /* iFirst */
             -1,      /* iLast */
-            190,     /* lineNo */
+            110,     /* lineNo */
             8,       /* colNo */
             "n",     /* aName */
             "pprod", /* fName */
@@ -779,7 +591,7 @@ static emlrtBCInfo
 };
 
 static emlrtRTEInfo
-    pb_emlrtRTEI =
+    jb_emlrtRTEI =
         {
             22,        /* lineNo */
             7,         /* colNo */
@@ -789,7 +601,17 @@ static emlrtRTEInfo
 };
 
 static emlrtRTEInfo
-    qb_emlrtRTEI =
+    kb_emlrtRTEI =
+        {
+            43,        /* lineNo */
+            19,        /* colNo */
+            "pfqn_ca", /* fName */
+            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
+            "pfqn_ca.m" /* pName */
+};
+
+static emlrtRTEInfo
+    lb_emlrtRTEI =
         {
             25,        /* lineNo */
             34,        /* colNo */
@@ -799,19 +621,9 @@ static emlrtRTEInfo
 };
 
 static emlrtRTEInfo
-    rb_emlrtRTEI =
+    mb_emlrtRTEI =
         {
-            115,       /* lineNo */
-            19,        /* colNo */
-            "pfqn_ca", /* fName */
-            "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
-            "pfqn_ca.m" /* pName */
-};
-
-static emlrtRTEInfo
-    sb_emlrtRTEI =
-        {
-            115,       /* lineNo */
+            43,        /* lineNo */
             1,         /* colNo */
             "pfqn_ca", /* fName */
             "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
@@ -819,9 +631,9 @@ static emlrtRTEInfo
 };
 
 static emlrtRTEInfo
-    tb_emlrtRTEI =
+    nb_emlrtRTEI =
         {
-            116,       /* lineNo */
+            44,        /* lineNo */
             1,         /* colNo */
             "pfqn_ca", /* fName */
             "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
@@ -829,9 +641,9 @@ static emlrtRTEInfo
 };
 
 static emlrtRTEInfo
-    ub_emlrtRTEI =
+    ob_emlrtRTEI =
         {
-            153,       /* lineNo */
+            73,        /* lineNo */
             25,        /* colNo */
             "pfqn_ca", /* fName */
             "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
@@ -839,9 +651,9 @@ static emlrtRTEInfo
 };
 
 static emlrtRTEInfo
-    vb_emlrtRTEI =
+    pb_emlrtRTEI =
         {
-            176,       /* lineNo */
+            96,        /* lineNo */
             8,         /* colNo */
             "pfqn_ca", /* fName */
             "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
@@ -849,16 +661,16 @@ static emlrtRTEInfo
 };
 
 static emlrtRTEInfo
-    wb_emlrtRTEI =
+    qb_emlrtRTEI =
         {
-            131,       /* lineNo */
+            59,        /* lineNo */
             5,         /* colNo */
             "pfqn_ca", /* fName */
             "/home/gcasale/Dropbox/code/line-dev.git/matlab/src/api/pfqn/"
             "pfqn_ca.m" /* pName */
 };
 
-static emlrtRTEInfo xb_emlrtRTEI = {
+static emlrtRTEInfo rb_emlrtRTEI = {
     8,                                                             /* lineNo */
     14,                                                            /* colNo */
     "factln",                                                      /* fName */
@@ -886,7 +698,7 @@ static void eq(const emlrtStack *sp, emxArray_boolean_T *in1,
   in2_data = in2->data;
   stride_0_1 = in1->size[0] * in1->size[1];
   in1->size[0] = 1;
-  emxEnsureCapacity_boolean_T(sp, in1, stride_0_1, &vb_emlrtRTEI);
+  emxEnsureCapacity_boolean_T(sp, in1, stride_0_1, &pb_emlrtRTEI);
   if (in3->size[1] == 1) {
     loop_ub = in2->size[1];
   } else {
@@ -894,7 +706,7 @@ static void eq(const emlrtStack *sp, emxArray_boolean_T *in1,
   }
   stride_0_1 = in1->size[0] * in1->size[1];
   in1->size[1] = loop_ub;
-  emxEnsureCapacity_boolean_T(sp, in1, stride_0_1, &vb_emlrtRTEI);
+  emxEnsureCapacity_boolean_T(sp, in1, stride_0_1, &pb_emlrtRTEI);
   in1_data = in1->data;
   stride_0_1 = (in2->size[1] != 1);
   stride_1_1 = (in3->size[1] != 1);
@@ -917,7 +729,7 @@ static void eq(const emlrtStack *sp, emxArray_boolean_T *in1,
   }
 }
 
-real_T pfqn_ca(const emlrtStack *sp, emxArray_real_T *L,
+real_T pfqn_ca(const emlrtStack *sp, const emxArray_real_T *L,
                const emxArray_real_T *N)
 {
   emlrtStack b_st;
@@ -934,10 +746,10 @@ real_T pfqn_ca(const emlrtStack *sp, emxArray_real_T *L,
   emxArray_real_T *b_N;
   emxArray_real_T *b_x;
   emxArray_real_T *n;
+  const real_T *L_data;
   const real_T *N_data;
   real_T Gn;
   real_T *G_data;
-  real_T *L_data;
   real_T *b_N_data;
   real_T *n_data;
   int32_T M;
@@ -945,7 +757,7 @@ real_T pfqn_ca(const emlrtStack *sp, emxArray_real_T *L,
   int32_T b_r;
   int32_T c_r;
   int32_T d_r;
-  int32_T i;
+  int32_T k;
   boolean_T *x_data;
   st.prev = sp;
   st.tls = sp->tls;
@@ -985,35 +797,35 @@ real_T pfqn_ca(const emlrtStack *sp, emxArray_real_T *L,
   /* } */
   R = L->size[1];
   M = L->size[0];
-  emxInit_real_T(sp, &G, 2, &sb_emlrtRTEI);
-  emxInit_real_T(sp, &n, 2, &tb_emlrtRTEI);
-  emxInit_boolean_T(sp, &x, &vb_emlrtRTEI);
-  emxInit_real_T(sp, &b_x, 2, &xb_emlrtRTEI);
-  emxInit_real_T(sp, &b_N, 2, &rb_emlrtRTEI);
+  emxInit_real_T(sp, &G, 2, &mb_emlrtRTEI);
+  emxInit_real_T(sp, &n, 2, &nb_emlrtRTEI);
+  emxInit_boolean_T(sp, &x, &pb_emlrtRTEI);
+  emxInit_real_T(sp, &b_x, 2, &rb_emlrtRTEI);
+  emxInit_real_T(sp, &b_N, 2, &kb_emlrtRTEI);
   if (L->size[0] == 0) {
     int32_T idx;
+    int32_T loop_ub;
     int32_T nz;
-    int32_T scalarLB;
     idx = b_N->size[0] * b_N->size[1];
     b_N->size[0] = 1;
     b_N->size[1] = L->size[1];
-    emxEnsureCapacity_real_T(sp, b_N, idx, &pb_emlrtRTEI);
+    emxEnsureCapacity_real_T(sp, b_N, idx, &jb_emlrtRTEI);
     b_N_data = b_N->data;
-    for (i = 0; i < R; i++) {
-      b_N_data[i] = 0.0;
+    for (k = 0; k < R; k++) {
+      b_N_data[k] = 0.0;
     }
-    st.site = &id_emlrtRSI;
+    st.site = &ad_emlrtRSI;
     c_sum(&st, b_N, n);
-    st.site = &id_emlrtRSI;
+    st.site = &ad_emlrtRSI;
     b_log(&st, n);
     n_data = n->data;
-    nz = N->size[1];
+    loop_ub = N->size[1];
     if ((N->size[1] != n->size[1]) &&
         ((N->size[1] != 1) && (n->size[1] != 1))) {
-      emlrtDimSizeImpxCheckR2021b(N->size[1], n->size[1], &d_emlrtECI,
+      emlrtDimSizeImpxCheckR2021b(N->size[1], n->size[1], &e_emlrtECI,
                                   (emlrtConstCTX)sp);
     }
-    st.site = &id_emlrtRSI;
+    st.site = &ad_emlrtRSI;
     /*  lf=FACTLN(n) */
     /*  Compure the logarithm of n!        */
     /*  */
@@ -1023,16 +835,16 @@ real_T pfqn_ca(const emlrtStack *sp, emxArray_real_T *L,
     idx = b_x->size[0] * b_x->size[1];
     b_x->size[0] = 1;
     b_x->size[1] = N->size[1];
-    emxEnsureCapacity_real_T(&b_st, b_x, idx, &q_emlrtRTEI);
-    L_data = b_x->data;
-    scalarLB = (N->size[1] / 2) << 1;
-    idx = scalarLB - 2;
-    for (i = 0; i <= idx; i += 2) {
-      _mm_storeu_pd(&L_data[i],
-                    _mm_add_pd(_mm_loadu_pd(&N_data[i]), _mm_set1_pd(1.0)));
+    emxEnsureCapacity_real_T(&b_st, b_x, idx, &o_emlrtRTEI);
+    b_N_data = b_x->data;
+    nz = (N->size[1] / 2) << 1;
+    idx = nz - 2;
+    for (k = 0; k <= idx; k += 2) {
+      _mm_storeu_pd(&b_N_data[k],
+                    _mm_add_pd(_mm_loadu_pd(&N_data[k]), _mm_set1_pd(1.0)));
     }
-    for (i = scalarLB; i < nz; i++) {
-      L_data[i] = N_data[i] + 1.0;
+    for (k = nz; k < loop_ub; k++) {
+      b_N_data[k] = N_data[k] + 1.0;
     }
     c_st.site = &gb_emlrtRSI;
     applyScalarFunctionInPlace(&c_st, b_x);
@@ -1040,46 +852,46 @@ real_T pfqn_ca(const emlrtStack *sp, emxArray_real_T *L,
       idx = b_N->size[0] * b_N->size[1];
       b_N->size[0] = 1;
       b_N->size[1] = N->size[1];
-      emxEnsureCapacity_real_T(sp, b_N, idx, &qb_emlrtRTEI);
+      emxEnsureCapacity_real_T(sp, b_N, idx, &lb_emlrtRTEI);
       b_N_data = b_N->data;
-      idx = scalarLB - 2;
-      for (i = 0; i <= idx; i += 2) {
+      idx = nz - 2;
+      for (k = 0; k <= idx; k += 2) {
         __m128d r;
-        r = _mm_loadu_pd(&n_data[i]);
-        _mm_storeu_pd(&b_N_data[i], _mm_mul_pd(_mm_loadu_pd(&N_data[i]), r));
+        r = _mm_loadu_pd(&n_data[k]);
+        _mm_storeu_pd(&b_N_data[k], _mm_mul_pd(_mm_loadu_pd(&N_data[k]), r));
       }
-      for (i = scalarLB; i < nz; i++) {
-        b_N_data[i] = N_data[i] * n_data[i];
+      for (k = nz; k < loop_ub; k++) {
+        b_N_data[k] = N_data[k] * n_data[k];
       }
-      st.site = &id_emlrtRSI;
+      st.site = &ad_emlrtRSI;
       Gn = -b_sum(&st, b_x) + b_sum(&st, b_N);
     } else {
-      st.site = &id_emlrtRSI;
-      Gn = binary_expand_op(&st, id_emlrtRSI, b_x, N, n);
+      st.site = &ad_emlrtRSI;
+      Gn = binary_expand_op(&st, ad_emlrtRSI, b_x, N, n);
     }
     Gn = muDoubleScalarExp(Gn);
   } else {
     int32_T idx;
     int32_T nz;
     boolean_T exitg1;
-    st.site = &hd_emlrtRSI;
-    b_st.site = &nc_emlrtRSI;
-    c_st.site = &oc_emlrtRSI;
-    d_st.site = &pc_emlrtRSI;
+    st.site = &yc_emlrtRSI;
+    b_st.site = &lc_emlrtRSI;
+    c_st.site = &mc_emlrtRSI;
+    d_st.site = &nc_emlrtRSI;
     if (N->size[1] < 1) {
       emlrtErrorWithMessageIdR2018a(
-          &d_st, &b_emlrtRTEI, "Coder:toolbox:eml_min_or_max_varDimZero",
+          &d_st, &d_emlrtRTEI, "Coder:toolbox:eml_min_or_max_varDimZero",
           "Coder:toolbox:eml_min_or_max_varDimZero", 0);
     }
-    e_st.site = &qc_emlrtRSI;
-    f_st.site = &rc_emlrtRSI;
+    e_st.site = &oc_emlrtRSI;
+    f_st.site = &pc_emlrtRSI;
     if (N->size[1] > 2) {
-      g_st.site = &ec_emlrtRSI;
+      g_st.site = &cc_emlrtRSI;
       if (!muDoubleScalarIsNaN(N_data[0])) {
         idx = 1;
       } else {
         idx = 0;
-        h_st.site = &fc_emlrtRSI;
+        h_st.site = &dc_emlrtRSI;
         if (N->size[1] > 2147483646) {
           i_st.site = &x_emlrtRSI;
           check_forloop_overflow_error(&i_st);
@@ -1096,198 +908,51 @@ real_T pfqn_ca(const emlrtStack *sp, emxArray_real_T *L,
         }
       }
       if (idx != 0) {
-        g_st.site = &dc_emlrtRSI;
-        h_st.site = &gc_emlrtRSI;
+        g_st.site = &bc_emlrtRSI;
+        h_st.site = &ec_emlrtRSI;
         if ((idx + 1 <= N->size[1]) && (N->size[1] > 2147483646)) {
           i_st.site = &x_emlrtRSI;
           check_forloop_overflow_error(&i_st);
         }
       }
     }
-    st.site = &gd_emlrtRSI;
+    st.site = &xc_emlrtRSI;
     if (b_sum(&st, N) == 0.0) {
       Gn = 1.0;
     } else {
-      real_T lGest;
-      real_T t;
-      int32_T loop_ub;
-      int32_T scalarLB;
-      boolean_T ok;
-      /*  Demand scaling, so that lGn stays computable once G(N) leaves the */
-      /*  double-precision range. The recursion below runs in linear space, so
-       * it */
-      /*  overflows to Inf as soon as G(N) > realmax, i.e. log G > 709.78 -- and
-       * lGn */
-      /*  was then returned as Inf even though log G is perfectly representable.
-       * This */
-      /*  is the floating-point range problem Reiser and Lavenberg (1980, JACM
-       * 27(2), */
-      /*  p.319) report for the convolution algorithm, and the scaling remedy is
-       * Lam */
-      /*  (1982), "Dynamic scaling and growth behavior of queuing network
-       * normalization */
-      /*  constants". */
-      /*  */
-      /*  Every state in G(N) carries the same total population sum(N), so
-       * dividing all */
-      /*  demands and think times by a constant c divides G(N) by exactly
-       * c^sum(N): */
-      /*    G(N; L/c, Z/c) = G(N; L, Z) / c^sum(N) */
-      /*  hence log G = log G_scaled + sum(N) log c, which is exact, not an */
-      /*  approximation. */
-      /*  */
-      /*  c must be chosen to CENTRE log G_scaled near 0, not merely to shrink
-       * the */
-      /*  demands. G(N) can leave the double range in EITHER direction: Reiser
-       * (1981, */
-      /*  Perf. Eval. 1:7-18, Sec. 6.1) reports the unnormalized convolution */
-      /*  UNDERFLOWING (< 1e-75, losing all significant digits) on his Fig. 5 */
-      /*  central-server model for K > 160, and OVERFLOWING (> 1e75) on the same
-       * model */
-      /*  if the think time is raised. Scaling by max(L), the textbook choice,
-       * only */
-      /*  shrinks G and so makes the underflow strictly worse -- on Reiser's
-       * model it */
-      /*  turns a representable G(200) ~ 1e-87 into an underflow to 0. */
-      /*  */
-      /*  log G is estimated first, from the largest SINGLE-STATE term, which is
-       * a */
-      /*  lower bound on G(N) and in practice within O(log #states) of log G: */
-      /*    all jobs at one queueing station i : sum_r N_r log L_ir */
-      /*    all jobs at the delay              : sum_r [N_r log Z_r - log N_r!]
-       */
-      /*  On Reiser's model at K=200 this gives max(-460.5, -264.1) = -264.1
-       * against a */
-      /*  true log G of about -263, i.e. accurate enough to place the scaled
-       * value well */
-      /*  inside the exponent range. */
-      /*  */
-      /*  c is then the power of two nearest exp(lGest/sum(N)), so that */
-      /*  log G_scaled = log G - sum(N) log c is near 0. A power of two matters:
-       * it */
-      /*  shifts exponents only, so L/c and Z/c stay exactly representable and
-       * the */
-      /*  recursion is bit-for-bit the unscaled one with shifted exponents. */
-      st.site = &fd_emlrtRSI;
-      Gn = b_sum(&st, N);
-      lGest = rtMinusInf;
-      for (i = 0; i < M; i++) {
-        t = 0.0;
-        ok = true;
-        idx = 1;
-        exitg1 = false;
-        while ((!exitg1) && (idx - 1 <= R - 1)) {
-          real_T d;
-          if ((idx < 1) || (idx > N->size[1])) {
-            emlrtDynamicBoundsCheckR2012b(idx, 1, N->size[1], &q_emlrtBCI,
-                                          (emlrtConstCTX)sp);
-          }
-          d = N_data[idx - 1];
-          if (d > 0.0) {
-            real_T c_x;
-            if (i + 1 > M) {
-              emlrtDynamicBoundsCheckR2012b(i + 1, 1, M, &r_emlrtBCI,
-                                            (emlrtConstCTX)sp);
-            }
-            if (idx > R) {
-              emlrtDynamicBoundsCheckR2012b(idx, 1, R, &s_emlrtBCI,
-                                            (emlrtConstCTX)sp);
-            }
-            c_x = L_data[i + L->size[0] * (idx - 1)];
-            if (c_x > 0.0) {
-              st.site = &ed_emlrtRSI;
-              if (i + 1 > M) {
-                emlrtDynamicBoundsCheckR2012b(i + 1, 1, M, &t_emlrtBCI, &st);
-              }
-              if (idx > R) {
-                emlrtDynamicBoundsCheckR2012b(idx, 1, R, &u_emlrtBCI, &st);
-              }
-              if (idx > N->size[1]) {
-                emlrtDynamicBoundsCheckR2012b(idx, 1, N->size[1], &v_emlrtBCI,
-                                              (emlrtConstCTX)sp);
-              }
-              t += d * muDoubleScalarLog(c_x);
-              idx++;
-            } else {
-              ok = false;
-              exitg1 = true;
-            }
-          } else {
-            idx++;
-          }
-          if (*emlrtBreakCheckR2012bFlagVar != 0) {
-            emlrtBreakCheckR2012b((emlrtConstCTX)sp);
-          }
-        }
-        if (ok) {
-          lGest = muDoubleScalarMax(lGest, t);
-        }
-        if (*emlrtBreakCheckR2012bFlagVar != 0) {
-          emlrtBreakCheckR2012b((emlrtConstCTX)sp);
-        }
-      }
-      st.site = &dd_emlrtRSI;
-      b_st.site = &jd_emlrtRSI;
-      c_st.site = &kd_emlrtRSI;
-      if (L->size[1] > 2147483646) {
-        d_st.site = &x_emlrtRSI;
-        check_forloop_overflow_error(&d_st);
-      }
-      if (muDoubleScalarIsInf(lGest)) {
-        t = 0.0;
-      } else {
-        st.site = &cd_emlrtRSI;
-        t = muDoubleScalarRound(lGest / (Gn * 0.69314718055994529));
-      }
-      st.site = &bd_emlrtRSI;
-      b_st.site = &ld_emlrtRSI;
-      c_st.site = &md_emlrtRSI;
-      d_st.site = &nd_emlrtRSI;
-      e_st.site = &od_emlrtRSI;
-      Gn = muDoubleScalarPower(2.0, t);
-      idx = L->size[0] * L->size[1];
-      nz = (idx / 2) << 1;
-      scalarLB = nz - 2;
-      for (i = 0; i <= scalarLB; i += 2) {
-        __m128d r;
-        r = _mm_loadu_pd(&L_data[i]);
-        _mm_storeu_pd(&L_data[i], _mm_div_pd(r, _mm_set1_pd(Gn)));
-      }
-      for (i = nz; i < idx; i++) {
-        L_data[i] /= Gn;
-      }
+      int32_T b_loop_ub;
       if ((real_T)L->size[0] + 1.0 != L->size[0] + 1) {
-        emlrtIntegerCheckR2012b((real_T)L->size[0] + 1.0, &b_emlrtDCI,
+        emlrtIntegerCheckR2012b((real_T)L->size[0] + 1.0, &emlrtDCI,
                                 (emlrtConstCTX)sp);
       }
       idx = b_N->size[0] * b_N->size[1];
       b_N->size[0] = 1;
-      loop_ub = N->size[1];
+      b_loop_ub = N->size[1];
       b_N->size[1] = N->size[1];
-      emxEnsureCapacity_real_T(sp, b_N, idx, &rb_emlrtRTEI);
+      emxEnsureCapacity_real_T(sp, b_N, idx, &kb_emlrtRTEI);
       b_N_data = b_N->data;
       idx = (N->size[1] / 2) << 1;
       nz = idx - 2;
-      for (i = 0; i <= nz; i += 2) {
-        _mm_storeu_pd(&b_N_data[i],
-                      _mm_add_pd(_mm_loadu_pd(&N_data[i]), _mm_set1_pd(1.0)));
+      for (k = 0; k <= nz; k += 2) {
+        _mm_storeu_pd(&b_N_data[k],
+                      _mm_add_pd(_mm_loadu_pd(&N_data[k]), _mm_set1_pd(1.0)));
       }
-      for (i = idx; i < loop_ub; i++) {
-        b_N_data[i] = N_data[i] + 1.0;
+      for (k = idx; k < b_loop_ub; k++) {
+        b_N_data[k] = N_data[k] + 1.0;
       }
-      st.site = &ad_emlrtRSI;
+      st.site = &wc_emlrtRSI;
       Gn = prod(&st, b_N);
       if (Gn != (int32_T)muDoubleScalarFloor(Gn)) {
-        emlrtIntegerCheckR2012b(Gn, &emlrtDCI, (emlrtConstCTX)sp);
+        emlrtIntegerCheckR2012b(Gn, &b_emlrtDCI, (emlrtConstCTX)sp);
       }
       idx = G->size[0] * G->size[1];
       G->size[0] = L->size[0] + 1;
       G->size[1] = (int32_T)Gn;
-      emxEnsureCapacity_real_T(sp, G, idx, &sb_emlrtRTEI);
+      emxEnsureCapacity_real_T(sp, G, idx, &mb_emlrtRTEI);
       G_data = G->data;
       idx = (L->size[0] + 1) * (int32_T)Gn;
-      for (i = 0; i < idx; i++) {
-        G_data[i] = 1.0;
+      for (k = 0; k < idx; k++) {
+        G_data[k] = 1.0;
       }
       /*  stores G across recursion */
       /*  [N]=PPROD(N,N) */
@@ -1297,67 +962,69 @@ real_T pfqn_ca(const emlrtStack *sp, emxArray_real_T *L,
       idx = n->size[0] * n->size[1];
       n->size[0] = 1;
       n->size[1] = N->size[1];
-      emxEnsureCapacity_real_T(sp, n, idx, &tb_emlrtRTEI);
+      emxEnsureCapacity_real_T(sp, n, idx, &nb_emlrtRTEI);
       n_data = n->data;
       idx = N->size[1];
-      for (i = 0; i < idx; i++) {
-        n_data[i] = 0.0;
+      for (k = 0; k < idx; k++) {
+        n_data[k] = 0.0;
       }
       int32_T exitg11;
       do {
         exitg11 = 0;
-        st.site = &yc_emlrtRSI;
+        st.site = &vc_emlrtRSI;
         if (b_sum(&st, n) != -1.0) {
-          st.site = &xc_emlrtRSI;
+          real_T idxn;
+          int32_T loop_ub;
+          st.site = &uc_emlrtRSI;
           /*  IDX=HASHPOP(N,N,R,PRODS) */
           /*  hash a population vector in n: 0<=n<=N */
-          lGest = 1.0;
-          for (b_r = 0; b_r < loop_ub; b_r++) {
+          idxn = 1.0;
+          for (b_r = 0; b_r < b_loop_ub; b_r++) {
             if (b_r < 1) {
-              scalarLB = 0;
+              loop_ub = 0;
             } else {
-              if (b_r > loop_ub) {
-                emlrtDynamicBoundsCheckR2012b(b_r, 1, loop_ub, &p_emlrtBCI,
+              if (b_r > b_loop_ub) {
+                emlrtDynamicBoundsCheckR2012b(b_r, 1, b_loop_ub, &k_emlrtBCI,
                                               &st);
               }
-              scalarLB = b_r;
+              loop_ub = b_r;
             }
             idx = b_N->size[0] * b_N->size[1];
             b_N->size[0] = 1;
-            b_N->size[1] = scalarLB;
-            emxEnsureCapacity_real_T(&st, b_N, idx, &ub_emlrtRTEI);
+            b_N->size[1] = loop_ub;
+            emxEnsureCapacity_real_T(&st, b_N, idx, &ob_emlrtRTEI);
             b_N_data = b_N->data;
-            idx = (scalarLB / 2) << 1;
+            idx = (loop_ub / 2) << 1;
             nz = idx - 2;
-            for (i = 0; i <= nz; i += 2) {
-              _mm_storeu_pd(&b_N_data[i], _mm_add_pd(_mm_loadu_pd(&N_data[i]),
+            for (k = 0; k <= nz; k += 2) {
+              _mm_storeu_pd(&b_N_data[k], _mm_add_pd(_mm_loadu_pd(&N_data[k]),
                                                      _mm_set1_pd(1.0)));
             }
-            for (i = idx; i < scalarLB; i++) {
-              b_N_data[i] = N_data[i] + 1.0;
+            for (k = idx; k < loop_ub; k++) {
+              b_N_data[k] = N_data[k] + 1.0;
             }
             if (b_r + 1 > n->size[1]) {
-              emlrtDynamicBoundsCheckR2012b(b_r + 1, 1, n->size[1], &x_emlrtBCI,
+              emlrtDynamicBoundsCheckR2012b(b_r + 1, 1, n->size[1], &p_emlrtBCI,
                                             &st);
             }
-            b_st.site = &sd_emlrtRSI;
-            lGest += prod(&b_st, b_N) * n_data[b_r];
+            b_st.site = &ed_emlrtRSI;
+            idxn += prod(&b_st, b_N) * n_data[b_r];
             if (*emlrtBreakCheckR2012bFlagVar != 0) {
               emlrtBreakCheckR2012b(&st);
             }
           }
-          st.site = &wc_emlrtRSI;
+          st.site = &tc_emlrtRSI;
           /*  F=FZ(Z,N) */
-          b_st.site = &td_emlrtRSI;
+          b_st.site = &fd_emlrtRSI;
           if (b_sum(&b_st, n) == 0.0) {
-            if (lGest != (int32_T)muDoubleScalarFloor(lGest)) {
-              emlrtIntegerCheckR2012b(lGest, &c_emlrtDCI, &st);
+            if (idxn != (int32_T)muDoubleScalarFloor(idxn)) {
+              emlrtIntegerCheckR2012b(idxn, &c_emlrtDCI, &st);
             }
-            if (((int32_T)lGest < 1) || ((int32_T)lGest > G->size[1])) {
-              emlrtDynamicBoundsCheckR2012b((int32_T)lGest, 1, G->size[1],
-                                            &w_emlrtBCI, &st);
+            if (((int32_T)idxn < 1) || ((int32_T)idxn > G->size[1])) {
+              emlrtDynamicBoundsCheckR2012b((int32_T)idxn, 1, G->size[1],
+                                            &o_emlrtBCI, &st);
             }
-            G_data[G->size[0] * ((int32_T)lGest - 1)] = 1.0;
+            G_data[G->size[0] * ((int32_T)idxn - 1)] = 1.0;
           } else {
             idx = 0;
             int32_T exitg2;
@@ -1365,35 +1032,35 @@ real_T pfqn_ca(const emlrtStack *sp, emxArray_real_T *L,
               exitg2 = 0;
               if (idx <= n->size[1] - 1) {
                 if (idx + 1 > R) {
-                  emlrtDynamicBoundsCheckR2012b(idx + 1, 1, R, &o_emlrtBCI,
+                  emlrtDynamicBoundsCheckR2012b(idx + 1, 1, R, &l_emlrtBCI,
                                                 &st);
                 }
                 if (idx + 1 > n->size[1]) {
                   emlrtDynamicBoundsCheckR2012b(idx + 1, 1, n->size[1],
-                                                &y_emlrtBCI, &st);
+                                                &q_emlrtBCI, &st);
                 }
                 if (n_data[idx] > 0.0) {
-                  if (lGest != (int32_T)muDoubleScalarFloor(lGest)) {
-                    emlrtIntegerCheckR2012b(lGest, &c_emlrtDCI, &st);
+                  if (idxn != (int32_T)muDoubleScalarFloor(idxn)) {
+                    emlrtIntegerCheckR2012b(idxn, &c_emlrtDCI, &st);
                   }
-                  if (((int32_T)lGest < 1) || ((int32_T)lGest > G->size[1])) {
-                    emlrtDynamicBoundsCheckR2012b((int32_T)lGest, 1, G->size[1],
-                                                  &w_emlrtBCI, &st);
+                  if (((int32_T)idxn < 1) || ((int32_T)idxn > G->size[1])) {
+                    emlrtDynamicBoundsCheckR2012b((int32_T)idxn, 1, G->size[1],
+                                                  &o_emlrtBCI, &st);
                   }
-                  G_data[G->size[0] * ((int32_T)lGest - 1)] = 0.0;
+                  G_data[G->size[0] * ((int32_T)idxn - 1)] = 0.0;
                   exitg2 = 1;
                 } else {
                   idx++;
                 }
               } else {
-                if (lGest != (int32_T)muDoubleScalarFloor(lGest)) {
-                  emlrtIntegerCheckR2012b(lGest, &c_emlrtDCI, &st);
+                if (idxn != (int32_T)muDoubleScalarFloor(idxn)) {
+                  emlrtIntegerCheckR2012b(idxn, &c_emlrtDCI, &st);
                 }
-                if (((int32_T)lGest < 1) || ((int32_T)lGest > G->size[1])) {
-                  emlrtDynamicBoundsCheckR2012b((int32_T)lGest, 1, G->size[1],
-                                                &w_emlrtBCI, &st);
+                if (((int32_T)idxn < 1) || ((int32_T)idxn > G->size[1])) {
+                  emlrtDynamicBoundsCheckR2012b((int32_T)idxn, 1, G->size[1],
+                                                &o_emlrtBCI, &st);
                 }
-                G_data[G->size[0] * ((int32_T)lGest - 1)] = 1.0;
+                G_data[G->size[0] * ((int32_T)idxn - 1)] = 1.0;
                 exitg2 = 1;
               }
               if (*emlrtBreakCheckR2012bFlagVar != 0) {
@@ -1402,111 +1069,111 @@ real_T pfqn_ca(const emlrtStack *sp, emxArray_real_T *L,
             } while (exitg2 == 0);
           }
           emlrtForLoopVectorCheckR2021a(2.0, 1.0, (real_T)M + 1.0,
-                                        mxDOUBLE_CLASS, M, &k_emlrtRTEI,
+                                        mxDOUBLE_CLASS, M, &j_emlrtRTEI,
                                         (emlrtConstCTX)sp);
           for (b_r = 0; b_r < M; b_r++) {
             if ((int32_T)((uint32_T)b_r + 1U) > G->size[0]) {
               emlrtDynamicBoundsCheckR2012b((int32_T)((uint32_T)b_r + 1U), 1,
-                                            G->size[0], &ab_emlrtBCI,
+                                            G->size[0], &r_emlrtBCI,
                                             (emlrtConstCTX)sp);
             }
-            if (((int32_T)lGest < 1) || ((int32_T)lGest > G->size[1])) {
-              emlrtDynamicBoundsCheckR2012b((int32_T)lGest, 1, G->size[1],
-                                            &bb_emlrtBCI, (emlrtConstCTX)sp);
+            if (((int32_T)idxn < 1) || ((int32_T)idxn > G->size[1])) {
+              emlrtDynamicBoundsCheckR2012b((int32_T)idxn, 1, G->size[1],
+                                            &s_emlrtBCI, (emlrtConstCTX)sp);
             }
             if (((int32_T)((uint32_T)b_r + 2U) < 1) ||
                 ((int32_T)((uint32_T)b_r + 2U) > G->size[0])) {
               emlrtDynamicBoundsCheckR2012b((int32_T)((uint32_T)b_r + 2U), 1,
-                                            G->size[0], &cb_emlrtBCI,
+                                            G->size[0], &t_emlrtBCI,
                                             (emlrtConstCTX)sp);
             }
-            if (((int32_T)lGest < 1) || ((int32_T)lGest > G->size[1])) {
-              emlrtDynamicBoundsCheckR2012b((int32_T)lGest, 1, G->size[1],
-                                            &db_emlrtBCI, (emlrtConstCTX)sp);
+            if (((int32_T)idxn < 1) || ((int32_T)idxn > G->size[1])) {
+              emlrtDynamicBoundsCheckR2012b((int32_T)idxn, 1, G->size[1],
+                                            &u_emlrtBCI, (emlrtConstCTX)sp);
             }
-            G_data[(b_r + G->size[0] * ((int32_T)lGest - 1)) + 1] =
-                G_data[b_r + G->size[0] * ((int32_T)lGest - 1)];
+            G_data[(b_r + G->size[0] * ((int32_T)idxn - 1)) + 1] =
+                G_data[b_r + G->size[0] * ((int32_T)idxn - 1)];
             /*  norm constant with m-1 queues */
             for (c_r = 0; c_r < R; c_r++) {
               if (c_r + 1 > n->size[1]) {
                 emlrtDynamicBoundsCheckR2012b(c_r + 1, 1, n->size[1],
-                                              &eb_emlrtBCI, (emlrtConstCTX)sp);
+                                              &v_emlrtBCI, (emlrtConstCTX)sp);
               }
               Gn = n_data[c_r];
               if (Gn >= 1.0) {
                 if (c_r + 1 > n->size[1]) {
-                  emlrtDynamicBoundsCheckR2012b(
-                      c_r + 1, 1, n->size[1], &fb_emlrtBCI, (emlrtConstCTX)sp);
+                  emlrtDynamicBoundsCheckR2012b(c_r + 1, 1, n->size[1],
+                                                &w_emlrtBCI, (emlrtConstCTX)sp);
                 }
                 n_data[c_r] = Gn - 1.0;
-                st.site = &vc_emlrtRSI;
+                st.site = &sc_emlrtRSI;
                 /*  IDX=HASHPOP(N,N,R,PRODS) */
                 /*  hash a population vector in n: 0<=n<=N */
                 Gn = 1.0;
-                for (d_r = 0; d_r < loop_ub; d_r++) {
+                for (d_r = 0; d_r < b_loop_ub; d_r++) {
                   if (d_r < 1) {
-                    scalarLB = 0;
+                    loop_ub = 0;
                   } else {
-                    if (d_r > loop_ub) {
-                      emlrtDynamicBoundsCheckR2012b(d_r, 1, loop_ub,
-                                                    &p_emlrtBCI, &st);
+                    if (d_r > b_loop_ub) {
+                      emlrtDynamicBoundsCheckR2012b(d_r, 1, b_loop_ub,
+                                                    &k_emlrtBCI, &st);
                     }
-                    scalarLB = d_r;
+                    loop_ub = d_r;
                   }
                   idx = b_N->size[0] * b_N->size[1];
                   b_N->size[0] = 1;
-                  b_N->size[1] = scalarLB;
-                  emxEnsureCapacity_real_T(&st, b_N, idx, &ub_emlrtRTEI);
+                  b_N->size[1] = loop_ub;
+                  emxEnsureCapacity_real_T(&st, b_N, idx, &ob_emlrtRTEI);
                   b_N_data = b_N->data;
-                  idx = (scalarLB / 2) << 1;
+                  idx = (loop_ub / 2) << 1;
                   nz = idx - 2;
-                  for (i = 0; i <= nz; i += 2) {
+                  for (k = 0; k <= nz; k += 2) {
                     _mm_storeu_pd(
-                        &b_N_data[i],
-                        _mm_add_pd(_mm_loadu_pd(&N_data[i]), _mm_set1_pd(1.0)));
+                        &b_N_data[k],
+                        _mm_add_pd(_mm_loadu_pd(&N_data[k]), _mm_set1_pd(1.0)));
                   }
-                  for (i = idx; i < scalarLB; i++) {
-                    b_N_data[i] = N_data[i] + 1.0;
+                  for (k = idx; k < loop_ub; k++) {
+                    b_N_data[k] = N_data[k] + 1.0;
                   }
                   if (d_r + 1 > n->size[1]) {
                     emlrtDynamicBoundsCheckR2012b(d_r + 1, 1, n->size[1],
-                                                  &x_emlrtBCI, &st);
+                                                  &p_emlrtBCI, &st);
                   }
-                  b_st.site = &sd_emlrtRSI;
+                  b_st.site = &ed_emlrtRSI;
                   Gn += prod(&b_st, b_N) * n_data[d_r];
                   if (*emlrtBreakCheckR2012bFlagVar != 0) {
                     emlrtBreakCheckR2012b(&st);
                   }
                 }
                 if (c_r + 1 > n->size[1]) {
-                  emlrtDynamicBoundsCheckR2012b(
-                      c_r + 1, 1, n->size[1], &gb_emlrtBCI, (emlrtConstCTX)sp);
+                  emlrtDynamicBoundsCheckR2012b(c_r + 1, 1, n->size[1],
+                                                &x_emlrtBCI, (emlrtConstCTX)sp);
                 }
                 n_data[c_r]++;
                 if (((int32_T)((uint32_T)b_r + 2U) < 1) ||
                     ((int32_T)((uint32_T)b_r + 2U) > G->size[0])) {
                   emlrtDynamicBoundsCheckR2012b((int32_T)((uint32_T)b_r + 2U),
-                                                1, G->size[0], &hb_emlrtBCI,
+                                                1, G->size[0], &y_emlrtBCI,
                                                 (emlrtConstCTX)sp);
                 }
-                if (((int32_T)lGest < 1) || ((int32_T)lGest > G->size[1])) {
-                  emlrtDynamicBoundsCheckR2012b((int32_T)lGest, 1, G->size[1],
-                                                &ib_emlrtBCI,
+                if (((int32_T)idxn < 1) || ((int32_T)idxn > G->size[1])) {
+                  emlrtDynamicBoundsCheckR2012b((int32_T)idxn, 1, G->size[1],
+                                                &ab_emlrtBCI,
                                                 (emlrtConstCTX)sp);
                 }
-                if ((int32_T)((uint32_T)b_r + 1U) > L->size[0]) {
+                if ((int32_T)((uint32_T)b_r + 1U) > M) {
                   emlrtDynamicBoundsCheckR2012b((int32_T)((uint32_T)b_r + 1U),
-                                                1, L->size[0], &jb_emlrtBCI,
+                                                1, M, &bb_emlrtBCI,
                                                 (emlrtConstCTX)sp);
                 }
-                if (c_r + 1 > L->size[1]) {
-                  emlrtDynamicBoundsCheckR2012b(
-                      c_r + 1, 1, L->size[1], &kb_emlrtBCI, (emlrtConstCTX)sp);
+                if (c_r + 1 > R) {
+                  emlrtDynamicBoundsCheckR2012b(c_r + 1, 1, R, &cb_emlrtBCI,
+                                                (emlrtConstCTX)sp);
                 }
                 if (((int32_T)((uint32_T)b_r + 2U) < 1) ||
                     ((int32_T)((uint32_T)b_r + 2U) > G->size[0])) {
                   emlrtDynamicBoundsCheckR2012b((int32_T)((uint32_T)b_r + 2U),
-                                                1, G->size[0], &lb_emlrtBCI,
+                                                1, G->size[0], &db_emlrtBCI,
                                                 (emlrtConstCTX)sp);
                 }
                 if (Gn != (int32_T)muDoubleScalarFloor(Gn)) {
@@ -1514,21 +1181,21 @@ real_T pfqn_ca(const emlrtStack *sp, emxArray_real_T *L,
                 }
                 if (((int32_T)Gn < 1) || ((int32_T)Gn > G->size[1])) {
                   emlrtDynamicBoundsCheckR2012b((int32_T)Gn, 1, G->size[1],
-                                                &mb_emlrtBCI,
+                                                &eb_emlrtBCI,
                                                 (emlrtConstCTX)sp);
                 }
                 if (((int32_T)((uint32_T)b_r + 2U) < 1) ||
                     ((int32_T)((uint32_T)b_r + 2U) > G->size[0])) {
                   emlrtDynamicBoundsCheckR2012b((int32_T)((uint32_T)b_r + 2U),
-                                                1, G->size[0], &nb_emlrtBCI,
+                                                1, G->size[0], &fb_emlrtBCI,
                                                 (emlrtConstCTX)sp);
                 }
-                if (((int32_T)lGest < 1) || ((int32_T)lGest > G->size[1])) {
-                  emlrtDynamicBoundsCheckR2012b((int32_T)lGest, 1, G->size[1],
-                                                &ob_emlrtBCI,
+                if (((int32_T)idxn < 1) || ((int32_T)idxn > G->size[1])) {
+                  emlrtDynamicBoundsCheckR2012b((int32_T)idxn, 1, G->size[1],
+                                                &gb_emlrtBCI,
                                                 (emlrtConstCTX)sp);
                 }
-                G_data[(b_r + G->size[0] * ((int32_T)lGest - 1)) + 1] +=
+                G_data[(b_r + G->size[0] * ((int32_T)idxn - 1)) + 1] +=
                     L_data[b_r + L->size[0] * c_r] *
                     G_data[(b_r + G->size[0] * ((int32_T)Gn - 1)) + 1];
               }
@@ -1540,53 +1207,54 @@ real_T pfqn_ca(const emlrtStack *sp, emxArray_real_T *L,
               emlrtBreakCheckR2012b((emlrtConstCTX)sp);
             }
           }
-          st.site = &uc_emlrtRSI;
+          st.site = &rc_emlrtRSI;
           /*  [N]=PPROD(N,N) */
           /*  sequentially generate all vectors n: 0<=n<=N */
           /*  n=pprod(N) - init */
           /*  n=pprod(n,N) - next state */
           nz = n->size[1];
-          if ((n->size[1] != loop_ub) &&
-              ((n->size[1] != 1) && (loop_ub != 1))) {
-            emlrtDimSizeImpxCheckR2021b(n->size[1], loop_ub, &e_emlrtECI, &st);
+          if ((n->size[1] != b_loop_ub) &&
+              ((n->size[1] != 1) && (b_loop_ub != 1))) {
+            emlrtDimSizeImpxCheckR2021b(n->size[1], b_loop_ub, &d_emlrtECI,
+                                        &st);
           }
-          b_st.site = &ud_emlrtRSI;
+          b_st.site = &gd_emlrtRSI;
           if (n->size[1] == N->size[1]) {
             idx = x->size[0] * x->size[1];
             x->size[0] = 1;
             x->size[1] = n->size[1];
-            emxEnsureCapacity_boolean_T(&b_st, x, idx, &vb_emlrtRTEI);
+            emxEnsureCapacity_boolean_T(&b_st, x, idx, &pb_emlrtRTEI);
             x_data = x->data;
-            for (i = 0; i < nz; i++) {
-              x_data[i] = (n_data[i] == N_data[i]);
+            for (k = 0; k < nz; k++) {
+              x_data[k] = (n_data[k] == N_data[k]);
             }
           } else {
-            c_st.site = &ud_emlrtRSI;
+            c_st.site = &gd_emlrtRSI;
             eq(&c_st, x, n, N);
             x_data = x->data;
           }
-          c_st.site = &vd_emlrtRSI;
+          c_st.site = &hd_emlrtRSI;
           d_st.site = &o_emlrtRSI;
           idx = x->size[1];
           if (x->size[1] == 0) {
             nz = 0;
           } else {
-            e_st.site = &qd_emlrtRSI;
+            e_st.site = &cd_emlrtRSI;
             nz = x_data[0];
-            f_st.site = &rd_emlrtRSI;
+            f_st.site = &dd_emlrtRSI;
             if (x->size[1] > 2147483646) {
               g_st.site = &x_emlrtRSI;
               check_forloop_overflow_error(&g_st);
             }
-            for (i = 2; i <= idx; i++) {
-              nz += x_data[i - 1];
+            for (k = 2; k <= idx; k++) {
+              nz += x_data[k - 1];
             }
           }
           if (nz == N->size[1]) {
             idx = n->size[0] * n->size[1];
             n->size[0] = 1;
             n->size[1] = 1;
-            emxEnsureCapacity_real_T(&st, n, idx, &wb_emlrtRTEI);
+            emxEnsureCapacity_real_T(&st, n, idx, &qb_emlrtRTEI);
             n_data = n->data;
             n_data[0] = -1.0;
           } else {
@@ -1594,17 +1262,17 @@ real_T pfqn_ca(const emlrtStack *sp, emxArray_real_T *L,
             exitg1 = false;
             while ((!exitg1) && (idx > 0)) {
               if (idx > n->size[1]) {
-                emlrtDynamicBoundsCheckR2012b(idx, 1, n->size[1], &pb_emlrtBCI,
+                emlrtDynamicBoundsCheckR2012b(idx, 1, n->size[1], &hb_emlrtBCI,
                                               &st);
               }
-              if (idx > loop_ub) {
-                emlrtDynamicBoundsCheckR2012b(idx, 1, loop_ub, &qb_emlrtBCI,
+              if (idx > b_loop_ub) {
+                emlrtDynamicBoundsCheckR2012b(idx, 1, b_loop_ub, &ib_emlrtBCI,
                                               &st);
               }
               if (n_data[idx - 1] == N_data[idx - 1]) {
                 if (idx > n->size[1]) {
                   emlrtDynamicBoundsCheckR2012b(idx, 1, n->size[1],
-                                                &rb_emlrtBCI, &st);
+                                                &jb_emlrtBCI, &st);
                 }
                 n_data[idx - 1] = 0.0;
                 idx--;
@@ -1617,7 +1285,7 @@ real_T pfqn_ca(const emlrtStack *sp, emxArray_real_T *L,
             }
             if (idx != 0) {
               if (idx > n->size[1]) {
-                emlrtDynamicBoundsCheckR2012b(idx, 1, n->size[1], &sb_emlrtBCI,
+                emlrtDynamicBoundsCheckR2012b(idx, 1, n->size[1], &kb_emlrtBCI,
                                               &st);
               }
               n_data[idx - 1]++;
@@ -1632,57 +1300,23 @@ real_T pfqn_ca(const emlrtStack *sp, emxArray_real_T *L,
           exitg11 = 1;
         }
       } while (exitg11 == 0);
-      /*  Undo the scaling in log space: log G = log G_scaled + sum(N) log c.
-       * lGn is */
-      /*  therefore finite whenever log G itself is, even though Gn may
-       * legitimately */
-      /*  overflow to Inf (the true constant really is outside double range). */
-      st.site = &tc_emlrtRSI;
-      ok = ((L->size[0] + 1 < 1) || (L->size[0] + 1 > G->size[0]));
-      if (ok) {
-        emlrtDynamicBoundsCheckR2012b(L->size[0] + 1, 1, G->size[0],
-                                      &n_emlrtBCI, &st);
-      }
-      if (G->size[1] < 1) {
-        emlrtDynamicBoundsCheckR2012b(G->size[1], 1, G->size[1], &m_emlrtBCI,
-                                      &st);
-      }
-      lGest = G_data[L->size[0] + G->size[0] * (G->size[1] - 1)];
-      if (lGest < 0.0) {
-        emlrtErrorWithMessageIdR2018a(
-            &st, &e_emlrtRTEI, "Coder:toolbox:ElFunDomainError",
-            "Coder:toolbox:ElFunDomainError", 3, 4, 3, "log");
-      }
-      st.site = &tc_emlrtRSI;
-      b_sum(&st, N);
-      st.site = &tc_emlrtRSI;
-      /*  Gn is recovered by scaling the mantissa back with pow2 (an exact
-       * exponent */
-      /*  adjustment), not as exp(lGn): on models that never overflowed this
-       * returns */
-      /*  bit-for-bit the value the unscaled recursion used to return, and it
-       * still */
-      /*  goes to Inf when the constant genuinely leaves double range -- in
-       * which case */
-      /*  lGn above remains finite and usable. */
-      if (G->size[1] < 1) {
-        emlrtDynamicBoundsCheckR2012b(G->size[1], 1, G->size[1], &l_emlrtBCI,
+      if (((int32_T)((uint32_T)L->size[0] + 1U) < 1) ||
+          ((int32_T)((uint32_T)L->size[0] + 1U) > G->size[0])) {
+        emlrtDynamicBoundsCheckR2012b((int32_T)((uint32_T)L->size[0] + 1U), 1,
+                                      G->size[0], &m_emlrtBCI,
                                       (emlrtConstCTX)sp);
       }
-      st.site = &sc_emlrtRSI;
-      Gn = b_sum(&st, N) * t;
-      if (Gn < 0.0) {
-        Gn = muDoubleScalarCeil(Gn);
-        if (Gn < -32768.0) {
-          Gn = -32768.0;
-        }
-      } else {
-        Gn = muDoubleScalarFloor(Gn);
-        if (Gn > 32767.0) {
-          Gn = 32767.0;
-        }
+      if (G->size[1] < 1) {
+        emlrtDynamicBoundsCheckR2012b(G->size[1], 1, G->size[1], &n_emlrtBCI,
+                                      (emlrtConstCTX)sp);
       }
-      Gn = ldexp(lGest, (int32_T)Gn);
+      Gn = G_data[L->size[0] + G->size[0] * (G->size[1] - 1)];
+      st.site = &qc_emlrtRSI;
+      if (Gn < 0.0) {
+        emlrtErrorWithMessageIdR2018a(
+            &st, &emlrtRTEI, "Coder:toolbox:ElFunDomainError",
+            "Coder:toolbox:ElFunDomainError", 3, 4, 3, "log");
+      }
     }
   }
   emxFree_real_T(sp, &b_N);

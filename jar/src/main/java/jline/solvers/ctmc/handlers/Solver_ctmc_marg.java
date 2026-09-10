@@ -41,7 +41,7 @@ public class Solver_ctmc_marg {
                 fname = "";
             }
         }
-        Matrix pi = Ctmc_solve.ctmc_solve(Q);
+        Matrix pi = jline.solvers.ctmc.CtmcStationary.solve(Q, SS, sn, options);
         for (int row = 0; row < pi.getNumRows(); row++) {
             for (int col = 0; col < pi.getNumCols(); col++) {
                 if (pi.get(row, col) < 0) {

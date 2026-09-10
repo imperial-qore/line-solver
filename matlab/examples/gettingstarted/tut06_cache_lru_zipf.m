@@ -37,7 +37,7 @@ P{missClass, clientClass}(cacheDelay, clientDelay)=1;
 model.link(P);
 
 % Block 4: solution
-ssaAvgTable = SSA(model,'samples',2e4,'seed',23000,'verbose',true).avgTable()
+ssaAvgTable = SSA(model,'samples',1e5,'seed',23000,'verbose',true).avgTable()
 if license('test','parallel_computing_toolbox')
-    ssaAvgTablePara = SSA(model,'samples',2e4,'seed',23000,'verbose',true,'parallel').avgTable()
+    ssaAvgTablePara = SSA(model,'samples',1e5,'seed',23000,'verbose',true,'parallel').avgTable()
 end

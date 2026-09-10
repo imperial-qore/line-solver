@@ -1,5 +1,18 @@
-function [AvgSysChainTable, CT,XT] = getAvgSysTable(self,R,T)
+function varargout = getAvgSysTable(self,varargin)
 % [AVGSYSCHAINTABLE, CT,XT] = GETAVGSYSTABLE(SELF,R,T)
+% The result recorder captures the returned table together with the solver
+% that produced it, so cross-codebase parity is asserted against the values a
+% solver RETURNED rather than the text it printed. Off unless a run asked for
+% it (LineResultRecorder.enable), and then it costs one appdata lookup here.
+% The wrapper exists so that recording happens on EVERY exit path, including
+% the early returns inside the implementation below.
+[scope, scopeGuard] = LineResultRecorder.enter(); %#ok<ASGLU>
+[varargout{1:max(nargout,1)}] = getAvgSysTable_impl(self,varargin{:});
+LineResultRecorder.capture(scope, self, 'sys', varargout{1});
+end
+
+function [AvgSysChainTable, CT,XT] = getAvgSysTable_impl(self,R,T)
+% GETAVGSYSTABLE_IMPL Implementation of GETAVGSYSTABLE; see the wrapper above.
 
 % Return table of average system metrics
 %

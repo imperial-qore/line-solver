@@ -18,8 +18,9 @@ from enum import Enum
 from ...api.sn.transforms import sn_get_residt_from_respt, get_chain_for_class
 from ...api.sn.network_struct import NodeType
 from ...api.io.logging import line_debug, line_warning
-from ..base import NetworkSolver
+from ..base import NetworkSolver, method_type
 from ..fork_join_driver import ForkJoinDriverMixin
+from ..transform_driver import TransformSolveMixin
 from ...indexed_table import IndexedTable
 
 
@@ -44,15 +45,25 @@ class OptionsDict(dict):
 def _amva_needs_amvald(sn):
     """True when the AMVA linearizer family must go through solver_amvald.
 
-    Mirrors the two MATLAB gates in solver_amva.m: the pfqn_* linearizer path
-    requires cond2 = ~sn_has_load_dependence(sn) (:91), and the lin arm itself
+    Mirrors the three MATLAB gates in solver_amva.m: the pfqn_* linearizer path
+    requires cond1 = sn_has_product_form_not_het_fcfs(sn) (:137) and
+    cond2 = ~sn_has_load_dependence(sn) (:91), and the lin arm itself
     re-checks isempty(sn.cdscaling) (:222). The pfqn_linearizer family carries no
     load-dependence argument, so an LD/CD model routed there loses the scaling
     silently. Presence of the handle is the test, matching MATLAB's
     size(sn.lldscaling,2)>0 / ~isempty(sn.cdscaling) -- a flat lldscaling is
     still routed to solver_amvald there, and pfqn_lldfun no-ops on it anyway.
+
+    cond1 is the het-FCFS exclusion: an FCFS station whose per-class service
+    means differ is not BCMP type 1, so MATLAB never reaches its lin arm for one
+    and takes the non-product-form tail (:397-401) to solver_amvald instead. Only
+    the lin family consults this predicate here, so the ab / schmidt / schmidt-ext
+    bypass that api solver_amva carries does not apply.
     """
     from ...api.sn.predicates import sn_has_load_dependence
+    from ...api.sn import sn_has_product_form_not_het_fcfs
+    if not sn_has_product_form_not_het_fcfs(sn):
+        return True
     if sn_has_load_dependence(sn):
         return True
     for attr in ('cdscaling', 'jdscaling'):
@@ -65,6 +76,29 @@ def _amva_needs_amvald(sn):
         except TypeError:
             return True
     return False
+
+
+def _qsys_queue_visits(sn, queue_ist, chain=0, class_idx=0):
+    """Visit ratio of the queue station of a single-class open queueing system.
+
+    ``sn.visits`` is STATEFUL-indexed in every codebase, so the station index has
+    to go through ``stationToStateful`` first; mirrors
+    ``sn.visits{1}(sn.stationToStateful(queue_ist))`` in
+    solver_mva_qsys_analyzer.m. Returns 1.0 when the struct carries no visits.
+    """
+    visits = getattr(sn, 'visits', None)
+    if not visits or chain not in visits or visits[chain] is None:
+        return 1.0
+    V = np.asarray(visits[chain], dtype=float)
+    isf = queue_ist
+    s2sf = getattr(sn, 'stationToStateful', None)
+    if s2sf is not None and len(np.asarray(s2sf).flatten()) > queue_ist:
+        isf = int(np.asarray(s2sf).flatten()[queue_ist])
+    if V.ndim == 1:
+        return float(V[isf]) if isf < V.shape[0] else 1.0
+    if isf >= V.shape[0] or class_idx >= V.shape[1]:
+        return 1.0
+    return float(V[isf, class_idx])
 
 
 def _bmap_batch_moments(proc):
@@ -163,7 +197,7 @@ def _gm1_lst_sojourn(sn, station_idx, mu, class_idx=0):
     try:
         from scipy.optimize import brentq
         f = lambda x: lst(mu * (1.0 - x)) - x
-        # caudal root is the smallest root in (0,1); scan for the FIRST sign change rather than bracketing (f can be positive again near 1); see _kb/06-solver-catalog.md MVA gm1 branch.
+        # caudal root: smallest root in (0,1); scan FIRST sign change not bracketing (f may be positive near 1); see _kb/06-solver-catalog.md MVA gm1 branch.
         grid = np.linspace(1e-9, 1.0 - 1e-6, 400)
         fv = [f(x) for x in grid]
         for gi in range(len(grid) - 1):
@@ -189,15 +223,24 @@ class SolverMVAOptions:
     cutoff: Optional[int] = None  # State space cutoff (for compatibility, not used in MVA)
     samples: Optional[int] = None  # Samples (for compatibility, not used in MVA)
     fork_join: str = 'default'  # Fork-join method: 'default'/'ht' (H-T), 'mmt' (experimental)
-    fj_warmstart: bool = True  # Resume the fork-join (MMT) fixed point from the iterate retained by the previous runAnalyzer call on this solver, instead of restarting from FineTol; only has an effect under an outer iteration such as SolverLN
+    fj_warmstart: bool = True  # Resume fork-join (MMT) fixed point from iterate kept by previous runAnalyzer call, not FineTol; effective only under outer iteration like SolverLN
     cd_peak_norm: bool = False  # Scale class-dependent station Util by the lattice peak (bmax); default reports unscaled T*S with a warning
     init_sol: Optional[np.ndarray] = None  # Warm-start chain-level queue lengths (M x nchains)
     config: Optional[dict] = None  # Config dict, e.g. {'multiserver': 'softmin'}
     timeout: float = float('inf')  # Wall-clock time budget in seconds (inf = no budget)
-    lang: str = field(default_factory=lambda: os.environ.get('LINE_SOLVER_LANG', 'python'))  # env LINE_SOLVER_LANG overrides; 'python' (native) or 'java' (delegate to jline.jar via JSON)
+    lang: str = field(default_factory=lambda: os.environ.get('LINE_SOLVER_LANG', 'python'))  # env LINE_SOLVER_LANG overrides; 'python' (native), 'java' (jline.jar via JSON) or 'cpp' (line-cli via JSON)
+    # Arithmetic backend, lang='cpp' ONLY: 'double' (default), 'exact' or
+    # 'real:<digits>'. It has no meaning for the other langs -- MATLAB, the JAR
+    # and native Python are IEEE double throughout -- so it is left None and the
+    # C++ CLI is invoked without --arith unless the caller sets it. An exact
+    # solve returns the same doubles here: the wire format carries the double
+    # alongside num/den, and only the CLI's own -o json --api path exposes the
+    # fraction. What it buys through this option is a solve with no rounding in
+    # the middle of it.
+    arith: Optional[str] = None
 
 
-class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
+class SolverMVA(TransformSolveMixin, ForkJoinDriverMixin, NetworkSolver):
     """
     Native Python Mean Value Analysis (MVA) solver.
 
@@ -224,7 +267,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
         self.model = model
         self._result = None
         self._mmt_cache = None  # Cache for MMT transformation across LN iterations
-        # MMT fork-join auxiliary arrival rates retained across runAnalyzer calls so an outer iteration resumes instead of restarting; see _kb/11-conventions-and-gotchas.md Caching a derived model.
+        # MMT fork-join arrival rates kept across runAnalyzer calls so outer iteration resumes; see _kb/11-conventions-and-gotchas.md Caching a derived model.
         self._fj_fork_lambda = None
 
         # Handle options passed as second argument (MATLAB-style)
@@ -242,6 +285,9 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                 kwargs.setdefault('max_iter', method_or_options.max_iter)
             if hasattr(method_or_options, 'seed'):
                 kwargs.setdefault('seed', method_or_options.seed)
+            # config carries per-method payloads (multiserver rule, QRF blocking params); dropping it makes a method REQUIRING them unreachable via options object
+            if method_or_options.get('config') is not None:
+                kwargs.setdefault('config', method_or_options.get('config'))
         elif hasattr(method_or_options, 'method'):
             # SolverOptions-like object (e.g., from SolverLN)
             self.method = getattr(method_or_options, 'method', 'default')
@@ -251,9 +297,11 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                 kwargs.setdefault('max_iter', method_or_options.max_iter)
             if hasattr(method_or_options, 'iter_max'):  # LN uses iter_max
                 kwargs.setdefault('max_iter', method_or_options.iter_max)
-            # SolverLN's iter_tol is the OUTER LQN fixed point's tolerance, not the inner per-layer MVA's; MATLAB forces only iter_max on the layer solver and leaves its iter_tol at the MVA default.
+            # SolverLN's iter_tol is OUTER LQN fixed-point tol, not inner per-layer MVA's; MATLAB forces only iter_max on layer solver, iter_tol at MVA default.
             if hasattr(method_or_options, 'seed'):
                 kwargs.setdefault('seed', method_or_options.seed)
+            if getattr(method_or_options, 'config', None) is not None:
+                kwargs.setdefault('config', method_or_options.config)
         else:
             self.method = 'default'
 
@@ -280,9 +328,9 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
 
     def reset(self):
         """Reset the solver to force recomputation on next getAvg call."""
-        self._result = None
+        self._clearResultStores()
         self._sn = None
-        # _mmt_cache/_fj_fork_lambda are deliberately NOT cleared on reset(); see _kb/11-conventions-and-gotchas.md Caching a derived model (provenance, not don't-touch).
+        # _mmt_cache/_fj_fork_lambda NOT cleared on reset(); see _kb/11-conventions-and-gotchas.md Caching a derived model (provenance, not don't-touch).
         self._extract_network_params()
 
     def _extract_network_params(self):
@@ -487,8 +535,65 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
 
         self._determine_network_type()
 
+    def _has_sjn_station(self):
+        """True when any station schedules by non-preemptive shortest job next.
+
+        Read off the struct rather than the nodes, so it matches what the
+        dispatcher tests. Compared by NAME: `sn.sched` carries members of
+        `lang.base.SchedStrategy`, and `==` against a member of another live
+        SchedStrategy class silently returns False (see
+        _kb/11-conventions-and-gotchas.md).
+        """
+        sn = getattr(self, '_sn', None)
+        if sn is None:
+            try:
+                sn = self.model.getStruct()
+            except Exception:
+                return False
+        sched = getattr(sn, 'sched', None)
+        if sched is None:
+            return False
+        values = sched.values() if hasattr(sched, 'values') else sched
+        for sv in values:
+            if sv is not None and getattr(sv, 'name', None) == 'SJF':
+                return True
+        return False
+
+    def _has_prs_prio_station(self):
+        """True when any station schedules by preemptive-resume priority.
+
+        Compared BY NAME for the reason _has_sjn_station gives: `sn.sched`
+        carries members of `lang.base.SchedStrategy`, and `==` against a member
+        of another live SchedStrategy class silently returns False.
+        """
+        sn = getattr(self, '_sn', None)
+        if sn is None:
+            try:
+                sn = self.model.getStruct()
+            except Exception:
+                return False
+        sched = getattr(sn, 'sched', None)
+        if sched is None:
+            return False
+        values = sched.values() if hasattr(sched, 'values') else sched
+        for sv in values:
+            if sv is not None and getattr(sv, 'name', None) == 'FCFSPRPRIO':
+                return True
+        return False
+
     def _determine_network_type(self):
-        """Determine if network is open, closed, or mixed."""
+        """Determine if network is open, closed, or mixed.
+
+        A closed class holding no jobs is not a closed part of the network: the
+        test is the POPULATION, as MATLAB's mvaDispatch branches on
+        ``sn.nclosedjobs == 0`` rather than on the presence of closed classes.
+        Calling such a model mixed sends it to the chain-level load-dependent
+        route, whose rate matrix is sized by the closed population, so
+        pfqn_ldmx_ec indexes an empty axis and every open-class metric comes
+        back zero (a JMT import declaring an empty closed class, as
+        test/testsOpenQN/oqn-11.jsimg does, reported throughput at the Source
+        and nothing downstream).
+        """
         has_open = False
         has_closed = False
 
@@ -496,7 +601,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
             # Open classes have njobs = inf, closed classes have finite njobs >= 0
             if np.isinf(self.njobs[c]):
                 has_open = True
-            else:
+            elif self.njobs[c] > 0:
                 has_closed = True
 
         if has_open and has_closed:
@@ -685,7 +790,13 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
         return True
 
     def _get_delay_stations(self) -> List[int]:
-        """Get list of delay (infinite server) station indices."""
+        """Get list of delay (infinite server) station indices.
+
+        NodeType.DELAY is the whole test, as in MATLAB: a Queue whose scheduling
+        is INF carries an infinite server count and is reported as a DELAY node
+        by Network._refresh_node_mappings, so it reaches this list without a
+        scheduling test of its own.
+        """
         from ...api.sn.network_struct import NodeType
 
         delay_indices = []
@@ -1050,6 +1161,144 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
 
         return self._result
 
+    def _sizebased_sched(self):
+        """The queue's size-based discipline, or None when it has none.
+
+        SRPT, PSJF, FB, LRPT and SETF are served by the Wierman and
+        Harchol-Balter response times (SIGMETRICS 2003); the generic AMVA path
+        carries no size-based term at all and would solve the station
+        size-blind, which is not what SRPT means. Mirrors MATLAB
+        mvaDispatch.m's isSizeBasedPolicy branch.
+        """
+        from ...lang.base import NodeType
+        if self.network_type != 'open' or self._sn is None:
+            return None
+        nodetype = self._sn.nodetype
+        if len(nodetype) != 3:
+            return None
+        has_source = any(nt == NodeType.SOURCE for nt in nodetype)
+        has_queue = any(nt == NodeType.QUEUE for nt in nodetype)
+        has_sink = any(nt == NodeType.SINK for nt in nodetype)
+        if not (has_source and has_queue and has_sink):
+            return None
+        # Match by NAME, never by value: the two Python SchedStrategy enums
+        # DISAGREE above 35 (lang.base has FSP=36, PAS=37, OI=38, then the
+        # size-based names appended at 39-42; constants has PSJF=36, FB=37,
+        # LAS=38, LRPT=39), and _normalize_sched_strategy reconciles them by
+        # name. A value comparison read a stored PSJF as LRPT and missed FB
+        # entirely, which then fell through to the size-blind AMVA path.
+        sized = ('SRPT', 'PSJF', 'FB', 'LAS', 'LRPT', 'SETF')
+        sched = self._sn.sched
+        if sched is None:
+            return None
+        for _, sched_strategy in sched.items():
+            name = getattr(sched_strategy, 'name', None)
+            if name in sized:
+                return 'FB' if name == 'LAS' else name
+        return None
+
+    def _run_sizebased_analysis(self):
+        """M/G/1 with size-based scheduling: SRPT, PSJF, FB (LAS), LRPT, SETF.
+
+        Port of MATLAB solver_mva_qsys_sizebased_analyzer.m. Twin of the JAR
+        Solver_mva_qsys_sizebased_analyzer.
+
+        NOTE ON THE INDEX SPACE. ``sn.visits`` is indexed by CHAIN, not by
+        station: reading the Source's station index takes chain 1, so on the
+        multiclass models this analyzer exists for every class beyond the first
+        would get the visit of a chain it does not belong to, which is zero.
+        The chain of each class is looked up explicitly.
+        """
+        from ...api.qsys import (qsys_mg1_srpt, qsys_mg1_psjf, qsys_mg1_fb,
+                                 qsys_mg1_lrpt, qsys_mg1_setf)
+        from ...lang.base import NodeType
+        from ...api.io.logging import line_warning
+
+        sched_type = self._sizebased_sched()
+        if sched_type is None:
+            return None
+        R = self.nclasses
+        nodetype = self._sn.nodetype
+        source_ist = None
+        queue_ist = None
+        for i, nt in enumerate(nodetype):
+            nt_val = nt.value if hasattr(nt, 'value') else nt
+            if nt_val == NodeType.SOURCE or nt_val == NodeType.SOURCE.value:
+                source_ist = self._sn.nodeToStation[i]
+            elif nt_val == NodeType.QUEUE or nt_val == NodeType.QUEUE.value:
+                queue_ist = self._sn.nodeToStation[i]
+        if source_ist is None or queue_ist is None:
+            return None
+        queue_isf = int(self._sn.stationToStateful[queue_ist])
+
+        chains = np.asarray(self._sn.chains)
+        chain_of = np.zeros(R, dtype=int)
+        for k in range(R):
+            nz = np.nonzero(chains[:, k])[0]
+            chain_of[k] = int(nz[0]) if nz.size else 0
+
+        lambda_arr = np.zeros(R)
+        mu = np.zeros(R)
+        cs = np.zeros(R)
+        visits = np.zeros(R)
+        for k in range(R):
+            visits[k] = float(self._sn.visits[chain_of[k]][queue_isf, k])
+            lambda_arr[k] = float(self.rates[source_ist, k]) * visits[k]
+            mu[k] = float(self.rates[queue_ist, k])
+            scv = float(self._sn.scv[queue_ist, k])
+            cs[k] = np.sqrt(scv) if np.isfinite(scv) and scv > 0 else 1.0
+
+        if np.any(lambda_arr <= 0) or np.any(mu <= 0):
+            raise ValueError('solver_mva_qsys_sizebased_analyzer: invalid arrival or '
+                             'service rates (must be positive).')
+        rho = float(np.sum(lambda_arr / mu))
+        if rho >= 1.0:
+            line_warning('solver_mva_qsys_sizebased_analyzer',
+                         'System is unstable (rho = %.4f >= 1).' % rho)
+
+        if sched_type == 'SRPT':
+            W, _ = qsys_mg1_srpt(lambda_arr, mu, cs)
+        elif sched_type == 'PSJF':
+            W, _ = qsys_mg1_psjf(lambda_arr, mu, cs)
+        elif sched_type == 'FB':
+            W, _ = qsys_mg1_fb(lambda_arr, mu, cs)
+        elif sched_type == 'LRPT':
+            W, _ = qsys_mg1_lrpt(lambda_arr, mu, cs)
+        else:
+            W, _ = qsys_mg1_setf(lambda_arr, mu, cs)
+        W = np.asarray(W, dtype=float).flatten()
+
+        QN = np.zeros((self.nstations, R))
+        UN = np.zeros((self.nstations, R))
+        RN = np.zeros((self.nstations, R))
+        TN = np.zeros((self.nstations, R))
+        AN = np.zeros((self.nstations, R))
+        TN[source_ist, :] = lambda_arr
+        AN[source_ist, :] = lambda_arr
+        RN[queue_ist, :] = W * visits
+        TN[queue_ist, :] = lambda_arr
+        AN[queue_ist, :] = lambda_arr
+        UN[queue_ist, :] = lambda_arr / mu
+        QN[queue_ist, :] = lambda_arr * W
+        XN = lambda_arr.copy()
+
+        from ...api.sn.transforms import sn_get_residt_from_respt
+        WN = sn_get_residt_from_respt(self._sn, RN, None)
+
+        self._result = {
+            'QN': QN,
+            'UN': UN,
+            'RN': RN,
+            'TN': TN,
+            'AN': AN,
+            'XN': XN,
+            'WN': WN,
+            'lG': 0,
+            'runtime': 0,
+            'lastiter': 1,
+        }
+        return self._result
+
     def _is_cache_only_network(self) -> bool:
         """Check if this is a cache-only network (Source-Cache-Sink)."""
         if self._sn is None:
@@ -1248,7 +1497,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                 cache_node.set_result_hit_prob(hitprob)
                 cache_node.set_result_miss_prob(missprob)
 
-            # exact hit/miss probs stored in sn.nodeparam so getAvgNode does not read stale values from a previous solver run (MATLAB's sn is a value-type struct so this is a python-only need).
+            # exact hit/miss probs stored in sn.nodeparam so getAvgNode avoids stale values from a previous run (MATLAB sn is value-type, so python-only need).
             ch.actualhitprob = hitprob.copy()
             ch.actualmissprob = missprob.copy()
 
@@ -1335,10 +1584,10 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
         # This computes hit/miss probabilities, updates rtnodes, refreshes visits
         self._update_cache_routing_and_visits()
 
-        # per-item occupancy: LRU uses the scale-invariant TTL algorithm; RR/FIFO use the exact product-form recursion, tractable only below 10 items (else NaN with a warning).
+        # per-item occupancy: LRU uses scale-invariant TTL; RR/FIFO use the exact product-form recursion, tractable only below 10 items (else NaN + warning).
         self._compute_cache_item_prob(cache_indices)
 
-        # Cache nodes converted to ClassSwitch so standard MVA handles the topology; cache indices saved to restore nodetype after solving; mirrors MATLAB line 38.
+        # Cache nodes converted to ClassSwitch so standard MVA handles topology; indices saved to restore nodetype after solving; mirrors MATLAB line 38.
         self._cache_indices = cache_indices
         for ind in cache_indices:
             sn.nodetype[ind] = NodeType.CLASSSWITCH
@@ -1398,7 +1647,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                              'Per-item cache occupancy (getAvgItemTable) requires the exact algorithm for RR/FIFO and is skipped for caches with more than 10 items (%d items); reporting NaN.' % n)
                 item_prob = np.full((n, h + 1), np.nan)
             else:
-                gamma, _, _, _ = cache_gamma_lp(lambd, Rcost)
+                gamma, _, _, _, _ = cache_gamma_lp(lambd, Rcost)
                 item_prob = cache_prob_erec(gamma, m)
             if hasattr(cache_node, 'set_result_item_prob'):
                 cache_node.set_result_item_prob(item_prob)
@@ -1411,7 +1660,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
             solver_mva_retrieval_analyzer, solver_mva_cacheqn_retrieval_analyzer, _has_source
         )
         sn = self._sn
-        # open (Source) cache uses the product-form FPI retrieval analyzer; closed integrated uses da_cacheqn_retrieval (relabels Cache to ClassSwitch, index in res.cache_idx).
+        # open (Source) cache uses product-form FPI analyzer; closed uses da_cacheqn_retrieval (relabels Cache to ClassSwitch, index in res.cache_idx).
         if _has_source(sn):
             res = solver_mva_retrieval_analyzer(sn, self.options)
             cache_indices = [ind for ind in range(sn.nnodes)
@@ -1533,7 +1782,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
 
         # Compute gamma using cache_gamma_lp
         try:
-            gamma, _, _, _ = cache_gamma_lp(lambd, Rcost)
+            gamma, _, _, _, _ = cache_gamma_lp(lambd, Rcost)
         except Exception:
             # Fall back to simple gamma computation
             gamma = np.zeros((n, h))
@@ -1548,7 +1797,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                 # Use Fixed Point Iteration method
                 pij = cache_prob_fpi(gamma, m)
             elif replacestrat == ReplacementStrategy.LRU:
-                # marked (MMAP) source: per-mark MAPs make the request sequence non-IRM, so LRU(m)-MAP TTL (Gast-Van Houdt 2017) applies; plain/i.i.d.-popularity sources stay sequence-exact TTL; mirrors MATLAB solver_mva_cache_analyzer.
+                # MMAP: per-mark MAPs make requests non-IRM, LRU(m)-MAP TTL (Gast-Van Houdt 2017); i.i.d. sequence-exact TTL; mirrors solver_mva_cache_analyzer.
                 D0c = None
                 markidx = getattr(sn, 'markidx', None)
                 if (markidx is not None and source_ist < markidx.shape[0]
@@ -1606,7 +1855,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                 for k in range(min(n, len(pread_v), pij.shape[0])):
                     miss_rate[v] += source_rate[v] * pread_v[k] * pij[k, 0]
 
-        # per-list occupancy needs a genuine per-list distribution: LRU's pij already is one; RR/FIFO derive it from the exact cache_prob_erec recursion (tractable only below 10 items, else NaN with a warning).
+        # per-list occupancy needs its own distribution: LRU's pij is one; RR/FIFO derive it from exact cache_prob_erec (below 10 items, else NaN + warning).
         from ...api.cache import cache_prob_erec
         if replacestrat == ReplacementStrategy.LRU:
             item_prob = pij
@@ -1762,6 +2011,176 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                     (isinstance(sv, int) and sv == SchedStrategy.INF.value))
         return m
 
+    def _sjn_station_mask(self):
+        """Stations scheduling by non-preemptive shortest job next."""
+        from ...lang.base import SchedStrategy
+        m = np.zeros(self.nstations, dtype=bool)
+        sched = self.sched
+        if sched is None:
+            return m
+        for i in range(self.nstations):
+            sv = sched.get(i) if isinstance(sched, dict) else (
+                sched[i] if i < len(sched) else None)
+            if sv is None:
+                continue
+            m[i] = (sv == SchedStrategy.SJF or
+                    (hasattr(sv, 'value') and sv.value == SchedStrategy.SJF.value) or
+                    (isinstance(sv, int) and sv == SchedStrategy.SJF.value))
+        return m
+
+    def _run_sjn(self):
+        """Closed models with shortest-job-next stations; see _kb/06-solver-catalog.md."""
+        import time as _t
+        from ...lang.base import SchedStrategy
+        from ...api.pfqn.sjn import pfqn_mvasjn, pfqn_amvasjn, SjnOptions, SjnStarvationError
+        from ...api.sn.demands import sn_get_demands_chain
+        from ...api.sn.deaggregate import sn_deaggregate_chain_results
+        t0 = _t.time()
+        sn = self._sn
+        M = self.nstations
+        C = sn.nchains
+        dem = sn_get_demands_chain(sn)
+        Lchain = np.asarray(dem.Lchain, dtype=float).reshape(M, C)
+        STchain = np.asarray(dem.STchain, dtype=float).reshape(M, C)
+        Vchain = np.asarray(dem.Vchain, dtype=float).reshape(M, C)
+        alpha = dem.alpha
+        Nchain = np.asarray(dem.Nchain, dtype=float).ravel()
+        SCVchain = np.asarray(dem.SCVchain, dtype=float).reshape(M, C)
+        if np.any(np.isinf(Nchain)):
+            raise ValueError('SJN scheduling is supported by SolverMVA only in closed models, '
+                             'the open case has no population recursion.')
+
+        sched = self.sched
+        rows = []
+        infrows = []
+        sjnrows = []
+        for i in range(M):
+            sv = sched.get(i) if isinstance(sched, dict) else (sched[i] if i < len(sched) else None)
+            code = sv.value if hasattr(sv, 'value') else sv
+            if code == SchedStrategy.EXT.value:
+                continue
+            # the scheduling strategy alone selects delay against queue, nservers never does
+            nsrv = float(sn.nservers[i]) if sn.nservers is not None else 1.0
+            if code == SchedStrategy.INF.value:
+                infrows.append(i)
+                continue
+            if code == SchedStrategy.SJF.value:
+                if nsrv != 1:
+                    raise ValueError('SJN scheduling at station %d requires a single server, the '
+                                     'response time equation is a single-server one.' % (i + 1))
+                sjnrows.append(len(rows))
+            elif code in (SchedStrategy.PS.value, SchedStrategy.FCFS.value,
+                          SchedStrategy.SIRO.value, SchedStrategy.LCFSPR.value):
+                if nsrv != 1:
+                    raise ValueError('station %d has %s servers, the SJN analyzer solves the '
+                                     'remaining stations with the single-server MVA equation.'
+                                     % (i + 1, nsrv))
+            else:
+                raise ValueError('The SJN analyzer does not support %s scheduling at the other '
+                                 'stations.' % str(sv))
+            rows.append(i)
+
+        L = STchain[rows, :] * Vchain[rows, :]
+        V = Vchain[rows, :]
+        scv = np.ones((len(rows), C))
+        for j in sjnrows:
+            i = rows[j]
+            for r in range(C):
+                v = SCVchain[i, r]
+                if np.isfinite(v) and v > 0:
+                    scv[j, r] = v
+        Z = np.zeros(C)
+        for i in infrows:
+            Z = Z + STchain[i, :] * Vchain[i, :]
+
+        opt = SjnOptions()
+        if getattr(self.options, 'iter_tol', None):
+            opt.tol = float(self.options.iter_tol)
+        # native options name it max_iter; OptionsDict-style options use iter_max
+        _im = getattr(self.options, 'max_iter', None) or getattr(self.options, 'iter_max', None)
+        if _im:
+            opt.iter_max = int(_im)
+        cfg = getattr(self.options, 'config', None)
+
+        def _cfg(key):
+            # options.config is a plain dict in native Python, an OptionsDict elsewhere
+            if isinstance(cfg, dict):
+                return cfg.get(key)
+            return getattr(cfg, key, None) if cfg is not None else None
+
+        for key, attr in (('sjn_ns', 'ns'), ('sjn_lfactor', 'lfactor'), ('sjn_umax', 'umax')):
+            val = _cfg(key)
+            if val is not None:
+                setattr(opt, attr, type(getattr(opt, attr))(val))
+        # SJN applies within a class and the classes are then non-preemptively prioritised;
+        # without distinct priorities the jobs of every class are compared by size directly
+        prio = np.asarray(getattr(sn, 'classprio', []), dtype=float).ravel()
+        if sn.nchains == sn.nclasses and prio.size == C and np.unique(prio).size == C:
+            opt.prio = prio.astype(int)
+
+        latticemax = _cfg('sjn_lattice_max')
+        latticemax = 1e5 if latticemax is None else float(latticemax)
+        method = str(getattr(self.options, 'method', 'default')).lower()
+        if method in ('amva', 'bs', 'sjn.amva'):
+            uselattice = False
+        elif method in ('exact', 'mva', 'sjn.mva'):
+            uselattice = True
+        else:
+            uselattice = float(np.prod(Nchain + 1)) <= latticemax
+        if uselattice:
+            try:
+                Xchain, Qrows, Urows, _Crows, _prof, it = pfqn_mvasjn(L, Nchain, Z, scv, sjnrows, V, opt)
+                actualmethod = 'sjn.mva'
+            except SjnStarvationError:
+                if method != 'default':
+                    raise
+                Xchain, Qrows, Urows, _Crows, _prof, it = pfqn_amvasjn(L, Nchain, Z, scv, sjnrows, V, opt)
+                actualmethod = 'sjn.amva'
+        else:
+            Xchain, Qrows, Urows, _Crows, _prof, it = pfqn_amvasjn(L, Nchain, Z, scv, sjnrows, V, opt)
+            actualmethod = 'sjn.amva'
+
+        Qchain = np.zeros((M, C)); Uchain = np.zeros((M, C))
+        Rchain = np.zeros((M, C)); Tchain = np.zeros((M, C))
+        Qchain[rows, :] = Qrows
+        Uchain[rows, :] = Urows
+        for i in range(M):
+            Tchain[i, :] = Xchain * Vchain[i, :]
+        for i in infrows:
+            Qchain[i, :] = Tchain[i, :] * STchain[i, :]
+            Uchain[i, :] = Qchain[i, :]
+        with np.errstate(divide='ignore', invalid='ignore'):
+            Rchain = np.where(Tchain > 0, Qchain / Tchain, 0.0)
+
+        Xchain = np.asarray(Xchain, dtype=float).ravel().copy()
+        Xchain[~np.isfinite(Xchain)] = 0.0
+        Qchain[~np.isfinite(Qchain)] = 0.0
+        Uchain[~np.isfinite(Uchain)] = 0.0
+        Rchain[~np.isfinite(Rchain)] = 0.0
+        # an empty chain carries no jobs, so every one of its metrics is zero
+        zero = (Nchain == 0)
+        if np.any(zero):
+            Xchain[zero] = 0.0
+            Qchain[:, zero] = 0.0
+            Uchain[:, zero] = 0.0
+            Rchain[:, zero] = 0.0
+            Tchain[:, zero] = 0.0
+
+        # MATLAB passes [] here and lets the deaggregation rebuild Q and U from Rchain and alpha
+        res = sn_deaggregate_chain_results(sn, Lchain, None, STchain, Vchain, alpha,
+                                           None, None, Rchain, Tchain, None, Xchain)
+        self._lastiter = it
+        self._result = {
+            'QN': res.Q, 'UN': res.U, 'RN': res.R, 'TN': res.T,
+            'AN': res.T.copy(), 'XN': np.asarray(res.X, dtype=float).ravel(), 'WN': res.R.copy(),
+            'CN': res.C, 'runtime': _t.time() - t0, 'method': actualmethod,
+        }
+        if getattr(self.options, 'verbose', False):
+            from line_solver.solvers.base import print_solver_banner
+            print_solver_banner("MVA analysis [method: %s; type: approximate, deterministic; lang: python] "
+                  "completed in %.6fs." % (actualmethod, _t.time() - t0))
+        return self
+
     def _run_marie(self):
         import time as _t
         t0 = _t.time()
@@ -1780,10 +2199,18 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                     if getattr(self._sn, 'scv', None) is not None
                     else np.ones(self.nstations))
         scv = np.asarray(scv_full, dtype=float)[~inf]
-        X, Qm, Um, Cm, it, mu = pfqn_marie(D, N, Z, scv)
-        Xchain = float(np.asarray(X).flatten()[0])
-        Qm = np.asarray(Qm, dtype=float).flatten()
-        Um = np.asarray(Um, dtype=float).flatten()
+        if D.shape[0] == 0:
+            # Nothing to isolate: with every station an infinite server the
+            # aggregation-decomposition degenerates to the exact delay solution
+            # X = N/Z, and pfqn_marie would be handed a zero-row demand matrix.
+            Xchain = (N / Z) if Z > 0 else 0.0
+            Qm = np.zeros(0)
+            Um = np.zeros(0)
+        else:
+            X, Qm, Um, Cm, it, mu = pfqn_marie(D, N, Z, scv)
+            Xchain = float(np.asarray(X).flatten()[0])
+            Qm = np.asarray(Qm, dtype=float).flatten()
+            Um = np.asarray(Um, dtype=float).flatten()
         M = self.nstations
         QN = np.zeros((M, 1)); UN = np.zeros((M, 1))
         RN = np.zeros((M, 1)); TN = np.zeros((M, 1))
@@ -1806,8 +2233,25 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
             'runtime': _t.time() - t0, 'method': 'marie',
         }
         if getattr(self.options, 'verbose', False):
-            print("MVA analysis [method: marie, lang: python] completed in "
+            from line_solver.solvers.base import print_solver_banner
+            print_solver_banner("MVA analysis [method: marie; type: approximate, deterministic; lang: python] completed in "
                   "%.6fs." % (_t.time() - t0))
+        return self
+
+    def _run_mapqn(self):
+        import time as _t
+        t0 = _t.time()
+        from ...api.solvers.mva.mapqn import solver_mva_mapqn_analyzer
+        ret = solver_mva_mapqn_analyzer(self._sn, self.options)
+        self._result = {
+            'QN': ret.QN, 'UN': ret.UN, 'RN': ret.RN, 'TN': ret.TN,
+            'AN': ret.AN, 'XN': ret.XN, 'WN': ret.WN, 'CN': ret.CN,
+            'runtime': _t.time() - t0, 'method': 'amva.mapqn', 'iter': ret.iter,
+        }
+        if getattr(self.options, 'verbose', False):
+            from line_solver.solvers.base import print_solver_banner
+            print_solver_banner("MVA analysis [method: amva.mapqn; type: approximate, deterministic; lang: python] "
+                                "completed in %.6fs." % (_t.time() - t0))
         return self
 
     def _run_marie_multi(self, t0):
@@ -1829,10 +2273,19 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                     if getattr(self._sn, 'scv', None) is not None
                     else np.ones((M, R)))
         scv = scv_full[~inf, :]
-        X, Qm, Um, Cm, it, mu = pfqn_marie(D, N, Z, scv)
-        X = np.asarray(X, dtype=float).ravel()
-        Qm = np.asarray(Qm, dtype=float).reshape(-1, R)
-        Um = np.asarray(Um, dtype=float).reshape(-1, R)
+        if D.shape[0] == 0:
+            # Nothing to isolate: see the single-class arm above.
+            X = np.zeros(R)
+            for r in range(R):
+                if Z[r] > 0:
+                    X[r] = N[r] / Z[r]
+            Qm = np.zeros((0, R))
+            Um = np.zeros((0, R))
+        else:
+            X, Qm, Um, Cm, it, mu = pfqn_marie(D, N, Z, scv)
+            X = np.asarray(X, dtype=float).ravel()
+            Qm = np.asarray(Qm, dtype=float).reshape(-1, R)
+            Um = np.asarray(Um, dtype=float).reshape(-1, R)
         QN = np.zeros((M, R)); UN = np.zeros((M, R))
         RN = np.zeros((M, R)); TN = np.zeros((M, R))
         qj = 0
@@ -1858,28 +2311,235 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
             'runtime': _t.time() - t0, 'method': 'marie',
         }
         if getattr(self.options, 'verbose', False):
-            print("MVA analysis [method: marie, lang: python] completed in "
+            from line_solver.solvers.base import print_solver_banner
+            print_solver_banner("MVA analysis [method: marie; type: approximate, deterministic; lang: python] completed in "
                   "%.6fs." % (_t.time() - t0))
         return self
 
+    def _schmidt_arm_inputs(self):
+        """(N, fcfs_rows) exactly as the schmidt / schmidt-ext / ab arm of
+        runAnalyzer hands them to the kernel: the population vector it recurs on,
+        and which of the queueing-station rows is served FCFS.
+
+        It exists so that `supportsModelMethod` and the arm itself ask
+        `mva_supports_schmidt_ext` the SAME question about the SAME numbers. The
+        population is the CHAIN one under class switching, because that is the
+        conserved vector the arm aggregates to; with one class per chain the two
+        carry the same numbers. The delay row the arm stacks on top is left out
+        on purpose: an INF row is never an FCFS station and the correction is
+        never formed at one.
+        """
+        L, queue_indices = self._get_queueing_demands()
+        njobs = self.njobs
+        if self._sn is not None and int(getattr(self._sn, 'nchains', 0)) < self.nclasses:
+            from ...api.sn import sn_get_demands_chain
+            njobs = np.asarray(sn_get_demands_chain(self._sn).Nchain, dtype=float).flatten()
+        fcfs = []
+        for q_idx in queue_indices:
+            _sched = (self.sched[q_idx]
+                      if (self.sched is not None and q_idx in self.sched) else None)
+            name = getattr(_sched, 'name', None) or str(_sched)
+            fcfs.append('INF' not in name and 'PS' not in name)
+        return njobs, fcfs
+
+    def _amva_multiserver_rule(self, mi):
+        """(max finite server count over the AMVA queueing stations, config rule).
+
+        MATLAB `solver_amva.m` keys its whole multiserver treatment on these two
+        values, and both branches below need them: the product-form arm applies
+        Seidmann's transform under 'default'/'seidmann' (:111-117), and the
+        linearizer family is handed to `solver_amvald` under
+        'default'/'softmin'/'seidmann'/'suri' (:243-253). Ignoring them does not
+        make the answer approximate, it solves a DIFFERENT model -- the one where
+        every station has a single server.
+        """
+        ns = np.asarray(mi, dtype=float).ravel()
+        ns = ns[np.isfinite(ns)]
+        max_servers = int(np.max(ns)) if ns.size > 0 else 1
+        rule = 'default'
+        cfg = getattr(self.options, 'config', None)
+        if isinstance(cfg, dict):
+            rule = cfg.get('multiserver') or 'default'
+        elif cfg is not None:
+            rule = getattr(cfg, 'multiserver', None) or 'default'
+        return max_servers, str(rule).lower()
+
+    def _amva_softmin_multiserver(self, mi):
+        """True for a multiserver model under the 'softmin' rule.
+
+        MATLAB solver_amva.m:118 returns solver_amvald for that rule BEFORE its
+        per-method switch, so it applies to every method, not only the linearizer
+        family. Seidmann's transform is not applied there -- softmin asks for the
+        load-dependent rate min(n,m) itself, which only amvald carries.
+        """
+        max_servers, rule = self._amva_multiserver_rule(mi)
+        return max_servers > 1 and rule == 'softmin'
+
+    def _lin_family_needs_amvald(self, mi):
+        """True when lin/gflin/egflin must go to solver_amvald for multiserver.
+
+        Complements `_amva_needs_amvald`, which covers only load- and
+        class-dependent scaling. The linearizer family carries no server-count
+        argument, so a multiserver model routed there loses `nservers` in exactly
+        the way an LD model loses its scaling.
+        """
+        from ...api.sn import sn_has_product_form_not_het_fcfs
+        max_servers, rule = self._amva_multiserver_rule(mi)
+        if max_servers <= 1:
+            return False
+        if rule in ('default', 'softmin', 'seidmann', 'suri'):
+            return True
+        # MATLAB never reaches its lin arm for a het-FCFS model: the non-product-form
+        # tail (solver_amva.m:397-401) takes it to solver_amvald whatever the rule is
+        return self._sn is not None and not sn_has_product_form_not_het_fcfs(self._sn)
+
+    @staticmethod
+    def _amva_seidmann(L, Z, mi):
+        """Seidmann's multiserver transform of (L, Z), as MATLAB solver_amva.m:111-117.
+
+        A station with m servers is replaced by a single-server station of demand
+        L/m plus a pure delay of L(m-1)/m folded into the think time, which is
+        what makes the single-server linearizer family and pfqn_bs applicable to a
+        multiserver model at all. Z is charged from the ORIGINAL demands, so the
+        two updates cannot be reordered.
+        """
+        L0 = np.atleast_2d(np.asarray(L, dtype=float))
+        Lms = L0.copy()
+        Zms = np.array(Z, dtype=float, copy=True).ravel()
+        ns = np.asarray(mi, dtype=float).ravel()
+        for j in range(L0.shape[0]):
+            m = ns[j] if j < ns.size else 1.0
+            if not np.isfinite(m) or m <= 1:
+                continue
+            Lms[j, :] = L0[j, :] / m
+            Zms += L0[j, :] * (m - 1.0) / m
+        return Lms, Zms
+
+    @staticmethod
+    def _amva_seidmann_unapply(QN, RN, TN, queue_indices, L, mi, X):
+        """Give each multiserver station back the population Seidmann folded away.
+
+        The transform charges L(m-1)/m to the think time, so the solved queue
+        length at station j counts only the jobs waiting for the one modelled
+        server; the jobs in service at the other m-1 are sitting in the delay
+        term. They belong to the station, so they are moved back here and the
+        delay row keeps only the ORIGINAL think time -- charging both is what
+        made sum(Q) exceed N. Mirrors MATLAB solver_amva.m.
+        """
+        L0 = np.atleast_2d(np.asarray(L, dtype=float))
+        ns = np.asarray(mi, dtype=float).ravel()
+        Xv = np.asarray(X, dtype=float).ravel()
+        for idx, q_idx in enumerate(queue_indices):
+            m = ns[idx] if idx < ns.size else 1.0
+            if not np.isfinite(m) or m <= 1:
+                continue
+            QN[q_idx, :] = QN[q_idx, :] + L0[idx, :] * (m - 1.0) / m * Xv
+            nz = TN[q_idx, :] > 0
+            RN[q_idx, nz] = QN[q_idx, nz] / TN[q_idx, nz]
+
+    def _warn_if_not_converged(self, method):
+        """Report an AMVA fixed point that did not meet its tolerance.
+
+        The authoritative signal is `_lastconverged`; the count is consulted only
+        when no flag was reported, because on the load-dependent route the counter
+        aggregates the nested sweeps and saturates the budget by construction on a
+        solve whose outer residual is exactly zero. Shared by the native path and
+        by the lang='java'/'cpp' delegations, which read both off the CLI payload:
+        a warning raised in one lang and not the other is worse than none, since
+        the silence is read as convergence.
+        """
+        if self._lastconverged is False or (
+                self._lastconverged is None
+                and self._lastiter and self._lastiterbudget
+                and self._lastiter >= self._lastiterbudget):
+            from ...api.io.logging import line_warning_always
+            line_warning_always(
+                'solver_mva_analyzer',
+                "AMVA method '%s' did not meet the convergence tolerance %g after %d "
+                "iterations; the returned metrics may not be converged. Try another method "
+                "(e.g. 'qd' or 'bs'), raise options.iter_max, or loosen options.iter_tol."
+                % (method, getattr(self.options, 'iter_tol', float('nan')), self._lastiter))
+
+    def _adopt_delegated_convergence(self, container):
+        """Carry the delegated solve's iteration count and convergence flag onto
+        this solver, then apply the same warning the native path applies."""
+        self._lastiter = getattr(container, 'iter', None)
+        self._lastconverged = getattr(container, 'converged', None)
+        _im = getattr(self.options, 'iter_max', None)
+        self._lastiterbudget = int(_im) if _im else None
+        self._warn_if_not_converged(getattr(container, 'method', None)
+                                    or getattr(self.options, 'method', 'default'))
+
+    def _interlock_matrix(self):
+        """Interlock matrix of Franks (1999), Eq. (4.7) as SolverLN left it in the options.
+
+        CLASS-indexed, so that a later refreshChains cannot leave it stale; the handler that
+        is about to run aggregates it to chains against the struct it solves. None for every
+        model but the layers of SolverLN.
+        """
+        cfg = getattr(self.options, 'config', None)
+        if cfg is None:
+            return None
+        if isinstance(cfg, dict):
+            return cfg.get('interlock', None)
+        return getattr(cfg, 'interlock', None)
+
+    def _apply_interlock(self, amvald_options):
+        """Carry the same matrix into an AMVA-LD run, aggregated to its chain basis."""
+        IL = self._interlock_matrix()
+        if IL is None or np.size(IL) == 0:
+            return
+        from ...api.sn import sn_interlock_chain
+        from ...api.solvers.mva.amvald import AmvaldOptions
+        ILchain = sn_interlock_chain(self._sn, IL)
+        if ILchain is None:
+            return
+        if getattr(amvald_options, 'config', None) is None:
+            amvald_options.config = AmvaldOptions.Config()
+        amvald_options.config.interlock_chain = ILchain
+
     def runAnalyzer(self):
         """Run the MVA analysis."""
+        # MODEL TRANSFORMATION, opt-in through options.config['transform']. The
+        # strategy rewrites the model into subproblems, TransformSolveMixin
+        # solves each with an instance of THIS solver and maps the metrics back,
+        # so a transformation written once serves MVA as well as CTMC. Mirrors
+        # the branch MATLAB puts in the shared runAnalyzerPreamble.
+        if self.maybe_transform():
+            return self._result
         # A fresh analysis invalidates any prior unstable-utilization cap.
         self._unstable_util_capped = False
         # last AMVA iteration count, published as result['iter']; None for non-iterative (exact) paths, which is not an error.
         self._lastiter = None
-        # iteration budget the handler actually used (not always options.iter_max, e.g. hardcoded linearizer maxiter=1000); None when not determinable, in which case the convergence check is skipped.
+        # iteration budget the handler used (not always options.iter_max, e.g. hardcoded linearizer maxiter=1000); None if unknown, convergence check skipped.
         self._lastiterbudget = None
         # authoritative convergence flag overrides the count-vs-budget heuristic; see _kb/06-solver-catalog.md MVA AMVA convergence flag vs iteration count.
         self._lastconverged = None
+        # Closed models with shortest-job-next stations; see _kb/06-solver-catalog.md.
+        _sjn = self._sjn_station_mask()
+        if np.any(_sjn):
+            if np.any(np.isinf(np.asarray(self.njobs, dtype=float))):
+                # without the rejection the generic AMVA path would silently solve the station as
+                # if it were size-blind, which is not what SJF means
+                raise ValueError(
+                    'SolverMVA supports shortest-job-next (SJF) scheduling only in closed models, '
+                    'the conditional waiting time equation being a population recursion. Use '
+                    'SolverLDES, or SolverMVA with SRPT or PSJF for the preemptive size-based '
+                    'open queue.')
+            return self._run_sjn()
         # Marie aggregation-decomposition for closed FCFS Coxian service; see _kb/06-solver-catalog.md MVA method='marie' section.
         _m0 = str(getattr(self.options, 'method', 'default')).lower()
         if _m0 in ('marie', 'amva.marie'):
             return self._run_marie()
+        # Horizontal-cut MVA for one exponential delay and one FCFS MAP queue
+        # (api.mapqn.mapqn_amva); see _kb/06-solver-catalog.md MVA method='amva.mapqn'.
+        if _m0 in ('amva.mapqn', 'mapqn'):
+            return self._run_mapqn()
         # Bound methods moved to SolverBA (mirrors MATLAB/JAR).
         _bfam = _m0.split('.')[0]
         if _bfam in ('aba', 'bjb', 'pb', 'gb', 'sb', 'mwba', 'pbh', 'pbk',
-                     'bjbk', 'cbh', 'ssd', 'cub', 'mbjb', 'sib', 'ldbcmp'):
+                     'bjbk', 'cbh', 'ssd', 'cub', 'mbjb', 'sib', 'scb', 'ldbcmp',
+                     'looping'):
             raise ValueError(
                 "Method '%s' is a bound method served by SolverBA; use "
                 "SolverBA(model, method='%s'). Bound methods were moved out of "
@@ -1889,8 +2549,30 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
             # native OI/PAS gate applied before lang='java' delegation so both langs raise the same exception rather than an opaque JAR RuntimeError.
             self._resolve_oi_path(str(getattr(self.options, 'method', 'default')).lower())
             from ..jar_dispatch import populate_java_result
-            populate_java_result(self)
+            self._adopt_delegated_convergence(populate_java_result(self))
             return self
+        # lang='cpp' delegates to the C++ multiprecision port (line-cli) over the
+        # same subprocess+JSON transport as lang='java'. Imported lazily so an
+        # install without the binary never touches this path.
+        #
+        # THE ONLY AUTOMATIC FALLBACK IS AN ABSENT BINARY. line-cli is not built
+        # by `pip install`, is platform-specific, and on an arch with no build
+        # there is nothing to run -- degrading to native Python there is an
+        # environment adaptation, and it warns so the reported lang and the
+        # engine that ran cannot silently disagree. A construct the C++ analyzer
+        # REFUSES propagates instead: the two ports do not refuse the same set,
+        # and answering anyway would report a python number under lang='cpp',
+        # which is the one thing this option exists to rule out.
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            self._resolve_oi_path(str(getattr(self.options, 'method', 'default')).lower())
+            from ..cpp_dispatch import LineCliNotAvailable, populate_cpp_result
+            try:
+                self._adopt_delegated_convergence(populate_cpp_result(self))
+                return self
+            except LineCliNotAvailable as e:
+                line_warning("SolverMVA",
+                             "lang='cpp' requested but the C++ solver is unavailable (%s); "
+                             "falling back to lang='python'." % e)
 
         start_time = time.time()
         line_debug("MVA: using lang=python", options=self.options)
@@ -1898,7 +2580,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
         if self._sn is not None and getattr(self._sn, 'immfeed', None) is not None and np.any(self._sn.immfeed):
             line_warning("SolverMVA", "SolverMVA does not handle immediate feedback (immfeed); the solver will treat self-loops as class-switching with re-queueing.")
 
-        # RQNA extends the MVA feature set with the MAP family for explicit method='rqna' and for 'default' auto-selecting RQNA on a bursty single-class open network.
+        # RQNA extends MVA feature set with the MAP family for explicit method='rqna' and 'default' auto-selecting RQNA on a bursty single-class open network.
         _method = str(getattr(self.options, 'method', 'default')).lower()
         _use_rqna_feats = (_method == 'rqna')
         if not _use_rqna_feats and _method == 'default' and self._sn is not None:
@@ -1907,13 +2589,13 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                                and np.all(np.isinf(self._sn.njobs))
                                and sn_has_bursty_arrival(self._sn))
 
-        # reject features outside the MVA feature set (finite capacity, FCR, JSQ/RROBIN, ...) rather than silently return the unconstrained product-form answer; mirrors MATLAB runAnalyzerChecks.
+        # reject features outside MVA featset (finite capacity, FCR, JSQ/RROBIN, ...) not silently give unconstrained product-form; mirrors runAnalyzerChecks.
         model = getattr(self, 'model', None)
         if model is not None and hasattr(model, 'get_used_lang_features'):
-            # method-aware feature gate: resolveMethod maps 'default' to 'rqna' only for a bursty single-class open network, so the MAP/MMPP family is accepted only on that path.
+            # method-aware feature gate: resolveMethod maps 'default' to 'rqna' only for a bursty single-class open network, so MAP/MMPP only on that path.
             self.runAnalyzerChecks(self.options)
 
-        # MAP/MMPP2 carry autocorrelation a renewal/product-form MVA cannot represent and are rejected (BMAP is exempt, dedicated batch handling); mirrors MATLAB/JAR runAnalyzerChecks.
+        # MAP/MMPP2 carry autocorrelation a renewal/product-form MVA cannot represent, so rejected (BMAP exempt, batch); mirrors MATLAB/JAR runAnalyzerChecks.
         if (self._sn is not None and getattr(self._sn, 'procid', None) is not None
                 and not _use_rqna_feats):
             from ...constants import ProcessType as _PT
@@ -1931,7 +2613,67 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                         "MAP/Gamma service, or SolverCTMC/SolverSSA. This matches "
                         "MATLAB SolverMVA." % _hit)
 
-        # RQNA auto-selected for multi-queue bursty open networks; a single-queue Source-Queue-Sink model routes to the qsys path (gm1/gig1) instead, matching MATLAB/JAR dispatch order.
+        # QNA (two-moment decomposition) is reachable only by explicit request;
+        # solver_mva_analyzer routes it the same way in MATLAB and the JAR.
+        if _method == 'qna':
+            from ...api.solvers.mva.analyzers import solver_qna
+            from ...lang.base import NodeType
+            ret = solver_qna(self._sn, self.options)
+            QN = np.asarray(ret.Q, dtype=np.float64)
+            UN = np.asarray(ret.U, dtype=np.float64)
+            RN = np.asarray(ret.R, dtype=np.float64)
+            TN = np.asarray(ret.T, dtype=np.float64)
+            M_, K_ = QN.shape
+            AN = TN.copy()
+            rates_mat = self._sn.rates if self._sn.rates is not None else np.zeros((M_, K_))
+            WN = np.zeros((M_, K_))
+            for i in range(M_):
+                nd = int(self._sn.stationToNode[i])
+                if self._sn.nodetype[nd] == NodeType.SOURCE:
+                    AN[i, :] = 0.0
+                for r in range(K_):
+                    if rates_mat[i, r] > 0 and RN[i, r] > 0:
+                        WN[i, r] = max(0.0, RN[i, r] - 1.0 / rates_mat[i, r])
+            self._result = {
+                'QN': QN, 'UN': UN, 'RN': RN, 'TN': TN, 'AN': AN,
+                'XN': np.asarray(ret.X, dtype=np.float64).ravel(), 'WN': WN,
+                'CN': np.sum(RN, axis=0),
+                'runtime': getattr(ret, 'runtime', 0.0),
+                'method': 'qna', 'iter': getattr(ret, 'it', 1),
+            }
+            return self._result
+
+        # RQT (robust queueing theory) is reachable only by explicit request;
+        # solver_mva_analyzer routes it the same way in MATLAB and the JAR.
+        if _method == 'rqt':
+            from ...api.solvers.mva.analyzers import solver_rqt
+            from ...lang.base import NodeType
+            ret = solver_rqt(self._sn, self.options)
+            QN = np.asarray(ret.Q, dtype=np.float64)
+            UN = np.asarray(ret.U, dtype=np.float64)
+            RN = np.asarray(ret.R, dtype=np.float64)
+            TN = np.asarray(ret.T, dtype=np.float64)
+            M_, K_ = QN.shape
+            AN = TN.copy()
+            rates_mat = self._sn.rates if self._sn.rates is not None else np.zeros((M_, K_))
+            WN = np.zeros((M_, K_))
+            for i in range(M_):
+                nd = int(self._sn.stationToNode[i])
+                if self._sn.nodetype[nd] == NodeType.SOURCE:
+                    AN[i, :] = 0.0
+                for r in range(K_):
+                    if rates_mat[i, r] > 0 and RN[i, r] > 0:
+                        WN[i, r] = max(0.0, RN[i, r] - 1.0 / rates_mat[i, r])
+            self._result = {
+                'QN': QN, 'UN': UN, 'RN': RN, 'TN': TN, 'AN': AN,
+                'XN': np.asarray(ret.X, dtype=np.float64).ravel(), 'WN': WN,
+                'CN': np.sum(RN, axis=0),
+                'runtime': getattr(ret, 'runtime', 0.0),
+                'method': 'rqt', 'iter': getattr(ret, 'it', 1),
+            }
+            return self._result
+
+        # RQNA auto-selected for multi-queue bursty open nets; single-queue Source-Queue-Sink routes to qsys path (gm1/gig1), matching MATLAB/JAR dispatch.
         from ...lang.base import NodeType as _NT_rqna
         _rqna_dispatch = (_method == 'rqna')
         if not _rqna_dispatch and _use_rqna_feats and self._sn is not None:
@@ -2016,6 +2758,15 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
             if result is not None:
                 return result
 
+        # Size-based M/G/1 (SRPT, PSJF, FB, LRPT, SETF) takes the exact
+        # Wierman-Harchol-Balter response times; see _kb/06-solver-catalog.md
+        if self._sizebased_sched() is not None:
+            line_debug("Size-based scheduling detected, routing to "
+                       "qsys_sizebased_analyzer", options=self.options)
+            result = self._run_sizebased_analysis()
+            if result is not None:
+                return result
+
         # Check for polling systems and handle specially
         if self._is_polling_system():
             line_debug("Multiclass open polling system, routing to polling_analyzer", options=self.options)
@@ -2039,21 +2790,81 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
             pfqn_schmidt, pfqn_schmidt_ext, pfqn_ab_amva,
             pfqn_linearizermx,
         )
-        # pfqn_qd/qdlin/qli/fli and api.pfqn.bounds are intentionally not imported: MATLAB has no solver path to them (qd family goes through solver_amvald; bounds go through SolverBA).
+        # pfqn_qdlin/qli/fli and api.pfqn.bounds intentionally not imported: the qd
+        # family reaches the solver through solver_amvald and bounds through SolverBA.
+        # pfqn_qdlin is the array-level TWIN of the 'qdlin' method, not its implementation.
 
         method = self.method.lower()
+
+        # A single-class open station with reneging resolves to its abandonment
+        # method here, not only in the feature gate: the gate and the analyzer
+        # must agree, or the gate would admit the model and the analyzer would
+        # then solve it as if nobody ever abandoned.
+        if method == 'default':
+            _ab = self._resolve_abandonment_method()
+            if _ab is not None:
+                method = _ab
 
         # Normalize AMVA method aliases
         method = method.replace('amva.', '')
 
+        # The closed-population AMVA family (Bard-Schweitzer, SQNI, Tay, SCAT,
+        # AQL, QSA, Bard LCP, Chow SA, Hsieh-Lam PAM, clustering, Improved
+        # Linearizer, Akyildiz-Bolch, Schmidt) lives ONLY in the closed
+        # product-form branch below. The same predicate the report gates on
+        # decides here, so a name the report offers is a name that runs, and a
+        # name it withholds errors by name instead of being answered with a
+        # table of zeros or with the qd-family numbers under someone else's.
+        from ...api.solvers.mva.handler import (
+            mva_supports_closed_population, mva_is_closed_population_method)
+        _cp_ok, _cp_reason = mva_supports_closed_population(self._sn, method)
+        if not _cp_ok:
+            raise ValueError(_cp_reason)
+
         # Get parameters
         L, queue_indices = self._get_queueing_demands()
+        if len(queue_indices) == 0 and mva_is_closed_population_method(method):
+            # Degenerate network: with no queueing station there is no
+            # arrival-instant queue to correct, so every AMVA approximation
+            # coincides with the exact delay solution Q_ir = X_r D_ir and the
+            # name a caller passed selects nothing. MATLAB solver_amva.m takes
+            # the same exit (sn_has_homogeneous_scheduling INF) ahead of its
+            # method switch; without it the family was handed a zero-row demand
+            # matrix and died inside pfqn_bs, or reported zeros.
+            method = 'lin'
         N = self.njobs.copy()
         Z = self._get_think_times()
         mi = self.nservers[queue_indices] if len(queue_indices) > 0 else np.ones(1)
 
         M = L.shape[0]  # Number of queueing stations
         R = self.nclasses  # Number of classes
+
+        # THE CLOSED-POPULATION AMVA FAMILY RECURS ON A CONSERVED POPULATION.
+        # Under class switching a job CHANGES CLASS as it moves, so no per-class
+        # population is conserved and the vector these kernels need is the CHAIN
+        # one. That is why MATLAB solver_amva.m and the C++ port build their whole
+        # product-form branch out of sn_get_product_form_chain_params and
+        # deaggregate at the end (solver_amva.m:159 and :426). Handed class
+        # populations instead, the family solved a DIFFERENT network: on a
+        # two-class Delay+PS switching model whose exact answer is [1.4118,
+        # 0.5882], all sixteen names returned the same [2, 0] -- every job parked
+        # at the delay -- and sixteen different approximations agreeing bit for
+        # bit is the signature of that, not of accuracy.
+        # Chain and class coincide exactly when every chain holds one class, so
+        # the substitution is made only where it changes the answer: a model
+        # without class switching keeps the code path, and the numbers, it had.
+        cp_chain = None
+        if (mva_is_closed_population_method(method) and self._sn is not None
+                and int(getattr(self._sn, 'nchains', R)) < R):
+            from ...api.sn import sn_get_demands_chain
+            cp_chain = sn_get_demands_chain(self._sn)
+            cp_delays = self._get_delay_stations()
+            R = int(self._sn.nchains)
+            L = cp_chain.Lchain[queue_indices, :]
+            N = np.asarray(cp_chain.Nchain, dtype=float).flatten().copy()
+            Z = np.zeros(R)
+            for _d in cp_delays:
+                Z = Z + np.asarray(cp_chain.Lchain[_d, :], dtype=float)
 
         # Compute arrival rates for open classes
         lambda_arr = np.zeros(R)
@@ -2074,12 +2885,17 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
         AN = np.zeros((self.nstations, R))
         XN = np.zeros(R)
 
-        # open networks with feedback need chain-level MVA for correct visit ratios; explicit qsys method names (mm1/gig1/gm1/...) route to the qsys dispatch, not the generic MVA branch.
+        # open feedback nets need chain-level MVA for visit ratios; explicit qsys names (mm1/gig1/gm1/...) route to qsys dispatch, not generic MVA branch.
         _qsys_dispatch_methods = {
             'mm1', 'mmk', 'mg1', 'mgi1', 'gm1', 'gig1', 'gim1',
             'gig1.kingman', 'gigk', 'gigk.kingman_approx',
             'gig1.gelenbe', 'gig1.heyman', 'gig1.kimura',
             'gig1.allen', 'gig1.kobayashi', 'gig1.klb', 'gig1.marchal',
+            # Whitt family; must be listed here as well as in qsys_methods
+            # below, or the generic MVA branch swallows the model and the qsys
+            # dispatch never runs.
+            'erlanga', 'mgisrgi', 'gigk.diffusion',
+            'gigk.whitt', 'qed', 'gig1.extremal',
         }
         _is_qsys_dispatch = (self.network_type == 'open' and self.nstations == 2
                              and self.nclasses == 1 and method in _qsys_dispatch_methods)
@@ -2134,22 +2950,28 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
             has_product_form_scvblind = _sn_pf_scvblind(self._sn) if self._sn is not None else True
             line_debug("Product-form check: hasProductForm=%s (exact method requested)", has_product_form_early, options=self.options)
 
-            # BMAP arrivals on an open single-class single-queue system always route to the exact qsys (MX/M/1) branch regardless of method; mirrors MATLAB solver_mva_qsys_analyzer routing order.
-            from ...constants import ProcessType as _PT
-            # python only needs the qsys route for non-plain-M/M/1|M/M/k queues (non-Poisson arrival, non-exponential service, or BMAP); egflin is already exact when ca=cs=1.
+            # An open single-class single-queue system (Source-Queue-Sink) takes
+            # the exact qsys closed forms -- M/M/1, M/M/k, M/G/1, G/M/1 -- as
+            # MATLAB's mvaDispatch branch 4 and the C++ port both do.
+            #
+            # THIS GATE USED TO EXCLUDE THE PLAIN M/M/1, on the stated ground
+            # that "egflin is already exact when ca=cs=1". IT IS NOT. egflin is a
+            # linearizer whose iteration stops on a tolerance: on lambda=0.5,
+            # mu=1 it returns QLen 0.999999245 where rho/(1-rho) is exactly 1,
+            # short by 7.6e-7. The condition was therefore excluding from the
+            # exact path precisely the model the exact path is cheapest on, and
+            # it made this the one model where lang='python' could not reproduce
+            # lang='cpp' or MATLAB to solver tolerance -- which is how it was
+            # found. Measured, not reasoned: the divergence is pinned in
+            # python/tests/test_mva_lang_cpp.py.
+            #
+            # The multiserver arm below already sends M/M/k here for the same
+            # reason (the Seidmann term underestimates), so this restores the
+            # single-server case to the company it belongs in.
             if (method == 'default' and self.network_type == 'open' and M == 1 and R == 1
                     and len(source_indices) > 0 and len(queue_indices) > 0
                     and self._sn.procid is not None):
-                _src0 = source_indices[0]
-                _q0 = queue_indices[0]
-                _scv0 = self._sn.scv
-                _ca0 = _scv0[_src0, 0] if _scv0 is not None else 1.0
-                _cs0 = _scv0[_q0, 0] if _scv0 is not None else 1.0
-                _is_bmap0 = self._sn.procid[_src0, 0] == _PT.BMAP
-                _non_poisson = np.isfinite(_ca0) and abs(_ca0 - 1.0) > 1e-9
-                _non_exp = np.isfinite(_cs0) and abs(_cs0 - 1.0) > 1e-9
-                if _is_bmap0 or _non_poisson or _non_exp:
-                    method = 'exact'
+                method = 'exact'
 
             # Handle 'default' method with MATLAB-compatible heuristic
             if method == 'default':
@@ -2173,7 +2995,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                     # Closed single-chain network with Blocking-After-Service finite buffers
                     method = 'sqd'
                 elif is_mixed_only:
-                    # exact BCMP mixed MVA (pfqn_mvamx) avoids egflin's open/closed double-counting of open-class interference; egflin remains the fallback for non-product-form or multiserver.
+                    # exact BCMP mixed MVA (pfqn_mvamx) avoids egflin open/closed double-counting open-class interference; egflin is fallback for non-PF or multiserver.
                     _mixed_max_srv = 1
                     if self.nservers is not None:
                         _fs = self.nservers[np.isfinite(self.nservers)]
@@ -2199,10 +3021,10 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                     # Open network with product form and single servers - use egflin
                     method = 'egflin'
                 elif is_open_product_form and max_servers > 1:
-                    # open M/M/k routes to exact MVA (Erlang-C via pfqn_mvaldms/qsys_mmk): the AMVA Seidmann term underestimates QLen/RespT by treating it as a scaled M/M/1.
+                    # open M/M/k routes to exact MVA (Erlang-C via pfqn_mvaldms/qsys_mmk): AMVA Seidmann term underestimates QLen/RespT by treating it as a scaled M/M/1.
                     method = 'exact'
                 elif use_ld_mva:
-                    # small closed product-form LD models use the exact pfqn_mvaldmx recursion, mirroring MATLAB's default-to-exact upgrade; else fall back to approximate LD-AMVA.
+                    # small closed product-form LD models use exact pfqn_mvaldmx recursion, mirroring MATLAB's default-to-exact upgrade; else fall back to approx LD-AMVA.
                     from ...api.sn import sn_has_product_form as _sn_has_pf
                     _cd = getattr(self._sn, 'cdscaling', None) if self._sn is not None else None
                     _jd = getattr(self._sn, 'jdscaling', None) if self._sn is not None else None
@@ -2221,7 +3043,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                     # single open HOL M/G/1 routes to exact qsys_mg1_prio (Cobham), not the AMVA preemptive shadow-server approximation.
                     method = 'exact'
                 elif not has_product_form_scvblind:
-                    # strictly non-product-form networks (priorities, fork-join, sd-routing, heterogeneous FCFS) use AMVA; MATLAB's SCV-blind product-form test still resolves small closed non-exponential-FCFS models to exact MVA.
+                    # non-PF nets (priorities, fork-join, sd-routing, heterog FCFS) use AMVA; MATLAB SCV-blind PF test still sends small closed non-exp-FCFS to exact MVA.
                     method = 'amva'
                 else:
                     # Match MATLAB's solver_mva_analyzer.m logic for non-LD models:
@@ -2274,8 +3096,27 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                         has_class_switching = True
                         break
 
-            # plain class switching without real load dependence uses the chain-based pfqn_mvams (more accurate); pfqn_mvaldmx is reserved for genuine LD scenarios.
+            # plain class switching without real load dependence uses the chain-based pfqn_mvams (more accurate); pfqn_mvaldmx is reserved for genuine LD cases.
             needs_mvaldmx = use_ld_mva and (self.lldscaling is not None or has_inf_server)
+
+            # MATLAB solver_amva.m:81-91 resolves {'default','amva'} to qd / egflin / lin
+            # unconditionally, as do the JAR Solver_amva.java:149-159 and the cpp
+            # solver_mva.h:1159-1170. The plain 'amva' arm answers a different model.
+            if method == 'amva':
+                _Nvec = np.asarray(N, dtype=float).flatten()
+                _chains = self._get_chains() if (self._sn is not None and self._sn.nchains > 0) else None
+                if _chains:
+                    _Nchain = np.array([float(np.sum(_Nvec[list(ch)])) for ch in _chains])
+                else:
+                    _Nchain = _Nvec
+                _srv = mi[np.isfinite(mi)] if mi is not None else np.array([1.0])
+                _maxsrv = int(np.max(_srv)) if _srv.size > 0 else 1
+                if np.sum(_Nchain[np.isfinite(_Nchain)]) <= 2 or np.any(_Nchain < 1):
+                    method = 'qd'
+                elif _maxsrv == 1:
+                    method = 'egflin'
+                else:
+                    method = 'lin'
 
             if method == 'sqd':
                 # Closed single-chain Blocking-After-Service network (finite buffers)
@@ -2422,61 +3263,99 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
 
                 C = self._sn.nchains
                 total_pop = int(np.sum(Nchain[np.isfinite(Nchain)]))
-
-                # mu_chain uses the FULL station count M_full (same as Lchain rows), not just queueing stations; mirrors MATLAB solver_mvald.m.
                 M_full = Lchain.shape[0]  # Number of ALL stations
                 S = self.nservers  # Server counts per station
-                mu_chain = np.ones((M_full, total_pop))
-                for ist in range(M_full):
-                    if ist < len(S) and np.isinf(S[ist]):
-                        # INF server: mu[ist,:] = 1:N (linear scaling)
-                        for n in range(total_pop):
-                            mu_chain[ist, n] = n + 1
-                    elif self.lldscaling is not None and ist < self.lldscaling.shape[0]:
-                        # Load-dependent: use lldscaling
-                        for n in range(total_pop):
-                            if n < self.lldscaling.shape[1]:
-                                mu_chain[ist, n] = self.lldscaling[ist, n]
-                            else:
-                                mu_chain[ist, n] = self.lldscaling[ist, -1]
-                    elif ist < len(S) and S[ist] > 1:
-                        # Finite multiserver queue: mu scales up to number of servers
-                        # For c servers: mu = [1, 2, ..., c, c, c, ...]
-                        c = int(S[ist])
-                        for n in range(total_pop):
-                            mu_chain[ist, n] = min(n + 1, c)
+                refstat_chain = np.asarray(refstatchain).flatten().astype(int)
+                open_chains = [c for c in range(C) if np.isinf(Nchain[c])]
 
-                # Build arrival rates for open chains
-                # For open classes, arrival rate comes from the Source station, not refstat
-                from ...api.sn.network_struct import NodeType
-                source_station = None
-                for ist in range(self.nstations):
-                    if self.station_types and ist < len(self.station_types):
-                        st = self.station_types[ist]
-                        if st is not None:
-                            st_val = st.value if hasattr(st, 'value') else int(st)
-                            if st_val == NodeType.SOURCE.value:
-                                source_station = ist
-                                break
-
+                # Chain arrival rates. The reference station of an open chain is its
+                # Source and STchain holds one over the SUM of the class arrival rates
+                # there, so reading the rate at chain level also covers a chain whose
+                # classes arrive at several rates, or one carrying a class reached only
+                # by a switch (which has no arrival process of its own).
                 lambda_chain = np.zeros(C)
-                for c in range(C):
-                    if np.isinf(Nchain[c]):
-                        # Sum arrival rates for all open classes in this chain
-                        if c in self._sn.inchain:
-                            inchain = self._sn.inchain[c].flatten().astype(int)
-                            for r in inchain:
-                                if r < R and np.isinf(N[r]):
-                                    # For open classes, get arrival rate from Source station
-                                    if source_station is not None and source_station < self.nstations:
-                                        arr_rate = self.rates[source_station, r]
-                                        if arr_rate > 0:
-                                            lambda_chain[c] += arr_rate
+                for c in open_chains:
+                    rst = int(refstat_chain[c])
+                    if STchain[rst, c] > 0:
+                        lambda_chain[c] = 1.0 / STchain[rst, c]
 
-                # pfqn_mvaldmx called with chain-level parameters and S=sn.nservers (all stations); mirrors MATLAB.
-                Xchain, Qchain, Uchain, _, lGN, Pc = pfqn_mvaldmx(
-                    lambda_chain, Lchain, Nchain, np.zeros(C), mu_chain, S
-                )
+                if not open_chains:
+                    # PURELY CLOSED: every station enters the recursion, an infinite
+                    # server as the load-dependent rate mu(n)=n, which is exact because
+                    # n cannot then exceed the closed population.
+                    mu_chain = np.ones((M_full, total_pop))
+                    for ist in range(M_full):
+                        if ist < len(S) and np.isinf(S[ist]):
+                            # INF server: mu[ist,:] = 1:N (linear scaling)
+                            for n in range(total_pop):
+                                mu_chain[ist, n] = n + 1
+                        elif self.lldscaling is not None and ist < self.lldscaling.shape[0]:
+                            # Load-dependent: use lldscaling
+                            for n in range(total_pop):
+                                if n < self.lldscaling.shape[1]:
+                                    mu_chain[ist, n] = self.lldscaling[ist, n]
+                                else:
+                                    mu_chain[ist, n] = self.lldscaling[ist, -1]
+                        elif ist < len(S) and S[ist] > 1:
+                            # Finite multiserver queue: mu scales up to number of servers
+                            # For c servers: mu = [1, 2, ..., c, c, c, ...]
+                            c = int(S[ist])
+                            for n in range(total_pop):
+                                mu_chain[ist, n] = min(n + 1, c)
+                    # pfqn_mvaldmx called with chain-level parameters and S=sn.nservers (all stations); mirrors MATLAB.
+                    Xchain, Qchain, Uchain, _, lGN, Pc = pfqn_mvaldmx(
+                        lambda_chain, Lchain, Nchain, np.zeros(C), mu_chain, S
+                    )
+                else:
+                    # MIXED OR PURELY OPEN. Three kinds of row are not the same thing to
+                    # pfqn_mvaldmx and have to be separated before it is called. This is
+                    # the partition solver_ncld makes for the same recursion.
+                    #  - THE SOURCE IS NOT A STATION. Its chain demand is the
+                    #    interarrival time 1/lambda, so it carries offered load Lo=1
+                    #    exactly and pfqn_ldmx_ec then forms 1/(1-Lo/mu)=inf.
+                    #  - A DELAY IS AN INFINITE SERVER FOR THE OPEN CHAINS TOO. mu(n)=n
+                    #    cut at the closed population declares it saturated at total_pop
+                    #    jobs. It enters as chain think time instead and its queue length
+                    #    is X*L, which is exact.
+                    #  - A QUEUEING STATION KEEPS ITS WHOLE RATE ROW. pfqn_ldmx_ec reads
+                    #    the limited-load-dependence level b off the row itself, so a row
+                    #    cut at the closed population is read as a slower station, and
+                    #    with no closed class at all it collapses to mu(1).
+                    source_stations = sorted({int(refstat_chain[c]) for c in open_chains})
+                    delay_stations = [i for i in range(M_full)
+                                      if i < len(S) and np.isinf(S[i]) and i not in source_stations]
+                    queue_stations = [i for i in range(M_full)
+                                      if i not in source_stations and i not in delay_stations]
+                    Zchain = np.zeros(C)
+                    if delay_stations:
+                        for c in range(C):
+                            Zchain[c] = float(np.sum(Lchain[delay_stations, c]))
+                    lld_width = self.lldscaling.shape[1] if self.lldscaling is not None else 0
+                    ncol = max(1, total_pop)
+                    for i in queue_stations:
+                        # first column of the trailing constant run, the level b of pfqn_ldmx_ec
+                        b = lld_width if (self.lldscaling is not None and i < self.lldscaling.shape[0]) else 0
+                        while b > 1 and self.lldscaling[i, b - 2] == self.lldscaling[i, b - 1]:
+                            b -= 1
+                        ncol = max(ncol, b)
+                    mu_chain = np.ones((len(queue_stations), ncol))
+                    for qi, i in enumerate(queue_stations):
+                        if lld_width > 0 and i < self.lldscaling.shape[0]:
+                            avail = min(ncol, lld_width)
+                            mu_chain[qi, :avail] = self.lldscaling[i, :avail]
+                            mu_chain[qi, avail:] = self.lldscaling[i, lld_width - 1]  # saturated tail
+                    Xchain, Qqueue, Uqueue, _, lGN, Pc = pfqn_mvaldmx(
+                        lambda_chain, Lchain[queue_stations, :], Nchain, Zchain, mu_chain,
+                        np.ones(len(queue_stations))
+                    )
+                    Qchain = np.zeros((M_full, C))
+                    Uchain = np.zeros((M_full, C))
+                    if queue_stations:
+                        Qchain[queue_stations, :] = Qqueue
+                        Uchain[queue_stations, :] = Uqueue
+                    for i in delay_stations:
+                        # infinite server: X*L for a closed chain, lambda*L for an open one
+                        Qchain[i, :] = Lchain[i, :] * Xchain
 
                 # Tchain(k,r)=Xchain(r)*Vchain(k,r), Rchain=Qchain./Tchain; mirrors MATLAB solver_mva.m.
                 Tchain = np.outer(np.ones(M_full), Xchain) * Vchain
@@ -2499,7 +3378,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                 TN = deagg.T
                 XN = deagg.X.flatten()
                 AN = TN.copy()
-                # busy-server fraction under load-dependent scaling: carried load over max(nservers, peak lldscaling), the NC convention, not mvaldmx's P(busy) estimator.
+                # busy-server fraction under load-dependent scaling: carried load over max(nservers, peak lldscaling), NC convention, not mvaldmx's P(busy) estimator.
                 if self.lldscaling is not None:
                     for ist in range(min(UN.shape[0], self.lldscaling.shape[0])):
                         if ist < len(S) and np.isfinite(S[ist]):
@@ -2513,7 +3392,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                 line_debug("Standard queueing network, routing to mva_analyzer (method=%s)", method, options=self.options)
                 # chain-level aggregation and post-processing mirrors MATLAB solver_mva: chain demands, chain MVA, recompute Q/X from waiting times, disaggregate.
 
-                # LCFS+LCFS-PR 2-station product-form check runs before the general product-form test, which does not recognize LCFS scheduling; mirrors MATLAB solver_mva.m:22-44/JAR Solver_mva.kt:42-80.
+                # LCFS+LCFS-PR 2-station PF check runs before general PF test, ignoring LCFS scheduling; mirrors MATLAB solver_mva.m:22-44/JAR Solver_mva.kt:42-80.
                 has_lcfs_network = False
                 if self._sn is not None and self._sn.sched:
                     from ...lang.base import SchedStrategy as _SS
@@ -2529,8 +3408,12 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                     )
                     has_lcfs_network = _lcfs_found and _lcfspr_found
 
-                # amvald substitution gated on the same SCV-blind product-form predicate MATLAB's exact path uses, so non-exponential FCFS still resolves to exact MVA unless strictly non-product-form.
-                _pf_means = has_product_form_scvblind
+                # amvald substitution gated on the same product-form predicate MATLAB's
+                # exact path uses. METHOD 'mva' IS THE DELIBERATE APPROXIMATION: the
+                # dispatch warns that the exact recursion runs outside its hypotheses
+                # and promises an answer, so an explicit request keeps the recursion
+                # where MATLAB's mvaDispatch keeps it.
+                _pf_means = has_product_form_scvblind or method == 'mva'
 
                 if method == 'mvac':
                     # Exact MVA by chain (MVAC, Conway et al. 1989): closed SSFR +
@@ -2555,7 +3438,9 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                     from ...api.solvers.mva.handler import solver_mva as mva_handler
                     from ...api.solvers.mva.handler import SolverMVAOptions as MVAHandlerOptions
 
-                    handler_options = MVAHandlerOptions(method='exact', tol=1e-8)
+                    # 'mva' is forwarded verbatim: it is the deliberate approximation,
+                    # and the handler's product-form guard exempts it by that name.
+                    handler_options = MVAHandlerOptions(method=('mva' if method == 'mva' else 'exact'), tol=1e-8, interlock=self._interlock_matrix())
                     result = mva_handler(self._sn, handler_options)
 
                     QN = result.Q if result.Q is not None else np.zeros((self.nstations, R))
@@ -2594,7 +3479,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                         TN[src_idx, r] = lam[i]
                         AN[src_idx, r] = lam[i]
 
-                # single open M/M/1-DPS uses the numerically exact truncated multiclass CTMC (qsys_mm1_dps): the AMVA-DPS cross-term correction violates equal-rate conservation.
+                # single open M/M/1-DPS uses the exact truncated multiclass CTMC (qsys_mm1_dps): the AMVA-DPS cross-term correction violates equal-rate conservation.
                 elif (self.network_type == 'open' and M == 1 and R >= 2
                       and len(queue_indices) > 0 and len(source_indices) > 0
                       and self._sn is not None and self._sn.sched
@@ -2605,7 +3490,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                     wvec = np.asarray(self._sn.schedparam)[q_idx, :].astype(float) \
                         if getattr(self._sn, 'schedparam', None) is not None else np.ones(R)
                     lam = np.array([float(self.rates[src_idx, r]) for r in range(R)])
-                    # raw service rates (not the demand matrix) are used here: AMVA's demand computation folds the DPS weight into the demand, an approximation artifact that would corrupt the exact solver's input.
+                    # raw service rates (not demand matrix) used here: AMVA folds the DPS weight into demand, an approx artifact corrupting the exact solver input.
                     mus = np.array([float(self.rates[q_idx, r]) if self.rates[q_idx, r] > 0 else np.inf
                                     for r in range(R)])
                     active = [r for r in range(R) if lam[r] > 0 and np.isfinite(mus[r])]
@@ -2621,7 +3506,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                         TN[src_idx, r] = lam[r]
                         AN[src_idx, r] = lam[r]
 
-                # open single-class single-queue dispatches to exact qsys formulas (M/M/1, M/M/k, M/G/1, G/M/1) regardless of product-form recognition; mirrors MATLAB/JAR solver_mva_qsys_analyzer.
+                # open single-class single-queue uses exact qsys formulas (M/M/1, M/M/k, M/G/1, G/M/1) regardless of product-form; mirrors solver_mva_qsys_analyzer.
                 elif self.network_type == 'open' and M == 1 and R == 1:
                     from ...api.qsys import qsys_mm1, qsys_mmk, qsys_mg1, qsys_gg1
                     sn_scv = self._sn.scv if self._sn.scv is not None else np.ones((self.nstations, R))
@@ -2629,8 +3514,17 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                     q_idx = queue_indices[0]
                     ca = float(np.sqrt(sn_scv[src_idx, 0])) if (src_idx is not None and np.isfinite(sn_scv[src_idx, 0]) and sn_scv[src_idx, 0] >= 0) else 1.0
                     cs = float(np.sqrt(sn_scv[q_idx, 0])) if (np.isfinite(sn_scv[q_idx, 0]) and sn_scv[q_idx, 0] >= 0) else 1.0
-                    lambda_r = float(self.rates[src_idx, 0]) if src_idx is not None else 1.0
-                    mu = float(1.0 / L[0, 0]) if L[0, 0] > 0 else float('inf')
+                    # The queue's visit ratio, which a feedback or re-entrant loop
+                    # raises above one and which separates the per-visit quantities
+                    # from the per-job ones. Reading mu off the DEMAND L=V*S instead
+                    # of the service rate, and lambda off the source rate alone, is
+                    # the same model only when Vq==1: it leaves QLen and Util right
+                    # but reports the per-job residence time as RespT and the
+                    # external arrival rate as the station throughput.
+                    Vq = _qsys_queue_visits(self._sn, q_idx)
+                    src_rate = float(self.rates[src_idx, 0]) if src_idx is not None else 1.0
+                    lambda_r = src_rate * Vq
+                    mu = float(self.rates[q_idx, 0])
                     nserv = mi[0] if len(mi) > 0 else 1.0
                     k = 1 if not np.isfinite(nserv) else int(nserv)
 
@@ -2645,6 +3539,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                         W_x, _, _, _ = qsys_mxm1(lambda_batch, mu, E_X, E_X2)
                         result = {'W': W_x}
                         lambda_r = lambda_batch * E_X  # effective job arrival rate
+                        src_rate = lambda_r
                     elif ca == 1.0 and cs == 1.0 and k == 1:
                         result = qsys_mm1(lambda_r, mu)
                     elif ca == 1.0 and cs == 1.0 and k > 1:
@@ -2652,7 +3547,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                     elif ca == 1.0 and k == 1:
                         result = qsys_mg1(lambda_r, mu, cs)
                     elif cs == 1.0 and k == 1:
-                        # exact PH/M/1 only when sn.proc holds the arrival law itself; a non-Markovian arrival gets an Erlang-n SCV fit instead, so falls to the exact LST sigma-root.
+                        # exact PH/M/1 only when sn.proc holds the arrival law itself; a non-Markovian arrival gets an Erlang-n SCV fit, so falls to the exact LST sigma-root.
                         result = None
                         _src_is_markovian = (src_idx is not None
                                              and self._sn.procid is not None
@@ -2690,16 +3585,19 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                         _Wg, _ = qsys_gig1_approx_klb(lambda_r, mu, ca, cs)
                         result = {'W': _Wg}
 
+                    # RespT/QLen are per-visit, the system throughput is the external
+                    # arrival rate and the queue throughput the effective one; mirrors
+                    # the tail of solver_mva_qsys_analyzer.m.
                     Rscalar = result['W']
                     RN[q_idx, 0] = Rscalar
-                    XN[0] = lambda_r
+                    XN[0] = src_rate
                     UN[q_idx, 0] = lambda_r / mu / k
                     TN[q_idx, 0] = lambda_r
                     AN[q_idx, 0] = lambda_r
-                    QN[q_idx, 0] = XN[0] * Rscalar
+                    QN[q_idx, 0] = lambda_r * Rscalar
                     if src_idx is not None:
-                        TN[src_idx, 0] = lambda_r
-                        AN[src_idx, 0] = lambda_r
+                        TN[src_idx, 0] = src_rate
+                        AN[src_idx, 0] = src_rate
 
                 # Check for product form - if not, fall back to AMVA (MATLAB behavior)
                 # Non-product-form open networks (e.g., heterogeneous FCFS) use solver_amvald
@@ -2718,6 +3616,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                     SCVchain = np.ones((self._sn.nstations, self._sn.nchains))
 
                     amvald_options = AmvaldOptions(method='default', iter_tol=self.options.iter_tol, iter_max=self.options.max_iter, init_sol=getattr(self.options, 'init_sol', None))
+                    self._apply_interlock(amvald_options)
                     result = solver_amvald(
                         self._sn, Lchain, STchain, Vchain, alpha,
                         Nchain, SCVchain, refstatchain, amvald_options
@@ -2749,7 +3648,9 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                     from ...api.solvers.mva.handler import solver_mva as mva_handler
                     from ...api.solvers.mva.handler import SolverMVAOptions as MVAHandlerOptions
 
-                    handler_options = MVAHandlerOptions(method='exact', tol=1e-8)
+                    # 'mva' is forwarded verbatim: it is the deliberate approximation,
+                    # and the handler's product-form guard exempts it by that name.
+                    handler_options = MVAHandlerOptions(method=('mva' if method == 'mva' else 'exact'), tol=1e-8, interlock=self._interlock_matrix())
                     result = mva_handler(self._sn, handler_options)
 
                     # Copy results from handler
@@ -2810,15 +3711,23 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                         S_pf = pf_params.S.flatten()  # Servers at queues
                         lambda_pf = pf_params.lambda_vec.flatten()
 
-                        # Get scheduling for queueing stations
+                        # sn_get_product_form_chain_params keys D and S on the
+                        # NODE TYPE, so an INF-scheduled Queue is a row of D
+                        # with S=inf; sched must be taken over that same set,
+                        # as MATLAB solver_amva.m does with nodeToStation(queueIdx).
+                        from ...api.sn.network_struct import NodeType as _NT
+                        _ntv = self._sn.nodetype if isinstance(self._sn.nodetype, np.ndarray) else np.array(
+                            [nt.value if hasattr(nt, 'value') else nt for nt in self._sn.nodetype])
+                        pf_stations = [int(self._sn.nodeToStation[i])
+                                       for i in np.where(_ntv == _NT.QUEUE.value)[0]]
                         sched_list = []
-                        for q_idx in queue_indices:
+                        for q_idx in pf_stations:
                             sched_val = self.sched.get(q_idx, SchedStrategy.FCFS) if self.sched else SchedStrategy.FCFS
                             sched_list.append(sched_val)
 
-                        # Handle all-delay case: no non-INF queue stations
-                        if not queue_indices:
-                            # pure-delay chain throughput X_c=N_c/D_c uses the FULL chain demand, not just Z_pf (which can misclassify an INF-scheduled station as a queue); mirrors MATLAB solver_amva.m:64.
+                        # Handle all-delay case: no queue-type stations
+                        if not pf_stations:
+                            # pure-delay chain throughput X_c=N_c/D_c uses FULL chain demand, not Z_pf (misclassifies INF-scheduled station as queue); mirrors solver_amva.m:64.
                             Dchain_tot = np.sum(Lchain, axis=0).flatten()
                             Xchain_out = np.zeros(C_chains)
                             for c in range(C_chains):
@@ -2842,13 +3751,13 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                         Xchain = Xchain_out.reshape(1, -1) if Xchain_out.ndim == 1 else Xchain_out
 
                         # Map queue results back to station indices
-                        for idx, q_idx in enumerate(queue_indices):
+                        for idx, q_idx in enumerate(pf_stations):
                             for c in range(C_chains):
                                 Qchain[q_idx, c] = Qchain_out[idx, c] if Qchain_out.ndim > 1 else Qchain_out[idx]
                                 Uchain[q_idx, c] = Uchain_out[idx, c] if Uchain_out.ndim > 1 else Uchain_out[idx]
 
                         # Compute delay station metrics
-                        delay_indices = [i for i in range(self.nstations) if i not in queue_indices]
+                        delay_indices = [i for i in range(self.nstations) if i not in pf_stations]
                         for d_idx in delay_indices:
                             for c in range(C_chains):
                                 Qchain[d_idx, c] = Xchain[0, c] * STchain[d_idx, c] * Vchain[d_idx, c]
@@ -2889,6 +3798,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                             init_sol=getattr(self.options, 'init_sol', None)
                         )
 
+                        self._apply_interlock(amvald_options)
                         result = solver_amvald(
                             self._sn, Lchain, STchain, Vchain, alpha,
                             Nchain, SCVchain, refstatchain, amvald_options
@@ -2938,6 +3848,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                         init_sol=getattr(self.options, 'init_sol', None)
                     )
 
+                    self._apply_interlock(amvald_options)
                     result = solver_amvald(
                         self._sn, Lchain, STchain, Vchain, alpha,
                         Nchain, SCVchain, refstatchain, amvald_options
@@ -2966,7 +3877,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                     used_chain_deaggregation = True
 
                 elif has_class_switching_early and not has_product_form_early and not np.any(np.isinf(N)):
-                    # non-product-form class-switching closed models: single-server uses linearizermx+egflin at chain level, multiserver uses solver_amvald; open networks fall through further down.
+                    # non-PF class-switching closed models: single-server uses linearizermx+egflin at chain level; multiserver uses solver_amvald; open nets fall through.
                     from ...api.sn import sn_get_demands_chain, sn_deaggregate_chain_results
 
                     chain_result = sn_get_demands_chain(self._sn)
@@ -3067,6 +3978,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
 
                         SCVchain = np.ones((self._sn.nstations, self._sn.nchains))
                         amvald_options = AmvaldOptions(method='default', iter_tol=self.options.iter_tol, iter_max=self.options.max_iter, init_sol=getattr(self.options, 'init_sol', None))
+                        self._apply_interlock(amvald_options)
                         result = solver_amvald(
                             self._sn, Lchain, STchain, Vchain, alpha,
                             Nchain, SCVchain, refstatchain, amvald_options
@@ -3111,6 +4023,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                     SCVchain = np.ones((self._sn.nstations, self._sn.nchains))
 
                     amvald_options = AmvaldOptions(method='default', iter_tol=self.options.iter_tol, iter_max=self.options.max_iter, init_sol=getattr(self.options, 'init_sol', None))
+                    self._apply_interlock(amvald_options)
                     result = solver_amvald(
                         self._sn, Lchain, STchain, Vchain, alpha,
                         Nchain, SCVchain, refstatchain, amvald_options
@@ -3139,7 +4052,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                     AN = TN.copy()
                     used_chain_deaggregation = True
                 elif has_multiserver:
-                    # multi-server closed networks use solver_amvald, which handles chain aggregation, Seidmann transformation and deaggregation internally; mirrors MATLAB solver_amva.m:209-217.
+                    # multi-server closed nets use solver_amvald, handling chain aggregation, Seidmann transform and deaggregation; mirrors MATLAB solver_amva.m:209-217.
                     from ...api.solvers.mva.amvald import solver_amvald, AmvaldOptions
                     from ...api.sn import sn_get_demands_chain, sn_deaggregate_chain_results
 
@@ -3163,6 +4076,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                             multiserver=self.options.config['multiserver']
                         )
 
+                    self._apply_interlock(amvald_options)
                     result = solver_amvald(
                         self._sn, Lchain, STchain, Vchain, alpha,
                         Nchain, SCVchain, refstatchain, amvald_options
@@ -3206,6 +4120,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                     SCVchain = np.ones((self._sn.nstations, self._sn.nchains))
 
                     amvald_options = AmvaldOptions(method='default', iter_tol=self.options.iter_tol, iter_max=self.options.max_iter, init_sol=getattr(self.options, 'init_sol', None))
+                    self._apply_interlock(amvald_options)
                     result = solver_amvald(
                         self._sn, Lchain, STchain, Vchain, alpha,
                         Nchain, SCVchain, refstatchain, amvald_options
@@ -3282,8 +4197,16 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                             QN[q_idx, :] = QN_out[idx, :]
                             UN[q_idx, :] = UN_out[idx, :]
                             RN[q_idx, :] = RN_out[idx, :]
-                            TN[q_idx, :] = TN_out[idx, :]
-                            AN[q_idx, :] = AN_out[idx, :]
+                            # T = V .* X, as MATLAB solver_amva.m:291 builds it,
+                            # NOT the linearizer's fourth output: that is the
+                            # per-reference-visit throughput and MATLAB discards
+                            # it (`~,~`) for this reason. V is recovered as
+                            # demand * rate = (V*S) * (1/S).
+                            for r in range(R):
+                                v = (self.demands[q_idx, r] * self.rates[q_idx, r]
+                                     if self.rates[q_idx, r] > 0 else 0.0)
+                                TN[q_idx, r] = XN_out[r] * v
+                            AN[q_idx, :] = TN[q_idx, :]
 
                         XN = XN_out.flatten()
                     else:
@@ -3300,16 +4223,24 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
 
                         XN = XN_out.flatten()
 
-            elif method == 'bs':
+            elif method == 'bs' and not self._amva_softmin_multiserver(mi):
                 line_debug("Using bound method: %s", method, options=self.options)
-                # Bard-Schweitzer needs the solver's own tolerance/iteration budget, warm start and per-station scheduling passed explicitly, or api defaults (looser tolerance, all-PS assumption) silently apply; mirrors MATLAB solver_amva.m:148.
+                # Bard-Schweitzer needs solver tol/iter, warm start, per-station sched explicit, else api defaults (looser tol, all-PS); mirrors solver_amva.m:148.
                 from ...lang.base import SchedStrategy as _SchedBase
                 _bs_sched = [self.sched[q_idx] if (self.sched is not None and q_idx in self.sched)
                              else _SchedBase.PS for q_idx in queue_indices]
                 _bs_tol = getattr(self.options, 'tol', None) or 1e-4
                 _bs_imax = getattr(self.options, 'iter_max', None) or 1000
+                # pfqn_bs has no server-count argument, so a multiserver model must be
+                # transformed before it is handed over; MATLAB solver_amva.m does this
+                # once for the whole product-form arm (:111-117), upstream of its bs
+                # case (:154), which is why its bs honours nservers and this did not.
+                _bs_L, _bs_Z = L, Z
+                _bs_max_servers, _bs_rule = self._amva_multiserver_rule(mi)
+                if _bs_max_servers > 1 and _bs_rule in ('default', 'seidmann'):
+                    _bs_L, _bs_Z = self._amva_seidmann(L, Z, mi)
                 XN_out, QN_out, UN_out, RN_out, _bsiter = pfqn_bs(
-                    L, N, Z, _bs_tol, _bs_imax, None, _bs_sched)
+                    _bs_L, N, _bs_Z, _bs_tol, _bs_imax, None, _bs_sched)
                 self._lastiter = _bsiter
                 self._lastiterbudget = _bs_imax
                 TN_out = np.tile(XN_out, (QN_out.shape[0], 1))
@@ -3323,16 +4254,218 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                     AN[q_idx, :] = AN_out[idx, :]
 
                 XN = XN_out.flatten()
+                if _bs_max_servers > 1 and _bs_rule in ('default', 'seidmann'):
+                    self._amva_seidmann_unapply(QN, RN, TN, queue_indices, L, mi, XN)
+
+            elif method == 'aql':
+                # Aggregate Queue Length: K+1 population points plus the gamma
+                # correction; MATLAB solver_amva.m:160 rejects multiserver here.
+                from ...api.pfqn import pfqn_aql
+                if self._amva_multiserver_rule(mi)[0] > 1:
+                    raise ValueError(
+                        "AQL cannot handle multi-server stations. "
+                        "Try with the 'default' or 'lin' methods.")
+                _aql_tol = getattr(self.options, 'tol', None) or 1e-7
+                _aql_imax = getattr(self.options, 'iter_max', None) or 1000
+                XN_out, _aqlCN, QN_out, UN_out, RN_out, TN_out, _aqlAN = pfqn_aql(
+                    L, N, Z, _aql_tol, _aql_imax)
+                self._lastiterbudget = _aql_imax
+                for idx, q_idx in enumerate(queue_indices):
+                    QN[q_idx, :] = QN_out[idx, :]
+                    UN[q_idx, :] = UN_out[idx, :]
+                    RN[q_idx, :] = RN_out[idx, :]
+                    TN[q_idx, :] = TN_out[idx, :]
+                    AN[q_idx, :] = TN_out[idx, :]
+                XN = XN_out.flatten()
+
+            elif method == 'qsa':
+                # Queue-Shift Approximation: the absolute shift of the
+                # aggregate queue length, solved by damped Newton over the
+                # quintuple (16); MATLAB solver_amva.m rejects multiserver here
+                # exactly as it does for aql.
+                from ...api.pfqn import pfqn_qsa
+                from ...lang.base import SchedStrategy as _SchedBase
+                if self._amva_multiserver_rule(mi)[0] > 1:
+                    raise ValueError(
+                        "QSA cannot handle multi-server stations. "
+                        "Try with the 'default' or 'lin' methods.")
+                _qsa_sched = [self.sched[q_idx] if (self.sched is not None and q_idx in self.sched)
+                              else _SchedBase.PS for q_idx in queue_indices]
+                _qsa_tol = getattr(self.options, 'tol', None) or 1e-10
+                _qsa_imax = getattr(self.options, 'iter_max', None) or 100
+                QN_out, UN_out, RN_out, _qsaCN, XN_out, _qsaiter = pfqn_qsa(
+                    L, N, Z, _qsa_sched, _qsa_tol, _qsa_imax)
+                self._lastiter = _qsaiter
+                self._lastiterbudget = _qsa_imax
+                TN_out = np.tile(np.asarray(XN_out).reshape(1, -1), (QN_out.shape[0], 1))
+                for idx, q_idx in enumerate(queue_indices):
+                    QN[q_idx, :] = QN_out[idx, :]
+                    UN[q_idx, :] = UN_out[idx, :]
+                    RN[q_idx, :] = RN_out[idx, :]
+                    TN[q_idx, :] = TN_out[idx, :]
+                    AN[q_idx, :] = TN_out[idx, :]
+                XN = np.asarray(XN_out).flatten()
+
+            elif method == 'tay':
+                # Tay's arrival-instant approximation: the arrival-instant queue lengths
+                # come from the throughput elasticities, not from a population shift.
+                from ...api.pfqn import pfqn_tay
+                _tay_tol = getattr(self.options, 'tol', None) or 1e-6
+                _tay_imax = getattr(self.options, 'iter_max', None) or 1000
+                XN_out, QN_out, UN_out, RN_out, _tayiter, _ = pfqn_tay(
+                    L, N, Z, _tay_tol, _tay_imax)
+                self._lastiter = _tayiter
+                self._lastiterbudget = _tay_imax
+                TN_out = np.tile(XN_out, (QN_out.shape[0], 1))
+                for idx, q_idx in enumerate(queue_indices):
+                    QN[q_idx, :] = QN_out[idx, :]
+                    UN[q_idx, :] = UN_out[idx, :]
+                    RN[q_idx, :] = RN_out[idx, :]
+                    TN[q_idx, :] = TN_out[idx, :]
+                    AN[q_idx, :] = TN_out[idx, :]
+                XN = XN_out.flatten()
+
+            elif method == 'scat':
+                # Neuse-Chandy SCAT: the Linearizer fixed point with a single
+                # Delta refresh. Multiserver stations are Seidmann-scaled here
+                # exactly as the bs arm does; MATLAB solver_amva.m applies the
+                # transform once for the whole product-form arm instead.
+                from ...api.pfqn import pfqn_scat
+                _sc_L, _sc_Z = L, Z
+                _sc_max_servers, _sc_rule = self._amva_multiserver_rule(mi)
+                _sc_seidmann = _sc_max_servers > 1 and _sc_rule in ('default', 'seidmann')
+                if _sc_seidmann:
+                    _sc_L, _sc_Z = self._amva_seidmann(L, Z, mi)
+                _sc_tol = getattr(self.options, 'tol', None) or 1e-8
+                _sc_imax = getattr(self.options, 'iter_max', None) or 1000
+                QN_out, UN_out, WN_out, _scTN, _scCN, XN_out, _sciter = pfqn_scat(
+                    _sc_L, N, _sc_Z, None, _sc_tol, _sc_imax)
+                self._lastiter = _sciter
+                self._lastiterbudget = _sc_imax
+                XN = np.asarray(XN_out).flatten()
+                for idx, q_idx in enumerate(queue_indices):
+                    QN[q_idx, :] = QN_out[idx, :]
+                    UN[q_idx, :] = UN_out[idx, :]
+                    RN[q_idx, :] = WN_out[idx, :]
+                    # T = V .* X, as in the lin family: the fourth output is the
+                    # throughput per REFERENCE VISIT, not the station throughput
+                    for r in range(R):
+                        v = (self.demands[q_idx, r] * self.rates[q_idx, r]
+                             if self.rates[q_idx, r] > 0 else 0.0)
+                        TN[q_idx, r] = XN[r] * v
+                    AN[q_idx, :] = TN[q_idx, :]
+                if _sc_seidmann:
+                    self._amva_seidmann_unapply(QN, RN, TN, queue_indices, L, mi, XN)
+
+            elif method in ('lcp', 'chow'):
+                # Bard LCP and the Chow Second Approximation built on it. Both
+                # are Bard-Schweitzer variants in the arrival-instant estimate,
+                # so they take the same Seidmann treatment as the bs arm.
+                from ...api.pfqn import pfqn_lcp, pfqn_chow
+                from ...lang.base import SchedStrategy as _SchedBase
+                _cw_L, _cw_Z = L, Z
+                _cw_max_servers, _cw_rule = self._amva_multiserver_rule(mi)
+                _cw_seidmann = _cw_max_servers > 1 and _cw_rule in ('default', 'seidmann')
+                if _cw_seidmann:
+                    _cw_L, _cw_Z = self._amva_seidmann(L, Z, mi)
+                _cw_sched = [self.sched[q_idx] if (self.sched is not None and q_idx in self.sched)
+                             else _SchedBase.PS for q_idx in queue_indices]
+                _cw_tol = getattr(self.options, 'tol', None) or 1e-6
+                _cw_imax = getattr(self.options, 'iter_max', None) or 1000
+                _cw_fn = pfqn_lcp if method == 'lcp' else pfqn_chow
+                XN_out, QN_out, UN_out, RN_out, _cwiter = _cw_fn(
+                    _cw_L, N, _cw_Z, _cw_tol, _cw_imax, None, _cw_sched)
+                self._lastiter = _cwiter
+                self._lastiterbudget = _cw_imax
+                TN_out = np.tile(XN_out, (QN_out.shape[0], 1))
+                for idx, q_idx in enumerate(queue_indices):
+                    QN[q_idx, :] = QN_out[idx, :]
+                    UN[q_idx, :] = UN_out[idx, :]
+                    RN[q_idx, :] = RN_out[idx, :]
+                    TN[q_idx, :] = TN_out[idx, :]
+                    AN[q_idx, :] = TN_out[idx, :]
+                XN = XN_out.flatten()
+                if _cw_seidmann:
+                    self._amva_seidmann_unapply(QN, RN, TN, queue_indices, L, mi, XN)
+
+            elif method in ('pamb', 'pami', 'pamt'):
+                # Hsieh-Lam proportional approximations, noniterative
+                from ...api.pfqn import pfqn_pam
+                XN_out, QN_out, UN_out, RN_out = pfqn_pam(L, N, Z, method)
+                self._lastiter = 1
+                TN_out = np.tile(XN_out, (QN_out.shape[0], 1))
+                for idx, q_idx in enumerate(queue_indices):
+                    QN[q_idx, :] = QN_out[idx, :]
+                    UN[q_idx, :] = UN_out[idx, :]
+                    RN[q_idx, :] = RN_out[idx, :]
+                    TN[q_idx, :] = TN_out[idx, :]
+                    AN[q_idx, :] = TN_out[idx, :]
+                XN = XN_out.flatten()
+
+            elif method == 'clust':
+                # de Souza e Silva-Lavenberg-Muntz clustering approximation
+                from ...api.pfqn import pfqn_clust
+                _cl_tol = getattr(self.options, 'tol', None) or 1e-6
+                _cl_imax = getattr(self.options, 'iter_max', None) or 1000
+                XN_out, QN_out, UN_out, RN_out, _cliter = pfqn_clust(
+                    L, N, Z, None, None, 'lin', _cl_tol, _cl_imax)
+                self._lastiter = _cliter
+                self._lastiterbudget = _cl_imax
+                TN_out = np.tile(XN_out, (QN_out.shape[0], 1))
+                for idx, q_idx in enumerate(queue_indices):
+                    QN[q_idx, :] = QN_out[idx, :]
+                    UN[q_idx, :] = UN_out[idx, :]
+                    RN[q_idx, :] = RN_out[idx, :]
+                    TN[q_idx, :] = TN_out[idx, :]
+                    AN[q_idx, :] = TN_out[idx, :]
+                XN = XN_out.flatten()
+
+            elif method == 'dmlin':
+                # de Souza e Silva-Muntz Improved Linearizer: the Linearizer
+                # fixed point reached with the Delta-terms pre-aggregated, so
+                # the answer matches the lin arm at lower cost.
+                from ...api.pfqn import pfqn_dmlin
+                _dm_L, _dm_Z = L, Z
+                _dm_max_servers, _dm_rule = self._amva_multiserver_rule(mi)
+                _dm_seidmann = _dm_max_servers > 1 and _dm_rule in ('default', 'seidmann')
+                if _dm_seidmann:
+                    _dm_L, _dm_Z = self._amva_seidmann(L, Z, mi)
+                _dm_tol = getattr(self.options, 'tol', None) or 1e-8
+                _dm_imax = getattr(self.options, 'iter_max', None) or 1000
+                QN_out, UN_out, WN_out, _dmTN, _dmCN, XN_out, _dmiter = pfqn_dmlin(
+                    _dm_L, N, _dm_Z, None, _dm_tol, _dm_imax)
+                self._lastiter = _dmiter
+                self._lastiterbudget = _dm_imax
+                XN = np.asarray(XN_out).flatten()
+                for idx, q_idx in enumerate(queue_indices):
+                    QN[q_idx, :] = QN_out[idx, :]
+                    UN[q_idx, :] = UN_out[idx, :]
+                    RN[q_idx, :] = WN_out[idx, :]
+                    # T = V .* X, as in the lin family
+                    for r in range(R):
+                        v = (self.demands[q_idx, r] * self.rates[q_idx, r]
+                             if self.rates[q_idx, r] > 0 else 0.0)
+                        TN[q_idx, r] = XN[r] * v
+                    AN[q_idx, :] = TN[q_idx, :]
+                if _dm_seidmann:
+                    self._amva_seidmann_unapply(QN, RN, TN, queue_indices, L, mi, XN)
 
             elif method == 'sqni':
-                # Square-root Non-iterative
+                # Square-root Non-iterative. pfqn_sqni is a closed form for one
+                # queueing station with a delay; with more stations it read only
+                # the first demand row and reported those numbers as the answer.
+                if self.nstations != 2 or len(queue_indices) != 1:
+                    raise ValueError(
+                        "SQNI is defined for a single queueing station with a delay. "
+                        "Try with the 'default' or 'lin' methods.")
                 QN_out, UN_out, XN_out = pfqn_sqni(L, N, Z)
                 for idx, q_idx in enumerate(queue_indices):
                     QN[q_idx, :] = QN_out[idx, :] if QN_out.ndim > 1 else QN_out
                     UN[q_idx, :] = UN_out[idx, :] if UN_out.ndim > 1 else UN_out
                 XN = XN_out.flatten()
 
-            elif method in ['lin', 'gflin', 'egflin'] and not _amva_needs_amvald(self._sn):
+            elif (method in ['lin', 'gflin', 'egflin'] and not _amva_needs_amvald(self._sn)
+                    and not self._lin_family_needs_amvald(mi)):
                 line_debug("Standard queueing network, routing to mva_analyzer (method=%s)", method, options=self.options)
                 # Linearizer family of algorithms
                 # Build scheduling strategy list
@@ -3368,7 +4501,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                     finite_servers = nservers[np.isfinite(nservers)]
                     max_servers = int(np.max(finite_servers)) if len(finite_servers) > 0 else 1
 
-                    # open/mixed networks need solver_amvald+sn_deaggregate for TN=XN*V; pfqn_linearizermx has no visits so its TN=XN alone; mirrors MATLAB solver_amva.m:208-210,264.
+                    # open/mixed networks need solver_amvald+sn_deaggregate for TN=XN*V; pfqn_linearizermx has no visits so TN=XN; mirrors solver_amva.m:208-210,264.
                     if has_open_classes:
                         # Pure open network OR multiserver mixed network: use solver_amvald
                         # Reference: MATLAB solver_amva.m lines 208-210, 264
@@ -3398,6 +4531,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                             )
 
                         # Call solver_amvald
+                        self._apply_interlock(amvald_options)
                         result = solver_amvald(
                             self._sn, Lchain, STchain, Vchain, alpha,
                             Nchain, SCVchain, refstatchain, amvald_options
@@ -3469,8 +4603,17 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                             QN[q_idx, :] = QN_out[idx, :]
                             UN[q_idx, :] = UN_out[idx, :]
                             RN[q_idx, :] = WN_out[idx, :]  # Response times
-                            TN[q_idx, :] = TN_out[idx, :]
-                            AN[q_idx, :] = TN_out[idx, :]  # Arrival rate = throughput
+                            # T = V .* X (MATLAB solver_amva.m:291), NOT the
+                            # linearizer's fourth output: that is the throughput
+                            # per REFERENCE VISIT, and MATLAB discards it (`~,~`)
+                            # for exactly this reason. V is recovered as
+                            # demand * rate = (V*S) * (1/S).
+                            _X = np.asarray(XN_out).flatten()
+                            for r in range(R):
+                                v = (self.demands[q_idx, r] * self.rates[q_idx, r]
+                                     if self.rates[q_idx, r] > 0 else 0.0)
+                                TN[q_idx, r] = _X[r] * v
+                            AN[q_idx, :] = TN[q_idx, :]  # Arrival rate = throughput
 
                         XN = XN_out.flatten()
                 else:
@@ -3508,6 +4651,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                         )
 
                         # Call solver_amvald
+                        self._apply_interlock(amvald_options)
                         result = solver_amvald(
                             self._sn, Lchain, STchain, Vchain, alpha,
                             Nchain, SCVchain, refstatchain, amvald_options
@@ -3538,8 +4682,33 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                         AN = TN.copy()
                         used_chain_deaggregation = True
                     else:
-                        # egflin alpha argument must not be omitted (distinguishes lin/gflin/egflin); see _kb/07-cross-language-parity.md egflin alpha-collapse trap.
-                        if method == 'egflin':
+                        _max_servers, _ms_rule = self._amva_multiserver_rule(mi)
+                        # The routing rules that send a multiserver model to solver_amvald were
+                        # taken above; the two that remain are served by their own algorithms,
+                        # both of which take nservers. The single-server linearizer below does
+                        # NOT, so reaching it with m>1 would silently solve the single-server
+                        # model. Mirrors MATLAB solver_amva.m:246-252.
+                        if _max_servers > 1 and _ms_rule == 'conway':
+                            from ...api.pfqn import pfqn_conwayms
+                            # returns (Q, U, R, C, X, totiter); the common unpack below
+                            # reads (Q, U, W, T, C, X, iter) and recomputes T from X and
+                            # the visits, so TN is passed as None deliberately.
+                            # Mirrors MATLAB solver_amva.m:249.
+                            _Qcw, _Ucw, _Rcw, _Ccw, _Xcw, _itcw = pfqn_conwayms(
+                                L, N, Z, np.asarray(mi, dtype=float).ravel(), sched_type,
+                                self.options.tol, 1000)
+                            result = (_Qcw, _Ucw, _Rcw, None, _Ccw, _Xcw, _itcw)
+                        elif _max_servers > 1 and _ms_rule == 'krzesinski':
+                            from ...api.pfqn import pfqn_linearizermx
+                            # returns (QN, UN, WN, TN, CN, XN, totiter); the common unpack
+                            # below reads (Q, U, W, T, C, X, iter) and recomputes T from X
+                            # and the visits, so TN is passed as None deliberately
+                            _lam = np.zeros(len(np.asarray(N).ravel()))
+                            _Qms, _Ums, _Rms, _, _Cms, _Xms, _itms = pfqn_linearizermx(
+                                _lam, L, N, Z, np.asarray(mi, dtype=float).ravel(), sched_type,
+                                self.options.tol, 1000, 'default')
+                            result = (_Qms, _Ums, _Rms, None, _Cms, _Xms, _itms)
+                        elif method == 'egflin':
                             N_arr = np.asarray(N, dtype=float).ravel()
                             alphaM = np.zeros(len(N_arr))
                             for r in range(len(N_arr)):
@@ -3562,20 +4731,37 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                             QN[q_idx, :] = QN_out[idx, :]
                             UN[q_idx, :] = UN_out[idx, :]
                             RN[q_idx, :] = WN_out[idx, :]  # Response times
-                            TN[q_idx, :] = TN_out[idx, :]
-                            AN[q_idx, :] = TN_out[idx, :]  # Arrival rate = throughput
+                            # T = V .* X (MATLAB solver_amva.m:291), NOT the
+                            # linearizer's fourth output: that is the throughput
+                            # per REFERENCE VISIT, and MATLAB discards it (`~,~`)
+                            # for exactly this reason. V is recovered as
+                            # demand * rate = (V*S) * (1/S).
+                            _X = np.asarray(XN_out).flatten()
+                            for r in range(R):
+                                v = (self.demands[q_idx, r] * self.rates[q_idx, r]
+                                     if self.rates[q_idx, r] > 0 else 0.0)
+                                TN[q_idx, r] = _X[r] * v
+                            AN[q_idx, :] = TN[q_idx, :]  # Arrival rate = throughput
 
                         XN = XN_out.flatten()
 
             elif method in ['schmidt', 'schmidt-ext', 'ab']:
-                # Schmidt/AB/Akyildiz-Bolch keep the delay row stacked on the demands ([Z0;L0]), and each callee has its OWN SchedStrategy numbering; see _kb/07-cross-language-parity.md SchedStrategy per-callee numbering trap.
+                # Schmidt/AB/Akyildiz-Bolch stack the delay row on demands ([Z0;L0]); see _kb/07-cross-language-parity.md SchedStrategy per-callee numbering trap.
                 from ...api.pfqn.schmidt import SchedStrategy as _SchedSchmidt
                 from ...api.pfqn.ab_amva import SchedStrategy as _SchedAb
 
                 _enum = _SchedAb if method == 'ab' else _SchedSchmidt
                 sched_q = []
                 for q_idx in queue_indices:
-                    s_str = str(self.sched[q_idx]) if (self.sched is not None and q_idx in self.sched) else 'FCFS'
+                    # `.name`, not str(): sn.sched holds an IntEnum, and since
+                    # python 3.11 str() on one of those is the bare NUMBER ('4'),
+                    # so 'PS' in str(sched) was false for every station and the
+                    # whole family was told FCFS. A PS station with class-dependent
+                    # demands then entered pfqn_schmidt_ext's alpha correction,
+                    # which is where the class-switching crash came from, and every
+                    # PS and LCFS-PR station was solved by the wrong kernel arm.
+                    _sched = self.sched[q_idx] if (self.sched is not None and q_idx in self.sched) else None
+                    s_str = getattr(_sched, 'name', None) or str(_sched) if _sched is not None else 'FCFS'
                     if 'INF' in s_str:
                         sched_q.append(int(_enum.INF))
                     elif 'PS' in s_str:
@@ -3596,6 +4782,16 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                 S_int = np.where(np.isfinite(S_full), S_full, 1.0).astype(int)
                 V_full = np.ones_like(D_full)
                 N_int = np.where(np.isfinite(N), N, 0).astype(int)
+
+                # One predicate for the gate and the run, asked about the numbers
+                # THIS arm passes: pfqn_schmidt_ext forms its alpha correction from
+                # the network with one class-r customer tagged, and an empty class
+                # has none to tag.
+                from ...api.solvers.mva.handler import mva_supports_schmidt_ext
+                _sx_N, _sx_fcfs = self._schmidt_arm_inputs()
+                _sx_ok, _sx_reason = mva_supports_schmidt_ext(_sx_N, _sx_fcfs, method)
+                if not _sx_ok:
+                    raise ValueError(_sx_reason)
 
                 if method == 'ab':
                     ab_res = pfqn_ab_amva(D_full, N_int, V_full, S_int, sched_full)
@@ -3632,9 +4828,19 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
 
                 XN = XN_flat
 
-            elif method in ('qd', 'qdlin', 'qli', 'fli') or (
-                    method in ('lin', 'gflin', 'egflin') and _amva_needs_amvald(self._sn)):
-                # the lin family only joins this arm under load/class dependence (mirrors MATLAB solver_amva.m gating); MATLAB has no pfqn_qli/pfqn_fli, so those now route through solver_amvald like the rest; see _kb/07-cross-language-parity.md egflin alpha-collapse trap for the related dropped-alpha history.
+            elif method in ('qd', 'qdlin', 'qli', 'fli') or method == 'priomva' or (
+                    method in ('lin', 'gflin', 'egflin')
+                    and (_amva_needs_amvald(self._sn) or self._lin_family_needs_amvald(mi))) or (
+                    method == 'bs' and self._amva_softmin_multiserver(mi)):
+                # 'priomva' is UNCONDITIONAL here: the preemptive-resume arm lives in
+                # solver_amvald's forward step and nowhere else, so a priomva model that
+                # fell through this chain reached the exact-MVA `else` below and was
+                # answered WITHOUT its priorities -- silently, and with product-form
+                # numbers. MATLAB cannot hit that: solver_mva_analyzer sends the whole
+                # amva family to solver_amva, whose non-product-form tail goes to
+                # solver_amvald. This chain is python's own shape, so the name is listed
+                # explicitly.
+                # lin family only under load/class dep; no pfqn_qli/pfqn_fli, via solver_amvald; see _kb/07-cross-language-parity.md egflin alpha-collapse trap.
                 from ...api.solvers.mva.amvald import solver_amvald, AmvaldOptions
                 from ...api.sn import sn_get_demands_chain, sn_deaggregate_chain_results
 
@@ -3653,6 +4859,11 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                     iter_max=getattr(self.options, 'iter_max', 1000) or 1000,
                     init_sol=getattr(self.options, 'init_sol', None)
                 )
+                self._apply_interlock(amvald_options)
+                _ms = self._amva_multiserver_rule(mi)[1]
+                # solver_amvald has no arm for these; MATLAB remaps them at solver_amva.m:397-401
+                amvald_options.config.multiserver = 'default' if _ms in (
+                    'conway', 'erlang', 'krzesinski') else _ms
                 result = solver_amvald(
                     self._sn, Lchain, STchain, Vchain, alpha,
                     Nchain, SCVchain, refstatchain, amvald_options
@@ -3740,10 +4951,14 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                 'gig1.kingman', 'gigk', 'gigk.kingman_approx',
                 'gig1.gelenbe', 'gig1.heyman', 'gig1.kimura',
                 'gig1.allen', 'gig1.kobayashi', 'gig1.klb', 'gig1.marchal',
+                # Whitt family: the first three answer a station with
+                # ABANDONMENT, which no other analytical solver in LINE does.
+                'erlanga', 'mgisrgi', 'gigk.diffusion',
+                'gigk.whitt', 'qed', 'gig1.extremal',
             }
 
             if method in qsys_methods and M == 1 and R == 1:
-                # single queue/class exact formulas: ca=sqrt(scv(source)), cs=sqrt(scv(queue)), R=qsys_*, Q=X*R, U=lambda/mu/k; mirrors MATLAB solver_mva_qsys_analyzer.m.
+                # single queue/class exact formulas: ca=sqrt(scv(source)), cs=sqrt(scv(queue)), R=qsys_*, Q=X*R, U=lambda/mu/k; mirrors solver_mva_qsys_analyzer.m.
                 sn_scv = self._sn.scv if self._sn.scv is not None else np.ones((self.nstations, R))
                 ca = np.sqrt(sn_scv[source_indices[0], 0]) if len(source_indices) > 0 and sn_scv[source_indices[0], 0] > 0 else 1.0
                 cs = np.sqrt(sn_scv[queue_indices[0], 0]) if sn_scv[queue_indices[0], 0] > 0 else 1.0
@@ -3787,7 +5002,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                     Rscalar = qsys_mg1(lambda_r, mu, cs)['W']
 
                 elif method in ['gm1', 'gim1']:
-                    # exact GI/M/1 tried via PH/M/1 sigma-root (only when sn.proc is an exact Markovian representation), else the exact LST sigma-root, else the two-moment qsys_gg1 fit.
+                    # exact GI/M/1 via PH/M/1 sigma-root (only when sn.proc is an exact Markovian rep), else exact LST sigma-root, else two-moment qsys_gg1 fit.
                     from ...constants import ProcessType as _PTq
                     Rscalar = None
                     src_idx = source_indices[0] if len(source_indices) > 0 else None
@@ -3838,8 +5053,67 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                 elif method == 'gig1.kimura':
                     Rscalar, _ = qsys_gig1_approx_kimura(lambda_r, mu, ca, cs)
 
+                # The Whitt family. These return a full measure set rather than a
+                # response time, because a station with abandonment or blocking
+                # has a CARRIED throughput below its offered rate: Little's law
+                # on lambda would silently overstate the queue.
+                qsys_full = None
+                if method in ('erlanga', 'mgisrgi', 'gigk.diffusion'):
+                    qi0 = queue_indices[0]
+                    cap = float(self._sn.cap[qi0]) if getattr(self._sn, 'cap', None) is not None else float('inf')
+                    room = float('inf') if not np.isfinite(cap) else max(0.0, cap - k)
+                    if method == 'gigk.diffusion':
+                        from ...api.qsys import qsys_ggnm_diffusion
+                        d = qsys_ggnm_diffusion(lambda_r, mu, k, room, ca, cs)
+                        carried = d['throughput']
+                        qsys_full = {'Q': d['meanNumber'], 'U': d['utilization'],
+                                     'T': carried, 'A': lambda_r,
+                                     'R': d['meanNumber'] / carried if carried > 0 else 0.0}
+                    else:
+                        from ...api.sn.patience import sn_patience_handles
+                        from ...api.qsys import qsys_erlanga, qsys_mgisrgi_whitt
+                        h = sn_patience_handles(self._sn, qi0, 0)
+                        if h is None:
+                            raise RuntimeError(
+                                "method '%s' needs a reneging patience law on the queue" % method)
+                        if method == 'erlanga' or h['isExponential']:
+                            a = qsys_erlanga(lambda_r, mu, h['rate'], k, room)
+                        else:
+                            a = qsys_mgisrgi_whitt(lambda_r, mu, k, room, h['hazard'])
+                        carried = a['throughput']
+                        # R is Little's law on the CARRIED rate, which is what
+                        # every other LINE solver reports at a station that
+                        # loses work (checked against SolverCTMC on M/M/1/K and
+                        # on M/M/k+M). The per-served-job sojourn time is a
+                        # different quantity and stays in the API result.
+                        qsys_full = {'Q': a['meanNumber'], 'U': a['utilization'],
+                                     'T': carried, 'A': lambda_r,
+                                     'R': a['meanNumber'] / carried if carried > 0 else 0.0}
+                elif method == 'gigk.whitt':
+                    from ...api.qsys import qsys_gigk_approx_whitt
+                    Rscalar = qsys_gigk_approx_whitt(lambda_r, mu, ca, cs, k)[0]
+                elif method == 'qed':
+                    from ...api.qsys import qsys_mmk_qed
+                    q = qsys_mmk_qed(lambda_r, mu, k)
+                    Rscalar = q['meanWait'] + 1.0 / mu
+                elif method == 'gig1.extremal':
+                    from ...api.qsys import qsys_gig1_bnds_extremal
+                    b = qsys_gig1_bnds_extremal(lambda_r, mu, ca, cs)
+                    # The upper end, as gig1.kingman already reports a bound.
+                    Rscalar = b['upperBound'] + 1.0 / mu
+
+                if qsys_full is not None:
+                    qi = queue_indices[0]
+                    RN[qi, 0] = qsys_full['R']
+                    QN[qi, 0] = qsys_full['Q']
+                    UN[qi, 0] = qsys_full['U']
+                    TN[qi, 0] = qsys_full['T']
+                    AN[qi, 0] = qsys_full['A']
+                    XN[0] = qsys_full['T']
+                    if len(source_indices) > 0:
+                        TN[source_indices[0], 0] = lambda_r
                 # Compute Q, U, T, X from R (matches MATLAB pattern)
-                if Rscalar is not None:
+                elif Rscalar is not None:
                     qi = queue_indices[0]
                     RN[qi, 0] = Rscalar
                     XN[0] = lambda_r
@@ -3874,7 +5148,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                                 if k == 1:
                                     QN[q_idx, r] = rho_k / (1 - rho_k)  # M/M/1 queue length
                                 else:
-                                    # M/M/k approximation: Q ~= rho_k/(1-rho_k)*Pk + rho_total (Pk = Erlang-C all-servers-busy probability), simplified to rho_total+rho_k/(1-rho_k) for moderate loads.
+                                    # M/M/k approx: Q ~= rho_k/(1-rho_k)*Pk + rho_total (Pk = Erlang-C all-busy prob), simplified to rho_total+rho_k/(1-rho_k) for moderate loads.
                                     from ...api.qsys import qsys_mmk
                                     result = qsys_mmk(lambda_r, mu, k)
                                     QN[q_idx, r] = result.get('L', rho_total / (1 - rho_k))
@@ -3888,7 +5162,40 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
 
                             XN[r] = lambda_r
 
-        # Delay-station metrics (QN=X*D, UN=QN, RN=service time) computed from throughput and demands, skipped for methods that already computed them via their handler.
+        if cp_chain is not None:
+            # The arm above solved the CHAIN network and wrote its queueing rows.
+            # Complete the chain-level picture the way MATLAB's product-form
+            # branch does -- a delay holds X Z jobs, every station carries
+            # X V, and R follows by Little's law -- and hand it to
+            # sn_deaggregate_chain_results, which splits each chain back over its
+            # classes by the visit-weighted share alpha. Q and U are left to the
+            # deaggregation rather than passed in, as the class-switching AMVA
+            # path above does, so the two agree on how a chain is split.
+            from ...api.sn import sn_deaggregate_chain_results
+            Xchain = np.asarray(XN, dtype=float).reshape(1, -1)
+            Qchain = np.array(QN, dtype=float)
+            Tchain = np.zeros((self.nstations, R))
+            Rchain = np.zeros((self.nstations, R))
+            for c in range(R):
+                for i in range(self.nstations):
+                    if i in cp_delays:
+                        Qchain[i, c] = Xchain[0, c] * cp_chain.STchain[i, c] * cp_chain.Vchain[i, c]
+                    Tchain[i, c] = Xchain[0, c] * cp_chain.Vchain[i, c]
+                    if Tchain[i, c] > 0:
+                        Rchain[i, c] = Qchain[i, c] / Tchain[i, c]
+            deagg = sn_deaggregate_chain_results(
+                self._sn, cp_chain.Lchain, None, cp_chain.STchain, cp_chain.Vchain,
+                cp_chain.alpha, None, None, Rchain, Tchain, None, Xchain)
+            QN = deagg.Q
+            UN = deagg.U
+            RN = deagg.R
+            TN = deagg.T
+            XN = deagg.X.flatten()
+            AN = TN.copy()
+            R = self.nclasses
+            used_chain_deaggregation = True
+
+        # Delay-station metrics (QN=X*D, UN=QN, RN=service time) from throughput and demands, skipped for methods that already computed them via handler.
         skip_delay_recompute = (method in ['exact', 'mva']) and self.network_type != 'open'
         # Also skip for amva with class switching since it uses chain-level disaggregation
         # which already computes correct class-level response times
@@ -3926,7 +5233,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                         if AN[i, r] == 0 and i not in source_stations:
                             AN[i, r] = XN[r]
 
-        # Source TN defaults to the arrival rate only when unfilled (BMAP's effective job rate differs from the raw event rate, so an analyzer-provided value is never overwritten); Source AN is 0 since jobs originate there.
+        # Source TN defaults to arrival rate only if unfilled (BMAP effective job rate differs from raw event rate, so analyzer value kept); Source AN is 0.
         for src_idx in source_stations:
             for r in range(R):
                 if self.rates[src_idx, r] > 0:
@@ -3982,20 +5289,14 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
             'runtime': runtime,
             'method': method,
             'iter': self._lastiter,
+            # None when the handler reports no flag, which is not the same as False:
+            # there the count is the signal. Published alongside it so the native
+            # result and the delegated one expose the same two fields.
+            'converged': self._lastconverged,
         }
 
-        # iteration-budget exhaustion warning: the AMVA loop cannot distinguish converged-early from ran-out-of-iterations; see _kb/06-solver-catalog.md MVA AMVA convergence flag vs iteration count.
-        if self._lastconverged is False or (
-                self._lastconverged is None
-                and self._lastiter and self._lastiterbudget
-                and self._lastiter >= self._lastiterbudget):
-            from ...api.io.logging import line_warning_always
-            line_warning_always(
-                'solver_mva_analyzer',
-                "AMVA method '%s' did not meet the convergence tolerance %g after %d "
-                "iterations; the returned metrics may not be converged. Try another method "
-                "(e.g. 'qd' or 'bs'), raise options.iter_max, or loosen options.iter_tol."
-                % (method, getattr(self.options, 'iter_tol', float('nan')), self._lastiter))
+        # AMVA convergence: can't tell converged-early vs ran-out-of-iterations; see _kb/06-solver-catalog.md MVA AMVA convergence flag vs iteration count.
+        self._warn_if_not_converged(method)
 
         # Restore Cache nodetype if it was converted to ClassSwitch during solving
         # (MATLAB restores via getStruct() which returns fresh sn; Python needs explicit restore)
@@ -4008,7 +5309,8 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
         if self.options.verbose:
             from ..base import method_label
             py_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
-            print(f"MVA analysis [method: {method_label(self.options.method, method)}, lang: python, env: {py_version}] completed in {runtime:.6f}s.")
+            from line_solver.solvers.base import print_solver_banner
+            print_solver_banner(f"MVA analysis [method: {method_label(self.options.method, method)}; type: {method_type('MVA', method_label(self.options.method, method))}; lang: python; env: {py_version}] completed in {runtime:.6f}s.")
 
         return self
 
@@ -4023,7 +5325,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
             pandas.DataFrame with columns: Station, JobClass, QLen, Util, RespT, ResidT, ArvR, Tput
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         self._cap_unstable_open_util()
 
         # Empty result (e.g. SQD method on an unsupported multichain model): empty table.
@@ -4035,9 +5337,10 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
         # Compute residence times from response times using visit ratios
         from ...api.sn.transforms import sn_get_residt_from_respt
         from ...api.sn.network_struct import NodeType
-        WN = sn_get_residt_from_respt(self._sn, self._result['RN'], None)
+        WN = sn_get_residt_from_respt(
+            self._sn, self._result.get('RN_uncapped', self._result['RN']), None)
 
-        # WN is already correct for fork branches (visit ratio 1 per branch, since a Fork sends the full rate lambda to EACH branch); no post-processing needed.
+        # WN already correct for fork branches (visit ratio 1 per branch, since a Fork sends the full rate lambda to EACH branch); no post-processing needed.
 
         # Get node-based dimensions and mappings from NetworkStruct
         nnodes = self._sn.nnodes if hasattr(self._sn, 'nnodes') else self.nstations
@@ -4124,12 +5427,20 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
         from ...api.solvers.mva.prob_methods import get_prob_aggr
 
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         # Accept a station node object (like SolverCTMC.getProbAggr): resolve
         # to the 1-based station index expected by get_prob_aggr.
         if not isinstance(ist, (int, np.integer)):
             ist = ist.get_station_index0() + 1
+
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            from ..cpp_dispatch import prob_aggr_via_cpp
+            p = prob_aggr_via_cpp(self)['probAggr']
+            if not (1 <= int(ist) <= len(p)):
+                raise ValueError("station index %r is outside 1..%d" % (ist, len(p)))
+            pr = float(p[int(ist) - 1])
+            return (float(np.log(pr)) if pr > 0.0 else float('-inf'), pr)
 
         # Create minimal SolverResults compatible object
         class ResultAdapter:
@@ -4171,7 +5482,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
         from ...api.solvers.mva.prob_methods import get_prob_marg
 
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         class ResultAdapter:
             def __init__(self, result_dict):
@@ -4201,11 +5512,20 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
         from ...api.solvers.mva.prob_methods import get_prob_sys_aggr
 
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
+
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            from ..cpp_dispatch import prob_aggr_via_cpp
+            pr = float(prob_aggr_via_cpp(self)['probSysAggr'])
+            return (float(np.log(pr)) if pr > 0.0 else float('-inf'), pr)
 
         class ResultAdapter:
             def __init__(self, result_dict):
                 self.Q = result_dict.get('QN')
+                # U is what the mixed branch's open-class product form is written
+                # in (getProbSysAggr.m reads self.result.Avg.U), so an adapter
+                # carrying only Q made every mixed model an AttributeError.
+                self.U = result_dict.get('UN')
                 self.prob = None
 
         result_adapter = ResultAdapter(self._result)
@@ -4233,7 +5553,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
         from ...api.solvers.mva.prob_methods import get_prob_norm_const_aggr
 
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         class ResultAdapter:
             def __init__(self, result_dict):
@@ -4284,7 +5604,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
             >>> print(f"Queue length at station 1, class 1: {Q[0,0]}")
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         return self._result['QN'].copy()
 
     def _cap_unstable_open_util(self) -> None:
@@ -4314,6 +5634,13 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
         if any_unstable:
             res['UN'] = UN
             if res.get('QN') is not None and res.get('RN') is not None:
+                # getAvg.m derives ResidT from the response times the ANALYZER
+                # produced and only then overwrites them with Inf, so the
+                # pre-cap matrix is kept for the ResidT computation. Reading the
+                # capped RN instead turns every saturated station's residence
+                # time into Inf, where the reference reports RN*V of the raw
+                # (possibly negative, hence zeroed) value.
+                res['RN_uncapped'] = np.array(res['RN'], dtype=float, copy=True)
                 QN, RN, TN, _ = saturate_unstable_open_metrics(
                     res['QN'], res['RN'], res['TN'], self._sn)
                 res['QN'] = QN
@@ -4321,8 +5648,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                 res['TN'] = TN
             line_warning("SolverMVA", "The model has unstable queues "
                          "(utilization >= 1); station utilization is reported "
-                         "capped at 1.0, queue length and response time as "
-                         "Inf, and throughput at the service capacity.")
+                         "capped at 1.0, queue length and response time as Inf.")
 
     def getAvgUtil(self) -> np.ndarray:
         """
@@ -4338,7 +5664,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
             >>> print(f"Utilization at station 1: {U[0,:].sum()}")
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         self._cap_unstable_open_util()
         return self._result['UN'].copy()
 
@@ -4356,7 +5682,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
             >>> print(f"Response time at station 1, class 1: {R[0,0]}")
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         return self._result['RN'].copy()
 
     def getAvgResidT(self) -> np.ndarray:
@@ -4370,11 +5696,12 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
             ResidT: Residence times matrix (M x K)
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         # Compute ResidT using proper visit ratios from network structure
         if self._sn is not None and self._sn.visits:
-            return sn_get_residt_from_respt(self._sn, self._result['RN'], None)
+            return sn_get_residt_from_respt(
+                self._sn, self._result.get('RN_uncapped', self._result['RN']), None)
         else:
             # Fallback: ResidT = RespT (no visit information available)
             return self._result['RN'].copy()
@@ -4394,7 +5721,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
             >>> print(f"Waiting time at station 1: {W[0,:].sum()}")
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         # W = R - S, where S is the service demand (1/service_rate)
         R = self._result['RN'].copy()
@@ -4419,7 +5746,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
             >>> print(f"Throughput at station 1, class 1: {T[0,0]}")
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         return self._result['TN'].copy()
 
     def getAvgArvR(self) -> np.ndarray:
@@ -4435,7 +5762,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
             and visit ratios
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         return self._result['AN'].copy()
 
     def getAvgSysRespT(self) -> np.ndarray:
@@ -4452,7 +5779,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
             For open networks: sum of response times across all stations
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         R = self._result['RN']
         X = self._result['XN']
@@ -4484,37 +5811,13 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
             This is the throughput at any single bottleneck station
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         return self._result['XN'].copy()
 
     # ============================================================================
     # Unified Metrics and Chain/Node/System Methods
     # ============================================================================
 
-    def getAvg(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """Get all average metrics at once.
-
-        Returns:
-            Tuple of (Q, U, R, T, A, W) where:
-            - Q: Queue lengths (M x K)
-            - U: Utilizations (M x K)
-            - R: Response times (M x K)
-            - T: Throughputs (M x K)
-            - A: Arrival rates (M x K)
-            - W: Waiting times (M x K)
-        """
-        if self._result is None:
-            self.runAnalyzer()
-        self._cap_unstable_open_util()
-
-        Q = self._result['QN']
-        U = self._result['UN']
-        R = self._result['RN']
-        T = self._result['TN']  # Use station throughputs, not broadcast system throughput
-        A = T.copy()
-        W = self._result.get('WN', R.copy())  # Use WN (residence times), not RN (response times)
-
-        return Q, U, R, T, A, W
 
     def _get_chains(self) -> List[List[int]]:
         """Get chain-to-class mapping from network structure."""
@@ -4551,7 +5854,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
     def getAvgQLenChain(self) -> np.ndarray:
         """Get average queue lengths aggregated by chain."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         Q = self._result['QN']
         chains = self._get_chains()
@@ -4572,7 +5875,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
         Cleans up tiny numerical values (< 1e-10) to exactly 0.
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         self._cap_unstable_open_util()
 
         U = self._result['UN']
@@ -4594,7 +5897,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
         Uses alpha-weighted sum matching MATLAB: RN(:,c) = sum(RNclass(:,inchain).*alpha(:,inchain),2)
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         R = self._result['RN']
         chains = self._get_chains()
@@ -4636,7 +5939,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
         where WNclass = sn_get_residt_from_respt converts response times to residence times.
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         R = self._result['RN']  # Per-class response times
         chains = self._get_chains()
@@ -4672,7 +5975,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
         TN(:,c) = sum(TNclass(:, inchain), 2)
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         # Use per-station throughputs TN, not system throughput XN
         TN = self._result['TN']
@@ -4741,7 +6044,9 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                     'Tput': TN[i, c],
                 })
 
-        return pd.DataFrame(rows)
+        # five SIGNIFICANT digits like MATLAB's table, not pandas' five decimals
+        from line_solver.indexed_table import IndexedTable
+        return IndexedTable(pd.DataFrame(rows))
 
     def getAvgNode(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
@@ -4759,7 +6064,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
         from ...api.sn import NodeType
 
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         TN = self._result['TN']
         AN = self._result['AN']
@@ -4869,9 +6174,11 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
         UN = self._result['UN']
         RN = self._result['RN']
 
-        # Compute residence times from response times using visit ratios
+        # Compute residence times from response times using visit ratios, off the
+        # pre-saturation matrix as getAvg.m does (see _cap_unstable_open_util)
         from ...api.sn.transforms import sn_get_residt_from_respt
-        WN = sn_get_residt_from_respt(sn, RN, None)
+        WN = sn_get_residt_from_respt(
+            sn, self._result.get('RN_uncapped', RN), None)
 
         for ist in range(M):
             ind = sn.stationToNode[ist]
@@ -4956,6 +6263,9 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
         if getattr(self.options, 'lang', 'python') == 'java':
             from ..jar_dispatch import cache_table_via_jar
             return cache_table_via_jar(self)
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            from ..cpp_dispatch import cache_table_via_cpp
+            return cache_table_via_cpp(self)
         from ..cache_table import build_cache_avg_table
         return build_cache_avg_table(self)
 
@@ -4967,6 +6277,9 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
         if getattr(self.options, 'lang', 'python') == 'java':
             from ..jar_dispatch import item_table_via_jar
             return item_table_via_jar(self)
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            from ..cpp_dispatch import item_table_via_cpp
+            return item_table_via_cpp(self)
         from ..cache_table import build_item_avg_table
         return build_item_avg_table(self)
 
@@ -5070,7 +6383,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
             from ..jar_dispatch import cdf_respt_via_jar
             return cdf_respt_via_jar(self)
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         if R is None:
             R = self._result['RN']
@@ -5125,27 +6438,24 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                      If None, returns all classes
 
         Returns:
-            (PercRT, PercTable): Tuple of:
-            - PercRT: List of dicts with percentile data for each (station, class)
-              Each dict contains:
-                - 'station': Station index
-                - 'class': Job class
-                - 'percentiles': Input percentile values
-                - 'values': Percentile response times
-            - PercTable: pandas DataFrame with columns:
-              Station, Class, P10, P25, P50, P75, P90, P95, P99, ...
+            (PercRT, PercTable) where PercRT is a list of dicts with percentile
+            data for each (station, class), each holding 'station' (station
+            index), 'class' (job class), 'percentiles' (input percentile values)
+            and 'values' (percentile response times), and PercTable is a pandas
+            DataFrame with columns Station, Class, P10, P25, P50, P75, P90, P95,
+            P99, ...
 
         Algorithm:
-            For exponential CDF with rate λ = 1/E[R]:
-            Percentile p: t_p = -ln(1-p) * E[R]
-            where p is in [0,1]
+            For an exponential CDF with rate lambda = 1/E[R], the percentile p
+            is t_p = -ln(1-p) * E[R] with p in [0,1].
 
         Notes:
-            - Percentiles outside (0,100) are clipped
-            - Returns empty lists for stations with zero response time
-            - Results match exponential percentile formula
+            Percentiles outside (0,100) are clipped, stations with zero response
+            time give empty lists, and results match the exponential percentile
+            formula.
 
-        Example:
+        Example::
+
             >>> perc_list, perc_table = solver.getPerctRespT([90, 95, 99])
             >>> print(perc_table)
             >>> # Extract 90th percentile response time
@@ -5236,7 +6546,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
         Returns:
             List of method names available for this model:
             - Base methods: 'default', 'mva', 'exact', 'amva', 'qna'
-            - AMVA variants: 'bs', 'sqni', 'lin', 'gflin', 'egflin', 'schmidt', 'schmidt-ext', 'ab'
+            - AMVA variants: 'bs', 'sqni', 'tay', 'lin', 'gflin', 'egflin', 'schmidt', 'schmidt-ext', 'ab'
             - Queueing formulas (2-station open): 'mm1', 'mmk', 'mg1', 'mgi1', 'gm1', 'gig1', etc.
 
         Notes:
@@ -5257,15 +6567,39 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
 
         # MVAC (exact mean value analysis by chain, pfqn_mvac): closed
         # single-server product-form networks only; rejects open/mixed and
-        # multiserver at solve time.
-        if self.network_type != 'open':
+        # multiserver at solve time. The gate is FULLY CLOSED, as
+        # SolverMVA.m:80's ~any(isinf(njobs)) is -- not merely 'has a closed
+        # class'. Testing network_type != 'open' also admitted a MIXED model,
+        # which solver_mvac then refused again, so the list named a method the
+        # model could not run.
+        if self.network_type == 'closed':
             methods.append('mvac')
+
+        # SJN (shortest-job-next, pfqn_mvasjn / pfqn_amvasjn): the conditional
+        # waiting time equation is a population recursion, so the family runs on
+        # a CLOSED model with an SJF station and nowhere else -- the dispatcher
+        # rejects an open one by name. Advertised only there, for the reason
+        # 'sqni' is gated: a name on this list is a name a caller is invited to
+        # ask for, and the JAR gates `checkDeclaredMethod` on exactly this list.
+        if self.network_type == 'closed' and self._has_sjn_station():
+            methods.extend(['sjn.mva', 'sjn.amva'])
 
         # AMVA and variants - available for closed/mixed networks
         methods.extend([
             'amva',
             'bs', 'amva.bs',
+            'aql', 'amva.aql',
+            'qsa', 'amva.qsa',
             'sqni',
+            'tay', 'amva.tay',
+            'scat', 'amva.scat',
+            'lcp', 'amva.lcp',
+            'chow', 'amva.chow',
+            'pamb', 'amva.pamb',
+            'pami', 'amva.pami',
+            'pamt', 'amva.pamt',
+            'clust', 'amva.clust',
+            'dmlin', 'amva.dmlin',
             'lin', 'amva.lin',
             'gflin',
             'egflin',
@@ -5276,14 +6610,59 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
             'qdlin', 'amva.qdlin',
             'qli', 'amva.qli',
             'fli', 'amva.fli',
-            'sqd',
         ])
+
+        # SQD (Smith Queue Decomposition) is only valid for closed single-chain
+        # Blocking-After-Service networks; solver_sqd returns EMPTY results on
+        # anything else, so listing it unconditionally named a method that
+        # cannot run. Mirrors SolverMVA.m and the C++ runner.
+        from ...api.solvers.mva.analyzers import _is_bas_model
+        if _is_bas_model(self._sn):
+            methods.append('sqd')
+
+        # SQNI (pfqn_sqni) is a closed form for one queueing station with a
+        # delay; listing it elsewhere named a method that cannot run.
+        _, _sqni_queues = self._get_queueing_demands()
+        if self.nstations != 2 or len(_sqni_queues) != 1:
+            methods.remove('sqni')
+
+        # AQL (pfqn_aql), QSA (pfqn_qsa) and Tay (pfqn_tay) reject multiserver
+        # stations at solve time, so they are only advertised for single-server
+        # models.
+        _ns = np.asarray(self.nservers, dtype=float).ravel()
+        if np.any(_ns[np.isfinite(_ns)] > 1):
+            for _m in ('aql', 'amva.aql', 'qsa', 'amva.qsa', 'tay', 'amva.tay'):
+                if _m in methods:
+                    methods.remove(_m)
 
         # QNA and RQNA for open networks (RQNA: robust queueing network
         # analyzer, indices of dispersion, for non-renewal MAP/MMPP arrivals)
         if self.network_type == 'open':
             methods.append('qna')
             methods.append('rqna')
+            methods.append('rqt')
+
+        # Marie withheld for open models and for class-dependent routing: the
+        # aggregation-decomposition is exact only when every class traverses the
+        # network alike. _run_marie has always dispatched it; not listing it
+        # hid a working method. Mirrors SolverMVA.m, SolverMVA.java and the C++
+        # runner.
+        from ...api.solvers.mva.analyzers import _has_classdep_routing
+        if self.network_type != 'open' and not _has_classdep_routing(self._sn):
+            methods.extend(['marie', 'amva.marie'])
+
+        # amva.mapqn: the horizontal-cut MVA for one exponential delay and one
+        # FCFS MAP queue; offered only on that shape, which mva_mapqn_reason
+        # judges for the list, the report and the run alike.
+        from ...api.solvers.mva.mapqn import mva_mapqn_reason
+        if not mva_mapqn_reason(self._sn):
+            methods.append('amva.mapqn')
+
+        # priomva: preemptive-resume priority arm (Chandy-Lakshmi [ChaL83]),
+        # offered only when a station actually uses FCFSPRPRIO. Mirrors
+        # SolverMVA.m; the arm itself lives in solver_amvald's forward step.
+        if self._has_prs_prio_station():
+            methods.extend(['priomva', 'amva.priomva'])
 
         # bound methods (aba/bjb/gb/sb/pb/mwba/...) moved to SolverBA and are rejected here; use SolverBA.listValidMethods for the bound catalogue.
 
@@ -5294,7 +6673,14 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                 'gig1.kingman', 'gigk', 'gigk.kingman_approx',
                 'gig1.gelenbe', 'gig1.heyman', 'gig1.kimura',
                 'gig1.allen', 'gig1.kobayashi', 'gig1.klb', 'gig1.marchal',
+                # Whitt family. The two abandonment methods are listed only
+                # when the station actually reneges: they have nothing to say
+                # about a queue nobody leaves, and listing them there would
+                # name a method that cannot run.
+                'gigk.whitt', 'qed', 'gig1.extremal', 'gigk.diffusion',
             ])
+            if self._resolve_abandonment_method() is not None:
+                methods.extend(['erlanga', 'mgisrgi'])
 
         return methods
 
@@ -5314,7 +6700,50 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                     return 'rqna'
             except Exception:
                 pass
+            # A single-class open station with reneging: resolve to the
+            # abandonment method BEFORE the feature gate runs, which is what
+            # lets the gate see a method whose featset admits Reneging. The
+            # condition is the exact shape solver_mva_qsys_analyzer handles, so
+            # any other reneging model still falls through and is refused.
+            resolved = self._resolve_abandonment_method()
+            if resolved is not None:
+                return resolved
         return method
+
+    def _resolve_abandonment_method(self):
+        """'erlanga' or 'mgisrgi' when the model is a single-class open
+        Source-Queue-Sink whose queue reneges, else None.
+
+        The shape test is the one solver_mva_qsys_analyzer serves -- two
+        stations, one class, all open -- and not merely "some station reneges":
+        resolving on a wider set would name a method the analyzer's qsys branch
+        never reaches, and the model would be answered by the generic MVA path
+        under that method's name.
+        """
+        sn = self._sn
+        if sn is None or getattr(sn, 'nclasses', 0) != 1:
+            return None
+        if getattr(sn, 'nstations', 0) != 2:
+            return None
+        njobs = getattr(sn, 'njobs', None)
+        if njobs is None or not np.all(np.isinf(np.asarray(njobs, dtype=float))):
+            return None
+        cls = getattr(sn, 'impatienceClass', None)
+        if cls is None:
+            return None
+        from ...lang.base import ImpatienceType
+        cls = np.asarray(cls)
+        if cls.ndim != 2 or cls.shape[1] < 1:
+            return None
+        rows = [i for i in range(cls.shape[0])
+                if int(cls[i, 0]) == int(ImpatienceType.RENEGING)]
+        if len(rows) != 1:
+            return None
+        from ...api.sn.patience import sn_patience_handles
+        h = sn_patience_handles(sn, rows[0], 0)
+        if h is None:
+            return None
+        return 'erlanga' if h['isExponential'] else 'mgisrgi'
 
     resolve_method = resolveMethod
 
@@ -5325,14 +6754,128 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
         by listValidMethods and inherit the base envelope. RQNA adds the
         non-renewal MAP/MMPP family (open only); mirrors the MATLAB/JAR
         SolverMVA.getMethodFeatureSet."""
+        from ...api.solvers.mva.handler import (
+            mva_base_method, mva_is_closed_population_method,
+            MVA_CLOSED_POPULATION_METHODS, MVA_NON_BCMP_SCHED_FEATURES)
         feats = set(SolverMVA.getFeatureSet())
+        method = mva_base_method(method)
+        if mva_is_closed_population_method(method):
+            # The closed-population AMVA family estimates the arrival-instant
+            # queue length as a function of the population vector N and is
+            # handed (L, N, Z) alone, so an open chain gives it nothing to recur
+            # on: the analyzer has no arm for any of these outside its closed
+            # product-form branch, and falling through returned the qd-family
+            # answer, or a table of zeros, under their name. The remaining
+            # precondition of that branch (product form) has no registry name
+            # and is applied by supportsClosedPopulation instead.
+            feats.discard('OpenClass')
+        # The load-dependent analyzer serves a load-, class- or joint-dependent
+        # model through 'exact'/'mva' (load dependence only, it has no class- or
+        # joint-dependent recursion) and through the default/amva/qd/lin/qdlin
+        # arms, and refuses every other name by name. The queueing-system closed
+        # forms are intercepted upstream of that analyzer and keep the base
+        # envelope.
+        if method in set(MVA_CLOSED_POPULATION_METHODS) | {
+                'sum', 'esum', 'mvac', 'qli', 'fli', 'gflin', 'egflin',
+                'qna', 'rqna', 'rqt'}:
+            feats -= {'LoadDependence', 'ClassDependence', 'JointDependence'}
+        elif method in ('mva', 'exact'):
+            feats -= {'ClassDependence', 'JointDependence'}
+        if method not in ('default', 'exact'):
+            # An order-independent or pass-and-swap station is served by the
+            # exact OI analyzer alone, which the dispatcher reaches only under
+            # 'default' or 'exact'; every other name is refused there by name,
+            # so it must not be advertised for such a model.
+            feats -= {'SchedStrategy_OI', 'SchedStrategy_PAS'}
+        if method in ('sum', 'esum'):
+            # The summation method passes each station to sum_closed /
+            # sum_closing as an INF, PS, LCFS-PR, FCFS or SIRO centre and
+            # refuses every other discipline by name.
+            feats -= set(MVA_NON_BCMP_SCHED_FEATURES)
+        elif method == 'mvac':
+            # pfqn_mvac recurs on the closed chains over single-server
+            # fixed-rate (SSFR) and infinite-server centres; the handler refuses
+            # every other discipline by name.
+            feats.discard('OpenClass')
+            feats -= set(MVA_NON_BCMP_SCHED_FEATURES)
         if method == 'qna':
+            # round-robin dispatching enters as a deterministic traffic split
+            # (npfqn_traffic_split_rr), which the exact-MVA paths have no
+            # counterpart for
+            feats.add('RoutingStrategy_RROBIN')
             feats.discard('ClosedClass')
             feats.discard('SelfLoopingClass')
+            # solver_qna's station loop has an arm for INF, PS and FCFS and none
+            # for anything else, so on a SIRO, LCFS-PR, HOL or priority station
+            # it left that row of Q, U, R and T at zero and reported the table
+            # as a solution.
+            feats -= {'SchedStrategy_SIRO', 'SchedStrategy_LCFSPR'}
+            feats -= set(MVA_NON_BCMP_SCHED_FEATURES)
         elif method == 'rqna':
             feats.update({'MAP', 'MMPP2', 'MMAP', 'RAP'})
             feats.discard('ClosedClass')
             feats.discard('SelfLoopingClass')
+        elif method == 'mapqn':
+            # the horizontal-cut MVA consumes a MAP service natively (a closed
+            # delay + FCFS queue model, see mva_mapqn_reason); declaring MAP
+            # here is what keeps needsMapEnv from routing the model through
+            # its random-environment image
+            feats.update({'MAP', 'MMPP2'})
+            feats -= {'OpenClass', 'Source', 'Sink', 'Fork', 'Forker', 'Join', 'Joiner', 'JoinPartial',
+                      'ClassSwitch', 'StatelessClassSwitcher', 'Cache', 'CacheClassSwitcher', 'CacheRetrieval',
+                      'LoadDependence', 'ClassDependence', 'JointDependence',
+                      'SchedStrategy_PS', 'SchedStrategy_SIRO', 'SchedStrategy_LCFSPR',
+                      'SchedStrategy_SRPT', 'SchedStrategy_PSJF', 'SchedStrategy_FB', 'SchedStrategy_LRPT',
+                      'SchedStrategy_SETF', 'SchedStrategy_OI', 'SchedStrategy_PAS'}
+            feats -= set(MVA_NON_BCMP_SCHED_FEATURES)
+        elif method == 'rqt':
+            # robust queueing theory: single-class open networks, the primitives
+            # entering the uncertainty sets are two moments
+            feats.discard('ClosedClass')
+            feats.discard('SelfLoopingClass')
+        if method in ('rqna', 'rqt'):
+            # A Join is a synchronisation node, not a queue: it carries no
+            # service process, so the index-of-dispersion curve these two read
+            # off every station does not exist for it, and neither analyzer has
+            # a synchronisation term to put in its place. QNA keeps Fork/Join --
+            # its station loop has an explicit Join arm.
+            feats -= {'Fork', 'Forker', 'Join', 'Joiner', 'JoinPartial'}
+        elif method in ('erlanga', 'mgisrgi'):
+            # The ONLY MVA methods that accept abandonment. Reneging is added
+            # here rather than to the base envelope on purpose: the base set
+            # governs every method, and a multi-station reneging model must go
+            # on being refused rather than silently solved without abandonment.
+            feats.add('Reneging')
+            feats.discard('ClosedClass')
+            feats.discard('SelfLoopingClass')
+        # MULTISERVER (registry name since 2026-09-05). The single-server
+        # recursions: AQL, QSA and Tay (mva_supports_closed_population), MVAC's
+        # SSFR chain recursion (mva_supports_mvac), RQNA's GI/G/1 workload
+        # (mva_supports_single_class_open), Kant's SJN recursion and the
+        # single-server closed forms of the queueing-system analyzer, every
+        # M/G/1, G/M/1 and G/G/1 name. Each predicate stays, wording the refusal
+        # for the run; the delta is what makes it nameable. RQT, QNA, M/M/k,
+        # G/G/k and the rest of the envelope carry a server count.
+        if (method in ('aql', 'qsa', 'tay', 'mvac', 'rqna', 'sjn.mva', 'sjn.amva',
+                       'mm1', 'mg1', 'mgi1', 'gm1', 'gim1')
+                or method.startswith('gig1')):
+            feats.discard('MultiServer')
+        # FINITECAPACITY (registry name since 2026-09-05) is NOT in the base
+        # envelope: the product-form recursions solve a buffer away, which is
+        # what supportsFiniteCapacity refuses. The names that honour one are
+        # granted it here, and that structural predicate keeps the shape half of
+        # each rule. 'default' and 'sqd' reach solver_sqd, the one
+        # Blocking-After-Service arm. The single-station M/M/1/K with tail drop
+        # is judged on the MODEL because no name can carry it, 'exact' excepted
+        # since the closed form is exact at scv=1 only.
+        if method in ('default', 'sqd'):
+            feats.add('FiniteCapacity')
+        elif method != 'exact':
+            model = getattr(self, 'model', None)
+            if model is not None and hasattr(model, 'getStruct'):
+                from ...api.sn import sn_is_mm1k_loss
+                if sn_is_mm1k_loss(model.getStruct()):
+                    feats.add('FiniteCapacity')
         return feats
 
     get_method_feature_set = getMethodFeatureSet
@@ -5343,13 +6886,72 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
         capacity check on top of it, otherwise MVA silently returns the
         unconstrained product-form answer for models built with setCapacity /
         a finite classCap (BUG-39). Mirrors MATLAB SolverMVA.supportsModelMethod."""
+        from ...api.solvers.mva.handler import (
+            mva_base_method, mva_supports_closed_population,
+            mva_supports_single_class_open, mva_supports_mvac,
+            mva_supports_schmidt_ext)
         ok, reason = super(SolverMVA, self).supportsModelMethod(method)
         model = getattr(self, 'model', None)
         if ok and model is not None and hasattr(model, 'getStruct'):
             ok, reason = SolverMVA.supportsFiniteCapacity(model)
+        if ok and model is not None and hasattr(model, 'getStruct'):
+            ok, reason = SolverMVA.supportsExactness(model, method)
+        if ok and model is not None and hasattr(model, 'getStruct'):
+            # Product form, a class count and a server count have no registry
+            # feature name, so these three rules cannot live in
+            # getMethodFeatureSet. Each is the SAME predicate the analyzer
+            # raises on, so a row the report offers is a row that runs.
+            sn = model.getStruct()
+            ok, reason = mva_supports_closed_population(sn, method)
+            if ok:
+                ok, reason = mva_supports_single_class_open(sn, method)
+            if ok:
+                ok, reason = mva_supports_mvac(sn, method)
+            if ok:
+                from ...api.solvers.mva.mapqn import mva_supports_mapqn
+                ok, reason = mva_supports_mapqn(sn, method)
+            if ok and mva_base_method(method) == 'schmidt-ext':
+                # Built only for the one method that reads them, so no other
+                # gate query pays for the demand matrix.
+                _N, _fcfs = self._schmidt_arm_inputs()
+                ok, reason = mva_supports_schmidt_ext(_N, _fcfs, method)
         return ok, reason
 
     supports_model_method = supportsModelMethod
+
+    @staticmethod
+    def supportsExactness(model, method):
+        """(bool, reason) Method 'exact' requires a product-form solution, the
+        same rule the analyzer enforces at solve time. Order-independent and
+        pass-and-swap stations are exempt: solver_mva_oi_analyzer is exact for
+        them regardless of the product-form test. Single-station open systems
+        are exempt too: they go to a queueing-system formula (M/G/1 PK, M/M/k,
+        Cobham, matrix-geometric, ...) that holds outside product form, never to
+        the MVA recursion. Product form has no registry
+        feature name, so the check cannot live in getMethodFeatureSet. Mirrors
+        MATLAB SolverMVA.supportsExactness."""
+        if method != 'exact':
+            return True, ''
+        if model.hasProductFormSolution():
+            return True, ''
+        from ...api.sn.network_struct import SchedStrategy
+        from ...lang.base import NodeType
+        sn = model.getStruct()
+        sched = getattr(sn, 'sched', None)
+        if isinstance(sched, dict):
+            for value in sched.values():
+                if value in (SchedStrategy.OI, SchedStrategy.PAS):
+                    return True, ''
+        nodetype = getattr(sn, 'nodetype', None)
+        if nodetype is not None and len(nodetype) == 3 and getattr(sn, 'nclosedjobs', 0) == 0:
+            types = set(nodetype)
+            if types in ({NodeType.SOURCE, NodeType.QUEUE, NodeType.SINK},
+                         {NodeType.SOURCE, NodeType.CACHE, NodeType.SINK}):
+                return True, ''
+        return False, ("method 'exact' requires a product-form solution; use "
+                       "'mva' for the approximation based on the exact MVA algorithm")
+
+    supports_exactness = supportsExactness
 
     @staticmethod
     def supportsFiniteCapacity(model):
@@ -5379,17 +6981,24 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
         return {
             'Sink', 'Source',
             'ClassSwitch', 'Delay', 'DelayStation', 'Queue',
-            'APH', 'Coxian', 'Erlang', 'Exp', 'HyperExp', 'BMAP',
+            'APH', 'Coxian', 'Cox2', 'Erlang', 'Exp', 'HyperExp', 'BMAP',
             'Pareto', 'Weibull', 'Lognormal', 'Uniform', 'Det',
             'StatelessClassSwitcher', 'InfiniteServer', 'SharedServer', 'Buffer', 'Dispatcher',
             'CacheClassSwitcher', 'Cache', 'CacheRetrieval',
             'Server', 'JobSink', 'RandomSource', 'ServiceTunnel',
-            'SchedStrategy_INF', 'SchedStrategy_PS',
+            'SchedStrategy_INF', 'SchedStrategy_PS', 'SchedStrategy_FCFSPRPRIO',
             'SchedStrategy_DPS', 'SchedStrategy_FCFS', 'SchedStrategy_SIRO', 'SchedStrategy_HOL',
             'SchedStrategy_LCFS', 'SchedStrategy_LCFSPR', 'SchedStrategy_POLLING',
             # exact order-independent path only (solver_mva_oi_analyzer)
             'SchedStrategy_OI', 'SchedStrategy_PAS',
+            # size-based M/G/1 disciplines, served by _run_sizebased_analysis
+            # (Wierman and Harchol-Balter, SIGMETRICS 2003)
+            'SchedStrategy_SRPT', 'SchedStrategy_PSJF', 'SchedStrategy_FB',
+            'SchedStrategy_LRPT', 'SchedStrategy_SETF',
+            # closed models only (_run_sjn)
+            'SchedStrategy_SJF',
             'Fork', 'Forker', 'Join', 'Joiner',
+            'JoinPartial',  # quorum join: the MMT fixed point charges the k-th branch completion (fj_ordstat_exp)
             'RoutingStrategy_PROB', 'RoutingStrategy_RAND',
             'ReplacementStrategy_RR', 'ReplacementStrategy_FIFO', 'ReplacementStrategy_LRU',
             'ReplacementStrategy_HLRU',
@@ -5398,6 +7007,12 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
             'LoadDependence',
             'ClassDependence',
         'JointDependence',
+            # c-server stations: the exact recursion, every AMVA kernel,
+            # qna/rqt and the M/M/k and G/G/k closed forms carry the count;
+            # getMethodFeatureSet withdraws it from the single-server names.
+            # FiniteCapacity is deliberately NOT here (see getMethodFeatureSet
+            # and supportsFiniteCapacity).
+            'MultiServer',
         }
 
     @staticmethod
@@ -5441,7 +7056,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                 if not SolverFeatureSet.supports(feat_supported, feat_used):
                     return False
 
-                # finite station/class capacity is rejected structurally (no registry feature name exists for it); a closed model whose capacity cannot bind (>=population) is exempt, as are BAS ('sqd') and Cache models.
+                # finite station/class cap rejected structurally (no registry name); closed models where cap can't bind (>=population) exempt, as BAS ('sqd')/Cache.
                 ok, reason = SolverMVA.supportsFiniteCapacity(model)
                 if not ok:
                     line_warning('SolverMVA', reason)
@@ -5476,10 +7091,16 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
 
         Returns:
             Dictionary with default option values:
-            - 'method': 'exact' (exact MVA algorithm)
-            - 'tol': 1e-8 (convergence tolerance)
+            - 'method': 'default' (auto-selects exact/amva, as MATLAB/JAR do)
+            - 'tol': 1e-4 (general-purpose tolerance)
             - 'max_iter': 1000 (maximum iterations)
             - 'verbose': default_verbose() (inherits GlobalConstants verbosity)
+            - 'config': {} (per-method switches, e.g. 'map_env_method')
+
+        `config` is present but EMPTY, as MATLAB's `SolverMVA.defaultOptions`
+        carries an empty config struct: every consumer reads it with a default,
+        so an absent key and an unset one mean the same thing, and the attribute
+        must exist for `options.config['key'] = ...` to work.
 
         Example:
             >>> opts = SolverMVA.defaultOptions()
@@ -5487,10 +7108,11 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
             >>> solver = SolverMVA(model, **opts)
         """
         return OptionsDict({
-            'method': 'exact',
-            'tol': 1e-8,
+            'method': 'default',
+            'tol': 1e-4,
             'max_iter': 1000,
             'verbose': default_verbose(),
+            'config': {},
         })
 
     # ============================================================================
@@ -5656,7 +7278,7 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
     default_options = defaultOptions
 
     # Chain-level aliases
-    GetAvg = getAvg
+    GetAvg = NetworkSolver.getAvg
     GetAvgChain = getAvgChain
     GetAvgChainTable = getAvgChainTable
     GetAvgQLenChain = getAvgQLenChain

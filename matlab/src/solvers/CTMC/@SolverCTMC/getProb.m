@@ -1,4 +1,4 @@
-function Pnir = getProb(self, node, state)
+function varargout = getProb(self,varargin)
 % PNIR = GETPROB(NODE, STATE) Returns state probabilities at equilibrium
 %
 % @brief Returns state probabilities for a given node, including phase information
@@ -36,6 +36,64 @@ function Pnir = getProb(self, node, state)
 % queue1.setState([2, 1]);
 % prob_specific = solver.getProb(queue1);
 % @endcode
+% The result recorder captures the scalar this getter returned together
+% with the solver that produced it -- see LineResultRecorder. Six of the
+% statepr_* goldens hold exactly this number and nothing else, so recording
+% it is what makes those goldens attributable instead of "the first bare
+% number the example printed". The wrapper exists so that recording happens
+% on EVERY exit path of the implementation below.
+[scope, scopeGuard] = LineResultRecorder.enter(); %#ok<ASGLU>
+[varargout{1:max(nargout,1)}] = getProb_impl(self,varargin{:});
+LineResultRecorder.captureScalar(scope, self, 'prob', varargout{1});
+end
+
+function Pnir = getProb_impl(self, node, state)
+% GETPROB_IMPL Implementation of GETPROB; see the wrapper above.
+
+
+% lang='cpp' answers this from the Prob column of -a prob, the DETAILED marginal
+% (phases and buffer arrangement included) of the state the model carries; a
+% state prior over several rows is refused by name. See CPPLINE.assertSingleState.
+%
+% A STATE NAMED IN THE CALL stays with the native path: `-a prob` reports the
+% marginal of the state model.json carries and takes no per-call state, so
+% serving one here would mean writing it onto the caller's model first.
+if isfield(self.options,'lang') && strcmp(self.options.lang,'cpp') && ~self.isChainSolver()
+    if nargin >= 3
+        CPPLINE.cppUnsupported(self.name, 'getProb(node, state)', ...
+            ['line-cli reports the marginal at the state the model carries and takes no ' ...
+            'per-call state, so answering a named one would mean writing it onto the ' ...
+            'caller''s model first']);
+    end
+    CPPLINE.assertSingleState(self.name, 'getProb', self.model);
+    if ~isnumeric(node), istc = node.index; else, istc = node; end
+    Pnir = CPPLINE.probEntry(CPPLINE.probAggr(self.name, self.model, self.options), ...
+        'Prob', istc, self.name, 'getProb');
+    return
+end
+
+if self.isChainSolver()
+    % Chain mode: getProb(state) returns the stationary probability of a
+    % single state, identified by its row in the chain state space or, when
+    % the chain carries none, by its 1-based state index.
+    if nargin<2
+        line_error(mfilename,'getProb in chain mode requires a state index or a state vector.');
+    end
+    pi = self.getProbSys();
+    if isempty(self.chainModel.stateSpace)
+        idx = node;
+        if ~isscalar(idx) || idx~=round(idx) || idx<1 || idx>length(pi)
+            line_error(mfilename,'The chain carries no state space, so getProb requires a state index in 1..%d.', length(pi));
+        end
+    else
+        idx = matchrow(self.chainModel.stateSpace, reshape(node,1,[]));
+        if idx<1
+            line_error(mfilename,'The requested state is not in the chain state space.');
+        end
+    end
+    Pnir = pi(idx);
+    return
+end
 
 self.assertPhaseTypeStates('getProb');
 

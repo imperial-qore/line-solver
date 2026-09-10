@@ -172,7 +172,10 @@ for j = 1:p
                 an = 1;
             else
                 ll = (1:Nn)';
-                an = (prod((Kj + ll) ./ (Kj + 2 * lj * Kj + ll)))^(1 / (2 * lj * Kj));
+                % in the log domain: the product runs over N_{ij} factors
+                % below one, and underflows to zero at a few hundred of them,
+                % which would silently set alpha_j = 0 and lG = NaN
+                an = exp(sum(log((Kj + ll) ./ (Kj + 2 * lj * Kj + ll))) / (2 * lj * Kj));
             end
             aj = min(aj, an / cumrho(n));
         end

@@ -18,7 +18,7 @@ mvn clean package -Pb
 The bundled JAR is automatically copied to ../common/jline.jar.
 
 #### Standalone LDES JAR
-To build a lightweight JAR for the LINE Discrete Event Simulator (LDES), excluding non-LDES dependencies:
+To build a lightweight JAR for LDES, excluding non-LDES dependencies:
 ```
 mvn clean package -P ldes
 ```
@@ -73,7 +73,7 @@ cd ../doc
 You can browse the JAR class hierarchy at [this page](https://line-solver.sourceforge.net/javadoc/index.html).
 
 ## Symbolic backend (first-time setup)
-The symbolic methods of `SolverCTMC`/`SolverFluid` are the JAR's only route to computer algebra: they delegate to a SageMath service packaged as the Docker image [`imperialqore/line-sage-rest`](https://hub.docker.com/r/imperialqore/line-sage-rest). It is not pulled automatically on first use, so obtain it once with:
+The symbolic methods of `SolverCTMC`/`SolverFLD` are the JAR's only route to computer algebra: they delegate to a SageMath service packaged as the Docker image [`imperialqore/line-sage-rest`](https://hub.docker.com/r/imperialqore/line-sage-rest). It is not pulled automatically on first use, so obtain it once with:
 ```
 docker pull imperialqore/line-sage-rest:latest
 ```
@@ -84,5 +84,5 @@ java -cp jline.jar jline.cli.LineInstall
 It warns when a dependency is missing without failing.
 
 ## Documentation
-Download the [manual](https://line-solver.sourceforge.net/doc/LINE-java.pdf) (Java syntax; Kotlin code calls the same API on the same JVM).
+Download the [manual](https://line-solver.sourceforge.net/doc/LINE-user-java.pdf) (Java syntax; Kotlin code calls the same API on the same JVM).
 

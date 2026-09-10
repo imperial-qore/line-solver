@@ -54,7 +54,7 @@ classdef (Sealed)  Cox2 < Markovian
             % Completion probability of phase 1. With the two rates fixed by
             % the second and third moments, the mean determines it:
             % e1 = 1/mu1 + (1-phi)/mu2  =>  phi = 1 - mu2*e1 + mu2/mu1.
-            % Verified in sage/proofs/distribution_fitters.py: with this phi
+            % Verified in io/sage/proofs/distribution_fitters.py: with this phi
             % the Coxian matches e1, e2 and e3 exactly on both branches.
             phi = 1 - mu2.*e1 + mu2./mu1;
             if phi(1)>=0 && phi(1)<=1 && mu1(1) >= 0 && mu2(1) >= 0

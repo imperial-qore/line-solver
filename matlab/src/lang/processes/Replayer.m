@@ -83,6 +83,45 @@ classdef Replayer < Distribution
             SKEW = skewness(self.data,0); % ,0 ensures Apache Commons equivalence in Java
         end
         
+        function result = isNHPP(self, varargin)
+            % RESULT = ISNHPP()
+            %
+            % Test whether the trace is a sample path of a NON-HOMOGENEOUS
+            % POISSON process, by the conditional-uniform KS test with the Lewis
+            % refinement (INFER_NHPP_KS).
+            %
+            % WHY THE QUESTION IS WORTH ASKING. A Replayer is used wherever a
+            % measured stream is fed to a solver, and every analytical method
+            % that consumes it as an arrival process assumes SOMETHING about its
+            % dependence structure. This test says whether the Poisson
+            % assumption -- independent increments, whatever the rate does with
+            % time -- survives contact with the data, which is the assumption a
+            % time-varying analysis (SolverFLD's 'mtginf', 'mol', 'tvms') rests
+            % on. A small p-value says the stream is not Poisson at any rate
+            % function, so those methods are answering a different process.
+            %
+            % The trace holds INTER-ARRIVAL times, so the arrival epochs are
+            % their cumulative sum and the horizon is the last of them.
+            %
+            % Returns the struct of INFER_NHPP_KS: statistic, pvalue, n,
+            % uniforms and transformed. Options are passed through.
+            %
+            % Reference: S.-H. Kim, W. Whitt (2014). Are call center and hospital
+            % arrivals well modeled by nonhomogeneous Poisson processes?
+            % Manufacturing & Service Operations Management 16(3), 464-480.
+            %
+            % See also INFER_NHPP_KS.
+            if isempty(self.data)
+                self.load();
+            end
+            ia = self.data(:);
+            if numel(ia) < 2
+                line_error(mfilename, 'the trace needs at least two inter-arrival times to test.');
+            end
+            epochs = cumsum(ia);
+            result = infer_nhpp_ks(epochs, epochs(end), varargin{:});
+        end
+
         function distr = fitExp(self)
             % DISTR = FITEXP()
             

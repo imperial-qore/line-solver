@@ -49,6 +49,17 @@ for ind=nodes
     if sn.isstation(ind)
         ist = sn.nodeToStation(ind);
         n0 = nplace(ist,:); % number of jobs in the initial state
+        if any(abs(n0 - round(n0)) > GlobalConstants.Zero)
+            % Fractional closed populations (tolerated by the fluid-family
+            % solvers) cannot be encoded in the discrete state space, e.g. the
+            % FCFS buffer is an explicit list of class ids. Round the INITIAL
+            % state only: the drift still conserves the fractional sn.njobs,
+            % and the steady-state solution does not depend on the start point.
+            % Clamp to the class capacity, itself fractional here, since
+            % State.fromMarginalAndStarted returns empty when n0 exceeds it.
+            n0 = min(round(n0), floor(sn.classcap(ist,:) + GlobalConstants.Zero));
+            n0 = max(n0, 0);
+        end
         s0 = zeros(1,length(N)); % number of active servers in the initial state
         s = sn.nservers(ist); % allocate
         for r=find(isfinite(N))' % for all closed classes
@@ -58,21 +69,23 @@ for ind=nodes
         switch sn.nodetype(ind)
             case NodeType.Cache
                 state_i = State.fromMarginalAndStarted(sn,ind,n0(:)',s0(:)');
-                % Cache state width = totalCacheCapacity + (per-item retrieval bitmap).
-                % Initialize the cache region with items 1..totalCacheCapacity and the
-                % retrieval-system region (one column per item) with zeros (nothing
-                % being retrieved). The bitmap is omitted when no retrieval system.
+                % Cache state width = totalCacheCapacity + block A (per-item retrieval
+                % bitmap) + block B (per-retrieval-class delayed-hit counts).
+                % Initialize the cache region with items 1..totalCacheCapacity and both
+                % retrieval blocks with zeros (nothing being retrieved, nothing merged).
+                % Both blocks are omitted when no retrieval system is configured.
                 if isfield(sn.nodeparam{ind}, 'totalCacheCapacity')
                     tcc = sn.nodeparam{ind}.totalCacheCapacity;
                 else
                     tcc = sn.nvars(ind,2*R+1);
                 end
-                rbw = 0;
+                rbw = 0; rpw = 0;
                 if isfield(sn.nodeparam{ind},'retrievalSystemCapacity') ...
                         && sn.nodeparam{ind}.retrievalSystemCapacity > 0
                     rbw = sn.nodeparam{ind}.nitems;
+                    rpw = numel(State.cacheRetrievalClassMap(sn, ind));
                 end
-                state_i = [state_i, 1:tcc, zeros(1,rbw)]; %#ok<AGROW>
+                state_i = [state_i, 1:tcc, zeros(1,rbw+rpw)]; %#ok<AGROW>
             case NodeType.Place
                 if sum(self.nodes{ind}.state)>0
                     % if the user pre-loaded manually some jobs, keep them
@@ -160,16 +173,18 @@ for ind=nodes
     elseif sn.isstateful(ind) % not a station
         switch sn.nodetype(ind)
             case NodeType.Cache
-                % [class counts | cache contents (items 1..tcc) | per-item retrieval
-                % bitmap (zeros, nothing being retrieved)]. The bitmap (one column per
-                % item) is omitted when no retrieval system is configured.
+                % [class counts | cache contents (items 1..tcc) | block A per-item
+                % retrieval bitmap | block B per-retrieval-class delayed-hit counts],
+                % both blocks zeroed. Both are omitted with no retrieval system.
                 tcc = self.nodes{ind}.totalCacheCapacity;
                 if self.nodes{ind}.retrievalSystemCapacity > 0
                     rbw = self.nodes{ind}.items.nitems;
+                    rpw = numel(self.nodes{ind}.retrievalClassIndices);
                 else
                     rbw = 0;
+                    rpw = 0;
                 end
-                state_i = [zeros(1,self.getNumberOfClasses), 1:tcc, zeros(1,rbw)];
+                state_i = [zeros(1,self.getNumberOfClasses), 1:tcc, zeros(1,rbw+rpw)];
             case NodeType.Router
                 state_i = zeros(1, self.getNumberOfClasses);
                 for r=1:sn.nclasses

@@ -346,14 +346,38 @@ def aoi_fcfs_mgi1(lambd: float, H_lst: Callable, E_H: float,
     # Peak AoI
     peakAoI = E_T + E_Y
 
-    # LST of AoI
+    # LST of AoI (Inoue et al. 2019, Theorem 2), via the general age formula
+    #   A*(s) = (lambda/s) * ( T*(s) - Apeak*(s) )
+    # the cycle average of exp(-s*age) over a departure interval: the age starts
+    # each cycle at the system time T of the packet just delivered and grows to
+    # the peak T + (next interarrival) at the next delivery. For M/GI/1 FCFS
+    # Lindley gives W' = max(0, T - Y), so W' + Y = max(Y, T), and with
+    # Y ~ Exp(lambda) independent of T,
+    #   E[exp(-s*max(Y,T))] = T*(s) - (s/(s+lambda)) * T*(s+lambda).
+    #
+    # THE PREVIOUS FORM WAS NOT AN LST: (lambda*H*(s))/(s+lambda-lambda*H*(s))
+    # diverges as s -> 0, so A*(0) was +inf instead of 1 and the value exceeded
+    # 1 for small s. Checked against simulation on M/E2/1: at s = 0.3 the old
+    # form gave 1.3062, the form below 0.56935, and the sample path 0.56948.
+    def _lst_at(sv):
+        if abs(sv) < 1e-12:
+            return 1.0 + 0j
+        H_s = H_lst(sv)
+        T_s = _Tstar_safe(sv)
+        T_sl = _Tstar_safe(sv + lambd)
+        peak_s = H_s * (T_s - (sv / (sv + lambd)) * T_sl)
+        return (lambd / sv) * (T_s - peak_s)
+
+    def _Tstar_safe(sv):
+        if abs(sv) < 1e-12:
+            return 1.0 + 0j
+        return _Tstar(sv)
+
     def lstAoI(s):
-        s = np.asarray(s, dtype=complex)
-        H_s = H_lst(s)
-        # Pollaczek-Khinchine LST for waiting time
-        W_s = (1 - rho) * s / (s - lambd + lambd * H_s)
-        # AoI LST
-        return (lambd * H_s) / (s + lambd - lambd * H_s) * W_s
+        arr = np.asarray(s, dtype=complex)
+        if arr.ndim == 0:
+            return _lst_at(complex(arr))
+        return np.array([_lst_at(complex(v)) for v in arr.ravel()]).reshape(arr.shape)
 
     return meanAoI, lstAoI, peakAoI
 
@@ -422,27 +446,33 @@ def aoi_fcfs_gim1(Y_lst: Callable, mu: float, E_Y: float,
     # Peak AoI
     peakAoI = E_Y + E_D
 
-    # LST of AoI
+    # LST of AoI (Inoue et al. 2019, Theorem 3), via the general age formula
+    #   A*(s) = (lambda/s) * ( T*(s) - Apeak*(s) )
+    # the cycle average of exp(-s*age) over a departure interval. In GI/M/1 the
+    # system time is EXPONENTIAL at rate eta = mu*(1-sigma), so T*(s) =
+    # eta/(s+eta), and Lindley gives W' + Y = max(Y, T) with T ~ Exp(eta)
+    # independent of the next interarrival Y, so
+    #   E[exp(-s*max(Y,T))] = Y*(s) - (s/(s+eta)) * Y*(s+eta),
+    # and the peak adds one fresh Exp(mu) service. A*(0) = 1 follows from the
+    # defining relation Y*(eta) = sigma.
+    #
+    # THE PREVIOUS FORM WAS NOT AN LST: (mu*sigma(s))/(s+mu-mu*sigma(s))*D*(s)
+    # gives sigma/(1-sigma) at s = 0 rather than 1, and it re-solved sigma(s) by
+    # brentq at every point with a SILENT fallback to sigma(0) on failure.
+    # Checked against simulation on E2/M/1: at s = 0.2 the old form gave
+    # 0.23056, the form below 0.59319, and the sample path 0.59332.
+    def _lst_at(sv):
+        if abs(sv) < 1e-12:
+            return 1.0 + 0j
+        T_s = eta / (sv + eta)
+        peak_s = (mu / (sv + mu)) * (Y_lst(sv) - (sv / (sv + eta)) * Y_lst(sv + eta))
+        return (lambd / sv) * (T_s - peak_s)
+
     def lstAoI(s):
-        s_arr = np.atleast_1d(np.asarray(s, dtype=complex))
-        result = np.zeros_like(s_arr)
-
-        for i, si in enumerate(s_arr):
-            # Find sigma(s)
-            def sig_eq(sig):
-                return float(np.real(Y_lst(si + mu - mu * sig))) - sig
-
-            try:
-                sigma_s = brentq(sig_eq, 0.001, 0.999)
-            except:
-                sigma_s = sigma
-
-            D_s = (1 - sigma) * mu / (si + mu - mu * sigma_s)
-            result[i] = (mu * sigma_s) / (si + mu - mu * sigma_s) * D_s
-
-        if np.isscalar(s):
-            return result[0]
-        return result
+        arr = np.asarray(s, dtype=complex)
+        if arr.ndim == 0:
+            return _lst_at(complex(arr))
+        return np.array([_lst_at(complex(v)) for v in arr.ravel()]).reshape(arr.shape)
 
     return meanAoI, lstAoI, peakAoI
 

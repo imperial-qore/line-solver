@@ -23,8 +23,8 @@ classdef RewardState < handle
         sn                  % NetworkStruct reference
         nclasses            % Number of job classes
         nstations           % Number of stations
-        nodeToStationMap    % containers.Map: node.index -> station index
-        classToIndexMap     % containers.Map: jobclass.index -> class index
+        nodeToStationMap    % dictionary: node.index -> station index
+        classToIndexMap     % dictionary: jobclass.index -> class index
     end
 
     methods
@@ -35,8 +35,8 @@ classdef RewardState < handle
             %
             % STATEVEC        - Row vector of aggregated state [1 x (M*K)]
             % SN              - NetworkStruct with model information
-            % NODESTOSTATION  - containers.Map: node.index -> station index
-            % CLASSESTOIDX    - containers.Map: jobclass.index -> class index
+            % NODESTOSTATION  - dictionary: node.index -> station index
+            % CLASSESTOIDX    - dictionary: jobclass.index -> class index
 
             self.stateVector = stateVec;
             self.sn = sn;
@@ -62,7 +62,7 @@ classdef RewardState < handle
 
             if nargin == 2
                 % Return view for all classes at this station
-                stationIdx = self.nodeToStationMap(node.index);
+                stationIdx = self.nodeToStationMap(int32(node.index));
                 startIdx = (stationIdx - 1) * self.nclasses + 1;
                 endIdx = stationIdx * self.nclasses;
 
@@ -81,8 +81,8 @@ classdef RewardState < handle
                         'Second argument must be a JobClass object');
                 end
 
-                stationIdx = self.nodeToStationMap(node.index);
-                classIdx = self.classToIndexMap(jobclass.index);
+                stationIdx = self.nodeToStationMap(int32(node.index));
+                classIdx = self.classToIndexMap(int32(jobclass.index));
 
                 if classIdx < 1 || classIdx > self.nclasses
                     error('RewardState:InvalidClass', ...
@@ -120,7 +120,7 @@ classdef RewardState < handle
                     'Argument must be a JobClass object');
             end
 
-            classIdx = self.classToIndexMap(jobclass.index);
+            classIdx = self.classToIndexMap(int32(jobclass.index));
 
             if classIdx < 1 || classIdx > self.nclasses
                 error('RewardState:InvalidClass', ...

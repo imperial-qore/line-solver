@@ -8,6 +8,8 @@ import jline.api.mam.Map_exponential;
 import jline.api.mam.Map_pie;
 import jline.api.mam.Mmap_shorten;
 import jline.api.mam.Mmap_super;
+import jline.api.npfqn.Npfqn_traffic_split_rr;
+import jline.api.sn.SnRtStations;
 import jline.lang.NetworkStruct;
 import jline.lang.constant.NodeType;
 import jline.lang.constant.SchedStrategy;
@@ -31,7 +33,9 @@ public final class Solver_mna_open {
         String depScv = (depScvObj instanceof String) ? (String) depScvObj : "qna";
 
         int K = sn.nclasses;
-        Matrix rt = sn.rt.copy();
+        // sn.rt and sn.visits are indexed by stateful node: project them onto stations
+        jline.util.Pair<Matrix, Matrix> rtst = SnRtStations.snRtStations(sn);
+        Matrix rt = rtst.getLeft();
         Matrix S = sn.rates.elementPow(-1.0);
         Matrix scv = sn.scv.copy();
         scv.removeNaN();
@@ -39,7 +43,7 @@ public final class Solver_mna_open {
         int I = sn.nnodes;
         int M = sn.nstations;
         int C = sn.nchains;
-        Matrix V = Matrix.cellsum(sn.visits);
+        Matrix V = rtst.getRight();
         Matrix Q = new Matrix(M, K, M * K);
         Map<Integer, MatrixCell> pie = new HashMap<Integer, MatrixCell>();
         Map<Integer, MatrixCell> DO = new HashMap<Integer, MatrixCell>();
@@ -75,12 +79,14 @@ public final class Solver_mna_open {
 
         Matrix d2 = new Matrix(M, 1, M);
         Matrix f2 = new Matrix(M * K, M * K, (int) Math.pow(M * K, 2));
+        // deterministic (round-robin) split degrees, k=1 where the split is Markovian
+        Matrix kRR = Npfqn_traffic_split_rr.npfqn_traffic_split_rr(sn);
         for (int i = 0; i < M; i++) {
             for (int j = 0; j < M; j++) {
                 if (sn.nodetype.get((int) sn.stationToNode.get(j)) != NodeType.Source) {
                     for (int r = 0; r < K; r++) {
                         for (int s = 0; s < K; s++) {
-                            if (rt.get(i * K + r, j * K + s) > 0) f2.set(i * K + r, j * K + s, 1);
+                            if (rt.get(i * K + r, j * K + s) > 0) f2.set(i * K + r, j * K + s, 1 + rt.get(i * K + r, j * K + s) * (1 - kRR.get(i, r)));
                         }
                     }
                 }
@@ -240,7 +246,8 @@ public final class Solver_mna_open {
                         for (int r = 0; r < K; r++) {
                             for (int s = 0; s < K; s++) {
                                 if (rt.get(i * K + r, j * K + s) > 0) {
-                                    f2.set(i * K + r, j * K + s, 1 + rt.get(i * K + r, j * K + s) * (d2.get(i) - 1));
+                                    // k-fold convolution then Bernoulli thinning at q=k*p: C^2 = (q/k)*d2+1-q
+                                    f2.set(i * K + r, j * K + s, 1 + rt.get(i * K + r, j * K + s) * (d2.get(i) - kRR.get(i, r)));
                                 }
                             }
                         }

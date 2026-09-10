@@ -143,6 +143,34 @@ public abstract class Station extends ServiceNode implements Serializable {
      */
     public void setCapacity(int cap) {
         this.cap = cap;
+        invalidateStruct();
+    }
+
+    /**
+     * Discards any cached {@link NetworkStruct} after a change this station's
+     * DERIVED struct fields depend on (cap, classCap, numberOfServers,
+     * dropRule).
+     * <p>
+     * {@code refreshCapacity} folds the capacity together with the per-class
+     * caps and the chain population into {@code sn.cap}/{@code sn.classcap}, so
+     * a cached struct does not see a new buffer. Without this a
+     * {@code setCapacity} called after the first {@code getStruct()} -- the
+     * ordinary order when a model is built, inspected, then capped -- was
+     * silently dropped, and every sn-reading solver answered the UNBOUNDED
+     * model: SolverCTMC returned the product-form 1.1475 jobs for a buffer of 1
+     * while the fluid solver, whose gate reads the node objects instead,
+     * refused the very same model as capacity-bound.
+     * </p><p>
+     * It deliberately does NOT call {@code getStruct()}: during construction
+     * these setters usually run before the topology is defined, and forcing a
+     * premature build would cache an empty connection matrix (same reasoning as
+     * {@code Queue.invalidateStructAfterPollingChange}).
+     * </p>
+     */
+    protected void invalidateStruct() {
+        if (this.model != null && this.model.getHasStruct()) {
+            this.model.resetStruct();
+        }
     }
 
     /**
@@ -183,12 +211,14 @@ public abstract class Station extends ServiceNode implements Serializable {
     }
 
     /**
-     * Sets the limited class-dependent scaling function for this station.
+     * Refuses a class dependence declared without its peak rate: the peak is
+     * the max_n beta_{i,r}(n) that utilization is normalized by, and it cannot
+     * be recovered from the handle. Use the two-argument form.
      * 
      * @param gamma the class-dependent scaling function
      */
     public void setLimitedClassDependence(SerializableFunction<Matrix, Matrix> gamma) {
-        this.lcdScaling = gamma;
+        throw new RuntimeException("Class dependence requires an explicit peak rate: setClassDependence(beta, peakRatePerClass). Pass a 1x1 Matrix (identical peak for every class) or a 1xR per-class vector.");
     }
 
     /**
@@ -199,8 +229,12 @@ public abstract class Station extends ServiceNode implements Serializable {
      * @param peakRatePerClass 1x1 (broadcast) or 1xR peak rate scaling per class
      */
     public void setLimitedClassDependence(SerializableFunction<Matrix, Matrix> gamma, Matrix peakRatePerClass) {
+        assertPeakRate(peakRatePerClass, "Class", "setClassDependence(beta, peakRatePerClass)");
         this.lcdScaling = gamma;
         this.lcdScalingPeak = peakRatePerClass;
+        // refreshStruct copies these into sn.cdscaling and its peak vector; only a full
+        // rebuild reads them, so a cached struct would keep the previous beta.
+        invalidateStruct();
     }
 
     /**
@@ -222,12 +256,13 @@ public abstract class Station extends ServiceNode implements Serializable {
     }
 
     /**
-     * Sets the limited joint-dependent scaling function for this station.
+     * Refuses a joint dependence declared without its peak rate; twin of
+     * {@link #setLimitedClassDependence(SerializableFunction)}.
      *
      * @param eta the joint-dependent scaling function
      */
     public void setLimitedJointDependence(SerializableFunction<Matrix, Matrix> eta) {
-        this.ljdScaling = eta;
+        throw new RuntimeException("Joint dependence requires an explicit peak rate: setJointDependence(eta, peakRatePerClass). Pass a 1x1 Matrix (identical peak for every class) or a 1xR per-class vector.");
     }
 
     /**
@@ -240,8 +275,35 @@ public abstract class Station extends ServiceNode implements Serializable {
      * @param peakRatePerClass 1x1 (broadcast) or 1xR peak rate scaling per class
      */
     public void setLimitedJointDependence(SerializableFunction<Matrix, Matrix> eta, Matrix peakRatePerClass) {
+        assertPeakRate(peakRatePerClass, "Joint", "setJointDependence(eta, peakRatePerClass)");
         this.ljdScaling = eta;
         this.ljdScalingPeak = peakRatePerClass;
+        // twin of setLimitedClassDependence: only a full rebuild reads eta
+        invalidateStruct();
+    }
+
+    /**
+     * A declared peak rate must be present and strictly positive, which is what
+     * makes U = T*S/peak a fraction of capacity rather than an unnormalized
+     * rate. Unlike the handle itself the peak cannot be recovered: sweeping the
+     * lattice for max_n beta(n) needs a bound the handle does not carry, and an
+     * open class has no bound at all. MATLAB rejects an empty or non-positive
+     * peak in the same setter.
+     *
+     * @param peak the declared peak rate scaling, 1x1 or 1xR
+     * @param what "Class" or "Joint", naming the dependence in the message
+     * @param remedy the call the user should have made
+     */
+    private static void assertPeakRate(Matrix peak, String what, String remedy) {
+        if (peak == null || peak.isEmpty()) {
+            throw new RuntimeException(what + " dependence requires an explicit peak rate: " + remedy
+                    + ". Pass a 1x1 Matrix (identical peak for every class) or a 1xR per-class vector.");
+        }
+        for (int i = 0; i < peak.length(); i++) {
+            if (!(peak.get(i) > 0)) {
+                throw new RuntimeException("peakRatePerClass must be a positive scalar or per-class vector.");
+            }
+        }
     }
 
     /**
@@ -269,6 +331,8 @@ public abstract class Station extends ServiceNode implements Serializable {
      */
     public void setLimitedLoadDependence(Matrix alpha) {
         this.lldScaling = alpha;
+        // refreshStruct folds this into sn.lldscaling; only a full rebuild reads it
+        invalidateStruct();
     }
 
     @Override
@@ -286,6 +350,7 @@ public abstract class Station extends ServiceNode implements Serializable {
             numberOfServers = Integer.MAX_VALUE;
         }
         this.numberOfServers = numberOfServers;
+        invalidateStruct();
     }
 
     /**
@@ -429,6 +494,10 @@ public abstract class Station extends ServiceNode implements Serializable {
                     map.put(jobclass, distr.getProcess());
                     mu.put(jobclass, Matrix.singleton(distr.getTimeAverageRate()));
                     phi.put(jobclass, Matrix.singleton(1.0));
+                } else if ((queue.getServiceProcess(jobclass) instanceof MAPt)
+                        || (queue.getServiceProcess(jobclass) instanceof PHt)) {
+                    putMatrixSchedule(map, mu, phi, jobclass,
+                            this.server.getServiceDistribution(jobclass));
                 } else if (queue.getServiceProcess(jobclass) instanceof Prior) {
                     // Prior distributions are handled by the UQ solver;
                     // use the prior-weighted mean rate as a placeholder for getStruct()
@@ -641,6 +710,10 @@ public abstract class Station extends ServiceNode implements Serializable {
                 map.put(jobclass, distr.getProcess());
                 mu.put(jobclass, Matrix.singleton(distr.getTimeAverageRate()));
                 phi.put(jobclass, Matrix.singleton(1.0));
+            } else if ((source.getArrivalDistribution(jobclass) instanceof MAPt)
+                    || (source.getArrivalDistribution(jobclass) instanceof PHt)) {
+                putMatrixSchedule(map, mu, phi, jobclass,
+                        source.getArrivalDistribution(jobclass));
             } else if ((source.getArrivalDistribution(jobclass) instanceof ME)
                     || (source.getArrivalDistribution(jobclass) instanceof RAP)) {
                 putMatrixExponential(map, mu, phi, jobclass,
@@ -791,6 +864,9 @@ public abstract class Station extends ServiceNode implements Serializable {
             }
         }
         this.cap = Math.min(sumClassCap, this.cap);
+        // This one MATERIALIZES the struct itself (getStruct above) before
+        // mutating classCap/cap, so the cache is guaranteed stale on return.
+        invalidateStruct();
     }
 
     /**
@@ -801,6 +877,21 @@ public abstract class Station extends ServiceNode implements Serializable {
      */
     public void setClassCap(JobClass jobClass, int cap) {
         this.classCap.put(jobClass, cap);
+        invalidateStruct();
+    }
+
+    /**
+     * Alias of {@link #setClassCap}, under the name the other three codebases
+     * use: MATLAB {@code setClassCapacity}, native Python
+     * {@code set_class_capacity}/{@code setClassCapacity} and C++
+     * {@code set_class_capacity}. Kept so a model ported across them does not
+     * have to rename this one call.
+     *
+     * @param jobClass the job class to set capacity for
+     * @param cap the maximum number of jobs of this class
+     */
+    public void setClassCapacity(JobClass jobClass, int cap) {
+        setClassCap(jobClass, cap);
     }
 
     /**
@@ -811,6 +902,7 @@ public abstract class Station extends ServiceNode implements Serializable {
      */
     public void setDropRule(JobClass jobclass, DropStrategy drop) {
         this.dropRule.put(jobclass, drop);
+        invalidateStruct();
     }
 
     /**
@@ -916,6 +1008,8 @@ public abstract class Station extends ServiceNode implements Serializable {
 
         this.patienceDistributions.put(jobClass, distribution);
         this.impatienceTypes.put(jobClass, impatienceType);
+        // refreshImpatience derives sn.impatience* and sn.impatienceClass from these
+        invalidateStruct();
     }
 
     /**
@@ -1032,6 +1126,8 @@ public abstract class Station extends ServiceNode implements Serializable {
 
         this.balkingStrategies.put(jobClass, strategy);
         this.balkingThresholds.put(jobClass, new ArrayList<BalkingThreshold>(thresholds));
+        // refreshBalking derives sn.balkingStrategy and sn.balkingThresholds from these
+        invalidateStruct();
     }
 
     /**
@@ -1237,6 +1333,9 @@ public abstract class Station extends ServiceNode implements Serializable {
         this.setRetrial(jobClass, retrialDistribution, -1);
         this.retrialPolicies.put(jobClass, policy);
         this.orbitMaxJobs.put(jobClass, maxOrbit);
+        // setCapacity and setRetrial (through setDropRule) invalidate above, but these
+        // two writes land after them, so the drop has to be repeated here to cover them.
+        invalidateStruct();
     }
 
     /**
@@ -1395,6 +1494,8 @@ public abstract class Station extends ServiceNode implements Serializable {
         }
 
         this.orbitImpatienceDistributions.put(jobClass, distribution);
+        // refreshRetrial reads this into the struct's orbit abandonment process
+        invalidateStruct();
     }
 
     /**
@@ -1452,6 +1553,8 @@ public abstract class Station extends ServiceNode implements Serializable {
             throw new IllegalArgumentException("jobClass is not part of this network");
         }
         this.batchRejectProb.put(jobClass, p);
+        // read back into the struct's batch reject probabilities on a full rebuild
+        invalidateStruct();
     }
 
     /**
@@ -1466,6 +1569,43 @@ public abstract class Station extends ServiceNode implements Serializable {
             return 0.0;
         }
         return p;
+    }
+
+
+    /**
+     * Fills the sn slots for a MAPt or PHt: the raw schedule in {@code map}, and mu/phi from
+     * the time-averaged nominal so that the phase count the schedule modulates is preserved.
+     * NHPP collapses to a single phase because its intensity is a scalar; a matrix schedule
+     * cannot.
+     */
+    private static void putMatrixSchedule(Map<JobClass, MatrixCell> map,
+                                          Map<JobClass, Matrix> mu,
+                                          Map<JobClass, Matrix> phi,
+                                          JobClass jobclass, Distribution distr) {
+        MatrixCell nominal;
+        if (distr instanceof MAPt) {
+            map.put(jobclass, ((MAPt) distr).getProcess());
+            nominal = ((MAPt) distr).getTimeAverageProcess();
+        } else {
+            map.put(jobclass, ((PHt) distr).getProcess());
+            nominal = ((PHt) distr).getTimeAverageProcessMAP();
+        }
+        Matrix d0 = nominal.get(0);
+        Matrix d1 = nominal.get(1);
+        int h = d0.getNumRows();
+        Matrix muv = new Matrix(h, 1, h);
+        Matrix phiv = new Matrix(h, 1, h);
+        for (int i = 0; i < h; i++) {
+            double rate = -d0.get(i, i);
+            double arr = 0.0;
+            for (int j = 0; j < h; j++) {
+                arr += d1.get(i, j);
+            }
+            muv.set(i, 0, rate);
+            phiv.set(i, 0, rate > 0 ? arr / rate : 1.0);
+        }
+        mu.put(jobclass, muv);
+        phi.put(jobclass, phiv);
     }
 
 }

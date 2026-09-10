@@ -71,9 +71,9 @@ if ~isempty(TH) && ~isempty(TN)
                                     actualDelayedHitProb = zeros(size(actualHitProb));
                                 end
 
-                                % see _kb/04-networkstruct.md (api/sn/*.m derived-field helpers) for rationale
+                                % see _kb/04-networkstruct.md (api/sn derived-field helpers) for rationale
                                 for origClass = 1:length(hitclass)
-                                    % see _kb/04-networkstruct.md (api/sn/*.m derived-field helpers) for rationale
+                                    % see _kb/04-networkstruct.md (api/sn derived-field helpers) for rationale
                                     if ~isempty(ANn)
                                         arvTput = ANn(ind, origClass);
                                     elseif any(origClass == inchain)

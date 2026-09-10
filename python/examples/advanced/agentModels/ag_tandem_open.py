@@ -1,8 +1,8 @@
 """
-Open Tandem Queue with MAM (INAP method)
+Open Tandem Queue with AG (INAP method)
 
-This example demonstrates MAM with INAP method on an open tandem queueing network
-(M/M/1 -> M/M/1) using the RCAT/INAP algorithm.
+This example demonstrates SolverAG with the INAP method on an open tandem queueing network
+(M/M/1 -> M/M/1) using the agent-based INAP method.
 
 Reference: Marin and Rota-Bulo', "A Mean-Field Analysis of a Class of
            Interactive Distributed Systems", MASCOTS 2009
@@ -46,11 +46,11 @@ print('Analytical (M/M/1):')
 print(f'  Queue1: U={U1_exact:.4f}, Q={Q1_exact:.4f}, R={R1_exact:.4f}')
 print(f'  Queue2: U={U2_exact:.4f}, Q={Q2_exact:.4f}, R={R2_exact:.4f}\n')
 
-# Solve with MAM using INAP method
-solver_inap = MAM(model, 'inap')
+# Solve with AG using INAP method
+solver_inap = AG(model, 'inap')
 avg_table_inap = solver_inap.get_avg_table()
 
-print('MAM (method=inap):')
+print('AG (method=inap):')
 print(avg_table_inap)
 
 # Note: 'exact' method (AutoCAT) is not yet implemented in native Python

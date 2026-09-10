@@ -729,17 +729,43 @@ if isfield(xDoc,'preload') && ~isempty(xDoc.preload.stationPopulations)
             c = model.getClassIndex(xDoc.preload.stationPopulations(st).classPopulation(r).ATTRIBUTE.refClass);
             state(ind,c) = xDoc.preload.stationPopulations(st).classPopulation(r).ATTRIBUTE.population;
         end
-        if isa(node{ind},'Place')
-            %node{ind}.setState(state(ind,:));
-            if length(classes)>1
-                line_error(mfilename,'Import failed: Colored Petri net models are not yet supported in LINE.\n');
-            end
-        end
+        % A PLACE NEEDS NO SPECIAL CASE HERE. A multi-class preload used to be
+        % refused as a "colored Petri net", but a Place has been per-class since
+        % it was given Storage(classes)/Linkage(classes) and a per-class
+        % classCap, the Enabling and Firing parsers above already read one arc
+        % weight per refClass, and INITFROMMARGINAL sets a Place from the same
+        % (node,class) row it sets every other stateful node from. The refusal
+        % was left over from before that and only fired on the preload, so an
+        % identical colored net WITHOUT a preload imported fine.
     end
 end
 try
     model.initFromMarginal(state);
 catch
+    % NAME WHAT ACTUALLY BROKE. The common cause is a preload above the
+    % per-class capacity the SAME file declares: JMT does not cross-check the
+    % two (it simply starts there and lets the drop rule stop the place from
+    % growing), while LINE's state space cannot hold a marking above a
+    % capacity, so State.isValid rejects it. Reporting that as a bare "failed
+    % to initialize" left the model silently at the zero marking, which is a
+    % different model from the one the file describes.
+    over = '';
+    snImp = model.getStruct();
+    for ind = 1:size(state,1)
+        ist = snImp.nodeToStation(ind);
+        if ist > 0
+            for r = 1:size(state,2)
+                if state(ind,r) > snImp.classcap(ist,r)
+                    over = sprintf('%s\n - ''%s'' preloads %g tokens of class ''%s'' but declares a capacity of %g for it', ...
+                        over, snImp.nodenames{ind}, state(ind,r), snImp.classnames{r}, snImp.classcap(ist,r));
+                end
+            end
+        end
+    end
+    if ~isempty(over)
+        line_error(mfilename, sprintf(['Import failed: the preload of this model lies outside the state space it declares:%s\n' ...
+            'Raise the capacity or lower the preload so the two agree.'], over));
+    end
     line_warning(mfilename,'Import failed to automatically initialize the model.\n');
 end
 Ttot=toc(T0);

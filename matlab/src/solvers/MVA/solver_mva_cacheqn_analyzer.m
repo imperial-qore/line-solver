@@ -39,17 +39,8 @@ end
 % per-item occupancy [nitems x (lists+1)] from converged access factors (RR/FIFO
 % exact recursion skipped, NaN, for >10 items); see _kb/09-ldes-and-cache.md
 for ci = 1:length(caches)
-    if ~isempty(cacheinfo.gamma{ci})
-        ni = size(cacheinfo.gamma{ci},1);
-        hi = numel(cacheinfo.m{ci});
-        if cacheinfo.strat{ci} == ReplacementStrategy.LRU
-            itemprob = cache_ttl_lrua(cacheinfo.lambda_cache{ci}, cacheinfo.Rcost{ci}, cacheinfo.m{ci});
-        elseif ni > 10
-            line_warning(mfilename, 'Per-item cache occupancy (getAvgItemTable) requires the exact algorithm for RR/FIFO and is skipped for caches with more than 10 items (%d items); reporting NaN.', ni);
-            itemprob = NaN(ni, hi+1);
-        else
-            itemprob = cache_prob_erec(cacheinfo.gamma{ci}, cacheinfo.m{ci});
-        end
+    itemprob = da_cacheqn_itemprob(cacheinfo, ci);
+    if ~isempty(itemprob)
         self.model.nodes{caches(ci)}.setResultItemProb(itemprob);
     end
 end

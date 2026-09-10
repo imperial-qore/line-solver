@@ -222,10 +222,25 @@ public final class FJ_tail_forktail {
         };
         double xlo = -beta * Math.log(1.0 - Math.pow(pp, 1.0 / (kmin * alpha)));
         double xhi = -beta * Math.log(1.0 - Math.pow(pp, 1.0 / (kmax * alpha)));
-        if (xlo == xhi) {
-            return xlo;
+        double lo = Math.min(xlo, xhi);
+        double hi = Math.max(xlo, xhi);
+        if (lo == hi) {
+            return lo;
         }
-        return new BrentSolver(1e-12, 1e-12).solve(200, residual, Math.min(xlo, xhi), Math.max(xlo, xhi));
+        // G(x)^(K*alpha) decreases in K, so the mixture obeys residual(lo) <= 0
+        // <= residual(hi) exactly -- with EQUALITY when P puts all its mass on
+        // kmin or on kmax. There the root sits ON an endpoint, the residual
+        // there is roundoff of either sign rather than the strict straddle
+        // BrentSolver demands, and the endpoint is already the answer.
+        double flo = residual.value(lo);
+        double fhi = residual.value(hi);
+        if (flo >= 0.0) {
+            return lo;
+        }
+        if (fhi <= 0.0) {
+            return hi;
+        }
+        return new BrentSolver(1e-12, 1e-12).solve(200, residual, lo, hi);
     }
 
     /**

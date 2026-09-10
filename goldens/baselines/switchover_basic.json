@@ -1,0 +1,50 @@
+{
+  "class": {
+    "JMT": "stochastic"
+  },
+  "example": "switchover_basic",
+  "solvers": {
+    "JMT": [
+      {
+        "ArvR": 0.0,
+        "JobClass": "myClass1",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "mySource",
+        "Tput": 0.19599,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "myClass2",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "mySource",
+        "Tput": 0.81958,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.19599,
+        "JobClass": "myClass1",
+        "QLen": 2210.4,
+        "ResidT": 38679.0,
+        "RespT": 38679.0,
+        "Station": "myQueue",
+        "Tput": 0.078203,
+        "Util": 0.78376
+      },
+      {
+        "ArvR": 0.81958,
+        "JobClass": "myClass2",
+        "QLen": 2267.8,
+        "ResidT": 9851.9,
+        "RespT": 9851.9,
+        "Station": "myQueue",
+        "Tput": 0.32287,
+        "Util": 0.20632
+      }
+    ]
+  }
+}

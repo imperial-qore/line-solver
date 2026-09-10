@@ -30,10 +30,24 @@ public final class Pfqn_gld_complex {
         Complex lG;
 
         if (M == 1) {
+            // A CLASS WITH JOBS AND NO DEMAND AT THE ONLY STATION MAKES THE CONSTANT ZERO,
+            // exactly as in the real Pfqn_gld: its factor is L_r^N_r = 0, so dropping the
+            // class from the sum below would answer with the constant of a DIFFERENT model.
+            // "Zero" is the MODULUS here, which also closes the hole the old per-part
+            // threshold left on a demand with a negative real part.
+            // See _kb/07-cross-language-parity.md.
+            for (int i = 0; i < R; i++) {
+                double mod2 = L.real.get(0, i) * L.real.get(0, i) + L.im.get(0, i) * L.im.get(0, i);
+                if (N.get(i) > 0 && mod2 == 0) {
+                    return new Ret.pfqnNcComplex(new Complex(0.0, 0.0),
+                            new Complex(Double.NEGATIVE_INFINITY, 0.0));
+                }
+            }
             Matrix N_tmp = new Matrix(1, 0);
             ComplexMatrix L_tmp = new ComplexMatrix(1, 0);
             for (int i = 0; i < R; i++) {
-                if (L.real.get(i) > GlobalConstants.FineTol || L.im.get(i) > GlobalConstants.FineTol) {
+                // exact zeros only, and by modulus, so the test matches the guard above
+                if (L.real.get(0, i) * L.real.get(0, i) + L.im.get(0, i) * L.im.get(0, i) > 0) {
                     Matrix N_tmp2 = new Matrix(1, 1);
                     N_tmp2.fill(N.get(i));
                     ComplexMatrix L_tmp2 = new ComplexMatrix(1, 1);

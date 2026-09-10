@@ -9,13 +9,6 @@ This example demonstrates:
 - Hit/miss class differentiation
 """
 
-# Ensure native line_solver is used (not python-wrapper)
-import sys
-import os
-_native_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
-if _native_path not in sys.path:
-    sys.path.insert(0, _native_path)
-
 from line_solver import *
 import numpy as np
 
@@ -61,13 +54,13 @@ if __name__ == "__main__":
     solver = np.append(solver, CTMC(model, keep=False))
 
     model.reset()
-    solver = np.append(solver, SSA(model, samples=10000, verbose=True, seed=23000))
+    solver = np.append(solver, SSA(model, samples=100000, verbose=True, method='serial', seed=23000))
 
     model.reset()
     solver = np.append(solver, MVA(model))
 
-    model.reset()
-    solver = np.append(solver, FLD(model, method='rmf'))
+    # No SolverFLD row: LRU has no drift-based fluid model, so the refined mean
+    # field carries RANDOM(m)/FIFO(m) and strict FIFO(m) only. Use CTMC/SSA/MVA/LDES.
 
     avg_node_table = np.empty(len(solver), dtype=object)
     for s in range(len(solver)):

@@ -1,5 +1,49 @@
 function tranSysState = sampleSys(self, numEvents)
 % TRANSYSSTATE = SAMPLESYS(NUMSAMPLES)
+
+
+if isfield(self.options,'lang') && strcmp(self.options.lang,'cpp')
+    % A chain given directly to SolverCTMC is not a Network, so linemodel_save
+    % has nothing to write for it; only the network case routes.
+    if self.isChainSolver()
+        CPPLINE.cppUnsupported(self.name, 'sampleSys', ...
+            ['a chain given directly to SolverCTMC is not a Network, so there is no ' ...
+            'model.json for line-cli to read']);
+    end
+    tranSysState = CPPLINE.sysSamplePath(self.name, self.model, self.options, numEvents, false);
+    return
+end
+
+if self.isChainSolver()
+    % Chain mode: a sample path of the user-supplied chain, started from
+    % options.init_sol when given. A DTMC advances one unit of time per step.
+    options = self.getOptions;
+    Solver.resetRandomGeneratorSeed(options.seed);
+    stateSpace = self.getStateSpace();
+    n = size(stateSpace,1);
+    pi0 = options.init_sol;
+    if isempty(pi0)
+        % Uniform start, as in the transient analysis, so that a sample path is
+        % reproducible under options.seed.
+        pi0 = ones(1,n)/n;
+    else
+        pi0 = reshape(pi0,1,[]);
+    end
+    tranSysState = struct();
+    tranSysState.handle = {};
+    if self.isDiscreteChain()
+        sts = dtmc_simulate(self.chainModel.getTransMat(), pi0, numEvents);
+        tranSysState.t = (0:(numEvents-1))';
+    else
+        [sjt, sts] = ctmc_simulate(self.chainModel.getGenerator(), pi0, numEvents);
+        tranSysState.t = cumsum([0; reshape(sjt(1:end-1),[],1)]);
+    end
+    tranSysState.state = {stateSpace(sts(:),:)};
+    tranSysState.event = {};
+    tranSysState.isaggregate = false;
+    return
+end
+
 self.assertPhaseTypeStates('sampleSys');
 
 options = self.getOptions;

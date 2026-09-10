@@ -141,7 +141,7 @@ switch options.method
                 muz = [mu; repmat(1:size(mu,2),D,1)];
             end
             if R==1
-                [lG] = pfqn_gldsingle(Lz, N, muz, options);
+                [lG] = pfqn_lldsingle(Lz, N, muz, options);
                 method = 'exact/gld';
             elseif M==1 && any(Z>0)
                 [~,lG]= pfqn_comomrm_ld(L, N, Z, mu, options);
@@ -167,23 +167,37 @@ switch options.method
         % delay term is passed as the aggregate IS demand sum(Z,1).
         [~,lG] = pfqn_clw_lld(L, N, sum(Z,1), mu, options);
         method = 'clw';
-    case {'panacea','panaceald'}
+    case {'pana','panald'}
         % Mitra-McKenna load-dependent PANACEA asymptotic expansion. Delay
         % terms may arrive either in Z or as mu(i,n)=n rows of L, both are
         % recognized by pfqn_panaceald.
         [~,lG] = pfqn_panaceald(L, N, sum(Z,1), mu);
-        method = 'panaceald';
+        method = 'panald';
         if isnan(lG)
             % normal usage (1 - lambda_i/mu_i(Ntot) > 0 at every queueing
             % center) is the domain of the expansion, not a numerical failure
-            line_error(mfilename,'The model is not in normal usage, so the ''panaceald'' asymptotic expansion does not apply. Use ''exact'', ''clw'' or an approximate load-dependent method instead.');
+            line_error(mfilename,'The model is not in normal usage, so the ''panald'' asymptotic expansion does not apply. Use ''exact'', ''clw'' or an approximate load-dependent method instead.');
         end
+    case 'divdiff'
+        % Divided-difference closed form with the limited load-dependent kernel
+        % of Casale-Harrison-Ong (Perform. Eval. 2021), Theorem 1. A think time
+        % would have to enter g_sigma, whose closed form covers queues only, so
+        % it is refused here as pfqn_nc refuses it in the fixed-rate case.
+        % Unlike the default route this one keeps pfqn_explicit_ld's warnings,
+        % since a caller that named the method has no fallback.
+        if sum(Z(:))>0
+            line_error(mfilename,'The ''divdiff'' method requires a model without think time, which needs the integral form of Corollary 3.4. Use ''exact'' or ''default''.');
+        end
+        [lG,~,expr] = pfqn_explicit_ld(L, N, mu);
+        method = ['divdiff.ld/',expr];
     case 'rd'
         [lG] = pfqn_rd(L, N, Z, mu, options);
     case 'nrp'
         [lG] = pfqn_nrp(L, N, Z, mu, options);
     case 'nrl'
         [lG] = pfqn_nrl(L, N, Z, mu, options);
+    case 'nre'
+        [lG] = pfqn_nre(L, N, Z, mu, options);
     case 'comomld'
         if M<=1 || sum(Z) < GlobalConstants.Zero
             [~,lG]= pfqn_comomrm_ld(L, N, Z, mu, options);

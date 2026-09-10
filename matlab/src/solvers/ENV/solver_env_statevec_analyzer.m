@@ -98,17 +98,66 @@ for e = 1:E
             'inner solver, but environment stage %d uses %s.'], e, class(solver_e)));
     end
     self.Qgen{e} = Q;
-    % Warm-start each entry distribution from the stage's own stationary
-    % distribution (a valid probability vector over its state space).
-    pi0 = ctmc_solve_reducible(Q);
-    pi0 = pi0(:)';
-    pi0(pi0 < 0) = 0;
-    if sum(pi0) > 0
-        pi0 = pi0 / sum(pi0);
+end
+
+% Warm start. A stage's OWN stationary distribution is not a usable seed here:
+% a stage that is individually unstable or critical (arrival rate >= its own
+% service rate) has no stationary law at all, and ctmc_solve_reducible then
+% returns the stationary law of the TRUNCATED generator, which piles mass
+% against the truncation wall and whose mean grows linearly with the cutoff
+% (for a critical M/M/1 truncated at N it is uniform, with mean N/2).
+%
+% The fixed point chained in post_ is exact -- it is the stationary equation of
+% the joint (queue,stage) chain, phi_e = (sum_h phi_h q_{he}) (s_e I - Q_e)^-1 --
+% and it does contract to the right answer from that seed, but the number of
+% sweeps needed grows with the cutoff. At a finite iter_max the reported result
+% therefore drifts further from the truth as the cutoff is RAISED, i.e. the
+% natural user response to a suspect number makes it worse.
+%
+% Seed instead from the environment-averaged generator sum_e probEnv(e)*Q_e.
+% That generator is positive recurrent exactly when the model is stable on
+% average, which is the regime in which the answer exists, so its stationary
+% law is cutoff-independent and the sweep count no longer tracks the cutoff.
+% Averaging needs one common state space; when the stages differ in size
+% (resetStateFun is what bridges them) fall back to the per-stage law, which
+% remains the best available seed and is no worse than before.
+dims = zeros(1, E);
+for e = 1:E
+    dims(e) = size(self.Qgen{e}, 1);
+end
+piShared = [];
+if E > 1 && all(dims == dims(1))
+    w = self.envObj.probEnv;
+    w = w(:)';
+    if numel(w) ~= E || any(~isfinite(w)) || sum(w) <= 0
+        w = ones(1, E) / E; % stage probabilities unavailable: weight stages equally
+    else
+        w = w / sum(w);
     end
-    self.piEnter{e} = pi0;
+    Qbar = sparse(dims(1), dims(1));
+    for e = 1:E
+        Qbar = Qbar + w(e) * sparse(self.Qgen{e});
+    end
+    piShared = normalizePi_(ctmc_solve_reducible(Qbar));
+end
+for e = 1:E
+    if isempty(piShared)
+        self.piEnter{e} = normalizePi_(ctmc_solve_reducible(self.Qgen{e}));
+    else
+        self.piEnter{e} = piShared;
+    end
 end
 self.piEnterPrev = self.piEnter;
+end
+
+% -------------------------------------------------------------------------
+function pi0 = normalizePi_(pi0)
+% Coerce a solver output into a probability row vector.
+pi0 = pi0(:)';
+pi0(pi0 < 0) = 0;
+if sum(pi0) > 0
+    pi0 = pi0 / sum(pi0);
+end
 end
 
 % -------------------------------------------------------------------------

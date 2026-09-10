@@ -23,7 +23,7 @@ model.link(myP);
 options = QNS.defaultOptions;
 %options.verbose = false;
 
-solver{1} = CTMC(model);
+solver{1} = CTMC(model,'exact');
 solver{end+1} =QNS(model,'conway');
 solver{end+1} =QNS(model,'reiser');
 solver{end+1} =QNS(model,'rolia');

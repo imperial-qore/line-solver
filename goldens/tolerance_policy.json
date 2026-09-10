@@ -1,0 +1,119 @@
+{
+  "_readme": [
+    "TOLERANCE POLICY for the cross-codebase parity assertions -- the single,",
+    "auditable place where every numeric slack lives. This is DATA so that all four",
+    "codebases (MATLAB, JAR, python, C++) read one file instead of four copies of a",
+    "policy that would drift apart. It was parity-static/tolerances.py until",
+    "2026-08-19; the per-override justifications moved into the `why` field, which",
+    "is the audit trail and is not decoration.",
+    "",
+    "Semantics: a cell passes if the relative difference <= `rel`, OR the absolute",
+    "difference <= `abs`. NaN on either side is skipped. Where both magnitudes are",
+    "below `nearZero.threshold`, the relative test is replaced by `nearZero.abs`.",
+    "",
+    "A solver's tolerance CLASS is recorded per solver in each golden's `class` map;",
+    "`stochasticSolvers` is the fallback for a golden that does not carry one.",
+    "",
+    "Keep `overrides` SHORT and JUSTIFIED -- a long list is a smell that the suite is",
+    "masking real divergence. Prefer excluding a solver from a golden (see",
+    "gen_baselines.py quarantine) over loosening it here. Every entry MUST carry a",
+    "`why`. Never widen one to make a run go green; see README.md."
+  ],
+  "classes": {
+    "deterministic": {
+      "rel": 1e-06
+    },
+    "stochastic": {
+      "rel": 0.05,
+      "abs": 0.001
+    }
+  },
+  "nearZero": {
+    "threshold": 1e-06,
+    "abs": 1e-06
+  },
+  "stochasticSolvers": [
+    "JMT",
+    "LDES",
+    "SSA"
+  ],
+  "overrides": [
+    {
+      "example": "sdroute_closed",
+      "solver": "SSA",
+      "rel": 0.12,
+      "note": "HyperExp think time (SCV=25); obs max ~9.3%",
+      "why": "RNG-noise tolerance: the golden SSA values come from the MATLAB/JAR SSA engine, but python-native SSA draws from an independent RNG stream. On high-variance models the two fixed-seed runs differ by more than the default 5% at the example's sample count, even though both converge to the exact CTMC as samples grow (verified). This is simulation noise between independent streams, not a correctness gap, so the affected (example, SSA) pairs get a wider relative tolerance sized to the observed divergence."
+    },
+    {
+      "example": "prio_psprio",
+      "solver": "SSA",
+      "rel": 0.18,
+      "note": "PSPRIO; low-priority class small & noisy, obs ~14.8%",
+      "why": "RNG-noise tolerance: the golden SSA values come from the MATLAB/JAR SSA engine, but python-native SSA draws from an independent RNG stream. On high-variance models the two fixed-seed runs differ by more than the default 5% at the example's sample count, even though both converge to the exact CTMC as samples grow (verified). This is simulation noise between independent streams, not a correctness gap, so the affected (example, SSA) pairs get a wider relative tolerance sized to the observed divergence."
+    },
+    {
+      "example": "init_state_ps",
+      "solver": "SSA",
+      "rel": 0.1,
+      "note": "PS multiclass; noise straddles the 5-8% boundary",
+      "why": "RNG-noise tolerance: the golden SSA values come from the MATLAB/JAR SSA engine, but python-native SSA draws from an independent RNG stream. On high-variance models the two fixed-seed runs differ by more than the default 5% at the example's sample count, even though both converge to the exact CTMC as samples grow (verified). This is simulation noise between independent streams, not a correctness gap, so the affected (example, SSA) pairs get a wider relative tolerance sized to the observed divergence."
+    },
+    {
+      "example": "cache_replc_lru",
+      "solver": "SSA",
+      "rel": 0.07,
+      "note": "obs 5.87%; both streams -> 0.4",
+      "why": "LRU cache hit/miss throughput. Exact hit ratio = m/n = 2/5 = 0.4 (all deterministic solvers give 0.4 exactly). The golden SSA value 0.40464 is the MATLAB/JAR SSA stream at 1e4 samples; python-native SSA draws an independent stream giving 0.38087. Both converge to 0.4 as samples grow (verified: 0.39691 at 1e5, 0.39905 at 1e6). Their 1e4-sample gap is 5.87%, just over the 5% default -- pure independent-stream noise, not a defect."
+    },
+    {
+      "example": "retrieval_ps",
+      "solver": "SSA",
+      "rel": 0.2,
+      "note": "obs 18% (MATLAB vs python/C++)",
+      "why": "A RETRIEVAL CACHE'S MISS SHARE IS A RARE EVENT, and at the run length the example states the estimator is not converged to within any tolerance a 5% gate would call agreement. Measured on retrieval_ps ArvR at seed 1: MATLAB 0.014394, JAR 0.015061, python 0.017026, C++ 0.017026 -- an 18% spread across four correct engines walking four sample paths. Sweeping the C++ engine over three seeds: 0.0170-0.0191 at 1e5 samples, 0.0163-0.0182 at 1e6, 0.0168-0.0172 at 4e6, against LDES's 0.016735. So the estimator IS converging, on ~4e6 samples, which is an hour per MATLAB row; the gate is widened to the observed spread instead. Authorised by the user 2026-08-13, who chose this over suppressing the cells or paying the run length. It measures little: read these two cells as a smoke test, and use LDES or NC when the hit share itself matters."
+    },
+    {
+      "example": "tut06_cache_lru_zipf",
+      "solver": "SSA",
+      "rel": 0.2,
+      "note": "obs 6.9% (M2J/M2P), 5.2% (M2C)",
+      "why": "A RETRIEVAL CACHE'S MISS SHARE IS A RARE EVENT, and at the run length the example states the estimator is not converged to within any tolerance a 5% gate would call agreement. Measured on retrieval_ps ArvR at seed 1: MATLAB 0.014394, JAR 0.015061, python 0.017026, C++ 0.017026 -- an 18% spread across four correct engines walking four sample paths. Sweeping the C++ engine over three seeds: 0.0170-0.0191 at 1e5 samples, 0.0163-0.0182 at 1e6, 0.0168-0.0172 at 4e6, against LDES's 0.016735. So the estimator IS converging, on ~4e6 samples, which is an hour per MATLAB row; the gate is widened to the observed spread instead. Authorised by the user 2026-08-13, who chose this over suppressing the cells or paying the run length. It measures little: read these two cells as a smoke test, and use LDES or NC when the hit share itself matters."
+    },
+    {
+      "example": "retrieval_chain",
+      "solver": "LDES",
+      "rel": 0.08,
+      "note": "sized to the worst seed pair (6.8%) plus headroom",
+      "why": "THIS ONE MASKS A SYSTEMATIC DIFFERENCE, NOT NOISE, and is here by explicit user instruction on 2026-08-13 rather than because the measurement excuses it. LDES is TWO engines: MATLAB, python and C++ drive the native `common/ldes` binary, the JAVA row runs the JAR's own in-JVM engine. On retrieval_chain their delayed-hit LATENCY differs by 6.1-6.8% and EACH IS STABLE ACROSS SEEDS, which is what rules out sampling: native ResidT 0.89462 / 0.89671 / 0.89681 (seeds 1,2,3) against JAR ResidT 0.83971 / 0.83600 / 0.83814. Everything else on the row agrees to 0.3% -- ArvR 0.56346 against 0.56429, and the hit / delayed-hit / miss shares to three digits -- so the two engines agree about the cache and disagree about how long a merged secondary request waits. If the retrieval latency is ever the quantity of interest, measure it against the native engine and not against this cell."
+    },
+    {
+      "example": "tut10_dep_process_analysis",
+      "solver": "OPT",
+      "rel": 0.05,
+      "note": "obs 2.62%; estimator sd ~5% over seeds",
+      "why": "tut09's OptResult is the simulated squared coefficient of variation of the departure process, estimated from a CTMC sample path (sample_sys_aggr). It is a stochastic estimate whose value depends on the codebase's RNG stream: MATLAB 0.819332 (both MATLAB rows, since lang='java' dispatches only getAvg, not sampleSysAggr) vs python 0.797870, around the theoretical 0.875. Observed gap 2.62%; the estimator's own noise at the example's 5e3 samples is ~5% relative sd over seeds, so 0.05 keeps headroom for a sampler change without hiding a real divergence."
+    },
+    {
+      "example": "cdf_respt_populations",
+      "solver": "FLD",
+      "abs": 0.001,
+      "note": "ODE-solver truncation residual; STALE, see why",
+      "why": "Direct FLD mean response times per population. Every row converges to the same point, but the MATLAB, JAR and python FLD backends use different ODE solvers (documented in CLAUDE.md), leaving iter_max=100 truncation residuals that differ by up to ~8e-4 absolute (e.g. Queue1 N=4: 4.99919 MATLAB vs 4.99999 python). An absolute tolerance covers the residual without loosening the relative test. The example's CDF-derived means/SCVs are a grid-dependent quadrature and are deliberately NOT goldened. THE POINT THEY CONVERGE TO CHANGED ON 2026-08-18 AND THE GOLDEN DID NOT. The quoted residuals are against the first-order limits [1,2,2]/[1,5,2]/[1,13,2], which is what the default answered until `fd172a026` put `dae` between the declined `minnormal` and that fallback. Every non-MATLAB row now answers the closure -- cycle 10.035 at N=4, 17.795 at N=8, against the exact 10.285/18.133 from MVA/NC -- and agrees to five digits, so the 22% this reports is a stale golden. Regenerate on a MATLAB box: ./run_parity_static.sh --gen cdf_respt_populations, and re-check this entry then: the residual it was sized for is a property of the old rung."
+    },
+    {
+      "example": "lqn_basic",
+      "solver": "LN",
+      "rel": 0.0005,
+      "note": "sized to the worst row (P2J 3.41e-4), not the 8.53e-5 PYTHON one",
+      "why": "LN layered fixed point. MATLAB and the JAR agree to every printed digit (M2J reproduces MATLAB exactly), while native python and the C++ engine stop at a different iterate of the same fixed point: PYTHON T1.QLen 8.53e-5, M2P ResidT 1.8e-5, M2C Util 1.51e-5, P2J QLen 3.41e-4. Every one of these is far inside the solver's OWN convergence tolerance (LN iter_tol = 5e-3), so all four answers are converged by the algorithm's standard; the defaults (iter_max 200, iter_tol 5e-3, tol 1e-4) are identical across the four codebases. Approved by the user 2026-08-03."
+    },
+    {
+      "example": "lqn_ofbiz",
+      "solver": "LN(NC)",
+      "rel": 5e-05,
+      "note": "PYTHON RespT 1.11e-5, M2P QLen 1.25e-5; LN iter_tol is 5e-3",
+      "why": "Same layered fixed-point iterate difference as lqn_basic, on the LN(NC) layer solver of a large LQN. MATLAB, the JAR and the C++ engine agree; only the rows python builds or runs dissent. Approved by the user 2026-08-03."
+    }
+  ]
+}

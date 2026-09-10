@@ -40,13 +40,13 @@ public final class Pfqn_nrl {
         int R = L.getNumCols();
         if (Z.elementSum() > 0) {
             L = Matrix.concatRows(L, Z, null);
-            java.util.List<Double> Ntrange = new java.util.ArrayList<Double>();
-            double i = 1.0;
-            while (i <= Nt) {
-                Ntrange.add(i);
-                i++;
+            // the delay is an infinite server: rates 1..Nt along ONE row, since
+            // concatRows appends a station, not a population column
+            Matrix delayRates = new Matrix(1, (int) Nt);
+            for (int k = 0; k < (int) Nt; k++) {
+                delayRates.set(0, k, k + 1.0);
             }
-            alpha = Matrix.concatRows(alpha, new Matrix(Ntrange), null);
+            alpha = Matrix.concatRows(alpha, delayRates, null);
         }
         if (M == 1 && Z.elementSum() == 0.0) {
             return Pfqn_gld.pfqn_gld(L, N, alpha, options).lG;

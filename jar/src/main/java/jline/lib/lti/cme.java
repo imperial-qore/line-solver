@@ -139,7 +139,6 @@ public final class cme {
                 new Apfloat((long) (polycoeff.size() - 1)));
         Apfloat constant_term = Apfloat.ONE.divide(to_divide);
         Apfloat int_value = moments(getmefunction(res), 0);
-        System.out.println(int_value);
         constant_term = constant_term.divide(int_value);
         for (long l = 0; l < (long) Math.pow(2.0, (double) (polycoeff.size() - 1)); l++) {
             boolean[] b = binaryCheck(l, polycoeff.size());

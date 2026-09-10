@@ -148,6 +148,19 @@ public abstract class EnsembleSolver extends Solver {
 
     protected void iterate() {
 
+        // Solver console: an ensemble solver does not pass through
+        // NetworkSolver.getAvg, so it opens its own run here; the finally in
+        // the caller-visible exit below closes it.
+        jline.io.LineConsole.beginRun(this, this.options);
+        try {
+            iterateBody();
+        } finally {
+            jline.io.LineConsole.closeRun(this);
+        }
+    }
+
+    private void iterateBody() {
+
         long outerStartTime = System.nanoTime();
         int it = 0;
         int E = getNumberOfModels();
@@ -239,7 +252,8 @@ public abstract class EnsembleSolver extends Solver {
         if (options.verbose != VerboseLevel.SILENT && !solveRuntimes.isEmpty()) {
             double avgSolve = solveRuntimes.stream().mapToDouble(Double::doubleValue).average().orElse(0.0);
             double avgSynch = synchRuntimes.stream().mapToDouble(Double::doubleValue).average().orElse(0.0);
-            System.out.printf("\nSummary: Analyze avg time: %.3fs. Update avg time: %.3fs. Total runtime: %.3fs. ",
+            // terminate the block: without the newline whatever prints next is glued onto this line.
+            System.out.printf("\nSummary: Analyze avg time: %.3fs. Update avg time: %.3fs. Total runtime: %.3fs.%n",
                        avgSolve, avgSynch, totalRuntime);
         }
 
@@ -277,8 +291,8 @@ public abstract class EnsembleSolver extends Solver {
     // b) getSolver() - solvers is public instead of using getter
     // c) setSolver() x 3 - solvers is public so no need for setters
     
-    // ========== Kotlin-style Alias Methods ==========
-    // Aliases for get* methods following Kotlin naming conventions
+    // ========== Alias Methods ==========
+    // Aliases for get* methods following property-style naming conventions
     
     public int numberOfModels() { return getNumberOfModels(); }
     protected AvgTable ensembleAvg() { return getEnsembleAvg(); }

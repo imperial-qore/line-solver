@@ -11,31 +11,15 @@ ST = 1 ./ sn.rates;
 ST(isnan(ST)) = 0;
 ST0 = ST;
 
-% Check for special LCFS + LCFS-PR 2-station network
+% Check for special LCFS + LCFS-PR 2-station network. The shape is decided by
+% NC_LCFS_REFUSAL, which SolverNC's support gate asks too, so a pair the report
+% offers is a pair this arm accepts.
 lcfsStat = find(sched == SchedStrategy.LCFS);
 lcfsprStat = find(sched == SchedStrategy.LCFSPR);
-if ~isempty(lcfsStat) && ~isempty(lcfsprStat)
-    % Validate LCFS network topology
-    if length(lcfsStat) ~= 1 || length(lcfsprStat) ~= 1
-        line_error(mfilename, 'LCFS NC requires exactly one LCFS and one LCFS-PR station.');
-    end
-    Nchain = zeros(1,C);
-    for c=1:C
-        inchain = sn.inchain{c};
-        Nchain(c) = sum(NK(inchain)); %#ok<FNDSB>
-    end
-    if any(isinf(Nchain))
-        line_error(mfilename, 'LCFS NC requires a closed queueing network.');
-    end
-    % Check for self-loops in routing matrix
-    rt = sn.rt;
-    nclasses = sn.nclasses;
-    for ist = [lcfsStat, lcfsprStat]
-        for r = 1:nclasses
-            if rt((ist-1)*nclasses+r, (ist-1)*nclasses+r) > 0
-                line_error(mfilename, 'LCFS NC does not support self-loops at stations.');
-            end
-        end
+if ~isempty(lcfsStat)
+    lcfsReason = nc_lcfs_refusal(sn);
+    if ~isempty(lcfsReason)
+        line_error(mfilename, lcfsReason);
     end
     % Call specialized LCFS NC solver
     [Q,U,R,T,C,X,lG] = solver_nc_lcfsqn(sn, options, lcfsStat, lcfsprStat);
@@ -43,9 +27,6 @@ if ~isempty(lcfsStat) && ~isempty(lcfsprStat)
     it = 1;
     method = 'lcfsqn.ca';
     return;
-elseif ~isempty(lcfsStat)
-    % LCFS without LCFS-PR is not supported
-    line_error(mfilename, 'LCFS scheduling requires a paired LCFS-PR station.');
 end
 
 Nchain = zeros(1,C);
@@ -121,8 +102,12 @@ while max(abs(1-eta./eta_1)) > options.iter_tol & it < options.iter_max
     % step 1
     [lG, Xchain, Qchain, method] = pfqn_nc(lambda,Lms,Nchain,sum(Z,1)+sum(Zms,1), options);
 
-    if sum(Zms,1) > GlobalConstants.FineTol
-        % in this case, we need to use the iterative approximation below
+    if all(sum(Zms,1) > GlobalConstants.FineTol) && ~strcmpi(options.method,'mcmc')
+        % in this case, we need to use the iterative approximation below.
+        % 'mcmc' is exempt: it obtains X and Q from ONE simulation of the
+        % regularized network, so discarding them would cost R + M*R further
+        % simulations to recover the same means by differencing lG. Seidmann's
+        % surrogate delay is added back to Qchain below instead.
         Xchain=[];
         Qchain=[];
     end
@@ -173,12 +158,17 @@ while max(abs(1-eta./eta_1)) > options.iter_tol & it < options.iter_max
             end
         end
     else
-        % just fill the delay servers
+        % just fill the delay servers, and restore the population that
+        % Seidmann's surrogate delay holds outside the queueing station (Zms is
+        % zero unless the station is a multiserver, so this is a no-op for a
+        % method that reaches this branch with single servers only)
         for r=1:C
             for ist=1:M
                 if Lchain(ist,r)>0
                     if isinf(nservers(ist)) % infinite server
                         Qchain(ist,r) = Lchain(ist,r) * Xchain(r);
+                    elseif nservers(ist) > 1
+                        Qchain(ist,r) = Qchain(ist,r) + Zms(ist,r) * Xchain(r);
                     end
                 end
             end

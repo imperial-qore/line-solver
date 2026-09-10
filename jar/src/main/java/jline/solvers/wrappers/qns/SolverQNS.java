@@ -27,9 +27,7 @@ import jline.solvers.AvgHandle;
 import jline.util.matrix.Matrix;
 
 import javax.xml.parsers.ParserConfigurationException;
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.util.List;
 
 /**
@@ -208,6 +206,14 @@ public class SolverQNS extends NetworkSolver {
         featSupported.setTrue("OpenClass");
         featSupported.setTrue("ClosedClass");
 
+        // c-server stations: the JMVA document carries the count as an
+        // <ldstation> and the LQN as a host multiplicity; "suri" and "schmidt"
+        // refuse one on the qnsolver path, which stays structural (it is a
+        // condition on options.config.multiserver, not on the model).
+        // FiniteCapacity is NOT declared: neither document has a buffer, which
+        // is what the binding-capacity gate in supportsModelMethod refuses.
+        featSupported.setTrue("MultiServer");
+
         return featSupported;
     }
 
@@ -219,6 +225,144 @@ public class SolverQNS extends NetworkSolver {
         FeatureSet featUsed = model.getUsedLangFeatures();
         FeatureSet featSupported = getFeatureSet();
         return FeatureSet.supports(featSupported, featUsed);
+    }
+
+    /**
+     * Structural finite-capacity gate.
+     *
+     * <p>NOTHING under the QNS tree reads sn.cap or sn.classcap -- the model is
+     * written out for {@code qnsolver}, whose MVA-family algorithms have no
+     * representation of a finite buffer -- so a capped station was solved as an
+     * unbounded one and the table reported the unconstrained answer under this
+     * solver's name. There is no registry feature name for plain capacity, hence
+     * the structural test; SolverMVA, SolverNC, SolverAG and SolverFluid gate
+     * the same way through the same helper.
+     *
+     * <p>Without it SolverAUTO.listValidMethods offered all eight "qns" method names on
+     * the BAS-blocking model of cqn_bas_blocking.
+     *
+     * @param method the concrete method name
+     * @return empty string if supported, else the offending reason
+     */
+    @Override
+    public String supportsModelMethod(String method) {
+        // A BINDING FINITE BUFFER FIRST, ahead of the base gate. Nothing under
+        // the QNS tree reads sn.cap or sn.classcap -- neither the JMVA document
+        // qnsolver reads nor the LQN QN2LQN writes has a buffer -- and this
+        // refusal names the station, the cap and the way out, where the feature
+        // envelope can only say "(feature: FiniteCapacity)". Once FiniteCapacity
+        // became a registry name on 2026-09-05 the base gate started answering
+        // first and the useful sentence became unreachable.
+        if (this.model != null) {
+            String capReason = NetworkSolver.bindingCapacityReason(this.model,
+                    this.model.getStruct(false), "SolverQNS");
+            if (capReason != null && !capReason.isEmpty()) {
+                return capReason;
+            }
+        }
+        String reason = super.supportsModelMethod(method);
+        if (reason != null && !reason.isEmpty()) {
+            return reason;
+        }
+        if (this.model == null) {
+            return "";
+        }
+        NetworkStruct snLocal = this.model.getStruct(false);
+        String immfeed = qnsImmfeedRefusal(snLocal);
+        if (!immfeed.isEmpty()) {
+            return immfeed;
+        }
+        if (this.model.hasProductFormSolution() || this.model.hasOpenClasses()) {
+            String ms = qnsMultiserverRefusal(snLocal, method);
+            if (!ms.isEmpty()) {
+                return ms;
+            }
+            String jmva = jline.solvers.wrappers.jmt.SolverJMT.jmtMethodRefusal(snLocal, method, null);
+            if (jmva != null && !jmva.isEmpty()) {
+                return jmva;
+            }
+        }
+        return "";
+    }
+
+    /**
+     * Why SolverQNS cannot serve a model with immediate feedback, or "" when the
+     * model has none.
+     *
+     * <p>Immediate feedback (sn.immfeed) keeps a self-looping job on its server
+     * instead of re-queueing it, and neither path of SolverQNS can state that:
+     * the JMVA document qnsolver reads carries a mean demand and a visit count
+     * per chain, and the LQN QN2LQN writes turns the routing into OR-fork
+     * precedences of pseudo-activities on the reference task, where a repeated
+     * visit is a new call. Either would answer for re-queueing under this
+     * solver's name.
+     *
+     * <p>ONE PREDICATE, TWO CALLERS: {@link #supportsModelMethod} (the gate,
+     * hence model.help and SolverAUTO) and {@link #runAnalyzer} (the run, for a
+     * caller with enableChecks off). SolverJMT keeps its own wording in
+     * jmtMethodRefusal. Mirrors matlab/src/solvers/wrappers/QNS/qns_immfeed_refusal.m.
+     *
+     * @param sn the network struct
+     * @return the refusal, or "" when the model carries no immediate feedback
+     */
+    public static String qnsImmfeedRefusal(NetworkStruct sn) {
+        if (sn == null || sn.immfeed == null || sn.immfeed.isEmpty()) {
+            return "";
+        }
+        if (sn.immfeed.elementSum() <= 0) {
+            return "";
+        }
+        return "SolverQNS does not support immediate feedback (sn.immfeed): neither the JMVA "
+                + "document qnsolver reads nor the LQN QN2LQN writes can keep a self-looping job "
+                + "on its server. Use SolverCTMC or SolverSSA, whose state space carries the "
+                + "self-loop.";
+    }
+
+    /**
+     * Whether qnsolver's own -m switch offers this multiserver approximation.
+     *
+     * <p>THE RULE IS INSIDE THE MULTISERVER BRANCH, and that is not a detail.
+     * Without a multiserver station the reference emits no -m at all and answers
+     * under the caller's method name, so refusing "suri" there would refuse a
+     * model this solver does solve.
+     *
+     * <p>"qnsolver -m" accepts conway, reiser, rolia and zhou. "suri" and
+     * "schmidt" are LQNS approximations, reachable only on the
+     * non-product-form closed SolverLQNS branch, and qnsolver has no flag for
+     * either. Mirrors matlab/src/solvers/wrappers/QNS/qns_multiserver_refusal.m
+     * and the C++ is_qnsolver_multiserver.
+     *
+     * @param sn     the network struct
+     * @param method the requested method name
+     * @return the refusal, or "" when the pair is served
+     */
+    public static String qnsMultiserverRefusal(NetworkStruct sn, String method) {
+        if (sn == null || method == null || method.isEmpty()) {
+            return "";
+        }
+        boolean multiserver = false;
+        if (sn.nservers != null) {
+            for (int i = 0; i < sn.nservers.length() && !multiserver; i++) {
+                double c = sn.nservers.get(i);
+                if (c > 1 && !Double.isInfinite(c)) {
+                    multiserver = true;
+                }
+            }
+        }
+        if (!multiserver) {
+            // No multiserver station, so no -m flag is emitted and every method
+            // name is served by the plain invocation.
+            return "";
+        }
+        String ms = method.toLowerCase();
+        if (ms.equals("default") || ms.equals("conway") || ms.equals("reiser")
+                || ms.equals("rolia") || ms.equals("zhou")) {
+            return "";
+        }
+        return "SolverQNS: the multiserver approximation '" + ms + "' is one LQNS offers and "
+                + "qnsolver does not: 'qnsolver -m' accepts conway, reiser, rolia and zhou only; "
+                + "suri and schmidt are available only on the non-product-form closed SolverLQNS "
+                + "branch.";
     }
 
     /**
@@ -247,6 +391,12 @@ public class SolverQNS extends NetworkSolver {
 
         if (this.sn == null) {
             this.sn = this.model.getStruct(false);
+        }
+        // The gate's own sentence for a caller running with enableChecks off:
+        // neither path can keep a self-looping job on its server.
+        String immfeedReason = qnsImmfeedRefusal(this.sn);
+        if (!immfeedReason.isEmpty()) {
+            throw new RuntimeException(immfeedReason);
         }
         jline.io.InputOutput.line_ack(options.verbose, "QNS");
         line_debug(options.verbose, String.format("QNS solver starting: method=%s, multiserver=%s, nstations=%d, nclasses=%d",
@@ -284,7 +434,9 @@ public class SolverQNS extends NetworkSolver {
         if (isProductForm || isOpen) {
             // Product-form or open: use qnsolver directly (QN2LQN does not support Source/Sink)
             if (!Solver_qns_analyzer.isQNSolverAvailable()) {
-                throw new RuntimeException("QNS solver requires the external 'qnsolver' tool for product-form and open networks. Please install qnsolver.");
+                throw new RuntimeException("QNS solver requires the external 'qnsolver' tool for product-form and open networks. "
+                        + "Obtain it from its authors at http://www.sce.carleton.ca/rads/lqns/; LINE ships no copy and "
+                        + "runs none from a container image.");
             }
             line_debug(options.verbose, "QNS: product-form or open model, using qnsolver directly");
             Solver_qns_analyzer analyzer = new Solver_qns_analyzer(this);
@@ -365,6 +517,11 @@ public class SolverQNS extends NetworkSolver {
                             tput = tputList.get(e);
                         }
                         // see _kb/12-interfaces-and-docs.md (Wrappers: JAR subprocess-bridge notes: LQNS entry-phase utilization fallback)
+                        // lqns sums the utilization over the host's servers, a Network station reports it per server
+                        double nservers = this.sn.nservers.get(i);
+                        if (!Double.isInfinite(nservers) && nservers > 0) {
+                            util = util / nservers;
+                        }
                         UN.set(i, r, util);
                         RN.set(i, r, respTList.get(t));
                         WN.set(i, r, residTList.get(t));
@@ -397,50 +554,13 @@ public class SolverQNS extends NetworkSolver {
     }
 
     /**
-     * Check if the solver is available
-     * Checks for the qnsolver command which is the actual executable used
+     * Check if the solver is available: a native {@code qnsolver} binary is on
+     * the PATH. qnsolver ships with LQNS, whose licence forbids redistribution,
+     * so LINE never runs it from a container image; use
+     * {@code run-tests.sh --lqns-docker} to test a containerised build.
      */
     public static boolean isAvailable() {
-        try {
-            String os = System.getProperty("os.name").toLowerCase();
-            String command = "qnsolver -h";
-            Process process;
-
-            if (os.contains("win")) {
-                process = Runtime.getRuntime().exec(new String[]{"cmd", "/c", command});
-            } else {
-                process = Runtime.getRuntime().exec(new String[]{"sh", "-c", command});
-            }
-
-            int exitCode = process.waitFor();
-
-            // see _kb/12-interfaces-and-docs.md (Wrappers: JAR subprocess-bridge notes: command -v probe semantics)
-            BufferedReader errorReader = new BufferedReader(new InputStreamReader(process.getErrorStream()));
-            String line;
-            while ((line = errorReader.readLine()) != null) {
-                String lowerLine = line.toLowerCase();
-                if (lowerLine.contains("command not found") ||
-                        lowerLine.contains("not recognized") ||
-                        lowerLine.contains("no such file")) {
-                    errorReader.close();
-                    return false;
-                }
-            }
-            errorReader.close();
-
-            // Also check stdout for command existence
-            BufferedReader outReader = new BufferedReader(new InputStreamReader(process.getInputStream()));
-            boolean hasOutput = outReader.readLine() != null;
-            outReader.close();
-
-            // If we got any output or a successful exit code, the command exists
-            return hasOutput || exitCode == 0;
-
-        } catch (IOException e) {
-            return false;
-        } catch (InterruptedException e) {
-            return false;
-        }
+        return Solver_qns_analyzer.hasNativeQNSolver();
     }
 
     // Probability methods - QNS solver does not support detailed state probability analysis
@@ -502,45 +622,8 @@ public class SolverQNS extends NetworkSolver {
         throw new RuntimeException("sampleSysAggr not supported by QNS solver");
     }
 
-    // Distribution methods - QNS solver does not support distribution analysis
-
-    @Override
-    public DistributionResult getCdfRespT(AvgHandle R) {
-        throw new RuntimeException("getCdfRespT not supported by QNS solver");
-    }
-
-    @Override
-    public DistributionResult getCdfRespT() {
-        throw new RuntimeException("getCdfRespT not supported by QNS solver");
-    }
-
-    @Override
-    public DistributionResult getTranCdfRespT(AvgHandle R) {
-        throw new RuntimeException("getTranCdfRespT not supported by QNS solver");
-    }
-
-    @Override
-    public DistributionResult getTranCdfRespT() {
-        throw new RuntimeException("getTranCdfRespT not supported by QNS solver");
-    }
-
-    @Override
-    public DistributionResult getCdfPassT(AvgHandle R) {
-        throw new RuntimeException("getCdfPassT not supported by QNS solver");
-    }
-
-    @Override
-    public DistributionResult getCdfPassT() {
-        throw new RuntimeException("getCdfPassT not supported by QNS solver");
-    }
-
-    @Override
-    public DistributionResult getTranCdfPassT(AvgHandle R) {
-        throw new RuntimeException("getTranCdfPassT not supported by QNS solver");
-    }
-
-    @Override
-    public DistributionResult getTranCdfPassT() {
-        throw new RuntimeException("getTranCdfPassT not supported by QNS solver");
-    }
+    // Distribution methods are NOT overridden: the reference SolverQNS declares
+    // none, so getCdfRespT falls through to the NetworkSolver exponential
+    // fallback and the transient/passage getters to the base refusals, exactly
+    // as MATLAB's inheritance resolves them.
 }

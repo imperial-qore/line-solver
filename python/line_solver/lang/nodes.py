@@ -42,6 +42,19 @@ class Queue(Station):
         model.add_node(self)
 
         self._sched_strategy = sched_strategy
+        # INF SCHEDULING IS AN INFINITE SERVER, and the server count says so:
+        # MATLAB's Queue constructor sets numberOfServers = Inf on this branch
+        # (and setNumberOfServers then ignores a later change), the JAR sets its
+        # Integer.MAX_VALUE, and every partition of the stations into delays and
+        # queues reads that count. Left at 1, the station was a Queue node with
+        # INF scheduling that no analyzer claimed: the AMVA excluded it from the
+        # queueing demands by its scheduling and the delay fill skipped it by its
+        # node type, so it reported QLen 0 while holding most of the population.
+        # the name, not the enum member: the user-facing SchedStrategy is
+        # line_solver.constants', a distinct class from lang.base's, so the two
+        # INF members compare unequal (as the DPS/GPS guards below already assume)
+        if getattr(sched_strategy, 'name', None) == 'INF':
+            self._number_of_servers = np.inf
         self._sched_param = {}  # Dict[JobClass, scheduling_parameter]
         self._service_process = {}  # Dict[JobClass, Distribution]
         self._server_types = None  # For heterogeneous servers
@@ -358,6 +371,119 @@ class Queue(Station):
             _np.random.set_state(rng_state)
         return state['ok'], state['badc'], state['partial']
 
+    def check_rate_monotonicity(self, Nvec, cap):
+        """Check OI condition (1) on the service rate mu(c): the per-job rates
+        must be non-negative, mu(c_1,...,c_j) >= mu(c_1,...,c_{j-1}) for every
+        microstate and position.
+
+        A rate can be permutation-invariant and still fail to parameterize an OI
+        queue. Single-server processor sharing with class-dependent rates,
+        mu(c) = (sum_j mu_{c_j}) / n, is the standard trap: it is flatly
+        invariant under permutations, yet as soon as two classes have different
+        rates its prefix increments go negative -- with mu_hit = 3.0 and
+        mu_miss = 0.7, mu(Hit) = 3.0 and mu(Hit,Miss) = 1.85, so the second job
+        would be served at rate -1.15.
+
+        Run this AFTER check_perm_invariance: permutation invariance is what
+        makes mu a function of the count vector, and the increments to test are
+        then just mu(n + e_r) - mu(n) over count vectors n and classes r, with
+        no permutation enumeration. Prefixes are non-empty, so mu is never
+        evaluated on an empty microstate, and an increment of exactly zero is
+        accepted -- that is how a class which does not visit this station is
+        expressed. Enumerates the reachable count vectors (per-class counts <=
+        Nvec, total <= cap) when small, otherwise samples and returns
+        partial=True. Returns (ok, badc, badr, partial): badc the microstate
+        whose rate is lowered, badr the class whose arrival lowers it.
+        """
+        import numpy as _np
+        mu = self._svc_rate_fun
+        if mu is None:
+            return True, None, None, False
+        K = len(Nvec)
+        tol = 1e-9
+        LATTICE_BUDGET = 4096
+        MAXEVAL = 50000
+        ub = _np.asarray(Nvec, dtype=float)
+        has_open = bool(_np.any(~_np.isfinite(ub)))
+        if _np.isfinite(cap) and 0 <= cap < 1e18:
+            Lmax = float(cap)
+        else:
+            Lmax = float(_np.sum(ub[_np.isfinite(ub)]))
+        ub = _np.where(_np.isfinite(ub), ub, min(Lmax, 6.0))
+        ub = _np.minimum(ub, Lmax).astype(int)
+        if not _np.isfinite(Lmax) or Lmax < 2:
+            return True, None, None, False
+        Lmax = int(Lmax)
+        lat = int(_np.prod(ub + 1))
+        exhaustive = (not has_open) and lat <= LATTICE_BUDGET
+
+        cache = {}
+        neval = [0]
+
+        def rate(n):
+            key = tuple(int(x) for x in n)
+            if key not in cache:
+                cache[key] = float(mu(_np.repeat(_np.arange(K), n)))
+                neval[0] += 1
+            return cache[key]
+
+        def test_prefix(n):
+            """Every one-job extension of the prefix n must not lower the rate."""
+            base = rate(n)
+            for r in range(K):
+                if n[r] >= ub[r]:
+                    continue
+                n[r] += 1
+                try:
+                    if rate(n) - base < -tol * max(1.0, abs(base)):
+                        return [int(x) for x in _np.repeat(_np.arange(K), n)], r
+                finally:
+                    n[r] -= 1
+            return None
+
+        partial = False
+        rng_state = _np.random.get_state()
+        _np.random.seed(0)
+        try:
+            if exhaustive:
+                n = _np.zeros(K, dtype=int)
+                while True:
+                    # non-empty prefixes with room for one more job
+                    if 1 <= n.sum() <= Lmax - 1:
+                        bad = test_prefix(n)
+                        if bad is not None:
+                            return False, bad[0], bad[1], partial
+                        if neval[0] >= MAXEVAL:
+                            partial = True
+                            break
+                    d = 0
+                    while d < K:
+                        n[d] += 1
+                        if n[d] <= ub[d]:
+                            break
+                        n[d] = 0
+                        d += 1
+                    if d >= K:
+                        break
+            else:
+                partial = True
+                for _ in range(400):
+                    length = 1 + int(_np.random.randint(0, max(1, min(Lmax, 6))))
+                    n = _np.zeros(K, dtype=int)
+                    for _j in range(length):
+                        r = int(_np.random.randint(0, K))
+                        if n[r] < ub[r]:
+                            n[r] += 1
+                    if 1 <= n.sum() <= Lmax - 1:
+                        bad = test_prefix(n)
+                        if bad is not None:
+                            return False, bad[0], bad[1], partial
+                        if neval[0] >= MAXEVAL:
+                            break
+        finally:
+            _np.random.set_state(rng_state)
+        return True, None, None, partial
+
     def is_service_defined(self, jobclass: JobClass) -> bool:
         """Check if service distribution is defined for a class."""
         return jobclass in self._service_process
@@ -389,6 +515,11 @@ class Queue(Station):
             raise ValueError(
                 f"Cannot use multi-server stations with "
                 f"{getattr(self._sched_strategy, 'name', self._sched_strategy)} scheduling.")
+        # An infinite server has no server count to set: MATLAB's
+        # setNumberOfServers ignores the request on this branch rather than
+        # turning the station into a finite-server queue behind its scheduling.
+        if getattr(self._sched_strategy, 'name', None) == 'INF':
+            return
         super().set_number_of_servers(value)
 
     def set_limit(self, limit: int) -> None:
@@ -465,6 +596,8 @@ class Queue(Station):
         server_type.set_id(len(self._server_types))
         server_type.set_parent_queue(self)
         self._server_types.append(server_type)
+        # The pools size the station, as in MATLAB/JAR updateTotalServerCount
+        self.number_of_servers = sum(st.get_num_of_servers() for st in self._server_types)
         self._invalidate_java()
 
     def get_server_types(self):
@@ -516,6 +649,42 @@ class Queue(Station):
             return None
         return self._hetero_service.get((jobclass, server_type))
 
+    def set_server_parallelism(self, jobclass, n: int) -> None:
+        """
+        Set the number of servers a job of this class seizes for the whole of its
+        service, JMT's job parallelism (Server.serverNumRequired).
+
+        A job waits until n servers are simultaneously free and holds all of them
+        until it completes, so the station serves at most floor(c/n) such jobs at
+        a time. The default is 1.
+
+        Args:
+            jobclass: Job class
+            n: Number of servers required, an integer in [1, c]
+
+        Raises:
+            ValueError: If n is below 1 or above the server count
+        """
+        n = int(n)
+        if n < 1:
+            raise ValueError("Server parallelism must be a positive integer.")
+        if n > self.number_of_servers:
+            raise ValueError(
+                f"Server parallelism ({n}) exceeds the {self.number_of_servers} servers of "
+                f"station {self.name}, so a job of class {jobclass.name} could never enter service.")
+        if not hasattr(self, '_server_parallelism'):
+            self._server_parallelism = {}
+        self._server_parallelism[jobclass] = n
+        self._invalidate_java()
+
+    def get_server_parallelism(self, jobclass) -> int:
+        """Get the number of servers seized by a job of this class, 1 if unset."""
+        return getattr(self, '_server_parallelism', {}).get(jobclass, 1)
+
+    def has_server_parallelism(self) -> bool:
+        """True when some class seizes more than one server."""
+        return any(n > 1 for n in getattr(self, '_server_parallelism', {}).values())
+
     def get_total_num_of_servers(self) -> int:
         """
         Get total number of servers across all server types.
@@ -536,6 +705,9 @@ class Queue(Station):
     setHeteroService = set_hetero_service
     getHeteroService = get_hetero_service
     getTotalNumOfServers = get_total_num_of_servers
+    setServerParallelism = set_server_parallelism
+    getServerParallelism = get_server_parallelism
+    hasServerParallelism = has_server_parallelism
 
     # =========================================================================
     # POLLING AND SWITCHOVER METHODS
@@ -973,6 +1145,7 @@ class Queue(Station):
 
         Used in BMAP/PH/N/N retrial queues. When a batch of size k arrives and
         only m < k servers are free:
+
           - with probability p the entire batch is rejected to the orbit;
           - with probability (1-p) m customers are admitted and k-m go to orbit.
 
@@ -1200,7 +1373,7 @@ class Source(Station):
         the epochs; this decides how many jobs each epoch releases. Geometric
         interarrivals with a Geometric batch size is the Geo^X arrival stream,
         whose analytical counterpart is
-        :func:`line_solver.api.qsys.qsys_geoxgeo1`.
+        :func:`line_solver.api.dqsys.dqsys_geoxgeo1`.
 
         The batch size must be supported on {1,2,...}: an epoch that releases no
         job is not an arrival epoch, so a law that can return zero is rejected
@@ -1351,6 +1524,13 @@ class Fork(Node):
         model.add_node(self)
 
         self._tasks_per_link = None
+        # Variable forking levels. Each is a list of (dest_name, class_idx,
+        # payload); dest_name '' means every connected link. Kept by
+        # DESTINATION NAME rather than link ordinal because the link order is an
+        # artefact of connmatrix traversal and renumbers on a relink.
+        self._tasks_per_link_by_dest = []
+        self._tasks_per_link_dist = []
+        self._branch_prob = []
         self._capacity = np.inf
         # see _kb/04-networkstruct.md (Node/process construction notes) for rationale
         self._state = None
@@ -1383,19 +1563,93 @@ class Fork(Node):
         """Set Fork state space (FJ tag-augmented copies only)."""
         self._state_space = space
 
-    def set_tasks_per_link(self, ntasks: np.ndarray) -> None:
+    def set_tasks_per_link(self, ntasks, jobclass=None, dest_node=None) -> None:
         """
-        Set number of tasks spawned per outgoing link (experimental).
+        Set number of tasks spawned per outgoing link.
+
+        The total number of siblings a firing creates is
+        (number of outgoing links) * ntasks. SolverJMT and SolverLDES simulate
+        it directly; the MMT fork-join transform behind SolverMVA/SolverNC
+        carries the load of all the siblings on the auxiliary open class and
+        synchronises on the order statistic of that many branch times, each
+        branch replicated ntasks times. The H-T transform refuses ntasks > 1.
 
         Args:
-            ntasks: Array with task counts for each link
+            ntasks: Task count emitted on each outgoing link
+            jobclass: Optional job class; when given, only that class is
+                affected and every other class keeps the node-wide value
+            dest_node: Optional destination node; when given, only the link
+                towards it is affected and the other links are left alone
         """
+        if jobclass is not None:
+            dest = '' if dest_node is None else dest_node.get_name()
+            self._tasks_per_link_by_dest.append(
+                (dest, jobclass.get_index0(), float(ntasks)))
+            self._invalidate_java()
+            return
         self._tasks_per_link = np.array(ntasks)
         self._invalidate_java()
 
     def get_tasks_per_link(self) -> Optional[np.ndarray]:
         """Get tasks per link."""
         return self._tasks_per_link
+
+    def set_tasks_per_link_distribution(self, jobclass, dist, dest_node=None) -> None:
+        """
+        Make the number of tasks emitted on each outgoing link RANDOM.
+
+        The degree is redrawn independently for every link and every forked job,
+        which is the variable forking level of JMT's JobsPerLinkDis. Exact under
+        SolverJMT and SolverLDES, which draw it at the fork epoch; the analytical
+        solvers see E[dist].
+
+        Args:
+            jobclass: Job class the distribution applies to
+            dist: DiscreteSampler over the tasks-per-link support
+            dest_node: Optional destination node restricting it to one link
+        """
+        from ..distributions.discrete import DiscreteDistribution
+        if not isinstance(dist, DiscreteDistribution):
+            raise ValueError('The tasks-per-link distribution must be a '
+                             'DiscreteDistribution (e.g. DiscreteSampler).')
+        dest = '' if dest_node is None else dest_node.get_name()
+        self._tasks_per_link_dist.append((dest, jobclass.get_index0(), dist))
+        self._invalidate_java()
+
+    def set_branch_probability(self, jobclass, dest_node, prob: float) -> None:
+        """
+        Activate an outgoing branch only with probability `prob`.
+
+        Branches are activated independently, so the number of siblings a job
+        produces is random even when the tasks per link are deterministic. The
+        matched Join must be told what to wait for: under a standard join a job
+        that skipped a branch would block forever, so any probability below one
+        requires JoinStrategy.PARTIAL or a quorum.
+        """
+        if prob < 0.0 or prob > 1.0:
+            raise ValueError('A branch activation probability must lie in [0,1].')
+        self._branch_prob.append((dest_node.get_name(), jobclass.get_index0(), float(prob)))
+        self._invalidate_java()
+
+    def get_tasks_per_link_distribution(self):
+        """Get the registered per-link jobs-per-link distributions."""
+        return self._tasks_per_link_dist
+
+    def get_branch_probability(self):
+        """Get the registered branch activation probabilities."""
+        return self._branch_prob
+
+    setState = set_state
+    getState = get_state
+    getStatePrior = get_state_prior
+    setStateSpace = set_state_space
+    getStateSpace = get_state_space
+    setTasksPerLink = set_tasks_per_link
+    getTasksPerLink = get_tasks_per_link
+    setTasksPerLinkDistribution = set_tasks_per_link_distribution
+    getTasksPerLinkDistribution = get_tasks_per_link_distribution
+    setBranchProbability = set_branch_probability
+    getBranchProbability = get_branch_probability
 
     @property
     def capacity(self) -> float:
@@ -1530,6 +1784,11 @@ class ClassSwitch(Node):
             self._switch_matrix = np.asarray(cs_matrix)
         else:
             self._switch_matrix = None  # Class switching probabilities
+
+    def has_class_switching(self) -> bool:
+        """A ClassSwitch node always switches classes (MATLAB: its server is a
+        StatelessClassSwitcher)."""
+        return True
 
     def init_class_switch_matrix(self) -> np.ndarray:
         """
@@ -1736,6 +1995,11 @@ class Cache(Station):
         self._replacement_strategy = replacement_strategy
         self._admission_prob = 1.0
 
+        # per-item storage costs and per-list cost caps (ton21cache Sec. IX)
+        self._item_size = None
+        self._cost_cap = None
+        self._cost_cap_global = False
+
         # Cache nodes have infinite servers (instant service)
         self._number_of_servers = np.inf
 
@@ -1749,6 +2013,8 @@ class Cache(Station):
 
         # Read (popularity) distributions per class
         self._read_process = {}  # Dict[JobClass, Distribution]
+        self._item_classes = {}   # Dict[JobClass, List[JobClass]] keyed by the chain's first read class
+        self._item_of_class = {}  # Dict[JobClass, int] item each per-item class reads (1-based)
 
         # Access probabilities matrix (optional)
         self._access_prob = None  # (num_items, num_classes)
@@ -1765,6 +2031,9 @@ class Cache(Station):
         self._actual_hit_prob_list = None  # Actual per-list (per-level) hit fractions [classes x lists]
         self._actual_item_prob = None  # Actual per-item occupancy [items x (lists+1)]: col 0 = miss, cols 1.. = per-list
         self._actual_residt = None  # Actual expected latency
+        self._actual_list_cost = None  # Mean storage cost held by each list [1 x lists]
+        self._actual_delayed_hit_qlen = None       # [1 x items] merged secondary requests per item
+        self._actual_delayed_hit_qlen_full = None  # as above, plus the triggering request
 
         # see _kb/04-networkstruct.md (Node/process construction notes) for rationale
         self._total_cache_capacity = int(np.sum(self._item_level_cap))
@@ -1791,6 +2060,11 @@ class Cache(Station):
             False: Cache is a stateful non-station node
         """
         return False
+
+    def has_class_switching(self) -> bool:
+        """A Cache switches the arriving class into its hit or miss class
+        (MATLAB: its server is a CacheClassSwitcher, itself a ClassSwitcher)."""
+        return True
 
     # =========================================================================
     # Properties
@@ -1906,6 +2180,121 @@ class Cache(Station):
         self._read_process[jobclass] = distribution
         self._invalidate_java()
 
+    @staticmethod
+    def _per_item_classes(spec, n_items: int, what: str):
+        """One class shared by every item, or a sequence of one class per item."""
+        if isinstance(spec, (list, tuple)):
+            if len(spec) != n_items:
+                raise ValueError(
+                    f"{len(spec)} {what} classes were given for {n_items} items; "
+                    "pass one class per item or a single class shared by all.")
+            return list(spec)
+        return [spec] * n_items
+
+    def set_item_read_classes(self, read_classes, hit_classes) -> None:
+        """
+        Declare that read_classes[i] is the request stream for item i at this cache.
+
+        Use at the cache the exogenous requests enter, where the per-item classes are
+        the user's own; item popularity is then carried by the per-class request rates
+        rather than by a popularity distribution the cache draws from. This is what
+        keeps a cache network free of arc-level class switching, so no class acquires a
+        default route into the cache that the model never intended.
+        """
+        from ..distributions.discrete import DiscreteSampler
+        n_items = self._num_items
+        read_arr = list(read_classes)
+        if len(read_arr) != n_items:
+            raise ValueError(
+                f"{self.name} holds {n_items} items but {len(read_arr)} read classes "
+                "were given; pass exactly one class per item.")
+        hit_arr = Cache._per_item_classes(hit_classes, n_items, "hit")
+        for i, cls in enumerate(read_arr):
+            item_popularity = np.zeros(n_items)
+            item_popularity[i] = 1.0
+            self._read_process[cls] = DiscreteSampler(item_popularity)
+            self.set_hit_class(cls, hit_arr[i])
+            self._item_of_class[cls] = i + 1
+        self._item_classes[read_arr[0]] = read_arr
+        self._invalidate_java()
+
+    def set_item_classes(self, jobin_class: JobClass, hit_classes):
+        """
+        Mint one class per item at a cache FED BY ANOTHER CACHE, so item identity
+        survives the miss hop. Idempotent.
+        """
+        from ..distributions.discrete import DiscreteSampler
+        from .classes import OpenClass, ClosedClass
+        existing = self._item_classes.get(jobin_class)
+        if existing is not None:
+            return existing
+        model = self.get_model()
+        n_items = self._num_items
+        hit_arr = Cache._per_item_classes(hit_classes, n_items, "hit")
+        is_closed = isinstance(jobin_class, ClosedClass)
+        ref_station = getattr(jobin_class, '_refstat', None)
+        minted = []
+        for i in range(n_items):
+            if is_closed:
+                cls = ClosedClass(model, f"{self.name}_item{i + 1}", 0, ref_station, 0)
+            else:
+                cls = OpenClass(model, f"{self.name}_item{i + 1}", 0)
+            item_popularity = np.zeros(n_items)
+            item_popularity[i] = 1.0
+            self._read_process[cls] = DiscreteSampler(item_popularity)
+            self.set_hit_class(cls, hit_arr[i])
+            self._item_of_class[cls] = i + 1
+            minted.append(cls)
+        self._item_classes[jobin_class] = minted
+        self._invalidate_java()
+        return minted
+
+    def set_miss_cache(self, jobin_class: JobClass, next_cache, hit_class_at_next):
+        """
+        Send this cache's misses to next_cache preserving item identity: the miss class
+        of this cache for item i IS the read class of next_cache for item i. Returns the
+        classes minted on next_cache so the caller can route them onward.
+        """
+        if next_cache._num_items != self._num_items:
+            raise ValueError(
+                f"Cache {self.name} holds {self._num_items} items but "
+                f"{next_cache.name} holds {next_cache._num_items}; "
+                "a cache network requires one common item set.")
+        self_cls = self._item_classes.get(jobin_class)
+        if self_cls is None:
+            raise ValueError(
+                f"No per-item classes at {self.name} for class {jobin_class.name}; "
+                "call set_item_read_classes before set_miss_cache.")
+        next_cls = next_cache.set_item_classes(jobin_class, hit_class_at_next)
+        for i, cls in enumerate(self_cls):
+            self.set_miss_class(cls, next_cls[i])
+            self._add_retrieval_routing_entry(
+                next_cls[i].get_index0(), next_cls[i].get_index0(),
+                self.get_index0(), next_cache.get_index0(), 1.0)
+        return next_cls
+
+    def set_item_miss_class(self, jobin_class: JobClass, miss_classes) -> None:
+        """
+        Terminate a cache network: every per-item class of this cache reports a miss as
+        the matching entry of miss_classes, which the user routes onward.
+        """
+        self_cls = self._item_classes.get(jobin_class)
+        if self_cls is None:
+            raise ValueError(
+                f"No per-item classes at {self.name} for class {jobin_class.name}; "
+                "call set_item_classes before set_item_miss_class.")
+        miss_arr = Cache._per_item_classes(miss_classes, len(self_cls), "miss")
+        for i, cls in enumerate(self_cls):
+            self.set_miss_class(cls, miss_arr[i])
+
+    def set_item_of_class(self, jobclass: JobClass, item: int) -> None:
+        """Record that a class reads a given item (1-based), as read back from JSON."""
+        self._item_of_class[jobclass] = int(item)
+
+    def get_item_of_class(self, jobclass: JobClass) -> int:
+        """Item a per-item class reads (1-based), 0 when the class is not one."""
+        return self._item_of_class.get(jobclass, 0)
+
     def get_read(self, jobclass: JobClass):
         """Get the read distribution for a job class."""
         return self._read_process.get(jobclass)
@@ -1939,6 +2328,70 @@ class Cache(Station):
             raise ValueError("The admission probability q must lie in [0,1].")
         self._admission_prob = float(q)
         self._invalidate_java()
+
+    def set_item_sizes(self, sizes) -> None:
+        """
+        Set the storage cost (size) of each item.
+
+        A positive integer vector with one entry per item, or a single value
+        applied to every item. Used together with set_cost_caps to bound the
+        storage held by each cache list.
+        """
+        sizes = np.atleast_1d(np.asarray(sizes, dtype=float)).ravel()
+        if sizes.size == 1:
+            sizes = np.full(self._num_items, sizes[0])
+        if sizes.size != self._num_items:
+            raise ValueError(f"The item size vector of {self.get_name()} must have "
+                             f"one entry per item ({self._num_items}).")
+        if np.any(sizes <= 0) or np.any(sizes != np.round(sizes)):
+            raise ValueError("Item sizes must be positive integers.")
+        self._item_size = sizes
+        self._invalidate_java()
+
+    def get_item_sizes(self) -> Optional[np.ndarray]:
+        """Get the per-item storage costs (sizes), None when unset."""
+        return self._item_size
+
+    def set_cost_caps(self, caps) -> None:
+        """
+        Set the per-list cap on the total storage cost of the resident items.
+
+        A single value declares one cap for the whole cache, modelled as the
+        same cap on every list.
+        """
+        caps = np.atleast_1d(np.asarray(caps, dtype=float)).ravel()
+        h = len(self._item_level_cap)
+        if caps.size == 1:
+            self._cost_cap_global = True
+            caps = np.full(h, caps[0])
+        else:
+            self._cost_cap_global = False
+        if caps.size != h:
+            raise ValueError(f"The cost cap vector of {self.get_name()} must have "
+                             f"one entry per cache list ({h}).")
+        if np.any(caps < 0) or np.any(caps != np.round(caps)):
+            raise ValueError("Storage cost caps must be non-negative integers.")
+        if self._replacement_strategy == ReplacementStrategy.CLIMB:
+            raise ValueError("Storage cost caps are not supported with the CLIMB "
+                             "replacement strategy.")
+        self._cost_cap = caps
+        self._invalidate_java()
+
+    def get_cost_caps(self) -> Optional[np.ndarray]:
+        """Get the per-list storage cost caps, None when unset."""
+        return self._cost_cap
+
+    def is_cost_cap_global(self) -> bool:
+        """Report whether the cost caps came from a single cache-wide cap."""
+        return self._cost_cap_global
+
+    def set_result_list_cost(self, list_cost) -> None:
+        """Store the mean storage cost held by each list, as computed by a solver."""
+        self._actual_list_cost = list_cost
+
+    def get_list_cost(self) -> Optional[np.ndarray]:
+        """Get the mean storage cost held by each list, None when not computed."""
+        return self._actual_list_cost
 
     def get_access_prob(self) -> Optional[np.ndarray]:
         """Get the access probability matrix."""
@@ -2119,6 +2572,21 @@ class Cache(Station):
         (0 when no retrieval system is configured)."""
         return self._retrieval_system_capacity
 
+    def set_result_delayed_hit_qlen(self, d1: np.ndarray, dfull: np.ndarray) -> None:
+        """Set the per-item delayed-hit queue length (called by solver).
+
+        d1 is the mean number of secondary requests waiting on the in-flight
+        fetch of each item; dfull additionally counts the request that triggered
+        the fetch.
+        """
+        self._actual_delayed_hit_qlen = np.asarray(d1)
+        self._actual_delayed_hit_qlen_full = np.asarray(dfull)
+
+    def get_delayed_hit_qlen(self):
+        """Per-item delayed-hit queue length (d1, dfull), or (None, None)."""
+        return (getattr(self, '_actual_delayed_hit_qlen', None),
+                getattr(self, '_actual_delayed_hit_qlen_full', None))
+
     def set_result_residt(self, expected_latency: np.ndarray) -> None:
         """Set the computed expected latency (called by solver)."""
         self._actual_residt = np.asarray(expected_latency)
@@ -2135,6 +2603,8 @@ class Cache(Station):
         self._actual_hit_prob_list = None
         self._actual_item_prob = None
         self._actual_residt = None
+        self._actual_delayed_hit_qlen = None
+        self._actual_delayed_hit_qlen_full = None
 
     def set_retrieval_class(self, input_class: JobClass,
                             output_class: JobClass, item: int) -> None:

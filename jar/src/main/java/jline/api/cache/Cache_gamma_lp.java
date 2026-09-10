@@ -53,7 +53,18 @@ public final class Cache_gamma_lp {
                 }
             }
         }
-        return new Ret.cacheGamma(gamma, u, n, h);
+        int[] parent = new int[h];
+        // tree structure read off item 0's routing matrix aggregated over users,
+        // the same matrix the gamma loop walks
+        Matrix Rtot = new Matrix(R[0][0].getNumRows(), R[0][0].getNumCols());
+        for (int v = 0; v < u; v++) {
+            Rtot = Rtot.add(1.0, R[v][0]);
+        }
+        for (int j = 0; j < h; j++) {
+            ArrayList<Integer> pj = cache_par(Rtot, 1 + j);
+            parent[j] = pj.isEmpty() ? -1 : (pj.get(0) - 1); // list indices, -1 = miss list
+        }
+        return new Ret.cacheGamma(gamma, u, n, h, parent);
     }
 
     /**

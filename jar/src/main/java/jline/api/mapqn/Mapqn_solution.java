@@ -28,6 +28,14 @@ public class Mapqn_solution {
      * (LR) bound model, with an {@code e_i_k} fallback for solvers that
      * use that naming convention.
      */
+    /**
+     * Get utilization for queue i (1-based), aggregated over phases, as written
+     * by the QR bound models. The phase-indexed overload below is the LR form.
+     */
+    public double getUtilization(int i) {
+        return getVariable("U_" + i);
+    }
+
     public double getUtilization(int i, int k) {
         double uVar = getVariable("U_" + i + "_" + k);
         if (uVar != 0.0) return uVar;

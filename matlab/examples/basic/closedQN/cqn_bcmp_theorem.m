@@ -65,9 +65,9 @@ lcfsprmodel.link(P);
 model = psmodel;
 % This part illustrates the execution of different solvers
 solver = {};
-solver{end+1} = CTMC(psmodel);
-solver{end+1} = CTMC(fcfsmodel);
-solver{end+1} = CTMC(lcfsprmodel);
+solver{end+1} = CTMC(psmodel,'exact');
+solver{end+1} = CTMC(fcfsmodel,'exact');
+solver{end+1} = CTMC(lcfsprmodel,'exact');
 for s=1:length(solver)
     fprintf(1,'MODEL: %s\n',solver{s}.model.getName());
     AvgTable{s} = solver{s}.getAvgTable();

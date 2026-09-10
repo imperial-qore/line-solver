@@ -1,0 +1,25 @@
+{
+  "class": {
+    "WF": "deterministic"
+  },
+  "example": "wf_serial",
+  "solvers": {
+    "WF": [
+      {
+        "JobClass": "mean",
+        "QLen": 4.5,
+        "Station": "PH"
+      },
+      {
+        "JobClass": "SCV",
+        "QLen": 0.358,
+        "Station": "PH"
+      },
+      {
+        "JobClass": "phases",
+        "QLen": 3.0,
+        "Station": "PH"
+      }
+    ]
+  }
+}

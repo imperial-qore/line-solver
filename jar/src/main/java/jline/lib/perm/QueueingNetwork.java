@@ -16,12 +16,19 @@ public final class QueueingNetwork {
      */
     public static Pair<Matrix, Double> preprocessingDS(Matrix M) {
         int n = M.getNumRows();
-        double minValue = 2.220446049250314e-16;
 
+        // A zero used to be floored to 2.22e-16 here. That is the same
+        // non-invertible substitution the four approximations used to make: it
+        // changes the permanent by n!*eps, and it also hides the real
+        // precondition, since flooring manufactures total support and the
+        // scaling then converges on a matrix that never had it.
+        if (n > 0) {
+            PermSupport.requireFullSupport(M, "preprocessingDS");
+        }
         double[][] data = new double[n][n];
         for (int i = 0; i < n; i++) {
             for (int j = 0; j < n; j++) {
-                data[i][j] = Math.max(M.get(i, j), minValue);
+                data[i][j] = M.get(i, j);
             }
         }
         Matrix result = new Matrix(data);
@@ -33,7 +40,15 @@ public final class QueueingNetwork {
         double maxColError = Double.POSITIVE_INFINITY;
         double tolerance = 0.001;
 
+        final int maxSweeps = 10000;
+        int sweeps = 0;
         while (maxRowError > tolerance || maxColError > tolerance) {
+            if (++sweeps > maxSweeps) {
+                throw new IllegalArgumentException(
+                        "preprocessingDS did not converge in " + maxSweeps + " sweeps (row error "
+                        + maxRowError + ", column error " + maxColError + " against a tolerance of "
+                        + tolerance + "). The usual cause is a matrix without total support.");
+            }
             double[] colSums = new double[n];
             for (int j = 0; j < n; j++) {
                 double s = 0.0;

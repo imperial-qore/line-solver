@@ -21,7 +21,14 @@ public final class Pfqn_mva {
 
     /**
      * Mean Value Analysis (MVA) Algorithm for closed Product-Form Queueing Networks. Exact solution is computed for
-     * several performance measures.
+     * several performance measures. Standard arrival theorem; for the interlocked-flow
+     * correction of Franks (1999), Ch. 4, Eq. (4.7) call {@link Pfqn_mva_ilock} instead.
+     *
+     * @param mi additive term of the residence-time recursion C(i,s)=L(i,s)*(mi(i)+Qarv),
+     *        1 for a queueing station; null for all ones. THIS IS NOT A SERVER COUNT:
+     *        mi(i)=c inflates the residence time by c rather than adding c servers. For
+     *        multiserver stations call {@link jline.api.pfqn.mva.Pfqn_mvams}, which passes
+     *        S to the load-dependent recursion with mu(i,n)=min(n,S(i)).
      */
     public static Ret.pfqnMVA pfqn_mva(Matrix L, Matrix N, Matrix Z, Matrix mi) {
         N = N.copy(); // Create local copy to avoid modifying the original
@@ -95,6 +102,9 @@ public final class Pfqn_mva {
 
         Matrix n = new Matrix(1, R);
         n.set(0, firstNonEmpty, 1);
+        // Reused across the whole population enumeration; holds the residence times of
+        // the class currently being swept so the second pass need not re-read CN.
+        double[] cnCol = new double[M];
         while (ctr > 0) {
             int s = 0;
             while (s < R) {
@@ -116,16 +126,25 @@ public final class Pfqn_mva {
                 // through all the stations.
                 while (i < M) {
                     double Lis = L_reduced.get(i, s);
-                    CN.set(i, s, Lis * (mi.get(0, i) + Q.get(pos_n_1s, i)));
-                    CNtot += CN.get(i, s);
+                    double qarv = Q.get(pos_n_1s, i);
+                    CN.set(i, s, Lis * (mi.get(0, i) + qarv));
+                    // Read back THROUGH CN, not from the expression: a sparse set of an
+                    // exact zero stores no entry, so the value CN.get returns is not always
+                    // the double just written. Keeping the round-trip and caching its RESULT
+                    // is what makes dropping the second read below exact. CN(i,s) is not
+                    // written again before that read.
+                    double cn_is = CN.get(i, s);
+                    cnCol[i] = cn_is;
+                    CNtot += cn_is;
                     i++;
                 }
                 // Compute the throughput for class s
                 XN.set(0, s, n.get(0, s) / (Z.get(0, s) + CNtot));
+                double xn_s = XN.get(0, s);
                 i = 0;
                 // Compute the queue lengths
                 while (i < M) {
-                    QN.set(i, s, XN.get(0, s) * CN.get(i, s));
+                    QN.set(i, s, xn_s * cnCol[i]);
                     Q.set(currentpop, i, Q.get(currentpop, i) + QN.get(i, s));
                     i++;
                 }

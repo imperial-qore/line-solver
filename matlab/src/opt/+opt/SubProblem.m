@@ -12,7 +12,7 @@ classdef SubProblem < handle
             obj.name = name;
             obj.variableType = variableType;
             obj.variables = variables;
-            obj.fixedValues = containers.Map('KeyType','char','ValueType','any');
+            obj.fixedValues = configureDictionary('string','cell');
         end
         function names = getVariableNames(obj)
             names = cell(1, numel(obj.variables));

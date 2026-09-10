@@ -1,0 +1,70 @@
+{
+  "class": {
+    "CTMC": "deterministic"
+  },
+  "example": "pas_selfloop",
+  "solvers": {
+    "CTMC": [
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class1",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.47972,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class2",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.31981,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class3",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.23986,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.47972,
+        "JobClass": "Class1",
+        "QLen": 0.72167,
+        "ResidT": 1.5043,
+        "RespT": 1.5043,
+        "Station": "PASQueue",
+        "Tput": 0.47972,
+        "Util": 0.15991
+      },
+      {
+        "ArvR": 0.31981,
+        "JobClass": "Class2",
+        "QLen": 0.41993,
+        "ResidT": 1.313,
+        "RespT": 1.313,
+        "Station": "PASQueue",
+        "Tput": 0.31981,
+        "Util": 0.1066
+      },
+      {
+        "ArvR": 0.23986,
+        "JobClass": "Class3",
+        "QLen": 0.29409,
+        "ResidT": 1.2261,
+        "RespT": 1.2261,
+        "Station": "PASQueue",
+        "Tput": 0.23986,
+        "Util": 0.079954
+      }
+    ]
+  }
+}

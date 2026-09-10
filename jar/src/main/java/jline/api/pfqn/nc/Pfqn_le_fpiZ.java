@@ -30,7 +30,9 @@ public final class Pfqn_le_fpiZ {
         for (int i = 0; i < M; i++) {
             u.set(i, 1.0 / M);
         }
-        double v = eta + 1;
+        // Note: eq. (35) in the SIGMETRICS 2017 paper has a spurious +1 in the v
+        // equation; the correct stationary point is v = eta - sum_r xi_r*Z_r.
+        double v = eta;
         Matrix u_1 = new Matrix(M, 1);
         u_1.fill(GlobalConstants.Inf);
         double v_1 = GlobalConstants.Inf;
@@ -60,7 +62,7 @@ public final class Pfqn_le_fpiZ {
                 Matrix.extract(L, 0, L.getNumRows(), r, r + 1, L_col_r, 0, 0);
                 xi.set(r, N.get(r) / (Z.get(r) + v * u_1.transpose().mult(L_col_r).get(0)));
             }
-            v = eta + 1;
+            v = eta;
             for (int r = 0; r < R; r++) {
                 v -= xi.get(r) * Z.get(r);
             }

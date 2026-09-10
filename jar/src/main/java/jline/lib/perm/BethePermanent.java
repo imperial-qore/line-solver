@@ -29,11 +29,17 @@ public class BethePermanent extends PermSolver {
         this.epsilon = epsilon;
         this.maxIteration = maxIteration;
 
-        // Ensure all matrix elements are at least minValue to avoid numerical issues
+        // MIN_VALUE guards the LOGARITHMS of message products in bethe() against
+        // underflow. It is deliberately NOT applied to the input: flooring the
+        // input is what fabricates a permanent of n!*eps where the truth is
+        // zero, so a non-positive entry is refused outright instead.
+        if (n > 0) {
+            PermSupport.requireFullSupport(matrix, "bethe");
+        }
         double[][] data = new double[n][n];
         for (int i = 0; i < n; i++) {
             for (int j = 0; j < n; j++) {
-                data[i][j] = Math.max(matrix.get(i, j), MIN_VALUE);
+                data[i][j] = matrix.get(i, j);
             }
         }
         Matrix sqrtMat = new Matrix(data);

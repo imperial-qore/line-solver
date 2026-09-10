@@ -1,5 +1,11 @@
 function tranSysState = sampleSysAggr(self, numEvents)
 % TRANSYSSTATE = SAMPLESYSAGGR(NUMSAMPLES)
+
+if isfield(self.options,'lang') && strcmp(self.options.lang,'cpp')
+    tranSysState = CPPLINE.sysSamplePath(self.name, self.model, self.options, numEvents, true);
+    return
+end
+
 self.assertPhaseTypeStates('sampleSysAggr');
 
 options = self.getOptions;
@@ -9,7 +15,10 @@ if isempty(self.result) || ~isfield(self.result,'infGen')
 end
 [infGen, eventFilt] = getGenerator(self);
 [stateSpace, localStateSpace] = getStateSpace(self);
-stateSpaceAggr = getStateSpaceAggr(self);
+% getStateSpaceAggr(self) was called here and its result NEVER READ. Its only
+% effect was to throw, because getStateSpaceAggr.m:6 calls self.run, which is
+% not a method of SolverCTMC -- so this dead line was what made the accessor
+% unrunnable. The aggregation is done per node by State.toMarginal below.
 
 sn = self.getStruct;
 initState = sn.state;

@@ -57,10 +57,23 @@ for i = 1:sn.nstations
     else
         xi = sum(Q(i,:)); %number of jobs in the station
         xi_t = QNt{i,1};
+        % capacity term psi(n) = min(n,c)*alpha(n): a load-dependent station
+        % clears alpha(n) times the nominal work, so the bare min() below
+        % would drop the scaling from Tput and Util while the ODE applied it
+        lldrow_i = [];
+        if isfield(sn,'lldscaling') && ~isempty(sn.lldscaling) && i <= size(sn.lldscaling,1) ...
+                && any(abs(sn.lldscaling(i,:)-1) > GlobalConstants.Zero)
+            lldrow_i = sn.lldscaling(i,:);
+        end
         for r=2:size(QNt,2)
             xi_t = xi_t + QNt{i,r};
         end
 
+        psi_i = fluid_capacity_closure(xi, sn.nservers(i), 0, lldrow_i, false);
+        psi_it = zeros(size(xi_t));
+        for tt = 1:numel(xi_t)
+            psi_it(tt) = fluid_capacity_closure(xi_t(tt), sn.nservers(i), 0, lldrow_i, false);
+        end
         if xi>0 || sn.sched(i)==SchedStrategy.EXT % step in to compute source tput in all cases
             switch sn.sched(i)
                 case SchedStrategy.FCFS
@@ -94,9 +107,9 @@ for i = 1:sn.nstations
                                 Xservice{i,k}(f) = QN(idx+f)*Lambda{i}{k}(f);
                             end
                         case {SchedStrategy.INF, SchedStrategy.PS}
-                            TN(i,k) = TN(i,k) + QN(idx+f)*Lambda{i}{k}(f)*phi{i}{k}(f)/xi*min(xi,sn.nservers(i));
-                            TNt{i,k} = TNt{i,k} + xvec_t(:,idx+f)*Lambda{i}{k}(f)*phi{i}{k}(f)./xi_t.*min(xi_t,sn.nservers(i));
-                            Xservice{i,k}(f) = QN(idx+f)*Lambda{i}{k}(f)/xi*min(xi,sn.nservers(i));
+                            TN(i,k) = TN(i,k) + QN(idx+f)*Lambda{i}{k}(f)*phi{i}{k}(f)/xi*psi_i;
+                            TNt{i,k} = TNt{i,k} + xvec_t(:,idx+f)*Lambda{i}{k}(f)*phi{i}{k}(f)./xi_t.*psi_it;
+                            Xservice{i,k}(f) = QN(idx+f)*Lambda{i}{k}(f)/xi*psi_i;
                         case SchedStrategy.DPS
                             w = sn.schedparam(i,:);
                             wxi = w*Q(i,:)'; %number of jobs in the station
@@ -104,27 +117,27 @@ for i = 1:sn.nstations
                             for r=2:size(QNt,2)
                                 wxi_t = wxi_t + w(r)*QNt{i,r};
                             end
-                            TN(i,k) = TN(i,k) + QN(idx+f)*Lambda{i}{k}(f)*phi{i}{k}(f)*w(k)/wxi*min(xi,sn.nservers(i));
-                            TNt{i,k} = TNt{i,k} + xvec_t(:,idx+f)*Lambda{i}{k}(f)*phi{i}{k}(f)*w(k)./wxi_t.*min(xi_t,sn.nservers(i));
-                            Xservice{i,k}(f) = QN(idx+f)*Lambda{i}{k}(f)*w(k)/wxi*min(xi,sn.nservers(i));
+                            TN(i,k) = TN(i,k) + QN(idx+f)*Lambda{i}{k}(f)*phi{i}{k}(f)*w(k)/wxi*psi_i;
+                            TNt{i,k} = TNt{i,k} + xvec_t(:,idx+f)*Lambda{i}{k}(f)*phi{i}{k}(f)*w(k)./wxi_t.*psi_it;
+                            Xservice{i,k}(f) = QN(idx+f)*Lambda{i}{k}(f)*w(k)/wxi*psi_i;
                         case {SchedStrategy.FCFS, SchedStrategy.SIRO}
                             switch options.method
                                 case {'default','closing','pnorm','softmin','tbi'}
-                                    TN(i,k) = TN(i,k) + QN(idx+f)*Lambda{i}{k}(f)*phi{i}{k}(f)/xi*min(xi,sn.nservers(i));
-                                    TNt{i,k} = TNt{i,k} + xvec_t(:,idx+f)*Lambda{i}{k}(f)*phi{i}{k}(f)./xi_t.*min(xi_t,sn.nservers(i));
-                                    Xservice{i,k}(f) = QN(idx+f)*Lambda{i}{k}(f)/xi*min(xi,sn.nservers(i));
+                                    TN(i,k) = TN(i,k) + QN(idx+f)*Lambda{i}{k}(f)*phi{i}{k}(f)/xi*psi_i;
+                                    TNt{i,k} = TNt{i,k} + xvec_t(:,idx+f)*Lambda{i}{k}(f)*phi{i}{k}(f)./xi_t.*psi_it;
+                                    Xservice{i,k}(f) = QN(idx+f)*Lambda{i}{k}(f)/xi*psi_i;
                                 case 'statedep'
-                                    TN(i,k) = TN(i,k) + QN(idx+f)*Lambda{i}{k}(f)*phi{i}{k}(f)*wi(k)/wni*min(xi,sn.nservers(i));
-                                    TNt{i,k} = TNt{i,k} + xvec_t(:,idx+f)*Lambda{i}{k}(f)*phi{i}{k}(f)./xi_t.*min(xi_t,sn.nservers(i));
-                                    Xservice{i,k}(f) = QN(idx+f)*Lambda{i}{k}(f)*wi(k)/wni*min(xi,sn.nservers(i));
+                                    TN(i,k) = TN(i,k) + QN(idx+f)*Lambda{i}{k}(f)*phi{i}{k}(f)*wi(k)/wni*psi_i;
+                                    TNt{i,k} = TNt{i,k} + xvec_t(:,idx+f)*Lambda{i}{k}(f)*phi{i}{k}(f)./xi_t.*psi_it;
+                                    Xservice{i,k}(f) = QN(idx+f)*Lambda{i}{k}(f)*wi(k)/wni*psi_i;
 
-                                    %Tfull(i,k) = Tfull(i,k) + Qfull(idx+f)*Lambda{i}{k}(f)*phi{i}{k}(f)*min(xi,sn.nservers(i))*wi(k);
-                                    %Tfull_t{i,k} = Tfull_t{i,k} + ymean_t(:,idx+f)*Lambda{i}{k}(f)*phi{i}{k}(f).*min(xi_t,sn.nservers(i)) * wi(k);
-                                    %Xservice{i,k}(f) = Qfull(idx+f)*Lambda{i}{k}(f)*min(xi,sn.nservers(i))*wi(k);
+                                    %Tfull(i,k) = Tfull(i,k) + Qfull(idx+f)*Lambda{i}{k}(f)*phi{i}{k}(f)*psi_i*wi(k);
+                                    %Tfull_t{i,k} = Tfull_t{i,k} + ymean_t(:,idx+f)*Lambda{i}{k}(f)*phi{i}{k}(f).*psi_it * wi(k);
+                                    %Xservice{i,k}(f) = Qfull(idx+f)*Lambda{i}{k}(f)*psi_i*wi(k);
 
-                                    %                                    Tfull(i,k) = Tfull(i,k) + Qfull(idx+f)*Lambda{i}{k}(f)*phi{i}{k}(f)*min(xi,sn.nservers(i))*wi(k)/wni;
-                                    %                                    Tfull_t{i,k} = Tfull_t{i,k} + ymean_t(:,idx+f)*Lambda{i}{k}(f)*phi{i}{k}(f).*min(xi_t,sn.nservers(i)) * wi(k)/wni;
-                                    %                                    Xservice{i,k}(f) = Qfull(idx+f)*Lambda{i}{k}(f)*min(xi,sn.nservers(i))*wi(k)/wni;
+                                    %                                    Tfull(i,k) = Tfull(i,k) + Qfull(idx+f)*Lambda{i}{k}(f)*phi{i}{k}(f)*psi_i*wi(k)/wni;
+                                    %                                    Tfull_t{i,k} = Tfull_t{i,k} + ymean_t(:,idx+f)*Lambda{i}{k}(f)*phi{i}{k}(f).*psi_it * wi(k)/wni;
+                                    %                                    Xservice{i,k}(f) = Qfull(idx+f)*Lambda{i}{k}(f)*psi_i*wi(k)/wni;
                             end
                         otherwise
                             line_error(mfilename,'Unsupported scheduling policy');
@@ -146,7 +159,16 @@ origK = size(chains,1);
 % This is approximate, Little's law does not hold in transient
 R = zeros(sn.nstations, sn.nclasses);
 for i = 1:sn.nstations
-    R(i, TN(i,:)>0) = Q(i,TN(i,:)>0) ./ TN(i,TN(i,:)>0);
+    % A CLASS THAT NEVER VISITS THIS STATION IS ZERO ONLY UP TO THE INTEGRATOR.
+    % The ODE leaves a rounding residue in both QN and TN there -- of the order of
+    % 1e-20 -- so a strict TN>0 test fails OPEN on a host whose last bits differ,
+    % and Q/T then divides one residue by another and reports an O(1) response
+    % time. test_CQN_Cox_CS_7 read RN(3,1)=10.0000086 on picard04 against 0 on
+    % picard09, for a class whose nodevisits entry is exactly 0. Comparing against
+    % GlobalConstants.Zero (1e-14) separates the residue from any throughput a
+    % queueing model can carry.
+    nz = TN(i,:) > GlobalConstants.Zero;
+    R(i, nz) = Q(i,nz) ./ TN(i,nz);
 end
 %R = Rlittle;
 %Tfull = Tlittle;
@@ -158,7 +180,10 @@ newQ = zeros(sn.nstations,origK);
 % visits to each station in each associated artificial class
 idxNR = reshape(1:sn.nstations*sn.nclasses, sn.nclasses, sn.nstations); %indices of non-delay (non-reference) nodes
 idxNR = reshape(idxNR(:,delayrefstat==0),1,[]);
-rtTrans = sn.rt(idxNR,idxNR); %transient transition matrix for non-reference nodes
+% station-major routing: these indices are station-major, sn.rt is indexed by
+% stateful node (see SN_RT_STATIONS)
+rtStation = sn_rt_stations(sn);
+rtTrans = rtStation(idxNR,idxNR); %transient transition matrix for non-reference nodes
 eventualVisit = pinv( eye(size(rtTrans)) - rtTrans ); % pinv handles better self-looping customers setting the relevant entries to zero instead than infinity
 idxOrigClasses = zeros(origK,1);
 
@@ -166,7 +191,7 @@ for k = 1:origK
     idxOrigClasses(k) = find(chains(k,:),1);
     refNode = refstat(idxOrigClasses(k));
 
-    eventualVisitProb = reshape( sn.rt((refNode-1)*sn.nclasses+k,idxNR)*eventualVisit, sn.nclasses , sn.nstations-sum(delayrefstat>0) )'; %#ok<MINV> %probability of eventual visit
+    eventualVisitProb = reshape( rtStation((refNode-1)*sn.nclasses+k,idxNR)*eventualVisit, sn.nclasses , sn.nstations-sum(delayrefstat>0) )'; %#ok<MINV> %probability of eventual visit
     eventualVisitProb = eventualVisitProb(:,chains(k,:)==1);
 
     newR(refNode,k) = sum( R(refNode,chains(k,:)==1),2 );
@@ -198,6 +223,15 @@ for i =1:M
     end
 end
 
-UN(delayNodes==0,:) = UN(delayNodes==0,:)./repmat(sn.nservers(delayNodes==0),1,K);
+% a load-dependent station clears alpha(n) times the nominal work, so its
+% utilization normalises by the peak scaling (T*S/peak, as in the CTMC);
+% without load dependence Seff == nservers and this is unchanged
+Seff = sn.nservers;
+if isfield(sn,'lldscaling') && ~isempty(sn.lldscaling)
+    for ist = 1:min(M,size(sn.lldscaling,1))
+        Seff(ist) = max(sn.nservers(ist), max(sn.lldscaling(ist,:)));
+    end
+end
+UN(delayNodes==0,:) = UN(delayNodes==0,:)./repmat(Seff(delayNodes==0),1,K);
 
 end

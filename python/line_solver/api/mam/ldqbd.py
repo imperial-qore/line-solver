@@ -29,9 +29,15 @@ class LdqbdResult:
     Attributes:
         R: List of rate matrices R^(1), R^(2), ..., R^(N)
         pi: Stationary distribution vector [pi_0, pi_1, ..., pi_N]
+        pi_cells: Per-level stationary vectors, still resolved by phase; pi is
+            their row sums. A caller that needs a phase-conditional quantity --
+            the mean of something that depends on the phase and not only on the
+            level -- cannot recover it from the aggregated vector and must read
+            these.
     """
     R: List[np.ndarray]
     pi: np.ndarray
+    pi_cells: Optional[List[np.ndarray]] = None
 
 
 @dataclass
@@ -94,9 +100,10 @@ def ldqbd(Q0: List[np.ndarray],
             print(f"  R^({n+1}) computed ({R[n].shape})")
 
     # Compute stationary distribution
-    pi = _compute_stationary_dist(R, Q0, Q1, Q2, N, options)
+    pi_cells = []
+    pi = _compute_stationary_dist(R, Q0, Q1, Q2, N, options, pi_cells)
 
-    return LdqbdResult(R, pi)
+    return LdqbdResult(R, pi, pi_cells)
 
 
 def _compute_all_rate_matrices(N: int,
@@ -193,7 +200,8 @@ def _compute_stationary_dist(R: List[np.ndarray],
                             Q1: List[np.ndarray],
                             Q2: List[np.ndarray],
                             N: int,
-                            options: LdqbdOptions) -> np.ndarray:
+                            options: LdqbdOptions,
+                            pi_cells_out: Optional[List[np.ndarray]] = None) -> np.ndarray:
     """
     Compute stationary distribution from rate matrices.
 
@@ -235,6 +243,9 @@ def _compute_stationary_dist(R: List[np.ndarray],
         if total > 0:
             pi = pi / total
 
+        if pi_cells_out is not None:
+            for n in range(N + 1):
+                pi_cells_out.append(np.array([[pi[n]]]))
         return pi
     else:
         # Heterogeneous or matrix case
@@ -264,55 +275,36 @@ def _compute_stationary_dist(R: List[np.ndarray],
         pi = np.zeros(N + 1)
         for n in range(N + 1):
             if total > 0:
-                pi[n] = np.sum(pi_cells[n]) / total
+                pi_cells[n] = pi_cells[n] / total
+                pi[n] = np.sum(pi_cells[n])
             else:
                 pi[n] = 1.0 / (N + 1)
 
+        if pi_cells_out is not None:
+            pi_cells_out.extend(pi_cells)
         return pi
 
 
 def _solve_left_null_space(A: np.ndarray) -> np.ndarray:
     """
-    Find left null space of matrix A (find pi such that pi * A = 0).
+    Boundary vector of the level-0 block: the solution of
+    pi_0 * (Q1^(0) + R^(1) Q2^(1)) = 0.
 
-    Uses iterative power method to find the eigenvector corresponding to
-    the smallest magnitude eigenvalue.
+    That matrix is the generator of the process censored on level 0, so its
+    stationary distribution IS the boundary vector and ctmc_solve is the right
+    instrument. Taking the eigenvector of the smallest-magnitude eigenvalue of
+    A.T is not: eigenvalues near zero are not separated from the true null
+    direction on a stiff block, and a complex conjugate pair returns a vector
+    with no probabilistic meaning at all. No caller reached this branch before
+    the bgchain method, whose level 0 carries the arrival and environment phases.
 
     Args:
-        A: Matrix to find null space of
+        A: the censored generator
 
     Returns:
         Left null space vector (row vector)
     """
+    from ..mc.ctmc import ctmc_solve, ctmc_makeinfgen
     A = np.asarray(A, dtype=np.float64)
-    n = A.shape[0]
-
-    # Use SVD to find left null space
-    U, s, Vt = np.linalg.svd(A)
-
-    # see _kb/03-api-layer.md for rationale
-
-    # see _kb/03-api-layer.md for rationale
-
-    # Actually, use eigendecomposition of A^T
-    try:
-        eigenvalues, eigenvectors = np.linalg.eig(A.T)
-
-        # Find eigenvector corresponding to smallest magnitude eigenvalue
-        min_idx = np.argmin(np.abs(eigenvalues))
-        pi = eigenvectors[:, min_idx].real
-
-        # Make positive
-        pi = np.abs(pi)
-
-        # Normalize
-        pi_sum = np.sum(pi)
-        if pi_sum > 1e-14:
-            pi = pi / pi_sum
-        else:
-            pi = np.ones(n) / n
-
-        return pi.reshape(1, -1)
-    except:
-        # Fallback: return uniform distribution
-        return np.ones((1, n)) / n
+    pi = np.asarray(ctmc_solve(ctmc_makeinfgen(A)), dtype=np.float64).reshape(1, -1)
+    return pi

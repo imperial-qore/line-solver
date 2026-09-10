@@ -10,9 +10,10 @@ All rights reserved.
 from .indexed_table import IndexedTable
 from .model_adapter import ModelAdapter
 from .linemodel_io import save_model, load_model
+from .pnml_io import save_pnml, load_pnml
 
 __all__ = ['IndexedTable', 'ModelAdapter', 'M2M', 'QN2JSIMG', 'qn2jsimg', 'LQN2QN', 'lqn2qn',
-           'save_model', 'load_model']
+           'save_model', 'load_model', 'save_pnml', 'load_pnml']
 
 
 class M2M:
@@ -40,11 +41,14 @@ class M2M:
         """
         from ..api.io.jmt_io import jsim2line
         from ..lang import Network, Queue, Delay, Source, Sink, Router
-        from ..lang import Place, Transition
+        from ..lang import Place, Transition, ClassSwitch, Fork, Join
         from ..lang import OpenClass, ClosedClass
         from ..lang.base import DropStrategy
         from ..distributions import Disabled
-        from ..constants import SchedStrategy, RoutingStrategy, TimingStrategy, GlobalConstants
+        from ..constants import SchedStrategy, RoutingStrategy, GlobalConstants
+        # TimingStrategy comes from lang.nodes, the enum the model layer stores
+        # and compares; the one that used to sit in constants had different values.
+        from ..lang.nodes import TimingStrategy
 
         # Parse JSIM file
         spec = jsim2line(filename)
@@ -67,6 +71,18 @@ class M2M:
                 node = Delay(model, node_name)
             elif node_type == 'Router':
                 node = Router(model, node_name)
+            elif node_type == 'ClassSwitch':
+                # the switching matrix is class-indexed, so it is applied below
+                node = ClassSwitch(model, node_name)
+            elif node_type == 'Fork':
+                node = Fork(model, node_name)
+                if node_spec.get('tasks_per_link') is not None:
+                    node.set_tasks_per_link(node_spec['tasks_per_link'])
+            elif node_type == 'Join':
+                forks = [n for n in node_map.values() if isinstance(n, Fork)]
+                if len(forks) > 1:
+                    raise ValueError('JSIM2LINE supports at most a single fork-join pair.')
+                node = Join(model, node_name, forks[0] if forks else None)
             elif node_type == 'Place':
                 # SPN Place: token store. Capacity/drop-rule/marking are applied
                 # after the classes exist (see the SPN configuration block below).
@@ -126,6 +142,27 @@ class M2M:
         for node_spec in spec.get('nodes', []):
             node = node_map.get(node_spec.get('name'))
             if node is None:
+                continue
+
+            if isinstance(node, ClassSwitch):
+                csspec = node_spec.get('csmatrix') or {}
+                if csspec:
+                    import numpy as _np
+                    names = [jc.getName() for jc in ordered_classes]
+                    csmatrix = _np.zeros((len(names), len(names)))
+                    for r, from_name in enumerate(names):
+                        row = csspec.get(from_name, {})
+                        for s, to_name in enumerate(names):
+                            csmatrix[r, s] = row.get(to_name, 0.0)
+                    node.setClassSwitchingMatrix(csmatrix)
+                continue
+
+            if isinstance(node, Join):
+                for cls_name, required in (node_spec.get('join_required') or {}).items():
+                    jc = class_map.get(cls_name)
+                    # JMT encodes "wait for every task" as -1, which is LINE's default
+                    if jc is not None and required is not None and required > 0:
+                        node.set_required(jc, required)
                 continue
 
             if isinstance(node, Place):
@@ -518,7 +555,7 @@ def QN2JSIMG(model, outputFileName=None, options=None):
 qn2jsimg = QN2JSIMG
 
 
-def LQN2QN(lqn):
+def LQN2QN(lqn, replication='auto'):
     """
     Convert a LayeredNetwork (LQN) to a Network (QN) using REPLY signals.
 
@@ -589,13 +626,46 @@ def LQN2QN(lqn):
       step on a shared ActivityThink delay, in series with the host demand, so
       the task keeps its thread for it while its processor is released.
 
-    Not yet represented: delayed-hit retrieval on the cache miss path, the
-    thread pool of a task with an internal AND-fork, task and processor
-    replication with its fan-out, and the setup and delay-off times of a
-    function task. Each is reported through a warning.
+    - Replication is represented in one of two ways, selected by
+      ``replication``. Under materialisation each replica of a processor is a
+      station of its own and each replica of a task carries its own copy of the
+      expanded step graph, its own reply signals and its own admission row; a
+      call from replica i of the caller reaches the fan-out block
+      ``{(i*f+k) mod r}`` of the callee replicas and splits its call mean
+      uniformly over them, which is deterministic pairing at f=1 and a uniform
+      broadcast at f=r. Under pooling the replicas of a processor collapse into
+      one station of r times the servers, a replicated thread pool into one
+      admission row of r times the bound, and a replicated reference task into
+      one class of r times the population; that is exact at an infinite-server
+      host and optimistic elsewhere, since pooled servers share one queue while
+      the replicas hold r separate ones.
+
+    - A CacheTask with delayed-hit retrieval gets a retrieval system, which is an
+      ordinary queueing network: one PS fetch station per cache replica, entered
+      and left by the read class, with the Cache node coalescing concurrent
+      misses of the same item. The fetch is what the miss branch does, so the
+      miss activity's host demand moves onto that station; calls issued by the
+      miss activity stay outside the retrieval system and are warned.
+
+    - A SetupTask carries its setup and delay-off times onto its host station
+      as the Queue setup/delay-off pair, per step class: the server shuts down
+      after the delay-off idle period and pays the setup on the next arrival.
+      An infinite-server processor never shuts down, so the pair is dropped
+      there with a warning.
+
+    Not yet represented: retrieval on a cache read with phase-2 successors, and
+    the thread pool of a task with an internal AND-fork. Each is reported
+    through a warning.
 
     Args:
         lqn: LayeredNetwork model to convert.
+        replication: how task and processor replication is represented.
+            ``'auto'`` (default) materialises the replicas when the expansion
+            stays within the instantiation budget and pools them otherwise,
+            ``'materialize'`` always materialises, ``'pool'`` always pools.
+            Pairing (fan-out 1) leaves the expansion linear in the replication
+            factor; a broadcast fan-out multiplies it along every call path,
+            which is what the budget guards.
 
     Returns:
         Network: queueing network modelling the LQN with REPLY signal blocking.
@@ -618,20 +688,27 @@ def LQN2QN(lqn):
 
     FINE_TOL = 1e-8
     MAXCALLSTAGES = 20          # guard against unrolling a huge call multiplicity
+    # Above this many replica subgraph instantiations 'auto' pools instead of
+    # materialising: the routing matrix is dense in (classes x nodes), so the
+    # conversion cost grows quadratically in the instantiation count.
+    MAXREPLINSTANCES = 128
     ID_POST_AND = 12
     ID_PRE_AND = 2
     CALL_SYNC, CALL_ASYNC, CALL_FWD = 1, 2, 3
 
+    if replication not in ('auto', 'materialize', 'pool'):
+        raise ValueError("LQN2QN: replication must be 'auto', 'materialize' or 'pool'.")
+
     lsn = lqn.getStruct()
     model = Network("%s-QN" % lqn.name)
 
-    ref_task_indices = [lsn.tshift + t for t in range(1, lsn.ntasks + 1)
+    ref_task_indices = [lsn.tshift + t for t in range(lsn.ntasks)
                         if lsn.isref[lsn.tshift + t, 0] == 1]
 
     # see _kb/04-networkstruct.md (lqn2qn activity-walk mechanics) for rationale
     open_entries = []
     arrival_map = getattr(lsn, 'arrival', None) or {}
-    for e in range(lsn.eshift + 1, lsn.eshift + lsn.nentries + 1):
+    for e in range(lsn.eshift, lsn.eshift + lsn.nentries):
         arv = arrival_map.get(e)
         if arv is not None and arv.getMean() > FINE_TOL and arv.getMean() != float('inf'):
             open_entries.append(e)
@@ -641,12 +718,10 @@ def LQN2QN(lqn):
 
     def sched_of(idx):
         s = lsn.sched.get(idx, SchedStrategy.FCFS)
-        if isinstance(s, str):
-            for cand in SchedStrategy:
-                if cand.value == s:
-                    return cand
-            return SchedStrategy.FCFS
-        return s
+        if isinstance(s, SchedStrategy):
+            return s
+        # lsn.sched holds raw native enum values; a bare int never matches a member by name
+        return SchedStrategy(int(s)) if not isinstance(s, str) else SchedStrategy[s]
 
     def demand_of(aidx):
         """Host demand of an activity as a distribution, or None if negligible."""
@@ -663,23 +738,143 @@ def LQN2QN(lqn):
 
     # ---------------------------------------------------- unsupported features
     if lsn.calltype is not None:
-        if any(int(lsn.calltype[c]) == CALL_ASYNC for c in range(1, lsn.ncalls + 1)):
+        if any(int(lsn.calltype[c]) == CALL_ASYNC for c in range(lsn.ncalls)):
             warnings.warn("LQN2QN: asynchronous calls are represented as non-blocking "
                           "visits: the caller releases its server but remains serialised "
                           "behind the callee.")
-    if lsn.hasretrieval is not None and lsn.hasretrieval.any():
-        warnings.warn("LQN2QN: delayed-hit retrieval on the cache miss path is not "
-                      "represented.")
+
+    def call_mean(cidx):
+        return float(lsn.callpair[cidx, 2]) if lsn.callpair.shape[1] > 2 else 1.0
+
+    def forwarding_of(eidx):
+        """Rows (target_eidx, probability) of the forwarding calls of an entry."""
+        fwd = []
+        if lsn.calltype is None:
+            return fwd
+        for cidx in range(lsn.ncalls):
+            if int(lsn.calltype[cidx]) != CALL_FWD or int(lsn.callpair[cidx, 0]) != eidx:
+                continue
+            p = min(max(call_mean(cidx), 0.0), 1.0)
+            if p > FINE_TOL:
+                fwd.append((int(lsn.callpair[cidx, 1]), p))
+        return fwd
+
+    def setup_times_of(tidx):
+        """Setup and delay-off of a SetupTask, or None when it is always on. Both
+        are needed: without a delay-off the server never shuts down, so it pays the
+        setup once at most and the pair carries no information."""
+        hassetup_flags = getattr(lsn, 'hassetup', None)
+        if hassetup_flags is None or tidx >= np.asarray(hassetup_flags).size or np.asarray(hassetup_flags).ravel()[tidx] == 0:
+            return None
+        setup = (getattr(lsn, 'setuptime', None) or {}).get(tidx)
+        delayoff = (getattr(lsn, 'delayofftime', None) or {}).get(tidx)
+        if setup is None or isinstance(setup, Immediate) or setup.getMean() <= FINE_TOL:
+            return None
+        if delayoff is None:
+            return 'nodelayoff'
+        return (setup, delayoff)
+
+    # --------------------------------------------------------------- replication
+    # A replicated element is r identical copies of itself. They are either
+    # materialised, one station and one step-graph copy per replica, or pooled
+    # into a single r-fold element -- see _kb/06-solver-catalog.md (LQN2QN).
+    repl_raw = np.ones(lsn.nhosts + lsn.ntasks + 1, dtype=int)
     if getattr(lsn, 'repl', None) is not None:
-        repl = np.asarray(lsn.repl).ravel()
-        over = [i for i in range(1, min(len(repl), lsn.nhosts + lsn.ntasks + 1)) if repl[i] > 1]
-        if over:
-            warnings.warn("LQN2QN: replication of %s is not represented: the replicas are "
-                          "collapsed into a single station and their fan-out is ignored."
-                          % lsn.names[over[0]])
-    if getattr(lsn, 'isfunction', None) is not None and np.asarray(lsn.isfunction).any():
-        warnings.warn("LQN2QN: setup and delay-off times of function tasks are not "
-                      "represented: the task is converted as an ordinary always-on station.")
+        raw = np.asarray(lsn.repl).ravel()
+        for i in range(min(len(raw), lsn.nhosts + lsn.ntasks)):
+            repl_raw[i] = max(1, int(raw[i]))
+    replicated = [i for i in range(lsn.nhosts + lsn.ntasks) if repl_raw[i] > 1]
+
+    def fan_out_of(a_tidx, b_tidx, rb):
+        """Callee replicas reached by one caller replica. An unset fan-out is the
+        smallest value consistent with repl(a)*fanout = repl(b)*fanin."""
+        if rb <= 1:
+            return 1
+        f = 0
+        fanout = getattr(lsn, 'fanout', None)
+        if fanout is not None and a_tidx < fanout.shape[0] and b_tidx < fanout.shape[1]:
+            f = int(fanout[a_tidx, b_tidx])
+        if f <= 0:
+            ra = repl_raw[a_tidx]
+            f = max(1, rb // ra) if rb > ra else 1
+        return min(max(1, f), rb)
+
+    def _instantiations():
+        """Copies of the task step graphs a materialised expansion would create."""
+        memo = {}
+
+        def task_cost(tidx, stack):
+            if tidx in stack:
+                return 1                    # recursive cycle: truncated anyway
+            if tidx in memo:
+                return memo[tidx]
+            deeper = stack | {tidx}
+            total = 1
+            for eidx in lsn.entriesof.get(tidx, []):
+                targets = [int(lsn.callpair[c, 1])
+                           for a in lsn.actsof.get(eidx, [])
+                           for c in lsn.callsof.get(a, [])
+                           if int(lsn.calltype[c]) in (CALL_SYNC, CALL_ASYNC)]
+                # A forwarded entry is expanded per replica just as a call is.
+                targets += [t for (t, _) in forwarding_of(eidx)]
+                for target_eidx in targets:
+                    b = int(lsn.parent[target_eidx, 0])
+                    total += fan_out_of(tidx, b, repl_raw[b]) * task_cost(b, deeper)
+            memo[tidx] = total
+            return total
+
+        return sum(repl_raw[t] * task_cost(t, frozenset())
+                   for t in set(ref_task_indices)
+                   | set(int(lsn.parent[e, 0]) for e in open_entries))
+
+    materialize = bool(replicated) and (
+        replication == 'materialize'
+        or (replication == 'auto' and _instantiations() <= MAXREPLINSTANCES))
+    if replicated and not materialize:
+        warnings.warn("LQN2QN: replication of %s is pooled: its replicas become one "
+                      "station of r times the servers, one admission row of r times "
+                      "the bound and one reference class of r times the population, "
+                      "which is exact at an infinite-server host and optimistic "
+                      "elsewhere. Pass replication='materialize' for one station and "
+                      "one step-graph copy per replica." % lsn.names[replicated[0]])
+
+    def nrep(idx):
+        """Replicas materialised for a host or task index."""
+        return repl_raw[idx] if materialize else 1
+
+    def pool_factor(idx):
+        """Capacity multiplier carried by a pooled element, 1 when materialised."""
+        return 1 if materialize else repl_raw[idx]
+
+    def target_replicas(a_tidx, a_rep, b_tidx):
+        """Replicas of the callee reached by replica a_rep of the caller."""
+        rb = nrep(b_tidx)
+        if rb <= 1:
+            return (0,)
+        f = fan_out_of(a_tidx, b_tidx, rb)
+        return tuple((a_rep * f + k) % rb for k in range(f))
+
+    def host_key(tidx, trep):
+        """Station of the processor replica running replica trep of a task."""
+        hidx = int(lsn.parent[tidx, 0])
+        return (hidx, trep % nrep(hidx))
+
+    def suffixed(name, rep):
+        """Replica 1 keeps the plain name. The suffix stays inside [A-Za-z0-9_]
+        because a class name is a JSON object key, and MATLAB jsondecode mangles
+        any key that is not a valid identifier."""
+        return name if rep == 0 else "%s_r%d" % (name, rep + 1)
+
+    used_names = {}
+
+    def unique_name(base):
+        """A subgraph copied per call site or per replica repeats its names, which
+        Network rejects, so a repeat is disambiguated by occurrence. The suffix is
+        identifier-safe for the same reason as in suffixed()."""
+        n = used_names.get(base, 0) + 1
+        used_names[base] = n
+        return base if n == 1 else "%s_d%d" % (base, n)
+
     # ------------------------------- tasks whose multiplicity is a thread pool
     # Such a task holds one thread per request from entry to reply, also across
     # its nested synchronous calls. Its calls do not hold the caller's server,
@@ -692,14 +887,14 @@ def LQN2QN(lqn):
     def task_has_and_fork(tidx):
         if lsn.actposttype is None:
             return False
-        for a in range(lsn.ashift + 1, lsn.ashift + lsn.nacts + 1):
+        for a in range(lsn.ashift, lsn.ashift + lsn.nacts):
             if int(lsn.parent[a, 0]) == tidx and a < len(lsn.actposttype) and \
                     int(lsn.actposttype[a]) == ID_POST_AND:
                 return True
         return False
 
     fcr_task = set()
-    for t in range(1, lsn.ntasks + 1):
+    for t in range(lsn.ntasks):
         tidx = lsn.tshift + t
         if lsn.isref[tidx, 0] != 0:
             continue
@@ -718,7 +913,7 @@ def LQN2QN(lqn):
 
     branch_acts = []
     if lsn.actposttype is not None:
-        for a in range(lsn.ashift + 1, lsn.ashift + lsn.nacts + 1):
+        for a in range(lsn.ashift, lsn.ashift + lsn.nacts):
             if a >= len(lsn.actposttype) or int(lsn.actposttype[a]) != ID_POST_AND:
                 continue
             frontier = [a]
@@ -730,25 +925,25 @@ def LQN2QN(lqn):
                 if lsn.actpretype is not None and cur < len(lsn.actpretype) and \
                         int(lsn.actpretype[cur]) == ID_PRE_AND:
                     continue    # branch tail: do not traverse past the join
-                for s in range(lsn.ashift + 1, lsn.ashift + lsn.nacts + 1):
+                for s in range(lsn.ashift, lsn.ashift + lsn.nacts):
                     if lsn.graph[cur, s] != 0 and int(lsn.parent[s, 0]) == int(lsn.parent[cur, 0]):
                         frontier.append(s)
     if branch_acts and fcr_task:
         front = []
         for a in branch_acts:
             for c in lsn.callsof.get(a, []):
-                front.append(int(lsn.parent[int(lsn.callpair[c, 2]), 0]))
+                front.append(int(lsn.parent[int(lsn.callpair[c, 1]), 0]))
         shadow = set()
         while front:
             t_ = front.pop(0)
             if t_ in shadow:
                 continue
             shadow.add(t_)
-            for a in range(lsn.ashift + 1, lsn.ashift + lsn.nacts + 1):
+            for a in range(lsn.ashift, lsn.ashift + lsn.nacts):
                 if int(lsn.parent[a, 0]) != t_:
                     continue
                 for c in lsn.callsof.get(a, []):
-                    front.append(int(lsn.parent[int(lsn.callpair[c, 2]), 0]))
+                    front.append(int(lsn.parent[int(lsn.callpair[c, 1]), 0]))
         for t_ in sorted(shadow & fcr_task):
             fcr_task.discard(t_)
             warnings.warn("LQN2QN: multiplicity of task %s is not enforced: it is "
@@ -756,24 +951,29 @@ def LQN2QN(lqn):
                           "fork-join transformation retags outside the admission "
                           "constraint." % lsn.names[t_])
 
-    # ------------------------------------------- stations, one per host processor
+    # ------------------------- stations, one per host processor replica
     host_station = {}
     host_is_delay = {}
-    for h in range(1, lsn.nhosts + 1):
+    for h in range(lsn.nhosts):
         nservers = lsn.mult[0, h]
         sched = sched_of(h)
-        if nservers >= 1e9 or sched == SchedStrategy.INF:
-            host_station[h] = Delay(model, lsn.names[h])
-            host_is_delay[h] = True
-        else:
-            q = Queue(model, lsn.names[h], sched)
-            q.setNumberOfServers(max(1, int(nservers)))
-            host_station[h] = q
-            host_is_delay[h] = False
+        for m in range(nrep(h)):
+            if nservers >= 1e9 or sched == SchedStrategy.INF:
+                host_station[(h, m)] = Delay(model, suffixed(lsn.names[h], m))
+                host_is_delay[(h, m)] = True
+            else:
+                q = Queue(model, suffixed(lsn.names[h], m), sched)
+                # A pooled processor carries the servers of all its replicas.
+                q.setNumberOfServers(max(1, int(nservers)) * pool_factor(h))
+                host_station[(h, m)] = q
+                host_is_delay[(h, m)] = False
 
+    # One think delay per reference task replica; ref_key is (task, replica).
     think_node = {}
     for ref_tidx in ref_task_indices:
-        think_node[ref_tidx] = Delay(model, "%s_Think" % lsn.names[ref_tidx])
+        for m in range(nrep(ref_tidx)):
+            think_node[(ref_tidx, m)] = Delay(
+                model, suffixed("%s_Think" % lsn.names[ref_tidx], m))
 
     # ------------------------------- pass 1: expand the activity graph into steps
     step_aidx, step_host, step_svc, step_name = [], [], [], []
@@ -794,6 +994,7 @@ def LQN2QN(lqn):
     # Thread-pool tasks holding a thread while a job is at each step.
     step_tasks = []
     cache_node_of = {}
+    fetch_node_of = {}
     cache_wiring = []
     # [join_step, join_aidx]; the quorum is applied once the fork class exists.
     join_quorum = []
@@ -801,24 +1002,24 @@ def LQN2QN(lqn):
     # thread across a think time but its host processor is released.
     act_think_node = []
 
-    def add_step(aidx, hidx, svc, name, blocks, isthink, ref_tidx):
+    def add_step(aidx, hidx, svc, name, blocks, isthink, ref_key):
         step_aidx.append(aidx)
         step_host.append(hidx)
         step_svc.append(svc)
         step_name.append(name)
         step_blocks.append(blocks)
         step_is_think.append(isthink)
-        step_ref_task.append(ref_tidx)
+        step_ref_task.append(ref_key)
         step_node.append(None)
         sid = len(step_aidx) - 1
         step_class_owner.append(sid)
-        # see _kb/04-networkstruct.md (lqn2qn activity-walk mechanics) for rationale
-        step_tasks.append(frozenset(t for t in thread_stack if t in fcr_task))
+        # Thread holders are (task, replica) pairs: a replica has its own pool.
+        step_tasks.append(frozenset(t for t in thread_stack if t[0] in fcr_task))
         return sid
 
-    def add_aux_step(node_obj, owner_step, name, ref_tidx):
+    def add_aux_step(node_obj, owner_step, name, ref_key):
         """A step on a Fork, Join or Router node: no station, no class of its own."""
-        sid = add_step(0, 0, None, name, False, False, ref_tidx)
+        sid = add_step(0, 0, None, name, False, False, ref_key)
         step_node[sid] = node_obj
         step_class_owner[sid] = step_class_owner[owner_step]
         return sid
@@ -831,14 +1032,30 @@ def LQN2QN(lqn):
         declared in the class of the target step."""
         flow.append((from_step, to_step, 1.0, False, True))
 
-    def get_cache_node(tidx):
-        if tidx in cache_node_of:
-            return cache_node_of[tidx]
+    def has_retrieval(tidx):
+        """True when the CacheTask coalesces concurrent misses of the same item."""
+        return (lsn.hasretrieval is not None and tidx < lsn.hasretrieval.shape[0]
+                and lsn.hasretrieval[tidx, 0] != 0)
+
+    def get_fetch_node(tidx, trep):
+        """The retrieval system of a CacheTask is an ordinary queueing network: one
+        PS fetch station per cache replica, as in the LN cache sublayer."""
+        if (tidx, trep) in fetch_node_of:
+            return fetch_node_of[(tidx, trep)]
+        q = Queue(model, suffixed("%s_Cache_Fetch" % lsn.names[tidx], trep), SchedStrategy.PS)
+        fetch_node_of[(tidx, trep)] = q
+        return q
+
+    def get_cache_node(tidx, trep):
+        if (tidx, trep) in cache_node_of:
+            return cache_node_of[(tidx, trep)]
         caps = lsn.itemcap.get(tidx)
-        cap = int(caps[0]) if caps is not None and len(caps) else 1
-        cnode = Cache(model, "%s_Cache" % lsn.names[tidx], int(lsn.nitems[tidx, 0]),
+        # the full per-level capacity vector, not just level 1 -- see _kb/09-ldes-and-cache.md
+        cap = [int(c) for c in caps] if caps is not None and len(caps) else [1]
+        cnode = Cache(model, suffixed("%s_Cache" % lsn.names[tidx], trep),
+                      int(lsn.nitems[tidx, 0]),
                       cap, ReplacementStrategy(int(lsn.replacestrat[tidx, 0])))
-        cache_node_of[tidx] = cnode
+        cache_node_of[(tidx, trep)] = cnode
         return cnode
 
     def is_and_fork(succ):
@@ -881,14 +1098,22 @@ def LQN2QN(lqn):
             return t if not isinstance(t, Immediate) and t.getMean() > FINE_TOL else None
         return Exp.fitMean(float(t)) if float(t) > FINE_TOL else None
 
+    def think_of(tidx):
+        """Think time of a reference task, or None when it has none. lsn.think holds
+        the Distribution when one is set, so a non-exponential think time keeps its
+        SCV; a bare mean is still accepted for hand-built structs."""
+        t = (getattr(lsn, 'think', None) or {}).get(tidx)
+        if t is None:
+            return None
+        if isinstance(t, Distribution):
+            return t if not isinstance(t, Immediate) and t.getMean() > FINE_TOL else None
+        return Exp.fitMean(float(t)) if float(t) > FINE_TOL else None
+
     def act_think_station():
         """Single INF station shared by every activity think time."""
         if not act_think_node:
             act_think_node.append(Delay(model, "ActivityThink"))
         return act_think_node[0]
-
-    def call_mean(cidx):
-        return float(lsn.callpair[cidx, 3]) if lsn.callpair.shape[1] > 3 else 1.0
 
     def call_stages(aidx):
         """Unrolls the synchronous and asynchronous calls of an activity."""
@@ -898,7 +1123,7 @@ def LQN2QN(lqn):
             if ctype not in (CALL_SYNC, CALL_ASYNC):
                 continue
             isasync = (ctype == CALL_ASYNC)
-            target_eidx = int(lsn.callpair[cidx, 2])
+            target_eidx = int(lsn.callpair[cidx, 1])
             m = call_mean(cidx)
             nfull = int(m + FINE_TOL)
             frac = m - nfull
@@ -911,31 +1136,19 @@ def LQN2QN(lqn):
                 stages.append((target_eidx, frac, isasync))
         return stages
 
-    def forwarding_of(eidx):
-        """Rows (target_eidx, probability) of the forwarding calls of an entry."""
-        fwd = []
-        if lsn.calltype is None:
-            return fwd
-        for cidx in range(1, lsn.ncalls + 1):
-            if int(lsn.calltype[cidx]) != CALL_FWD or int(lsn.callpair[cidx, 1]) != eidx:
-                continue
-            p = min(max(call_mean(cidx), 0.0), 1.0)
-            if p > FINE_TOL:
-                fwd.append((int(lsn.callpair[cidx, 2]), p))
-        return fwd
-
-    def expand_entry(eidx, ref_tidx):
-        """Expands the activity subgraph bound to an entry, in the current context.
+    def expand_entry(eidx, ref_key, trep):
+        """Expands the activity subgraph bound to an entry of replica trep of its
+        task, in the current context.
 
         Returns (first_step, reply_exits, terminals), the exits being
         (step, is_signal, prob) triples.
         """
-        if eidx in entry_stack:
+        if (eidx, trep) in entry_stack:
             warnings.warn("LQN2QN: recursive call cycle at entry %s truncated."
                           % lsn.names[eidx])
             return None, [], []
-        entry_stack.append(eidx)
-        thread_stack.append(int(lsn.parent[eidx, 0]))
+        entry_stack.append((eidx, trep))
+        thread_stack.append((int(lsn.parent[eidx, 0]), trep))
         try:
             local_acts = lsn.actsof.get(eidx, [])
             bound = None
@@ -946,7 +1159,8 @@ def LQN2QN(lqn):
             if bound is None:
                 return None, [], []
 
-            first_step, reply_exits, terminals = _walk_entry(bound, eidx, ref_tidx, local_acts)
+            first_step, reply_exits, terminals = _walk_entry(bound, eidx, ref_key,
+                                                             local_acts, trep)
 
             # see _kb/04-networkstruct.md (lqn2qn activity-walk mechanics) for rationale
             fwd = forwarding_of(eidx)
@@ -957,15 +1171,24 @@ def LQN2QN(lqn):
                 # The forwarder's thread is released at the handoff, so the
                 # forwarded chain is expanded without it on the thread stack.
                 fwd_thread = thread_stack.pop()
+                fwd_tidx = int(lsn.parent[eidx, 0])
                 for target_eidx, p in fwd:
-                    f_first, f_replies, f_terms = expand_entry(target_eidx, ref_tidx)
-                    if f_first is None:
-                        continue
-                    for op in own_ports:
-                        add_route((op[0], op[1]), f_first, op[2] * p)
-                    pforw += p
-                    fwd_exits.extend(f_replies)
-                    fwd_exits.extend(f_terms)
+                    # A forwarding call spreads over the reached callee replicas
+                    # exactly as a synchronous one does.
+                    reps = target_replicas(fwd_tidx, trep,
+                                           int(lsn.parent[target_eidx, 0]))
+                    reached = 0
+                    for m in reps:
+                        f_first, f_replies, f_terms = expand_entry(target_eidx, ref_key, m)
+                        if f_first is None:
+                            continue
+                        reached += 1
+                        for op in own_ports:
+                            add_route((op[0], op[1]), f_first, op[2] * p / len(reps))
+                        fwd_exits.extend(f_replies)
+                        fwd_exits.extend(f_terms)
+                    if reached:
+                        pforw += p * reached / len(reps)
                 thread_stack.append(fwd_thread)
                 # What is left of each of this entry's own ports still replies.
                 residual = max(0.0, 1.0 - pforw)
@@ -976,7 +1199,7 @@ def LQN2QN(lqn):
             entry_stack.pop()
             thread_stack.pop()
 
-    def _walk_entry(a0, eidx, ref_tidx, local_acts):
+    def _walk_entry(a0, eidx, ref_key, local_acts, trep):
         """Walks the intra-task activity graph of one entry."""
         visited_entry = {}
         visited_exit = {}
@@ -984,6 +1207,10 @@ def LQN2QN(lqn):
         fork_owner_stack = []
         state = {'saw_reply': False}
         reply_exits, terminals = [], []
+
+        def sname(name):
+            """A class name carries the replica of the task that owns the step."""
+            return unique_name(suffixed(name, trep))
 
         def replies_here(aidx):
             if lsn.replygraph is None:
@@ -996,12 +1223,12 @@ def LQN2QN(lqn):
 
         def make_activity_steps(aidx, tidx, cache_node):
             """One step for the host demand, plus one per unrolled call stage."""
-            hidx = int(lsn.parent[tidx, 0])
+            hidx = host_key(tidx, trep)
 
             if cache_node is not None:
                 # A read step holds no demand and issues no call: the lookup is
                 # instantaneous, the work is done on the hit or miss branch.
-                read_step = add_step(aidx, hidx, None, lsn.names[aidx], False, False, ref_tidx)
+                read_step = add_step(aidx, hidx, None, sname(lsn.names[aidx]), False, False, ref_key)
                 step_node[read_step] = cache_node
                 if lsn.callsof.get(aidx):
                     warnings.warn("LQN2QN: calls issued by cache read activity %s are "
@@ -1014,7 +1241,7 @@ def LQN2QN(lqn):
 
             svc = demand_of(aidx)
             stages = call_stages(aidx)
-            entry_step = add_step(aidx, hidx, svc, lsn.names[aidx], False, False, ref_tidx)
+            entry_step = add_step(aidx, hidx, svc, sname(lsn.names[aidx]), False, False, ref_key)
             # cur is the port through which the activity is currently left. A
             # blocking call site is left through its reply signal.
             cur = (entry_step, False)
@@ -1022,8 +1249,8 @@ def LQN2QN(lqn):
             # see _kb/04-networkstruct.md (lqn2qn activity-walk mechanics) for rationale
             think_dist = act_think_of(aidx)
             if think_dist is not None:
-                think_step = add_step(aidx, hidx, think_dist, "%s_think" % lsn.names[aidx],
-                                      False, False, ref_tidx)
+                think_step = add_step(aidx, hidx, think_dist, sname("%s_think" % lsn.names[aidx]),
+                                      False, False, ref_key)
                 step_node[think_step] = act_think_station()
                 add_route(cur, think_step, 1.0)
                 cur = (think_step, False)
@@ -1031,7 +1258,7 @@ def LQN2QN(lqn):
             # see _kb/04-networkstruct.md (lqn2qn activity-walk mechanics) for rationale
             tmult = float(lsn.mult[0, tidx])
             host_blocks = (not host_is_delay.get(hidx, False) and tidx not in fcr_task
-                           and ref_tidx != 0 and tmult < 1e9
+                           and ref_key != 0 and tmult < 1e9
                            and sched_of(tidx) != SchedStrategy.INF)
 
             for k, (target_eidx, prob, isasync) in enumerate(stages):
@@ -1040,25 +1267,32 @@ def LQN2QN(lqn):
                 # see _kb/04-networkstruct.md (lqn2qn activity-walk mechanics) for rationale
                 if isasync:
                     async_thread = thread_stack.pop()
-                callee_first, callee_replies, callee_terms = expand_entry(target_eidx, ref_tidx)
+                # The stage is routed to the callee replicas this caller replica
+                # reaches, which share the call mean uniformly.
+                expanded = []
+                for m in target_replicas(tidx, trep, int(lsn.parent[target_eidx, 0])):
+                    c_first, c_replies, c_terms = expand_entry(target_eidx, ref_key, m)
+                    if c_first is None:
+                        continue
+                    # A callee path that neither replies nor continues still holds
+                    # a token, so it returns to the caller like a reply would.
+                    expanded.append((c_first, list(c_replies) + list(c_terms)))
                 if isasync:
                     thread_stack.append(async_thread)
-                if callee_first is None:
+                if not expanded:
                     continue        # callee not expandable: drop the call, never block
-                # A callee path that neither replies nor continues still holds a
-                # token, so it returns to the caller like a reply would.
-                callee_replies = list(callee_replies) + list(callee_terms)
+                share = 1.0 / len(expanded)
 
                 # see _kb/04-networkstruct.md (lqn2qn activity-walk mechanics) for rationale
                 needs_merge = (prob < 1.0) or (k < len(stages) - 1) or \
                     (not blocks) or is_and_join_pre(aidx)
                 nxt = None
                 if needs_merge:
-                    nxt = add_step(aidx, hidx, None, "%s_c%d_ret" % (lsn.names[aidx], k + 1),
-                                   False, False, ref_tidx)
+                    ret_name = sname("%s_c%d_ret" % (lsn.names[aidx], k + 1))
+                    nxt = add_step(aidx, hidx, None, ret_name, False, False, ref_key)
                     if not blocks:
                         # see _kb/04-networkstruct.md (lqn2qn activity-walk mechanics) for rationale
-                        step_node[nxt] = Router(model, "%s_c%d_ret" % (lsn.names[aidx], k + 1))
+                        step_node[nxt] = Router(model, ret_name)
 
                 if blocks:
                     # see _kb/04-networkstruct.md (lqn2qn activity-walk mechanics) for rationale
@@ -1066,25 +1300,29 @@ def LQN2QN(lqn):
                         blk = entry_step
                         step_blocks[blk] = True
                     else:
-                        blk = add_step(aidx, hidx, None, "%s_c%d" % (lsn.names[aidx], k + 1),
-                                       True, False, ref_tidx)
+                        blk = add_step(aidx, hidx, None, sname("%s_c%d" % (lsn.names[aidx], k + 1)),
+                                       True, False, ref_key)
                         add_route(cur, blk, prob)
                         if prob < 1.0:
                             add_route(cur, nxt, 1.0 - prob)
-                    add_route((blk, False), callee_first, 1.0)
-                    for (s, sig, pr) in callee_replies:
-                        reply.append((s, blk, sig, pr))
+                    for (c_first, c_replies) in expanded:
+                        # Every reached replica replies into the same signal, so
+                        # the call site blocks once however many replicas it has.
+                        add_route((blk, False), c_first, share)
+                        for (s, sig, pr) in c_replies:
+                            reply.append((s, blk, sig, pr))
                     if needs_merge:
                         add_route((blk, True), nxt, 1.0)
                         cur = (nxt, False)
                     else:
                         cur = (blk, True)
                 else:
-                    add_route(cur, callee_first, prob)
+                    for (c_first, c_replies) in expanded:
+                        add_route(cur, c_first, prob * share)
+                        for (s, sig, pr) in c_replies:
+                            add_route((s, sig), nxt, pr)
                     if prob < 1.0:
                         add_route(cur, nxt, 1.0 - prob)
-                    for (s, sig, pr) in callee_replies:
-                        add_route((s, sig), nxt, pr)
                     cur = (nxt, False)
 
             visited_exit[aidx] = cur
@@ -1100,7 +1338,7 @@ def LQN2QN(lqn):
             # step: it sits on the Cache node rather than on the processor.
             cache_node = None
             if lsn.iscache is not None and lsn.iscache[tidx, 0] != 0 and lsn.graph[eidx, aidx] != 0:
-                cache_node = get_cache_node(tidx)
+                cache_node = get_cache_node(tidx, trep)
 
             entry_step = make_activity_steps(aidx, tidx, cache_node)
             exit_port = visited_exit[aidx]
@@ -1119,31 +1357,36 @@ def LQN2QN(lqn):
             if replies_here(aidx):
                 if cache_node is not None and len(succ) >= 2:
                     # see _kb/04-networkstruct.md (lqn2qn activity-walk mechanics) for rationale
-                    trig_h = add_step(aidx, int(lsn.parent[tidx, 0]), None,
-                                      "%s_ph2h" % lsn.names[aidx], False, False, ref_tidx)
-                    trig_m = add_step(aidx, int(lsn.parent[tidx, 0]), None,
-                                      "%s_ph2m" % lsn.names[aidx], False, False, ref_tidx)
+                    trig_h = add_step(aidx, host_key(tidx, trep), None,
+                                      sname("%s_ph2h" % lsn.names[aidx]), False, False, ref_key)
+                    trig_m = add_step(aidx, host_key(tidx, trep), None,
+                                      sname("%s_ph2m" % lsn.names[aidx]), False, False, ref_key)
                     add_cache_route(entry_step, trig_h)
                     add_cache_route(entry_step, trig_m)
+                    if has_retrieval(tidx):
+                        warnings.warn("LQN2QN: delayed-hit retrieval of %s is not "
+                                      "represented on a cache read with phase-2 "
+                                      "successors." % lsn.names[tidx])
                     cache_wiring.append((cache_node, entry_step, trig_h, trig_m,
-                                         lsn.itemproc.get(eidx), int(lsn.nitems[eidx, 0])))
+                                         lsn.itemproc.get(eidx), int(lsn.nitems[eidx, 0]),
+                                         None, None))
                     reply_exits.append((trig_h, False, 1.0))
                     reply_exits.append((trig_m, False, 1.0))
                     saved_stack = list(thread_stack)
                     del thread_stack[:]
-                    thread_stack.append(tidx)
+                    thread_stack.append((tidx, trep))
                     n_t0 = len(terminals)
                     for hm in range(2):
                         s_entry = walk(succ[hm])
                         if step_node[s_entry] is not None:
-                            hm_head = add_step(aidx, int(lsn.parent[tidx, 0]), None,
-                                               "%s_ph2b%d" % (lsn.names[aidx], hm + 1),
-                                               False, False, ref_tidx)
+                            hm_head = add_step(aidx, host_key(tidx, trep), None,
+                                               sname("%s_ph2b%d" % (lsn.names[aidx], hm + 1)),
+                                               False, False, ref_key)
                             add_route((hm_head, False), s_entry, 1.0)
                             s_entry = hm_head
                         spawn_pairs.append((trig_h if hm == 0 else trig_m, s_entry))
                     for (ts, tsig, tpr) in terminals[n_t0:]:
-                        ph2_exits.append((ts, tsig, tpr, ref_tidx))
+                        ph2_exits.append((ts, tsig, tpr, ref_key))
                     del terminals[n_t0:]
                     del thread_stack[:]
                     thread_stack.extend(saved_stack)
@@ -1154,8 +1397,8 @@ def LQN2QN(lqn):
                 # see _kb/04-networkstruct.md (lqn2qn activity-walk mechanics) for rationale
                 if ok_ctx and (exit_port[1]
                                or isinstance(step_node[exit_port[0]], Router)):
-                    trig = add_step(aidx, int(lsn.parent[tidx, 0]), None,
-                                    "%s_ph2t" % lsn.names[aidx], False, False, ref_tidx)
+                    trig = add_step(aidx, host_key(tidx, trep), None,
+                                    sname("%s_ph2t" % lsn.names[aidx]), False, False, ref_key)
                     add_route(exit_port, trig, 1.0)
                     exit_port = (trig, False)
                 ph2_spawn = (ok_ctx and not exit_port[1]
@@ -1169,20 +1412,20 @@ def LQN2QN(lqn):
                     reply_exits.append((exit_port[0], exit_port[1], 1.0))
                     saved_stack = list(thread_stack)
                     del thread_stack[:]
-                    thread_stack.append(tidx)
+                    thread_stack.append((tidx, trep))
                     n_t0 = len(terminals)
                     pos_succ = [s for s in succ if lsn.graph[aidx, s] > 0]
                     target = None
                     if is_and_fork(succ):
                         # see _kb/04-networkstruct.md (lqn2qn activity-walk mechanics) for rationale
-                        head = add_step(aidx, int(lsn.parent[tidx, 0]), None,
-                                        "%s_ph2" % lsn.names[aidx], False, False, ref_tidx)
+                        head = add_step(aidx, host_key(tidx, trep), None,
+                                        sname("%s_ph2" % lsn.names[aidx]), False, False, ref_key)
                         wire_and_fork((head, False), succ, aidx)
                         target = head
                     elif is_and_join_pre(aidx):
                         # see _kb/04-networkstruct.md (lqn2qn activity-walk mechanics) for rationale
-                        head = add_step(aidx, int(lsn.parent[tidx, 0]), None,
-                                        "%s_ph2" % lsn.names[aidx], False, False, ref_tidx)
+                        head = add_step(aidx, host_key(tidx, trep), None,
+                                        sname("%s_ph2" % lsn.names[aidx]), False, False, ref_key)
                         wire_and_join((head, False), succ[0])
                         target = head
                     elif len(pos_succ) == 1:
@@ -1191,14 +1434,14 @@ def LQN2QN(lqn):
                             target = s_entry
                     if target is None:
                         # see _kb/04-networkstruct.md (lqn2qn activity-walk mechanics) for rationale
-                        head = add_step(aidx, int(lsn.parent[tidx, 0]), None,
-                                        "%s_ph2" % lsn.names[aidx], False, False, ref_tidx)
+                        head = add_step(aidx, host_key(tidx, trep), None,
+                                        sname("%s_ph2" % lsn.names[aidx]), False, False, ref_key)
                         for s2 in pos_succ:
                             add_route((head, False), walk(s2), lsn.graph[aidx, s2])
                         target = head
                     spawn_pairs.append((exit_port[0], target))
                     for (ts, tsig, tpr) in terminals[n_t0:]:
-                        ph2_exits.append((ts, tsig, tpr, ref_tidx))
+                        ph2_exits.append((ts, tsig, tpr, ref_key))
                     del terminals[n_t0:]
                     del thread_stack[:]
                     thread_stack.extend(saved_stack)
@@ -1214,8 +1457,20 @@ def LQN2QN(lqn):
                     m_entry = walk(succ[1])
                     add_cache_route(entry_step, h_entry)
                     add_cache_route(entry_step, m_entry)
+                    fetch, fetch_svc = None, None
+                    if has_retrieval(tidx):
+                        # The fetch is what the miss branch does, so its demand moves
+                        # to the fetch station where concurrent misses coalesce.
+                        fetch = get_fetch_node(tidx, trep)
+                        fetch_svc = step_svc[m_entry]
+                        step_svc[m_entry] = None
+                        if lsn.callsof.get(succ[1]):
+                            warnings.warn("LQN2QN: calls of miss activity %s stay outside "
+                                          "the retrieval system, so they are not coalesced "
+                                          "across concurrent misses." % lsn.names[succ[1]])
                     cache_wiring.append((cache_node, entry_step, h_entry, m_entry,
-                                         lsn.itemproc.get(eidx), int(lsn.nitems[eidx, 0])))
+                                         lsn.itemproc.get(eidx), int(lsn.nitems[eidx, 0]),
+                                         fetch, fetch_svc))
                     return entry_step
 
             if is_and_fork(succ):
@@ -1235,17 +1490,17 @@ def LQN2QN(lqn):
 
         def wire_and_fork(from_port, fsucc, aidx):
             # see _kb/04-networkstruct.md (lqn2qn activity-walk mechanics) for rationale
-            fork_node = Fork(model, "Fork_%s" % lsn.names[aidx])
-            fork_step = add_aux_step(fork_node, from_port[0],
-                                     "Fork_%s" % lsn.names[aidx], ref_tidx)
+            fork_name = sname("Fork_%s" % lsn.names[aidx])
+            fork_node = Fork(model, fork_name)
+            fork_step = add_aux_step(fork_node, from_port[0], fork_name, ref_key)
             add_route(from_port, fork_step, 1.0)
             fork_owner_stack.append(fork_step)
             # see _kb/04-networkstruct.md (lqn2qn activity-walk mechanics) for rationale
             ordered = ([s for s in fsucc if branch_replies(s)]
                        + [s for s in fsucc if not branch_replies(s)])
             for b, s in enumerate(ordered):
-                rname = "Fork_%s_%d" % (lsn.names[aidx], b + 1)
-                router_step = add_aux_step(Router(model, rname), fork_step, rname, ref_tidx)
+                rname = sname("Fork_%s_%d" % (lsn.names[aidx], b + 1))
+                router_step = add_aux_step(Router(model, rname), fork_step, rname, ref_key)
                 add_route((fork_step, False), router_step, 1.0)
                 add_route((router_step, False), walk(s), 1.0)
             fork_owner_stack.pop()
@@ -1261,10 +1516,9 @@ def LQN2QN(lqn):
                 add_route(from_port, walk(join_aidx), 1.0)
                 return
             fork_owner = fork_owner_stack[-1]
-            join_node = Join(model, "Join_%s" % lsn.names[join_aidx],
-                             step_node[fork_owner])
-            join_step = add_aux_step(join_node, fork_owner,
-                                     "Join_%s" % lsn.names[join_aidx], ref_tidx)
+            join_name = sname("Join_%s" % lsn.names[join_aidx])
+            join_node = Join(model, join_name, step_node[fork_owner])
+            join_step = add_aux_step(join_node, fork_owner, join_name, ref_key)
             add_route(from_port, join_step, 1.0)
             add_route((join_step, False), walk(join_aidx), 1.0)
             join_of[join_aidx] = join_step
@@ -1294,18 +1548,23 @@ def LQN2QN(lqn):
             terminals = []
         return first_step, reply_exits, terminals
 
+    # One closed chain per reference task replica: the replicas are separate
+    # populations that meet only where they share a station.
     for ref_tidx in ref_task_indices:
-        think_step = add_step(0, 0, None, "%s_Think" % lsn.names[ref_tidx],
-                              False, True, ref_tidx)
-        for eidx in lsn.entriesof.get(ref_tidx, []):
-            first_step, reply_exits, terminals = expand_entry(eidx, ref_tidx)
-            if first_step is None:
-                continue
-            add_route((think_step, False), first_step, 1.0)
-            # A reference task has no caller: its replies and its dead ends both
-            # close the cycle at the think delay.
-            for (s, sig, pr) in list(reply_exits) + list(terminals):
-                add_route((s, sig), think_step, pr)
+        for rep in range(nrep(ref_tidx)):
+            ref_key = (ref_tidx, rep)
+            think_step = add_step(0, 0, None,
+                                  unique_name(suffixed("%s_Think" % lsn.names[ref_tidx], rep)),
+                                  False, True, ref_key)
+            for eidx in lsn.entriesof.get(ref_tidx, []):
+                first_step, reply_exits, terminals = expand_entry(eidx, ref_key, rep)
+                if first_step is None:
+                    continue
+                add_route((think_step, False), first_step, 1.0)
+                # A reference task has no caller: its replies and its dead ends
+                # both close the cycle at the think delay.
+                for (s, sig, pr) in list(reply_exits) + list(terminals):
+                    add_route((s, sig), think_step, pr)
 
     # see _kb/04-networkstruct.md (lqn2qn activity-walk mechanics) for rationale
     open_wiring = []
@@ -1314,12 +1573,14 @@ def LQN2QN(lqn):
         src_node = Source(model, 'Source')
         snk_node = Sink(model, 'Sink')
     for eidx in open_entries:
-        first_step, reply_exits, terminals = expand_entry(eidx, 0)
-        if first_step is None:
-            warnings.warn("LQN2QN: open arrival entry %s has no bound activity; "
-                          "ignored." % lsn.names[eidx])
-            continue
-        open_wiring.append((eidx, first_step, list(reply_exits) + list(terminals)))
+        # Each replica of the entry's task receives its own arrival stream.
+        for rep in range(nrep(int(lsn.parent[eidx, 0]))):
+            first_step, reply_exits, terminals = expand_entry(eidx, 0, rep)
+            if first_step is None:
+                warnings.warn("LQN2QN: open arrival entry %s has no bound activity; "
+                              "ignored." % lsn.names[eidx])
+                continue
+            open_wiring.append((eidx, first_step, list(reply_exits) + list(terminals)))
 
     # ------------------------------- pass 2: create classes and reply signals
     nsteps = len(step_aidx)
@@ -1330,13 +1591,15 @@ def LQN2QN(lqn):
         if step_class_owner[i] != i:
             # Fork, Join and Router steps carry the job through unchanged.
             continue
-        ref_tidx = step_ref_task[i]
-        if ref_tidx == 0:
+        ref_key = step_ref_task[i]
+        if ref_key == 0:
             # A step of an open arrival chain travels in an open class.
             step_class[i] = OpenClass(model, step_name[i])
         else:
-            population = int(lsn.mult[0, ref_tidx]) if step_is_think[i] else 0
-            step_class[i] = ClosedClass(model, step_name[i], population, think_node[ref_tidx])
+            # A pooled reference task holds the population of all its replicas.
+            population = (int(lsn.mult[0, ref_key[0]]) * pool_factor(ref_key[0])
+                          if step_is_think[i] else 0)
+            step_class[i] = ClosedClass(model, step_name[i], population, think_node[ref_key])
     for i in range(nsteps):
         step_class[i] = step_class[step_class_owner[i]]
 
@@ -1368,11 +1631,11 @@ def LQN2QN(lqn):
     ph2_dump_node = None
     ph2_destructor_of = {}
     for (_, _, _, rft) in ph2_exits:
-        if rft <= 0 or rft in ph2_destructor_of:
+        if rft == 0 or rft in ph2_destructor_of:
             continue
         if ph2_dump_node is None:
             ph2_dump_node = Queue(model, "Ph2Sink", SchedStrategy.FCFS)
-        sig = ClosedSignal(model, "Ph2End_%s" % lsn.names[rft],
+        sig = ClosedSignal(model, suffixed("Ph2End_%s" % lsn.names[rft[0]], rft[1]),
                            SignalType.NEGATIVE, think_node[rft])
         for node in model.getNodes():
             if node.__class__.__name__ != 'Sink':
@@ -1403,32 +1666,62 @@ def LQN2QN(lqn):
                     think_node[step_ref_task[i]].setService(step_class[i], Immediate())
             continue
         if step_is_think[i]:
-            ref_tidx = step_ref_task[i]
-            tmean = lsn.think.get(ref_tidx, 0.0)
-            tnode = think_node[ref_tidx]
-            if tmean is None or tmean <= FINE_TOL:
-                tnode.setService(step_class[i], Immediate())
-            else:
-                tnode.setService(step_class[i], Exp.fitMean(tmean))
+            ref_key = step_ref_task[i]
+            think_dist = think_of(ref_key[0])
+            tnode = think_node[ref_key]
+            tnode.setService(step_class[i], think_dist if think_dist is not None else Immediate())
         else:
             station = host_station[step_host[i]]
             station.setService(step_class[i], step_svc[i] if step_svc[i] is not None else Immediate())
+
+    # A SetupTask is a server that shuts down when idle and pays a setup on the
+    # next arrival, which is the Queue setup/delay-off pair at its host station.
+    warned_setup = set()
+    for i in range(nsteps):
+        if step_node[i] is not None or step_is_think[i] or step_aidx[i] == 0:
+            continue
+        tidx = int(lsn.parent[step_aidx[i], 0])
+        times = setup_times_of(tidx)
+        if times is None:
+            continue
+        if times == 'nodelayoff':
+            if tidx not in warned_setup:
+                warnings.warn("LQN2QN: setup of setup task %s is not represented: it "
+                              "has no delay-off time, so its server never shuts down and "
+                              "never sets up again." % lsn.names[tidx])
+                warned_setup.add(tidx)
+            continue
+        # Delay subclasses Queue, so the infinite server is tested by hostIsDelay
+        if host_is_delay.get(step_host[i], False):
+            if tidx not in warned_setup:
+                warnings.warn("LQN2QN: setup of setup task %s is not represented: its "
+                              "processor is an infinite server, which never shuts down."
+                              % lsn.names[tidx])
+                warned_setup.add(tidx)
+            continue
+        host_station[step_host[i]].set_delay_off(step_class[i], times[0], times[1])
 
     # see _kb/04-networkstruct.md (lqn2qn activity-walk mechanics) for rationale
     for i in range(nsteps):
         if step_signal[i] is None:
             continue
-        for h in range(1, lsn.nhosts + 1):
-            host_station[h].setService(step_signal[i], Immediate())
+        for hstation in host_station.values():
+            hstation.setService(step_signal[i], Immediate())
         for tn in think_node.values():
             tn.setService(step_signal[i], Immediate())
 
     # Cache read/hit/miss wiring, now that the classes exist.
-    for (cnode, read_step, hit_step, miss_step, itemproc, nitems) in cache_wiring:
+    for (cnode, read_step, hit_step, miss_step, itemproc, nitems,
+         fetch, fetch_svc) in cache_wiring:
         # see _kb/04-networkstruct.md (lqn2qn activity-walk mechanics) for rationale
         cnode.setRead(step_class[read_step], itemproc)
         cnode.setHitClass(step_class[read_step], step_class[hit_step])
         cnode.setMissClass(step_class[read_step], step_class[miss_step])
+        if fetch is not None:
+            # Service and routing of the retrieval system are read off the read class.
+            fetch.setService(step_class[read_step],
+                             fetch_svc if fetch_svc is not None else Immediate())
+            cnode.set_retrieval_system(step_class[read_step], step_class[miss_step], fetch)
 
     # --------------------------------------------------------- pass 4: routing
     P = model.initRoutingMatrix()
@@ -1444,6 +1737,12 @@ def LQN2QN(lqn):
         # class-switches into the reply signal of the outer call site.
         src = step_signal[i] if via_signal else step_class[i]
         P.set(src, step_signal[owner], station_of(i), station_of(owner), p)
+
+    for (cnode, read_step, _h, _m, _ip, _ni, fetch, _fs) in cache_wiring:
+        if fetch is not None:
+            rcls = step_class[read_step]
+            P.set(rcls, rcls, cnode, fetch, 1.0)
+            P.set(rcls, rcls, fetch, cnode, 1.0)
 
     # -------------------------- phase-2 chain ends: destroy the spawned token
     for (s, sig, pr, rft) in ph2_exits:
@@ -1468,8 +1767,9 @@ def LQN2QN(lqn):
 
     model.link(P)
 
-    # see _kb/04-networkstruct.md (lqn2qn activity-walk mechanics) for rationale
-    fcr_list = sorted(fcr_task)
+    # One admission row per thread-pool task replica; a pooled task keeps a
+    # single row whose bound covers all its replicas.
+    fcr_list = sorted(set(t for i in range(nsteps) for t in step_tasks[i]))
     if fcr_list:
         import numpy as np
         classes = model.getClasses()
@@ -1477,16 +1777,20 @@ def LQN2QN(lqn):
         Amat = np.zeros((len(fcr_list), Kc))
         bvec = np.zeros(len(fcr_list))
         region_nodes = []
-        for ti, tidx in enumerate(fcr_list):
+        for ti, tkey in enumerate(fcr_list):
             for i in range(nsteps):
-                if tidx not in step_tasks[i]:
+                if tkey not in step_tasks[i]:
                     continue
                 cidx = classes.index(step_class[i])
                 Amat[ti, cidx] = 1.0
                 nd = station_of(i)
                 if isinstance(nd, (Queue, Delay)) and nd not in region_nodes:
                     region_nodes.append(nd)
-            bvec[ti] = float(lsn.mult[0, tidx])
+                for (_c, rstep, _h, _m, _ip, _ni, fetch, _fs) in cache_wiring:
+                    # The caller holds its thread for the whole fetch.
+                    if rstep == i and fetch is not None and fetch not in region_nodes:
+                        region_nodes.append(fetch)
+            bvec[ti] = float(lsn.mult[0, tkey[0]]) * pool_factor(tkey[0])
         if Amat.any() and region_nodes:
             fcr = model.add_region(*region_nodes)
             fcr.set_linear_constraints(Amat, bvec)

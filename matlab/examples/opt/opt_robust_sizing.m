@@ -9,7 +9,7 @@ nodes = base.getNodes(); queue = nodes{2};
 
 problem = opt.OptimizationProblem(base);
 problem.addVariable(opt.ServerAllocation(queue, [1 12]));
-serverCost = containers.Map('KeyType','char','ValueType','double');
+serverCost = configureDictionary('string','double');
 serverCost('Server') = 10.0;
 problem.setObjective(opt.MinimizeCost(serverCost, [], [], {}));
 problem.addConstraint(opt.UtilizationConstraint(queue, 0.5));

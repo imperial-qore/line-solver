@@ -6,7 +6,16 @@ import java.io.FileWriter;
 import java.io.BufferedReader;
 import java.lang.management.ManagementFactory;
 import java.lang.reflect.Method;
+import java.util.Map;
 import java.util.Properties;
+
+import jline.lang.JobClass;
+import jline.lang.NetworkStruct;
+import jline.lang.constant.RoutingStrategy;
+import jline.lang.constant.SchedStrategy;
+import jline.solvers.SolverOptions;
+import jline.util.matrix.Matrix;
+import jline.util.Maths;
 
 import org.ejml.data.DMatrixSparseCSC;
 import org.ejml.data.DMatrixSparseTriplet;
@@ -124,6 +133,398 @@ public final class MemoryGuard {
     private static File cacheFile() {
         String tmp = System.getProperty("java.io.tmpdir", ".");
         return new File(tmp, "line_ctmc_calib_java.properties");
+    }
+
+    /**
+     * Worst-case log-size of the CTMC state space induced by sn: stars-and-bars
+     * job placements per class over the stations that keep no ordered buffer
+     * (open classes truncated at the cutoff), times the class-sequence
+     * multiplicity of every order-preserving buffer, times the service-phase
+     * multiplicity at each station, times one routing pointer per (node,class)
+     * doing RROBIN or WRROBIN. Mirrors MATLAB ctmc_state_space_logsize.m and
+     * Python state_space_log_size.
+     *
+     * @param sn      the network structure, after PH conversion
+     * @param options solver options carrying the cutoff
+     * @return the natural log of the worst-case number of states
+     */
+    public static double stateSpaceLogSize(NetworkStruct sn, SolverOptions options) {
+        int M = sn.nstations;
+        int K = sn.nclasses;
+        Matrix NK = sn.njobs;
+
+        double cutoffScalar = 0;
+        Matrix cutoffMat = options.getCutoffMatrix(M, K);
+        for (int ci = 0; ci < cutoffMat.getNumRows(); ci++) {
+            for (int cj = 0; cj < cutoffMat.getNumCols(); cj++) {
+                double cv = cutoffMat.get(ci, cj);
+                if (!Double.isInfinite(cv) && cv > cutoffScalar) {
+                    cutoffScalar = cv;
+                }
+            }
+        }
+        if (cutoffScalar <= 0) {
+            // Same default the CTMC analyzer installs for open/mixed models.
+            cutoffScalar = Math.ceil(Math.pow(6000, 1.0 / (M * K)));
+        }
+
+        // ORDERED BUFFERS, computed EXACTLY. A station outside the share family
+        // keeps the class SEQUENCE of the jobs it holds. Omitting the factor
+        // priced gallery_mmap1_multiclass at 726 states against 225840
+        // enumerated; BOUNDING it instead of computing it double counts (the
+        // sequence term already places the jobs it orders) and refused a working
+        // model. The joint sum counts placement and ordering together. A
+        // G-network signal never occupies a buffer slot.
+        boolean[] isBuffered = new boolean[K];
+        int Kb = 0;
+        for (int k = 0; k < K; k++) {
+            boolean sig = sn.issignal != null && k < sn.issignal.getNumElements()
+                    && sn.issignal.get(k) != 0;
+            isBuffered[k] = !sig;
+            if (isBuffered[k]) {
+                Kb++;
+            }
+        }
+        int nOrd = 0;
+        if (Kb > 1) {
+            for (int i = 0; i < M; i++) {
+                SchedStrategy schedI = null;
+                if (sn.stations != null && i < sn.stations.size() && sn.sched != null) {
+                    schedI = sn.sched.get(sn.stations.get(i));
+                }
+                if (schedI == SchedStrategy.EXT || isShareScheduling(schedI)) {
+                    continue;
+                }
+                nOrd++;
+            }
+        }
+
+        double logNstates = 0;
+        double[] nkEff = new double[K];
+        for (int k = 0; k < K; k++) {
+            nkEff[k] = Double.isInfinite(NK.get(k)) ? cutoffScalar : NK.get(k);
+        }
+
+        if (nOrd == 0) {
+            for (int k = 0; k < K; k++) {
+                double mk = Math.max(admittingStations(sn, k, 0, M), 1);
+                logNstates += Maths.factln(nkEff[k] + mk - 1) - Maths.factln(mk - 1)
+                        - Maths.factln(nkEff[k]);
+            }
+        } else {
+            int mRem = M - nOrd;
+            for (int k = 0; k < K; k++) {
+                if (!isBuffered[k]) {
+                    double mk = Math.max(admittingStations(sn, k, 0, M), 1);
+                    logNstates += Maths.factln(nkEff[k] + mk - 1) - Maths.factln(mk - 1)
+                            - Maths.factln(nkEff[k]);
+                }
+            }
+            int[] caps = new int[Kb];
+            int ci = 0;
+            double grid = 1.0;
+            for (int k = 0; k < K; k++) {
+                if (isBuffered[k]) {
+                    caps[ci++] = (int) Math.floor(nkEff[k]);
+                    grid *= (Math.floor(nkEff[k]) + 1);
+                }
+            }
+            if (grid <= ORDER_GRID_MAX) {
+                java.util.List<int[]> capsList = new java.util.ArrayList<int[]>();
+                java.util.List<Double> capTotList = new java.util.ArrayList<Double>();
+                for (int i2 = 0; i2 < M; i2++) {
+                    SchedStrategy sc = null;
+                    if (sn.stations != null && i2 < sn.stations.size() && sn.sched != null) {
+                        sc = sn.sched.get(sn.stations.get(i2));
+                    }
+                    if (sc == SchedStrategy.EXT || isShareScheduling(sc)) {
+                        continue;
+                    }
+                    int[] per = new int[caps.length];
+                    int bk = 0;
+                    for (int k = 0; k < K && bk < caps.length; k++) {
+                        if (!isBuffered[k]) {
+                            continue;
+                        }
+                        int c = caps[bk];
+                        if (sn.classcap != null && i2 < sn.classcap.getNumRows()
+                                && k < sn.classcap.getNumCols()
+                                && Double.isFinite(sn.classcap.get(i2, k))) {
+                            c = Math.min(c, (int) Math.floor(sn.classcap.get(i2, k)));
+                        }
+                        per[bk++] = c;
+                    }
+                    capsList.add(per);
+                    double ct = Double.POSITIVE_INFINITY;
+                    if (sn.cap != null && i2 < sn.cap.getNumElements()
+                            && Double.isFinite(sn.cap.get(i2)) && sn.cap.get(i2) >= 0) {
+                        ct = Math.floor(sn.cap.get(i2));
+                    }
+                    capTotList.add(ct);
+                }
+                int[][] capsPer = new int[capsList.size()][];
+                double[] capTot = new double[capTotList.size()];
+                for (int a2 = 0; a2 < capsList.size(); a2++) {
+                    capsPer[a2] = capsList.get(a2);
+                    capTot[a2] = capTotList.get(a2);
+                }
+                logNstates += logOrderedJoint(capsPer, capTot, caps, mRem);
+            } else {
+                double total = 0;
+                for (int c : caps) {
+                    total += c;
+                }
+                double logKb = Math.log(Kb);
+                logNstates += nOrd * ((total + 1) * logKb - Math.log(Kb - 1)
+                        + Math.log1p(-Math.exp(-(total + 1) * logKb)));
+                for (int k = 0; k < K; k++) {
+                    if (isBuffered[k]) {
+                        double mk = admittingRemaining(sn, k, M);
+                        if (mk >= 1) {
+                            logNstates += Maths.factln(nkEff[k] + mk - 1)
+                                    - Maths.factln(mk - 1) - Maths.factln(nkEff[k]);
+                        }
+                    }
+                }
+            }
+        }
+
+        if (sn.phasessz != null && !sn.phasessz.isEmpty()) {
+            for (int i = 0; i < Math.min(M, sn.phasessz.getNumRows()); i++) {
+                SchedStrategy sched = null;
+                if (sn.stations != null && i < sn.stations.size() && sn.sched != null) {
+                    sched = sn.sched.get(sn.stations.get(i));
+                }
+                for (int k = 0; k < Math.min(K, sn.phasessz.getNumCols()); k++) {
+                    double p = sn.phasessz.get(i, k);
+                    if (!Double.isFinite(p) || p <= 1) {
+                        continue;
+                    }
+                    double m;
+                    if (sched == SchedStrategy.EXT) {
+                        m = 1;
+                    } else if (isShareScheduling(sched)) {
+                        m = nkEff[k];
+                    } else {
+                        // nservers may be stored as a row or a column: index linearly.
+                        double c = (sn.nservers != null && i < sn.nservers.getNumElements())
+                                ? sn.nservers.get(i) : 1;
+                        m = Math.min(nkEff[k], c);
+                    }
+                    if (!Double.isFinite(m)) {
+                        m = nkEff[k];
+                    }
+                    logNstates += Maths.factln(m + p - 1) - Maths.factln(p - 1) - Maths.factln(m);
+                }
+            }
+        }
+
+        if (sn.routing != null && sn.connmatrix != null && !sn.connmatrix.isEmpty()) {
+            for (int ind = 0; ind < Math.min(sn.nnodes, sn.connmatrix.getNumRows()); ind++) {
+                int nout = 0;
+                for (int j = 0; j < sn.connmatrix.getNumCols(); j++) {
+                    if (sn.connmatrix.get(ind, j) != 0) {
+                        nout++;
+                    }
+                }
+                if (nout <= 1 || sn.nodes == null || ind >= sn.nodes.size()) {
+                    continue;
+                }
+                Map<JobClass, RoutingStrategy> perClass = sn.routing.get(sn.nodes.get(ind));
+                if (perClass == null) {
+                    continue;
+                }
+                int nrr = 0;
+                for (RoutingStrategy rs : perClass.values()) {
+                    if (rs == RoutingStrategy.RROBIN || rs == RoutingStrategy.WRROBIN) {
+                        nrr++;
+                    }
+                }
+                if (nrr > 0) {
+                    logNstates += nrr * Math.log(nout);
+                }
+            }
+        }
+        return logNstates;
+    }
+
+    /**
+     * How many of stations {@code [from, to)} can hold a job of class k at all.
+     *
+     * <p>A ZERO per-class capacity means the class is DISABLED there, so it never
+     * occupies a slot and the placement term must spread it over the stations that
+     * admit it rather than over all M. ld_whittle_bandwidth disables each of its
+     * three PS routes for the other two classes; counting all M=4 priced it at
+     * C(9,6)^3 = 592704 states, 7852 GB under the quadratic byte model, and the
+     * gate refused a model whose true space is 7^3 = 343 and solves at once.
+     */
+    private static int admittingStations(NetworkStruct sn, int k, int from, int to) {
+        int n = 0;
+        for (int i = from; i < to; i++) {
+            if (sn.classcap != null && i < sn.classcap.getNumRows()
+                    && k < sn.classcap.getNumCols() && sn.classcap.get(i, k) == 0) {
+                continue;
+            }
+            n++;
+        }
+        return n;
+    }
+
+    /** As {@link #admittingStations}, restricted to the NON-ordered stations. */
+    private static int admittingRemaining(NetworkStruct sn, int k, int M) {
+        int n = 0;
+        for (int i = 0; i < M; i++) {
+            SchedStrategy sc = null;
+            if (sn.stations != null && i < sn.stations.size() && sn.sched != null) {
+                sc = sn.sched.get(sn.stations.get(i));
+            }
+            if (!(sc == SchedStrategy.EXT || isShareScheduling(sc))) {
+                continue;
+            }
+            if (sn.classcap != null && i < sn.classcap.getNumRows()
+                    && k < sn.classcap.getNumCols() && sn.classcap.get(i, k) == 0) {
+                continue;
+            }
+            n++;
+        }
+        return n;
+    }
+
+    /** Largest (m_1..m_K) box the exact ordered-buffer DP will walk. */
+    private static final double ORDER_GRID_MAX = 1.0e6;
+
+    /**
+     * Log count of (placement, ordering) configurations over ALL order-preserving
+     * stations at once, POPULATION CONSERVED. capsPer[a][k] bounds class k at
+     * ordered station a; capTot[a] bounds the buffer TOTAL there, because a finite
+     * station capacity is a slot count and not a per-class bound; njobs is the
+     * population to share out and mRem share stations take the leftovers.
+     *
+     * Cutoff truncates an OPEN class's population IN THE NETWORK, exactly as the
+     * plain stars-and-bars term treats it, so open classes are conserved too.
+     */
+    private static double logOrderedJoint(int[][] capsPer, double[] capTot, int[] njobs, int mRem) {
+        int kb = njobs.length;
+        int[] dims = new int[kb];
+        int nstate = 1;
+        for (int k = 0; k < kb; k++) {
+            dims[k] = njobs[k] + 1;
+            nstate *= dims[k];
+        }
+        double[] L = new double[nstate];
+        java.util.Arrays.fill(L, Double.NEGATIVE_INFINITY);
+        L[idxOf(njobs, dims)] = 0.0;
+        for (int a = 0; a < capsPer.length; a++) {
+            double[] ln = new double[nstate];
+            java.util.Arrays.fill(ln, Double.NEGATIVE_INFINITY);
+            for (int si = 0; si < nstate; si++) {
+                if (Double.isInfinite(L[si]) && L[si] < 0) {
+                    continue;
+                }
+                int[] rem = subOf(si, dims);
+                int[] av = new int[kb];
+                for (int k = 0; k < kb; k++) {
+                    av[k] = Math.min(capsPer[a][k], rem[k]);
+                }
+                int[] m = new int[kb];
+                while (true) {
+                    int t = 0;
+                    for (int k = 0; k < kb; k++) {
+                        t += m[k];
+                    }
+                    if (!(capTot[a] < Double.POSITIVE_INFINITY && t > capTot[a])) {
+                        double v = L[si] + Maths.factln(t);
+                        for (int k = 0; k < kb; k++) {
+                            v -= Maths.factln(m[k]);
+                        }
+                        int[] nx = new int[kb];
+                        for (int k = 0; k < kb; k++) {
+                            nx[k] = rem[k] - m[k];
+                        }
+                        int di = idxOf(nx, dims);
+                        if (Double.isInfinite(ln[di]) && ln[di] < 0) {
+                            ln[di] = v;
+                        } else {
+                            double mx = Math.max(ln[di], v);
+                            ln[di] = mx + Math.log(Math.exp(ln[di] - mx) + Math.exp(v - mx));
+                        }
+                    }
+                    int pos = 0;
+                    while (pos < kb && m[pos] == av[pos]) {
+                        m[pos] = 0;
+                        pos++;
+                    }
+                    if (pos == kb) {
+                        break;
+                    }
+                    m[pos]++;
+                }
+            }
+            L = ln;
+        }
+        double top = Double.NEGATIVE_INFINITY;
+        java.util.List<Double> terms = new java.util.ArrayList<Double>();
+        for (int si = 0; si < nstate; si++) {
+            if (Double.isInfinite(L[si]) && L[si] < 0) {
+                continue;
+            }
+            int[] rem = subOf(si, dims);
+            double v = L[si];
+            if (mRem >= 1) {
+                for (int k = 0; k < kb; k++) {
+                    v += Maths.factln(rem[k] + mRem - 1) - Maths.factln(rem[k]) - Maths.factln(mRem - 1);
+                }
+            } else {
+                boolean leftover = false;
+                for (int k = 0; k < kb; k++) {
+                    if (rem[k] > 0) {
+                        leftover = true;
+                    }
+                }
+                if (leftover) {
+                    continue;
+                }
+            }
+            terms.add(v);
+            if (v > top) {
+                top = v;
+            }
+        }
+        if (terms.isEmpty()) {
+            return Double.NEGATIVE_INFINITY;
+        }
+        double acc = 0;
+        for (int i = 0; i < terms.size(); i++) {
+            acc += Math.exp(terms.get(i) - top);
+        }
+        return top + Math.log(acc);
+    }
+
+    private static int idxOf(int[] v, int[] dims) {
+        int ix = 0;
+        int mult = 1;
+        for (int k = 0; k < dims.length; k++) {
+            ix += v[k] * mult;
+            mult *= dims[k];
+        }
+        return ix;
+    }
+
+    private static int[] subOf(int ix, int[] dims) {
+        int[] v = new int[dims.length];
+        int r = ix;
+        for (int k = 0; k < dims.length; k++) {
+            v[k] = r % dims[k];
+            r /= dims[k];
+        }
+        return v;
+    }
+
+    private static boolean isShareScheduling(SchedStrategy sched) {
+        return sched == SchedStrategy.INF || sched == SchedStrategy.PS
+                || sched == SchedStrategy.DPS || sched == SchedStrategy.GPS
+                || sched == SchedStrategy.PSPRIO || sched == SchedStrategy.DPSPRIO
+                || sched == SchedStrategy.GPSPRIO || sched == SchedStrategy.LPS;
     }
 
     /**

@@ -171,7 +171,7 @@ def test_mmap2k_fit_recovers_a_canonical_mmap_exactly(K, form):
     A random canonical MMAP(2,K) is built, its characteristics measured, and the
     fit must reproduce all of them: three moments, decay rate, class
     probabilities, forward and backward moments. The marking inverse is linear
-    and K-independent (see sage/proofs/mmap2k_marking_inverse.py), so this is an
+    and K-independent (see io/sage/proofs/mmap2k_marking_inverse.py), so this is an
     exact-recovery test, not a tolerance one.
     """
     from line_solver.lib.m3a.amap2 import amap2_assemble
@@ -223,7 +223,7 @@ def test_mmap3k_fit_recovers_the_marking_exactly(n, K):
     Order two needs (p, F, B); order three needs the second-order backward
     moment as well, because the canonical D1 has one more nonzero. The
     independent characteristic set was derived in
-    sage/proofs/mmap3k_marking_inverse.py.
+    io/sage/proofs/mmap3k_marking_inverse.py.
     """
     from line_solver.lib.m3a.mmap3k import mmap3k_fit
 

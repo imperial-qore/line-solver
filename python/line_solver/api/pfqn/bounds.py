@@ -9,7 +9,7 @@ queueing networks, including:
 """
 
 import numpy as np
-from typing import Union
+from typing import Tuple, Union
 
 def pfqn_xzabalow(
     L: np.ndarray,
@@ -402,3 +402,179 @@ __all__ = [
     'pfqn_xzgsbup',
     'pfqn_mwrbb',
 ]
+
+
+def _harel_power_sums(rho: np.ndarray, max_power: int) -> np.ndarray:
+    """Power sums A_i = sum_j rho_j^i, i = 1..max_power; A[i-1] holds A_i."""
+    return np.array([np.sum(rho ** i) for i in range(1, max_power + 1)])
+
+
+def _harel_G(A: np.ndarray, n: int) -> np.ndarray:
+    """G(0..n) by the Newton-Girard recurrence n G(n) = sum_i A_i G(n-i)."""
+    if A.size < n:
+        raise ValueError('pfqn_harel_bounds: too few power sums for the requested population.')
+    G = np.zeros(n + 1)
+    G[0] = 1.0
+    for m in range(1, n + 1):
+        acc = 0.0
+        for i in range(1, m + 1):
+            acc += A[i - 1] * G[m - i]
+        G[m] = acc / m
+    return G
+
+
+def _harel_reject_thinktime(Z: float, who: str) -> None:
+    """The reference refuses a nonzero think time rather than folding it in."""
+    if Z != 0:
+        raise ValueError('%s is only valid for networks with zero think time; '
+                         'the provided think time is nonzero.' % who)
+
+
+def _harel_check_rho(rho: np.ndarray, who: str) -> None:
+    """Shared input screening of the loading vector."""
+    if rho.size == 0:
+        raise ValueError('%s: the loading vector must have at least one element.' % who)
+    if np.any(rho <= 0):
+        raise ValueError('%s: all loading factors must be positive.' % who)
+
+
+def _harel_upper_from_th(A1: float, N: int, n: int, THn: float) -> float:
+    """UB(n) = N / (A1 + ((N-1)/(n-1)) (n/TH(n) - A1))."""
+    if THn == 0:
+        raise ValueError('pfqn_harel_bounds: the throughput at the extrapolation point is zero.')
+    den = A1 + ((N - 1.0) / (n - 1.0)) * (n / THn - A1)
+    if den == 0:
+        raise ValueError('pfqn_harel_bounds: the upper-bound denominator vanishes.')
+    return N / den
+
+
+def pfqn_harel_lb(rho: np.ndarray, N: int, Z: float = 0.0) -> float:
+    """
+    Harel-Namn-Sturm throughput lower bound of a single-class closed network.
+
+    LB = N / (A_1 + (N-1) (A_N/A_1)^{1/(N-1)}) with A_i = sum_j rho_j^i, from
+    Harel, Namn and Sturm, "Simple bounds for closed queueing networks"
+    (Queueing Systems 31, 1999). A nonzero think time is refused.
+
+    Args:
+        rho: (k,) relative utilizations, all strictly positive.
+        N: population, at least 1.
+        Z: think time; must be zero.
+
+    Returns:
+        The throughput lower bound at population N.
+    """
+    _harel_reject_thinktime(Z, 'pfqn_harel_lb')
+    if N < 1:
+        raise ValueError('pfqn_harel_lb: the population must be at least 1.')
+    rho = np.asarray(rho, dtype=float).ravel()
+    _harel_check_rho(rho, 'pfqn_harel_lb')
+    A1 = float(np.sum(rho))
+    if N == 1:
+        return 1.0 / A1
+    AN = float(np.sum(rho ** N))
+    return N / (A1 + (N - 1) * (AN / A1) ** (1.0 / (N - 1)))
+
+
+def pfqn_harel_ub(rho: np.ndarray, N: int, n: int, Z: float = 0.0) -> float:
+    """
+    Harel-Namn-Sturm throughput upper bound of a single-class closed network.
+
+    Extrapolated from the EXACT throughput TH(n) = G(n-1)/G(n) at the small
+    population n, UB(n) = N / (A_1 + ((N-1)/(n-1)) (n/TH(n) - A_1)). G is
+    evaluated by the Newton-Girard recurrence; the n <= 7 ceiling is kept from
+    the reference implementation. A nonzero think time is refused.
+
+    Args:
+        rho: (k,) relative utilizations, all strictly positive.
+        N: population, at least 1.
+        n: extrapolation point, 2 <= n <= min(N, 7).
+        Z: think time; must be zero.
+
+    Returns:
+        The throughput upper bound at population N.
+    """
+    _harel_reject_thinktime(Z, 'pfqn_harel_ub')
+    if N < 1:
+        raise ValueError('pfqn_harel_ub: the population must be at least 1.')
+    if n < 2:
+        raise ValueError('pfqn_harel_ub: the extrapolation point must be at least 2.')
+    if n > N:
+        raise ValueError('pfqn_harel_ub: the extrapolation point cannot exceed N.')
+    if n > 7:
+        raise ValueError('pfqn_harel_ub: the extrapolation point cannot exceed 7.')
+    rho = np.asarray(rho, dtype=float).ravel()
+    _harel_check_rho(rho, 'pfqn_harel_ub')
+    A = _harel_power_sums(rho, n)
+    G = _harel_G(A, n)
+    if G[n] == 0:
+        raise ValueError('pfqn_harel_ub: the normalizing constant vanishes.')
+    return _harel_upper_from_th(float(A[0]), N, n, float(G[n - 1] / G[n]))
+
+
+def pfqn_harel_bounds(rho: np.ndarray, N: int, Z: float = 0.0,
+                      maxUB: int = 0) -> Tuple[float, np.ndarray, np.ndarray]:
+    """
+    Harel-Namn-Sturm throughput bounds of a single-class closed network.
+
+    These are the SHARP bounds of Harel, Namn and Sturm, "Simple bounds for
+    closed queueing networks" (Queueing Systems 31, 1999), distinct from the
+    'sb' family in the BA solver: 'sb' uses only the first three power sums in
+    closed form, whereas this family evaluates the normalizing constant exactly
+    at small populations and extrapolates from it. Both cite the same paper;
+    they are different results in it and neither subsumes the other.
+
+    With the power sums A_i = sum_j rho_j^i,
+
+        G(n)  = h_n(rho), the complete homogeneous symmetric polynomial,
+        TH(n) = G(n-1)/G(n),           the exact throughput at population n,
+        LB    = N / (A_1 + (N-1) (A_N/A_1)^{1/(N-1)}),
+        UB(n) = N / (A_1 + ((N-1)/(n-1)) (n/TH(n) - A_1)),   2 <= n <= N.
+
+    G(n) IS the normalizing constant of the closed load-independent network at
+    population n, so it must equal pfqn_ca on the same demands and TH(n) must
+    equal the exact pfqn_mva throughput at population n. G is evaluated by the
+    Newton-Girard recurrence n G(n) = sum_{i=1..n} A_i G(n-i); the n <= 7
+    ceiling on the extrapolation point is kept from the reference.
+
+    Args:
+        rho: (k,) relative utilizations, all strictly positive.
+        N: population, at least 1.
+        Z: think time; must be zero.
+        maxUB: largest extrapolation point; defaults to min(N, 7) when <= 0.
+
+    Returns:
+        Tuple (LB, UB, TH) with UB[n-1] the upper bound extrapolated from
+        population n (UB[0] unset) and TH[n-1] the exact throughput at
+        population n, n = 1..maxUB.
+    """
+    _harel_reject_thinktime(Z, 'pfqn_harel_bounds')
+    if N < 1:
+        raise ValueError('pfqn_harel_bounds: the population must be at least 1.')
+    rho = np.asarray(rho, dtype=float).ravel()
+    _harel_check_rho(rho, 'pfqn_harel_bounds')
+
+    effective_max_ub = maxUB if maxUB > 0 else min(N, 7)
+    if effective_max_ub > 7:
+        raise ValueError('pfqn_harel_bounds: upper bounds are available only for n <= 7.')
+    if effective_max_ub > N:
+        raise ValueError('pfqn_harel_bounds: the extrapolation point cannot exceed N.')
+
+    # The lower bound reads A up to N, the upper bounds only up to maxUB.
+    A = _harel_power_sums(rho, max(N, effective_max_ub))
+    A1 = float(A[0])
+    if N == 1:
+        LB = 1.0 / A1
+    else:
+        LB = N / (A1 + (N - 1) * (float(A[N - 1]) / A1) ** (1.0 / (N - 1)))
+
+    G = _harel_G(A, effective_max_ub)
+    TH = np.zeros(effective_max_ub)
+    UB = np.zeros(effective_max_ub)
+    for n in range(1, effective_max_ub + 1):
+        if G[n] == 0:
+            raise ValueError('pfqn_harel_bounds: the normalizing constant vanishes.')
+        TH[n - 1] = G[n - 1] / G[n]
+    for n in range(2, effective_max_ub + 1):
+        UB[n - 1] = _harel_upper_from_th(A1, N, n, float(TH[n - 1]))
+    return float(LB), UB, TH

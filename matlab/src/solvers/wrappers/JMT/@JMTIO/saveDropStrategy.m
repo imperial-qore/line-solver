@@ -31,12 +31,7 @@ for r=1:numOfClasses
     subParameterNode.setAttribute('name', 'dropStrategy');
     
     valueNode2 = simDoc.createElement('value');
-    if isnan(i) || sn.droprule(i,r)==0
-        % JMT sets the field to 'drop' for nodes without a buffer
-        valueNode2.appendChild(simDoc.createTextNode('drop'));
-    else
-        valueNode2.appendChild(simDoc.createTextNode(DropStrategy.toText(sn.droprule(i,r))));
-    end
+    valueNode2.appendChild(simDoc.createTextNode(jmtDropStrategyText(sn, i, r)));
     
     subParameterNode.appendChild(valueNode2);
     schedStrategyNode.appendChild(subParameterNode);

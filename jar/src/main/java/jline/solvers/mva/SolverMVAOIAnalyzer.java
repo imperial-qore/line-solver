@@ -58,6 +58,17 @@ public class SolverMVAOIAnalyzer {
         if (this.oiList.isEmpty()) {
             throw new RuntimeException("OI solver requires at least one order-independent station");
         }
+        // ---- reject class switching (OI rank rates are per raw class) ------
+        // The recursion is driven by the per-class population vector sn.njobs,
+        // which class switching makes meaningless: a class that only ever
+        // appears mid-chain carries njobs = 0, so the OI station would be
+        // analyzed as if empty. Refuse it the way Solver_nc_oi does rather than
+        // return that silently.
+        for (int c = 0; c < sn.nchains; c++) {
+            if (sn.inchain.get(c).getNumElements() > 1) {
+                throw new RuntimeException("solver_mva_oi requires one class per chain (no class switching).");
+            }
+        }
         this.visits = new double[M][R];
         for (Map.Entry<Integer, Matrix> e : sn.visits.entrySet()) {
             Matrix vc = e.getValue();

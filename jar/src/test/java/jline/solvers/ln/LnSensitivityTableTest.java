@@ -109,7 +109,12 @@ public class LnSensitivityTableTest {
         assertEquals(Arrays.asList("exact", "exact", "exact"), T.getLayerMethods(),
                 "the per-layer branch labels must be reported individually");
         assertGoldenLayer(T, "P1", 0.015211, -0.014406, -0.031257, -0.021453);
-        assertGoldenLayer(T, "P2", 0.00026872, -0.0024998, -0.00080616, -0.00080616);
+        // The P2 row was re-recorded 2026-08-10, when a served task's declared think
+        // time stopped entering the thread cycle as a per-request delay
+        // (SolverLN.refThinkTime). T2's think time 3 used to throttle its layer to
+        // 1/(3+0.05) = 0.328 requests per second, where LDES (500k samples, seed
+        // 23000) reads 2.2924; MATLAB getSensitivityTable returns the row below.
+        assertGoldenLayer(T, "P2", 0.013198, -0.0025, -0.0050842, -0.0050842);
         assertGoldenLayer(T, "T2", 0.0031701, -0.003003, -0.0067251, -0.0055844);
     }
 

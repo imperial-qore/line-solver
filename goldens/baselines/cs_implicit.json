@@ -1,0 +1,30 @@
+{
+  "class": {
+    "MVA": "deterministic"
+  },
+  "example": "cs_implicit",
+  "solvers": {
+    "MVA": [
+      {
+        "ArvR": 0.0,
+        "JobClass": "Chain1",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source 1",
+        "Tput": 0.6,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.6,
+        "JobClass": "Chain1",
+        "QLen": 1.5,
+        "ResidT": 2.5,
+        "RespT": 2.5,
+        "Station": "Queue 1",
+        "Tput": 0.6,
+        "Util": 0.6
+      }
+    ]
+  }
+}

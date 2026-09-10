@@ -54,6 +54,8 @@ from .qr_bounds_rsrd import mapqn_qr_bounds_rsrd
 
 from .qrf_noblo_mmi import qrf_noblo_mmi
 from .qrf_noblo_mem import qrf_noblo_mem
+from .qrf_noblo_bethe import qrf_noblo_bethe
+from .qrf_bas_nlp import qrf_bas_bethe, qrf_bas_mem, qrf_bas_mmi
 from .qrf_noblo_mmi_ld import qrf_noblo_mmi_ld
 from .qrf_noblo_mmi_linear import qrf_noblo_mmi_linear
 
@@ -88,6 +90,14 @@ __all__ = [
     # QRF NLP approximations
     'qrf_noblo_mmi',
     'qrf_noblo_mem',
+    'qrf_noblo_bethe',
+    'qrf_bas_mmi',
+    'qrf_bas_mem',
+    'qrf_bas_bethe',
     'qrf_noblo_mmi_ld',
     'qrf_noblo_mmi_linear',
 ]
+
+# Horizontal-cut mean value recursion (SolverMVA method 'amva.mapqn')
+from .amva import mapqn_amva, MapqnAmvaResult
+__all__ += ['mapqn_amva', 'MapqnAmvaResult']

@@ -7,6 +7,7 @@ package jline.solvers.nc.analyzers;
 import jline.api.retrieval.Cache_retrieval_inputs;
 import jline.api.retrieval.Retrieval_metrics;
 import jline.api.retrieval.Retrieval_nc;
+import jline.api.retrieval.Retrieval_rayint;
 import jline.lang.NetworkStruct;
 import jline.lang.constant.NodeType;
 import jline.lang.nodeparam.CacheNodeParam;
@@ -20,6 +21,13 @@ import jline.util.matrix.Matrix;
  * algorithms Retrieval_nc (normalizing constant) and Retrieval_metrics (hit/miss/
  * delayed-hit). Latency is left to SolverMVA (Retrieval_fpi_latency); it is NaN here.
  * Port of matlab/src/solvers/NC/solver_nc_retrieval_analyzer.m.
+ *
+ * Those recurrences are exponential in the item count, so options.method =
+ * "rayint" selects instead the ray (WKB) approximation of Retrieval_rayint,
+ * which is polynomial. It applies only when every fetch station is
+ * infinite-server, where the delayed-hit constant factorizes exactly as
+ * prod_k D_k times the plain cache constant with access factors
+ * gamma_{k,j}/D_k; elsewhere it warns and falls back to the exact path.
  */
 public final class Solver_nc_retrieval_analyzer {
     private Solver_nc_retrieval_analyzer() {}
@@ -41,19 +49,89 @@ public final class Solver_nc_retrieval_analyzer {
         int n = in.lambda.length;
         int r = in.eta[0].length - 1;
 
-        // exact normalizing constant E(m) = retrieval_nc(0,m,...)
-        double E = Retrieval_nc.retrieval_nc(new double[r], in.m, in.lambda, in.eta, in.gamma);
-        res.lG = Math.log(E);
+        boolean useray = options != null && options.method != null
+                && ("rayint".equalsIgnoreCase(options.method) || "ray".equalsIgnoreCase(options.method));
+        if (useray) {
+            // The ray expansion needs the delayed-hit constant to factorize. It does,
+            // EXACTLY, when every fetch station is infinite-server: dividing the
+            // Retrieval_nc recurrence by prod_k D_k with D_k = 1 + lambda_k eta_{0,k}
+            // collapses it onto Cache_erec with theta_{k,j} = gamma_{k,j}/D_k, so the
+            // delayed-hit cache IS a plain cache with fetch-inflated access factors.
+            // A queueing (PS) fetch station breaks this: the (v_s+1) multiplicity ties
+            // E(0,m) to the whole moment tower E(1_s,m), E(2_s,m), ..., and replacing it
+            // by the Retrieval_fpi mean field overestimates E by 13%/140%/830% at
+            // n=6/8/10 (measured), growing with n. Refuse rather than return a
+            // confident wrong number.
+            String reason = null;
+            boolean hasPS = false;
+            for (int i = 0; i < n && !hasPS; i++) {
+                for (int s = 1; s <= r; s++) { if (in.eta[i][s] != 0) { hasPS = true; break; } }
+            }
+            double msumChk = 0;
+            for (int j = 0; j < in.m.length; j++) { msumChk += in.m[j]; }
+            if (hasPS) {
+                reason = "the retrieval system has a queueing (non infinite-server) fetch station";
+            } else if (msumChk >= n) {
+                reason = "the cache is full (sum(m) >= n), where the saddle point escapes to infinity";
+            }
+            if (reason != null) {
+                System.err.println("Warning [Solver_nc_retrieval_analyzer]: method 'rayint' does not apply because "
+                        + reason + "; falling back to the exact recurrences.");
+                useray = false;
+            }
+        }
 
-        Retrieval_metrics.Result mm = Retrieval_metrics.retrieval_metrics(in.m, in.lambda, in.eta, in.gamma);
+        double[] pmiss;
+        double[][] phit;
+        double[][] pdh;
+        if (useray) {
+            // --- ray (WKB) approximation, infinite-server fetch ---
+            int h = in.m.length;
+            double[] D = new double[n];
+            double[][] theta = new double[n][h];
+            for (int i = 0; i < n; i++) {
+                D[i] = 1.0 + in.lambda[i] * in.eta[i][0];
+                for (int j = 0; j < h; j++) { theta[i][j] = in.gamma[i][j] / D[i]; }
+            }
+            Retrieval_rayint.Result ray = Retrieval_rayint.retrieval_rayint(theta, in.m);
+            double logD = 0;
+            for (int i = 0; i < n; i++) { logD += Math.log(D[i]); }
+            res.lG = logD + ray.logE;
+
+            // Same saddle as the constant, so the ratios are consistent with lG:
+            // pi_{i,j} = theta_{i,j} xi_j / (1 + sum_l theta_{i,l} xi_l), and the
+            // out-of-cache mass 1 - sum_j pi_{i,j} splits between a true miss (weight 1)
+            // and an outstanding fetch (weight lambda_i eta_{0,i}) in proportion 1:D_i-1.
+            pmiss = new double[n];
+            phit = new double[h][n];
+            pdh = new double[1][n];
+            for (int i = 0; i < n; i++) {
+                double den = 1.0;
+                for (int j = 0; j < h; j++) { den += theta[i][j] * ray.xi[j]; }
+                double pih = 0;
+                for (int j = 0; j < h; j++) {
+                    phit[j][i] = theta[i][j] * ray.xi[j] / den;
+                    pih += phit[j][i];
+                }
+                pmiss[i] = (1.0 - pih) / D[i];
+                pdh[0][i] = in.lambda[i] * in.eta[i][0] * pmiss[i];
+            }
+        } else {
+            // exact normalizing constant E(m) = retrieval_nc(0,m,...)
+            double E = Retrieval_nc.retrieval_nc(new double[r], in.m, in.lambda, in.eta, in.gamma);
+            res.lG = Math.log(E);
+
+            Retrieval_metrics.Result mm = Retrieval_metrics.retrieval_metrics(in.m, in.lambda, in.eta, in.gamma);
+            pmiss = mm.pmiss; phit = mm.phit; pdh = mm.pdh;
+        }
 
         double tot = 0; for (double x : in.lambda) tot += x;
         double hitAgg = 0, missAgg = 0, delayedAgg = 0;
         for (int i = 0; i < n; i++) {
             double w = in.lambda[i] / tot;
-            double ph = 0; for (double[] row : mm.phit) ph += row[i];
-            double pd = 0; for (double[] row : mm.pdh) pd += row[i];
-            hitAgg += w * ph; missAgg += w * mm.pmiss[i]; delayedAgg += w * pd;
+            double ph = 0; for (double[] row : phit) ph += row[i];
+            double pd = 0; for (double[] row : pdh) pd += row[i];
+            hitAgg += w * ph; missAgg += w * pmiss[i]; delayedAgg += w * pd;
         }
 
         // cache node hit/miss/latency (per-class vectors; read-class entry set, rest NaN)
@@ -73,14 +151,14 @@ public final class Solver_nc_retrieval_analyzer {
         hitProbList.fill(Double.NaN);
         for (int l = 0; l < h; l++) {
             double acc = 0;
-            for (int i = 0; i < n; i++) acc += (in.lambda[i] / tot) * mm.phit[l][i];
+            for (int i = 0; i < n; i++) acc += (in.lambda[i] / tot) * phit[l][i];
             hitProbList.set(in.jobinClass, l, acc);
         }
         // per-item occupancy [n x (h+1)]: column 0 = miss, columns 1.. = per-list.
         Matrix itemProb = new Matrix(n, h + 1);
         for (int i = 0; i < n; i++) {
-            itemProb.set(i, 0, mm.pmiss[i]);
-            for (int l = 0; l < h; l++) itemProb.set(i, l + 1, mm.phit[l][i]);
+            itemProb.set(i, 0, pmiss[i]);
+            for (int l = 0; l < h; l++) itemProb.set(i, l + 1, phit[l][i]);
         }
         cache.setResultHitProb(hitProb);
         cache.setResultMissProb(missProb);
@@ -106,10 +184,10 @@ public final class Solver_nc_retrieval_analyzer {
         if (sourceStation >= 0) for (int k = 0; k < K; k++) { double rt = sn.rates.get(sourceStation, k); if (!Double.isNaN(rt)) TN.set(sourceStation, k, rt); }
 
         // retrieval-station occupancy (QN=UN=phi_s) and throughput
-        setStationMetrics(sn, in, mm.pdh, mm.pmiss, QN, UN, RN, TN);
+        setStationMetrics(sn, in, pdh, pmiss, QN, UN, RN, TN);
 
         res.QN = QN; res.UN = UN; res.RN = RN; res.TN = TN; res.CN = CN; res.XN = XN; res.AN = AN; res.WN = WN;
-        res.method = "exact";
+        res.method = useray ? "rayint" : "exact";
         res.runtime = (System.nanoTime() - t0) / 1e9;
         return res;
     }

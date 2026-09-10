@@ -7,8 +7,11 @@ from network states, essential for state probability computation.
 
 import numpy as np
 from typing import Tuple, Optional, Union, List
-from ...lang.base import SchedStrategy, NodeType
-from ...lib.thirdparty.uniqueperms import uniqueperms
+from ...lang.base import (SchedStrategy, NodeType,
+                          SCHED_PREEMPT as _SCHED_PREEMPT,
+                          SCHED_BUFFER_CLASS_TAG as _SCHED_TAG,
+                          SCHED_BUFFER_PER_CLASS_COUNT as _SCHED_COUNT)
+from .multiset_perms import multiset_perms
 from .reply_block import reply_width as _reply_width
 
 
@@ -199,8 +202,7 @@ def toMarginal(sn, ind: int, state_i: np.ndarray = None, phasesz: np.ndarray = N
         # External node (Source): infinite jobs per class
         nir = np.full((n_states, R), np.inf)
 
-    elif sched in [SchedStrategy.FCFS, SchedStrategy.HOL,
-                   SchedStrategy.LCFS]:
+    elif sched in _SCHED_TAG:
         # FCFS/LCFS: count jobs in service plus those in buffer
         # Buffer entries use 1-based class indices (MATLAB convention):
         # 0 = empty, 1 = class 0, 2 = class 1, etc.
@@ -213,8 +215,7 @@ def toMarginal(sn, ind: int, state_i: np.ndarray = None, phasesz: np.ndarray = N
                 else:
                     nir[:, r] += np.sum(space_buf == (r + 1), axis=1)
 
-    elif sched in [SchedStrategy.SIRO, SchedStrategy.SEPT, SchedStrategy.LEPT,
-                   SchedStrategy.POLLING]:
+    elif sched in _SCHED_COUNT or sched == SchedStrategy.POLLING:
         # These policies track buffer per class
         nir = sir.copy()
         if space_buf.size > 0:
@@ -226,8 +227,7 @@ def toMarginal(sn, ind: int, state_i: np.ndarray = None, phasesz: np.ndarray = N
                     if r < space_buf.shape[1]:
                         nir[:, r] += space_buf[:, r]
 
-    elif sched in [SchedStrategy.LCFSPR, SchedStrategy.LCFSPRPRIO,
-                   SchedStrategy.FCFSPRPRIO, SchedStrategy.FCFSPR]:
+    elif sched in _SCHED_PREEMPT:
         # Preempt-resume: count jobs in service plus preempted jobs held in the
         # buffer. The buffer stores interleaved [class, phase] pairs, so class
         # IDs live at the even columns (1-based: class r stored as r+1).
@@ -337,7 +337,13 @@ def roundMarginalPreservingChains(n, sn):
     return n
 
 
-def fromMarginal(sn, ind: int, n: Union[np.ndarray, list], options: dict = None) -> np.ndarray:
+# Disciplines whose local state is phases only, with no buffer part.
+_SHARE_SERVER_SCHED = [SchedStrategy.INF, SchedStrategy.PS, SchedStrategy.DPS,
+                       SchedStrategy.GPS, SchedStrategy.PSPRIO, SchedStrategy.LPS]
+
+
+def fromMarginal(sn, ind: int, n: Union[np.ndarray, list], options: dict = None,
+                 top_row_only: bool = False) -> np.ndarray:
     """
     Generate state space with specific marginal job counts at a node.
 
@@ -350,6 +356,8 @@ def fromMarginal(sn, ind: int, n: Union[np.ndarray, list], options: dict = None)
         ind: Node index (0-based)
         n: Vector of job counts per class [n_classes]
         options: Optional configuration dictionary
+        top_row_only: return only the first row of the space, formed in closed
+            form where the branch admits it (see the share-server branch below)
 
     Returns:
         State space matrix where each row is a valid state with the specified
@@ -421,24 +429,10 @@ def fromMarginal(sn, ind: int, n: Union[np.ndarray, list], options: dict = None)
         for r in range(R):
             if hasattr(sn.proc[ist], '__getitem__') and r < len(sn.proc[ist]):
                 proc_entry = sn.proc[ist][r]
+                # sn.proc stores (D0, D1); the phase count is its order.
+                from ..sn.proc_form import proc_n_phases
                 if proc_entry is not None:
-                    # Handle dict case (Erlang, HyperExp, Exp store params as dict)
-                    if isinstance(proc_entry, dict):
-                        if 'k' in proc_entry:
-                            # Erlang: phases = k (number of stages)
-                            phases[r] = int(proc_entry['k'])
-                        elif 'probs' in proc_entry and 'rates' in proc_entry:
-                            # HyperExp: number of phases = length of probs array
-                            phases[r] = len(proc_entry['probs'])
-                        else:
-                            # Exp or other: 1 phase
-                            phases[r] = 1
-                    # Handle list case (PH, MAP, etc. store as [alpha, T])
-                    elif isinstance(proc_entry, (list, tuple)) and len(proc_entry) > 0:
-                        first_elem = proc_entry[0]
-                        phases[r] = len(first_elem) if isinstance(first_elem, (list, np.ndarray)) else 1
-                    else:
-                        phases[r] = 1
+                    phases[r] = proc_n_phases(proc_entry)
                 else:
                     phases[r] = 1
             else:
@@ -495,7 +489,7 @@ def fromMarginal(sn, ind: int, n: Union[np.ndarray, list], options: dict = None)
         vi = []
         for r in range(R):
             vi.extend([r + 1] * int(n[r]))
-        mi = np.array(uniqueperms(vi), dtype=float)
+        mi = np.array(multiset_perms(vi), dtype=float)
         if mi.ndim == 1:
             mi = mi.reshape(1, -1)
         pad = W - mi.shape[1]
@@ -507,6 +501,18 @@ def fromMarginal(sn, ind: int, n: Union[np.ndarray, list], options: dict = None)
     _is_retrial = (getattr(sn, 'retrialProc', None) is not None
                    and ist < len(sn.retrialProc)
                    and any(x is not None for x in sn.retrialProc[ist]))
+    # Share-server branch: the space is the cartesian product of the per-class
+    # phase compositions and is uniqued then reversed below, so its first row is
+    # the lexicographic maximum, i.e. every job of every class in phase 1. Formed
+    # directly here because the enumeration is binomial in the population and a
+    # caller that only wants the seed row must not pay for it.
+    if (top_row_only and not _is_retrial
+            and sched in _SHARE_SERVER_SCHED):
+        row = [np.zeros(max(int(phases[r]), 1)) for r in range(R)]
+        for r in range(R):
+            row[r][0] = float(n[r])
+        return (np.concatenate(row).reshape(1, -1) if row else np.zeros((1, 0)))
+
     space = _generate_state_space_for_sched(sched, S, n, phases, R, is_retrial=_is_retrial)
 
     # Sort and unique the state space
@@ -589,8 +595,7 @@ def _generate_state_space_for_sched(sched: int, S: int, n: np.ndarray, phases: n
         # Add infinite buffer marker
         space = np.concatenate([np.full((1, 1), np.inf), state], axis=1)
 
-    elif sched in [SchedStrategy.INF, SchedStrategy.PS, SchedStrategy.DPS,
-                   SchedStrategy.GPS, SchedStrategy.PSPRIO, SchedStrategy.LPS]:
+    elif sched in _SHARE_SERVER_SCHED:
         # Jobs only in service, no buffer
         # Generate all combinations of phase distributions
         space = _cartesian_space_for_phases(n, phases, R)
@@ -619,8 +624,7 @@ def _generate_state_space_for_sched(sched: int, S: int, n: np.ndarray, phases: n
                     rows.append(np.concatenate([buf, np.ravel(srow).astype(float)]))
             space = np.array(rows)
 
-    elif sched in [SchedStrategy.FCFS, SchedStrategy.HOL,
-                   SchedStrategy.LCFS]:
+    elif sched in _SCHED_TAG:
         # Jobs in ordered buffer + service
         if sum(n) == 0:
             space = np.zeros((1, 1 + sum(phases)))
@@ -628,8 +632,7 @@ def _generate_state_space_for_sched(sched: int, S: int, n: np.ndarray, phases: n
             # Generate buffer and phase states
             space = _cartesian_space_fcfs_lcfs(n, phases, S, R)
 
-    elif sched in [SchedStrategy.LCFSPR, SchedStrategy.LCFSPRPRIO,
-                   SchedStrategy.FCFSPRPRIO, SchedStrategy.FCFSPR]:
+    elif sched in _SCHED_PREEMPT:
         # Preempt-resume (priority) policies: track an ordered buffer of the
         # preempted jobs together with the phase each was preempted at, plus
         # the service phases. The buffer stores interleaved [class, phase]
@@ -665,7 +668,7 @@ def _generate_state_space_for_sched(sched: int, S: int, n: np.ndarray, phases: n
                 rows.append(np.concatenate([bufp, srvp[i]]))
         space = np.array(rows, dtype=float)
 
-    elif sched in (SchedStrategy.SIRO, SchedStrategy.SEPT, SchedStrategy.LEPT):
+    elif sched in _SCHED_COUNT:
         # Unordered per-class-count buffer + service (SIRO/SEPT/LEPT)
         if sum(n) <= S:
             # All jobs in service
@@ -713,11 +716,25 @@ def _ext_class_disabled(sn, ist: int, r: int) -> bool:
 
     Mirrors MATLAB's `isnan(sn.proc{ist}{r}{1})` test in fromMarginal.m. A
     disabled class contributes no arrival-phase token to the Source state.
+
+    MATLAB and Python spell "no arrival process" differently: MATLAB stores a
+    NaN D0 (and a NaN rate), Python stores None (and a zero rate). Both spellings
+    must read as disabled, otherwise every class that never arrives here gets a
+    spurious one-hot arrival phase and the Source row stops matching MATLAB's.
     """
+    # A zero phase count is MATLAB's own marker for "no process at (ist,r)".
+    if getattr(sn, 'phases', None) is not None:
+        try:
+            if int(np.asarray(sn.phases)[ist, r]) == 0:
+                return True
+        except (IndexError, KeyError, TypeError, ValueError):
+            pass
     # Prefer the (D0,D1) process representation when available.
     if getattr(sn, 'proc', None) is not None:
         try:
             proc_ir = sn.proc[ist][r]
+            if proc_ir is None or len(proc_ir) == 0:
+                return True
             if isinstance(proc_ir, (list, tuple)) and len(proc_ir) > 0:
                 return bool(np.any(np.isnan(np.atleast_2d(proc_ir[0]))))
         except (IndexError, KeyError, TypeError):
@@ -780,9 +797,9 @@ def _cartesian_space_fcfs_lcfs(n: np.ndarray, phases: np.ndarray, S: int, R: int
         vi.extend([r + 1] * int(n[r]))  # 1-based class IDs
 
     # Generate all unique permutations of job ordering
-    # Uses efficient multiset permutation algorithm (matching MATLAB's uniqueperms)
+    # Uses an efficient multiset permutation algorithm
     # instead of set(permutations(vi)) which is O(n!) even with duplicates
-    mi = uniqueperms(vi)
+    mi = multiset_perms(vi)
     mi = np.array(mi) if len(mi) > 0 else np.array([vi])
 
     if len(mi) == 0:
@@ -836,15 +853,17 @@ def _cartesian_space_fcfs_lcfs(n: np.ndarray, phases: np.ndarray, S: int, R: int
 
 def _cartesian_space_preempt(n: np.ndarray, phases: np.ndarray, S: int, R: int) -> np.ndarray:
     """
-    Generate state space for preempt-resume (priority) scheduling
-    (LCFSPR, LCFSPRPRIO, FCFSPRPRIO).
+    Generate state space for the preempt family (LCFSPR, LCFSPRPRIO, LCFSPI,
+    LCFSPIPRIO, FCFSPR, FCFSPRPRIO, FCFSPI, FCFSPIPRIO).
 
     Tracks an ordered buffer of the preempted jobs and the service phases. The
     state format matches MATLAB State.fromMarginal (the LCFSPR/FCFSPRPRIO case):
     - Buffer: interleaved [class, phase] pairs, one pair per buffer position
       (class and phase are 1-based; 0 marks an empty pair). Storing the phase is
-      what distinguishes preempt-resume from plain FCFS/LCFS: a resumed job
-      restarts in the phase it was preempted at.
+      what distinguishes the preempt family from plain FCFS/LCFS: a PR job
+      restarts in the phase it was preempted at. A PI job discards that phase
+      and restarts from pie, but the pair layout is shared so that the same
+      enumerated space serves both.
     - Server phases: phase distribution per class for jobs in service.
 
     Args:
@@ -870,7 +889,7 @@ def _cartesian_space_preempt(n: np.ndarray, phases: np.ndarray, S: int, R: int) 
     for r in range(R):
         vi.extend([r + 1] * int(n[r]))
 
-    mi = uniqueperms(vi)
+    mi = multiset_perms(vi)
     mi = np.array(mi) if len(mi) > 0 else np.array([vi])
     if mi.ndim == 1:
         mi = mi.reshape(1, -1)
@@ -1055,9 +1074,14 @@ def fromMarginalAndRunning(sn, ind: int, n: Union[np.ndarray, list],
     else:
         ist = ind
 
-    # Get number of servers
+    # Get number of servers. Coerce to int, but keep inf for an
+    # infinite-server (Delay/INF) station: int(inf) is an OverflowError, and
+    # MATLAB's fromMarginalAndRunning reads sn.nservers(ist) unconverted, so
+    # every model containing a Delay reached that error instead of a state.
     if hasattr(sn, 'nservers'):
-        S = int(sn.nservers[ist])
+        S = sn.nservers[ist]
+        if np.isfinite(S):
+            S = int(S)
     else:
         S = 1
 
@@ -1067,19 +1091,10 @@ def fromMarginalAndRunning(sn, ind: int, n: Union[np.ndarray, list],
         for r in range(R):
             if hasattr(sn.proc[ist], '__getitem__') and r < len(sn.proc[ist]):
                 proc_entry = sn.proc[ist][r]
+                # sn.proc stores (D0, D1); the phase count is its order.
+                from ..sn.proc_form import proc_n_phases
                 if proc_entry is not None:
-                    if isinstance(proc_entry, dict):
-                        if 'k' in proc_entry:
-                            phases[r] = int(proc_entry['k'])
-                        elif 'probs' in proc_entry and 'rates' in proc_entry:
-                            phases[r] = len(proc_entry['probs'])
-                        else:
-                            phases[r] = 1
-                    elif isinstance(proc_entry, (list, tuple)) and len(proc_entry) > 0:
-                        first_elem = proc_entry[0]
-                        phases[r] = len(first_elem) if isinstance(first_elem, (list, np.ndarray)) else 1
-                    else:
-                        phases[r] = 1
+                    phases[r] = proc_n_phases(proc_entry)
                 else:
                     phases[r] = 1
             else:
@@ -1130,15 +1145,13 @@ def _generate_state_space_with_running(sched: int, S: int, n: np.ndarray, s: np.
     Returns:
         State space matrix for this node
     """
-    from itertools import permutations
-
     if sched in [SchedStrategy.INF, SchedStrategy.PS, SchedStrategy.DPS,
                  SchedStrategy.GPS, SchedStrategy.PSPRIO, SchedStrategy.LPS]:
         # For these strategies, all jobs are "in service"
         # Running = total for these schedulers
         return _cartesian_space_for_phases(s, phases, R)
 
-    elif sched in [SchedStrategy.FCFS, SchedStrategy.HOL, SchedStrategy.LCFS]:
+    elif sched in _SCHED_TAG:
         # FCFS/LCFS: ordered buffer + service
         total_jobs = int(sum(n))
         running_jobs = int(sum(s))
@@ -1156,33 +1169,27 @@ def _generate_state_space_with_running(sched: int, S: int, n: np.ndarray, s: np.
             if buffer_jobs[r] > 0:
                 inbuf.extend([r + 1] * int(buffer_jobs[r]))  # 1-based class IDs
 
-        # Generate all unique permutations of buffer ordering
+        # One buffer ordering is enough: this is an INITIAL state and the caller
+        # keeps only the lexicographic maximum, whose buffer prefix is the
+        # descending-sorted buffer. Enumerating every permutation first was
+        # factorial in the buffer content. The phase distributions of the running
+        # jobs still vary, so those rows are kept.
         if len(inbuf) > 0:
-            mi_buf_list = list(set(permutations(inbuf)))
-            mi_buf = np.array(mi_buf_list)
+            mi_buf = np.array(sorted(inbuf, reverse=True), dtype=float)
         else:
-            mi_buf = np.array([[0]])  # Empty buffer marker
+            mi_buf = np.array([0], dtype=float)  # Empty buffer marker
 
-        # si is exactly s (the running constraint)
-        si = s
+        # kstate = cartesian product of phase distributions per class
+        kstate = _cartesian_space_for_phases(s, phases, R)
 
-        all_states = []
-        for b in range(mi_buf.shape[0]):
-            # Generate phase distributions for running jobs
-            # kstate = cartesian product of phase distributions per class
-            kstate = _cartesian_space_for_phases(si, phases, R)
-
-            # Build full states: [mi_buf[b], kstate]
-            for ks in kstate:
-                state = np.concatenate([mi_buf[b], ks])
-                all_states.append(state)
+        all_states = [np.concatenate([mi_buf, ks]) for ks in kstate]
 
         if not all_states:
             return np.zeros((1, 1 + int(sum(phases))))
 
         return np.array(all_states)
 
-    elif sched in (SchedStrategy.SIRO, SchedStrategy.SEPT, SchedStrategy.LEPT):
+    elif sched in _SCHED_COUNT:
         # SIRO/SEPT/LEPT: unordered per-class-count buffer + service
         total_jobs = int(sum(n))
 
@@ -1293,19 +1300,10 @@ def _from_marginal_and_started(sn, ind: int, n: Union[np.ndarray, list],
         for r in range(R):
             if hasattr(sn.proc[ist], '__getitem__') and r < len(sn.proc[ist]):
                 proc_entry = sn.proc[ist][r]
+                # sn.proc stores (D0, D1); the phase count is its order.
+                from ..sn.proc_form import proc_n_phases
                 if proc_entry is not None:
-                    if isinstance(proc_entry, dict):
-                        if 'k' in proc_entry:
-                            phases[r] = int(proc_entry['k'])
-                        elif 'probs' in proc_entry and 'rates' in proc_entry:
-                            phases[r] = len(proc_entry['probs'])
-                        else:
-                            phases[r] = 1
-                    elif isinstance(proc_entry, (list, tuple)) and len(proc_entry) > 0:
-                        first_elem = proc_entry[0]
-                        phases[r] = len(first_elem) if isinstance(first_elem, (list, np.ndarray)) else 1
-                    else:
-                        phases[r] = 1
+                    phases[r] = proc_n_phases(proc_entry)
                 else:
                     phases[r] = 1
             else:
@@ -1344,7 +1342,7 @@ def _from_marginal_and_started(sn, ind: int, n: Union[np.ndarray, list],
         vi = []
         for r in range(R):
             vi.extend([r + 1] * int(n[r]))
-        mi = np.array(uniqueperms(vi), dtype=float)
+        mi = np.array(multiset_perms(vi), dtype=float)
         if mi.ndim == 1:
             mi = mi.reshape(1, -1)
         pad = W - mi.shape[1]
@@ -1382,21 +1380,22 @@ def _generate_state_space_with_started(sched: int, S: int, n: np.ndarray, s: np.
     Returns:
         State space matrix for this node
     """
-    from itertools import permutations
-
     if sched in [SchedStrategy.INF, SchedStrategy.PS, SchedStrategy.DPS,
-                 SchedStrategy.GPS, SchedStrategy.PSPRIO, SchedStrategy.LPS]:
-        # For these strategies, started jobs go in phase 1
-        # Build single state with all started jobs in phase 1
+                 SchedStrategy.GPS, SchedStrategy.PSPRIO, SchedStrategy.DPSPRIO,
+                 SchedStrategy.GPSPRIO, SchedStrategy.LPS]:
+        # These policies track only the jobs in the servers, and under a shared
+        # server EVERY job is in one, so the state holds the TOTAL count n[r],
+        # not the started count s[r] (MATLAB fromMarginalAndStarted.m, the
+        # INF/PS/DPS/GPS/LPS branch). Writing s[r] here lost the queued jobs.
         kstate = np.zeros((1, int(sum(phases))))
         col = 0
         for r in range(R):
-            # Put all s[r] jobs in phase 1 (column col)
-            kstate[0, col] = s[r]
+            # Put all n[r] jobs in phase 1 (column col)
+            kstate[0, col] = n[r]
             col += int(phases[r])
         return kstate
 
-    elif sched in [SchedStrategy.FCFS, SchedStrategy.HOL, SchedStrategy.LCFS]:
+    elif sched in _SCHED_TAG:
         # FCFS/LCFS: ordered buffer + service
         total_jobs = int(sum(n))
 
@@ -1412,10 +1411,11 @@ def _generate_state_space_with_started(sched: int, S: int, n: np.ndarray, s: np.
             if buffer_jobs[r] > 0:
                 inbuf.extend([r + 1] * int(buffer_jobs[r]))  # 1-based class IDs
 
-        # Generate all unique permutations of buffer ordering
+        # One buffer ordering is enough: this is an INITIAL state and the caller
+        # keeps only the lexicographic maximum, i.e. the descending-sorted buffer.
+        # Enumerating every permutation first was factorial in the buffer content.
         if len(inbuf) > 0:
-            mi_buf_list = list(set(permutations(inbuf)))
-            mi_buf = np.array(mi_buf_list)
+            mi_buf = np.array([sorted(inbuf, reverse=True)], dtype=float)
         else:
             mi_buf = np.array([[0]])  # Empty buffer marker
 
@@ -1426,18 +1426,9 @@ def _generate_state_space_with_started(sched: int, S: int, n: np.ndarray, s: np.
             kstate[0, col] = s[r]  # All started jobs in phase 1
             col += int(phases[r])
 
-        all_states = []
-        for b in range(mi_buf.shape[0]):
-            state = np.concatenate([mi_buf[b], kstate[0]])
-            all_states.append(state)
+        return np.array([np.concatenate([mi_buf[0], kstate[0]])])
 
-        if not all_states:
-            return np.zeros((1, 1 + int(sum(phases))))
-
-        return np.array(all_states)
-
-    elif sched in (SchedStrategy.SIRO, SchedStrategy.SEPT, SchedStrategy.LEPT,
-                   SchedStrategy.POLLING):
+    elif sched in _SCHED_COUNT or sched == SchedStrategy.POLLING:
         # SIRO/SEPT/LEPT/POLLING: unordered per-class-count buffer + service
         total_jobs = int(sum(n))
 
@@ -1570,7 +1561,7 @@ def toMarginalAggr(sn, ind: int, state_i: np.ndarray,
     if sched == SchedStrategy.EXT:
         nir[:] = np.inf
 
-    elif sched in (SchedStrategy.FCFS, SchedStrategy.HOL, SchedStrategy.LCFS):
+    elif sched in _SCHED_TAG:
         # Buffer stores 1-based class IDs
         if space_buf.size > 0 and not (space_buf.shape == (1, 1) and space_buf[0, 0] == 0):
             for r in range(R):
@@ -1579,8 +1570,7 @@ def toMarginalAggr(sn, ind: int, state_i: np.ndarray,
                 else:
                     nir[:, r] += np.sum(space_buf == (r + 1), axis=1)
 
-    elif sched in (SchedStrategy.SIRO, SchedStrategy.SEPT, SchedStrategy.LEPT,
-                   SchedStrategy.POLLING):
+    elif sched in _SCHED_COUNT or sched == SchedStrategy.POLLING:
         # Buffer stores per-class job counts
         for r in range(R):
             if space_buf.ndim >= 2 and r < space_buf.shape[1]:
@@ -1588,8 +1578,7 @@ def toMarginalAggr(sn, ind: int, state_i: np.ndarray,
             elif space_buf.ndim == 1 and r < len(space_buf):
                 nir[:, r] += space_buf[r]
 
-    elif sched in (SchedStrategy.LCFSPR, SchedStrategy.LCFSPRPRIO,
-                   SchedStrategy.FCFSPRPRIO, SchedStrategy.FCFSPR):
+    elif sched in _SCHED_PREEMPT:
         # Preempt-resume: buffer stores interleaved [class, phase] pairs, so
         # the preempted-job class IDs are at the even columns.
         if space_buf.size > 0:
@@ -1610,3 +1599,156 @@ def toMarginalAggr(sn, ind: int, state_i: np.ndarray,
 
     ni = np.sum(nir, axis=1)
     return ni, nir
+
+
+def fromMarg(sn, ind: int, ntot: int, options: dict = None) -> np.ndarray:
+    """
+    Generate the state space with a given TOTAL queue length at a node.
+
+    This is the class-summed counterpart of fromMarginal: where fromMarginal
+    fixes how many jobs of EACH class the node holds, fromMarg fixes only how
+    many jobs it holds ALTOGETHER, and returns the union of fromMarginal over
+    every class split of ntot the node can hold.
+
+    A class that is disabled at the station has classcap 0 and is excluded from
+    the split enumeration up front rather than after the fact. Asking
+    fromMarginal for a job of such a class yields an EMPTY local space, and an
+    empty factor is absorbed by the cartesian product instead of annihilating
+    it, so the job would silently disappear.
+
+    Args:
+        sn: NetworkStruct or Network object
+        ind: Node index (0-based)
+        ntot: Total number of jobs at the node, all classes summed
+        options: Optional configuration dictionary
+
+    Returns:
+        State space matrix with the requested total
+    """
+    from ..pfqn import multichoose
+
+    if hasattr(sn, 'get_struct'):
+        sn = sn.get_struct()
+    if options is None:
+        options = {'force': False}
+
+    R = sn.nclasses
+    if ntot < 0:
+        return np.zeros((0, 0))
+
+    ccap = _class_caps(sn, ind, R)
+
+    # Enumerate the class splits of ntot that the node can hold. ntot=0 has the
+    # single empty split, which fromMarginal answers with the per-discipline
+    # empty state; do not re-derive that width here.
+    if ntot == 0:
+        nset = np.zeros((1, R), dtype=int)
+    else:
+        nset = np.atleast_2d(multichoose(R, ntot))
+        keep = np.all(nset <= ccap.reshape(1, -1), axis=1)
+        nset = nset[keep, :]
+
+    subspaces = []
+    for j in range(nset.shape[0]):
+        sj = np.atleast_2d(np.asarray(fromMarginal(sn, ind, nset[j, :], options)))
+        if sj.size == 0:
+            continue
+        subspaces.append(sj)
+
+    return _stack_left_padded(subspaces)
+
+
+def fromMargAndStarted(sn, ind: int, ntot: int, stot: int, options: dict = None) -> np.ndarray:
+    """
+    Generate the states with a given TOTAL queue length and a given TOTAL
+    number of started jobs.
+
+    Where fromMarginalAndStarted takes one per-class vector n and one per-class
+    vector s and builds ONE row, fromMargAndStarted takes only the two totals
+    and returns the union of that row over every (n,s) pair consistent with
+    them: sum(n)=ntot, sum(s)=stot, and s <= n elementwise.
+
+    Classes disabled at the station are excluded from the enumeration through
+    classcap, for the reason documented in fromMarg.
+
+    Args:
+        sn: NetworkStruct or Network object
+        ind: Node index (0-based)
+        ntot: Total number of jobs at the node, all classes summed
+        stot: Total number of jobs that have started service
+        options: Optional configuration dictionary
+
+    Returns:
+        State space matrix with the requested totals
+    """
+    from ..pfqn import multichoose, multichoosecon
+
+    if hasattr(sn, 'get_struct'):
+        sn = sn.get_struct()
+    if options is None:
+        options = {'force': True}
+
+    R = sn.nclasses
+    if ntot < 0 or stot < 0 or stot > ntot:
+        return np.zeros((0, 0))
+
+    ccap = _class_caps(sn, ind, R)
+
+    if ntot == 0:
+        nset = np.zeros((1, R), dtype=int)
+    else:
+        nset = np.atleast_2d(multichoose(R, ntot))
+        keep = np.all(nset <= ccap.reshape(1, -1), axis=1)
+        nset = nset[keep, :]
+
+    subspaces = []
+    for j in range(nset.shape[0]):
+        nj = nset[j, :]
+        # s must be drawn from the jobs actually present, which is what
+        # multichoosecon expresses; s=0 is its one uncovered base case.
+        if stot == 0:
+            sset = np.zeros((1, R), dtype=int)
+        else:
+            sset = multichoosecon(nj, stot)
+        for k in range(sset.shape[0]):
+            sjk = np.atleast_2d(np.asarray(fromMarginalAndStarted(sn, ind, nj, sset[k, :], options)))
+            if sjk.size == 0:
+                continue
+            subspaces.append(sjk)
+
+    return _stack_left_padded(subspaces)
+
+
+def _class_caps(sn, ind: int, R: int) -> np.ndarray:
+    """Per-class capacity of a station, or unbounded at a non-station node."""
+    isstation = getattr(sn, 'isstation', None)
+    classcap = getattr(sn, 'classcap', None)
+    if isstation is None or classcap is None or np.size(classcap) == 0:
+        return np.full(R, np.inf)
+    isst = np.asarray(isstation).ravel()
+    if ind >= isst.size or not isst[ind]:
+        return np.full(R, np.inf)
+    ist = int(np.asarray(sn.nodeToStation).ravel()[ind])
+    return np.asarray(classcap, dtype=float)[ist, :].ravel()
+
+
+def _stack_left_padded(subspaces) -> np.ndarray:
+    """
+    Stack sub-spaces of different width, then unique and reverse.
+
+    The buffer is RIGHT-aligned, so sub-spaces of different width must be
+    padded on the LEFT before they are stacked, exactly as fromMarginal does
+    for the reply-block sub-spaces. The reversal after the sort puts the empty
+    state first and the states with jobs in phase 1 earlier.
+    """
+    if not subspaces:
+        return np.zeros((0, 0))
+    maxw = max(s.shape[1] for s in subspaces)
+    padded = []
+    for s in subspaces:
+        if s.shape[1] < maxw:
+            s = np.hstack([np.zeros((s.shape[0], maxw - s.shape[1])), s])
+        padded.append(s)
+    space = np.vstack(padded)
+    space = np.unique(space, axis=0)
+    return space[::-1, :]

@@ -174,45 +174,45 @@ public class Weibull extends ContinuousDistribution implements Serializable {
         return representation;
     }
 
-    // =================== KOTLIN-STYLE PROPERTY ALIASES ===================
+    // =================== PROPERTY ALIASES ===================
     
     /**
-     * Kotlin-style property alias for getMean()
+     * Property alias for getMean
      */
     public double mean() {
         return getMean();
     }
     
     /**
-     * Kotlin-style property alias for getRate()
+     * Property alias for getRate
      */
     public double rate() {
         return getRate();
     }
     
     /**
-     * Kotlin-style property alias for getSCV()
+     * Property alias for getSCV
      */
     public double scv() {
         return getSCV();
     }
     
     /**
-     * Kotlin-style property alias for getSkewness()
+     * Property alias for getSkewness
      */
     public double skewness() {
         return getSkewness();
     }
     
     /**
-     * Kotlin-style property alias for getVar()
+     * Property alias for getVar
      */
     public double var() {
         return getVar();
     }
     
     /**
-     * Kotlin-style property alias for getProcess()
+     * Property alias for getProcess
      */
     public MatrixCell process() {
         return getProcess();

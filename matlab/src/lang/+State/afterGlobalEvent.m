@@ -236,8 +236,14 @@ if sn.nodetype(ind) == NodeType.Transition % same isa(glevent,'ModeEvent')
                     [~,ep_space(ep_ind,1:R)] = State.toMarginalAggr(sn,ep_ind, glspace{ep_isf},K,Ks,ep_space_buf,ep_space_srv,ep_space_var);
                 end
                 if any(ep_space(:) >= inhibiting_m(:))
-                    % Inhibitor arc active: mode cannot fire.
+                    % Inhibitor arc active: mode cannot fire. The marking degree
+                    % must be zeroed with it, since the immediate branch below
+                    % reads it whether or not the mode is enabled; leaving it
+                    % unassigned made an immediate mode with a LIVE inhibitor arc
+                    % an undefined-variable error rather than a mode that does
+                    % not fire.
                     en_degree_m = 0;
+                    mark_degree_m = 0;
                 else
                     en_degree_m = 1;
                     while all(ep_space >= en_degree_m * enabling_m)

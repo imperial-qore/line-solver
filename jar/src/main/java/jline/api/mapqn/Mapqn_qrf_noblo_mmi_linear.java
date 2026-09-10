@@ -1,7 +1,10 @@
 /**
  * QRF No-Blocking NLP with Linear Constraint Matrices.
  * Port of MATLAB qrf_noblo_mmi_linear.m.
- * Note: Despite the name, this uses the MEM objective (matching MATLAB).
+ * The "linear" is about HOW the constraints are built (explicit sparse Aeq/beq
+ * rather than a residual callback), not about the objective, which is MMI. Until
+ * 2026-08-29 the MATLAB reference called its own mem() here and this port
+ * mirrored that.
  * @since LINE 3.0
  */
 package jline.api.mapqn;
@@ -11,7 +14,6 @@ import java.util.List;
 public final class Mapqn_qrf_noblo_mmi_linear {
     private Mapqn_qrf_noblo_mmi_linear() {}
 
-    private static final double LOGTOL = 1e-6;
 
     public static Mapqn_solution solve(double[][][][] MAPs, int N, double[][] rt, double[][] alpha) {
         int M = MAPs.length;
@@ -42,7 +44,7 @@ public final class Mapqn_qrf_noblo_mmi_linear {
             for (int h = 0; h < K[i]; h++) {
                 for (int k = 0; k < K[i]; k++) {
                     mu[i][h][k] = D1[h][k];
-                    v[i][k][h] = (h == k) ? 0.0 : D0[h][k];
+                    v[i][h][k] = (h == k) ? 0.0 : D0[h][k]; // (from, to), as mu is
                 }
             }
         }
@@ -111,28 +113,27 @@ public final class Mapqn_qrf_noblo_mmi_linear {
         final int[] Kf = K;
         final int[] Ff = F;
 
-        // MEM objective (matching MATLAB which uses mem despite name)
+        // MMI objective. The 'linear' in the name is about HOW the constraints are
+        // built, not about the objective; until 2026-08-29 the MATLAB reference called
+        // its own mem() here and this port mirrored that.
         Mapqn_nlp_solver.ObjectiveFn objective = new Mapqn_nlp_solver.ObjectiveFn() {
             @Override
             public double apply(double[] x) {
-                Double[][][][][][][] p2 = Mapqn_qrf_noblo_mmi.unflattenP2(x, Mf, Nf, KmaxF, MRf);
-                double fobj = 0.0;
-                for (int m = 0; m < MRf; m++) {
-                    for (int i = 0; i < Mf; i++) {
-                        for (int k = 0; k < Kf[i]; k++) {
-                            for (int ni = 1; ni <= Ff[i]; ni++) {
-                                double pval = p2[i][ni][k][i][ni][k][m];
-                                fobj -= pval * Math.log(LOGTOL + pval);
-                            }
-                        }
-                    }
-                }
-                return fobj;
+                return Mapqn_qrf_noblo_mmi.mmiObjective(x, Mf, Nf, Kf, KmaxF, Ff, MRf);
+            }
+        };
+        Mapqn_nlp_solver.GradientFn gradient = new Mapqn_nlp_solver.GradientFn() {
+            @Override
+            public void apply(double[] x, double[] gradOut) {
+                Mapqn_qrf_noblo_mmi.mmiGradient(x, gradOut, Mf, Nf, Kf, KmaxF, Ff, MRf);
             }
         };
 
-        double[] xOpt = Mapqn_nlp_solver.solve(objective, numVars, Aeq, beq, Aub, bub, lb, ub, x0);
-        return Mapqn_qrf_noblo_mmi.extractResults(xOpt, M, N, K, Kmax, F, MR);
+        double[] start = Mapqn_nlp_solver.feasibleStart(Aeq, beq, Aub, bub, numVars);
+        if (start != null) x0 = start;
+        double[] xOpt = Mapqn_nlp_solver.solve(objective, gradient, numVars,
+                Aeq, beq, Aub, bub, lb, ub, x0);
+        return Mapqn_qrf_noblo_mmi.extractResults(xOpt, M, N, K, Kmax, F, MR, alphaEff);
     }
 
     public static Mapqn_solution solve(double[][][][] MAPs, int N, double[][] rt) {

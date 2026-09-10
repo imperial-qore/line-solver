@@ -1,0 +1,90 @@
+{
+  "class": {
+    "MVA": "deterministic"
+  },
+  "example": "oqn_oneline",
+  "solvers": {
+    "MVA": [
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class1",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.02,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class2",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.04,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.02,
+        "JobClass": "Class1",
+        "QLen": 1.82,
+        "ResidT": 91.0,
+        "RespT": 91.0,
+        "Station": "Station1",
+        "Tput": 0.02,
+        "Util": 1.82
+      },
+      {
+        "ArvR": 0.04,
+        "JobClass": "Class2",
+        "QLen": 3.68,
+        "ResidT": 92.0,
+        "RespT": 92.0,
+        "Station": "Station1",
+        "Tput": 0.04,
+        "Util": 3.68
+      },
+      {
+        "ArvR": 0.02,
+        "JobClass": "Class1",
+        "QLen": 0.33333,
+        "ResidT": 16.667,
+        "RespT": 16.667,
+        "Station": "Station2",
+        "Tput": 0.02,
+        "Util": 0.2
+      },
+      {
+        "ArvR": 0.04,
+        "JobClass": "Class2",
+        "QLen": 0.33333,
+        "ResidT": 8.3333,
+        "RespT": 8.3333,
+        "Station": "Station2",
+        "Tput": 0.04,
+        "Util": 0.2
+      },
+      {
+        "ArvR": 0.02,
+        "JobClass": "Class1",
+        "QLen": 0.18518,
+        "ResidT": 9.2592,
+        "RespT": 9.2592,
+        "Station": "Station3",
+        "Tput": 0.02,
+        "Util": 0.1
+      },
+      {
+        "ArvR": 0.04,
+        "JobClass": "Class2",
+        "QLen": 0.66667,
+        "ResidT": 16.667,
+        "RespT": 16.667,
+        "Station": "Station3",
+        "Tput": 0.04,
+        "Util": 0.36
+      }
+    ]
+  }
+}

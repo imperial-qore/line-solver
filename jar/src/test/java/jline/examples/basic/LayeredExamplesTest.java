@@ -54,14 +54,15 @@ public class LayeredExamplesTest {
         LayeredNetworkAvgTable lnAvgTable = (LayeredNetworkAvgTable) avgTable;
         
         // Expected values from MATLAB dev/ execution (SolverLN results)
-        // Source: matlab/examples/basic/layeredModel/lqn_serial.m run in dev/ directory with SolverLN
+        // Source: matlab/examples/basic/layeredModel/lqn_serial.m run with SolverLN under the
+        // default layering method, which the srvn alias resolves to srvn.ph (was srvn.cs)
         // Order: P1, P2, T1, T2, E1, E2, AS1, AS2, AS3, AS4
-        double[] expectedQLen = {Double.NaN, Double.NaN, 1.12406428613832, 0.532556142194661, 1.12406428613832, 0.532556142194661, 0.162458950075148, 0.961605337078543, 0.443796785162218, 0.0887593570324436};
-        double[] expectedUtil = {0.142014971391375, 0.532556142194661, 0.142014971391375, 0.532556142194661, 0.142014971391375, 0.532556142194661, 0.142014971391375, 0.0, 0.443796785162218, 0.0887593570324436};
-        double[] expectedRespT = {Double.NaN, Double.NaN, Double.NaN, Double.NaN, 12.6641778694225, 6.0, 1.83033040512252, 10.8338474757396, 5.0, 1.0};
-        double[] expectedResidT = {Double.NaN, Double.NaN, 1.83033040512252, 6.0, Double.NaN, Double.NaN, 1.83033040512252, 0.0, 5.0, 1.0};
+        double[] expectedQLen = {Double.NaN, Double.NaN, 1.17334899671, 0.529599062451, 1.17334899671, 0.529599062451, 0.161430012703, 1.01191898313, 0.441332552042, 0.0882665104084};
+        double[] expectedUtil = {0.141226416036, 0.529599062451, 0.141226416036, 0.529599062451, 0.141226416036, 0.529599062451, 0.141226416036, 0.0, 0.441332552042, 0.0882665104084};
+        double[] expectedRespT = {Double.NaN, Double.NaN, Double.NaN, Double.NaN, 13.3, 6.0, 1.82889311769, 11.4643592781, 5.0, 1.0};
+        double[] expectedResidT = {Double.NaN, Double.NaN, 1.82889311769, 6.0, Double.NaN, Double.NaN, 1.82889311769, 0.0, 5.0, 1.0};
         double[] expectedArvR = {Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN};
-        double[] expectedTput = {Double.NaN, Double.NaN, 0.0887593571196091, 0.0887593570324436, 0.0887593571196091, 0.0887593570324436, 0.0887593571196091, 0.0887593571196091, 0.0887593570324436, 0.0887593570324436};
+        double[] expectedTput = {Double.NaN, Double.NaN, 0.0882665100228, 0.0882665104084, 0.0882665100228, 0.0882665104084, 0.0882665100228, 0.0882665100228, 0.0882665104084, 0.0882665104084};
         
         // Verify table size
         assertEquals(10, lnAvgTable.getQLen().size(), 
@@ -153,14 +154,17 @@ public class LayeredExamplesTest {
     @Test
     public void testLqnFunction() throws Exception {
         // Create the model
-        LayeredNetwork model = LayeredModel.lqn_function();
+        LayeredNetwork model = LayeredModel.lqn_setup();
         
         // Create and run the solver
         final AvgTable[] avgTableHolder = new AvgTable[1];
         withSuppressedOutput(() -> {
             LNOptions lnoptions = new LNOptions();
             lnoptions.seed = 23000;
-            SolverLN solver = new SolverLN(model, SolverType.MVA);
+            // the routing encoding, which this golden was recorded under; the
+            // 'srvn' alias now resolves to 'srvn.ph' on this model
+            lnoptions.method = "srvn.cs";
+            SolverLN solver = new SolverLN(model, SolverType.MVA, lnoptions);
             avgTableHolder[0] = solver.getAvgTable();
         });
         AvgTable avgTable = avgTableHolder[0]; //avgTable.print();
@@ -171,18 +175,22 @@ public class LayeredExamplesTest {
         
         LayeredNetworkAvgTable lnAvgTable = (LayeredNetworkAvgTable) avgTable;
         
-        // Expected values from MATLAB ground truth for lqn_function
-        // Source: MATLAB SolverLN(model, @(m) SolverMVA(m)) on the same model.
-        // The task-level think time of the FunctionTask is folded into the
-        // caller-facing delay (updateThinkTimes), matching MATLAB, which has
-        // never exempted function tasks.
+        // Expected values from MATLAB ground truth for lqn_setup
+        // Source: MATLAB SolverLN(model, @(m) SolverMVA(m)) with method='srvn.cs',
+        // re-recorded 2026-08-11; the JAR reproduces every row to 1e-16.
+        // The previous golden (Util 0.43577, F2 QLen 0.564231, F2 ResidT 1.29479)
+        // charged F2's declared think time as a per-request delay. Commit
+        // a9f6c2cf5 dropped that reading in MATLAB after lqns, lqsim and LDES all
+        // contradicted it: a think time on a SERVED task is not a cycle
+        // component, only a reference task's is. F2 is served, so its Exp(1/8)
+        // leaves the client delay and T1 runs at X=0.5.
         // Order: P1, P2, T1, F2, E1, E2, A1, A2
-        double[] expectedQLen = {Double.NaN, Double.NaN, 1.0, 0.564231128523838, 1.0, 0.564231128523838, 1.0, 0.564231128523801};
-        double[] expectedUtil = {0.43576969427078, 0.0363141947054414, 0.43576969427078, 0.0363141947054414, 0.43576969427078, 0.0363141947054414, 0.43576969427078, 0.0363141947054414};
-        double[] expectedRespT = {Double.NaN, Double.NaN, Double.NaN, Double.NaN, 2.29479012523095, 1.29479012523096, 2.29479012523017, 1.29479012523087};
-        double[] expectedResidT = {Double.NaN, Double.NaN, 1.0, 1.29479012523096, Double.NaN, Double.NaN, 1.0, 1.29479012523096};
+        double[] expectedQLen = {Double.NaN, Double.NaN, 1.0, 0.5, 1.0, 0.5, 1.0, 0.16666676540009195};
+        double[] expectedUtil = {0.5, 0.04166666077165185, 0.5, 0.04166666077165185, 0.5, 0.04166666077165185, 0.5, 0.04166666077165185};
+        double[] expectedRespT = {Double.NaN, Double.NaN, Double.NaN, Double.NaN, 2.0, 1.0, 2.0, 0.3333335779603371};
+        double[] expectedResidT = {Double.NaN, Double.NaN, 1.0, 0.3333335779603372, Double.NaN, Double.NaN, 1.0, 0.3333335779603372};
         double[] expectedArvR = {Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN};
-        double[] expectedTput = {Double.NaN, Double.NaN, 0.43576969427078, 0.435770336465296, 0.43576969427078, 0.435770336465296, 0.43576969427078, 0.435770336465296};
+        double[] expectedTput = {Double.NaN, Double.NaN, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5};
         
         // Verify table size
         assertEquals(8, lnAvgTable.getQLen().size(), 
@@ -204,7 +212,11 @@ public class LayeredExamplesTest {
         // Create and run the solver
         final AvgTable[] avgTableHolder = new AvgTable[1];
         withSuppressedOutput(() -> {
-            SolverLN solver = new SolverLN(model, SolverType.MVA);
+            // the routing encoding, which this golden was recorded under; the
+            // 'srvn' alias now resolves to 'srvn.ph' on this model
+            LNOptions lnoptions = new LNOptions();
+            lnoptions.method = "srvn.cs";
+            SolverLN solver = new SolverLN(model, SolverType.MVA, lnoptions);
             avgTableHolder[0] = solver.getAvgTable();
         });
         AvgTable avgTable = avgTableHolder[0];
@@ -248,6 +260,11 @@ public class LayeredExamplesTest {
         // solver{2} = LN(model, @(x) NC(x,'verbose',false))
         final AvgTable[] avgTableHolder = new AvgTable[1];
         withSuppressedOutput(() -> {
+            // The default encoding, NOT the routing one: this golden reproduces
+            // under 'srvn.ph' to 1e-9 on every row and under 'srvn.cs' to no
+            // better than 17% on Util, so the blanket 'srvn.cs' pin of f81e42237
+            // (which re-recorded the OTHER goldens it pinned, but not this one)
+            // did not apply here.
             SolverLN solver = new SolverLN(model, SolverType.NC);
             avgTableHolder[0] = solver.getAvgTable();
         });
@@ -263,7 +280,7 @@ public class LayeredExamplesTest {
         // 72 entries: 9 processors, 9 tasks (incl USAGE_DELAY), 14 entries, 40 activities
         double[] expectedQLen = {
             // Processors [0-8]
-            Double.NaN, 0.0, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN,
+            Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN,
             // Tasks [9-17]
             0.13148104173001546, 0.0, 0.06733341453388977, 0.04649983203346833, 0.019240689267888116, 0.03848137846513493, 0.019240689267888217, 0.06414762947362763, 0.008018453619040551,
             // Entries [18-31]
@@ -293,9 +310,9 @@ public class LayeredExamplesTest {
 
         double[] expectedRespT = {
             // Processors [0-8]
-            Double.NaN, 0.0, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN,
+            Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN,
             // Tasks [9-17]
-            Double.NaN, 0.0, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN,
+            Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN,
             // Entries [18-31]
             0.0, 0.011298311152431949, 0.01129831115269053, 0.01129831115252055, 0.011298311152690565, 0.011298311152702651, 0.0, 0.06778986691654053, 0.011298311152461465, 0.011298311152837913, 0.011298311152589289, 0.011298311152837972, 0.0903864892221563, 0.011298311152859165,
             // Activities [32-71]
@@ -308,11 +325,11 @@ public class LayeredExamplesTest {
 
         double[] expectedResidT = {
             // Processors [0-8]
-            Double.NaN, 0.0, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN,
+            Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN,
             // Tasks [9-17]
             0.01129831115255007, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
             // Entries [18-31]
-            Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, 0.0, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN,
+            Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN,
             // Activities [32-71]
             0.0, 0.003995781894879102, 0.001653373675134042, 0.0033067473332314564, 0.0016533736751340425, 6.890345741714277E-4, 0.0,
             0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
@@ -321,16 +338,15 @@ public class LayeredExamplesTest {
             0.0, 0.0, 0.0
         };
 
-        double[] expectedArvR = new double[72]; // All NaN or 0
+        // Nothing reports an arrival rate on an LQN, the USAGE_DELAY* component
+        // included: being unreachable makes its measures idle, not its missing
+        // ones present.
+        double[] expectedArvR = new double[72];
         Arrays.fill(expectedArvR, Double.NaN);
-        expectedArvR[1] = 0.0;  // P2 (USAGE_DELAY processor)
-        expectedArvR[10] = 0.0; // USAGE_DELAY_Task
-        expectedArvR[24] = 0.0; // USAGE_DELAY0_Entry
-        expectedArvR[38] = 0.0; // USAGE_DELAY0_Activity
 
         double[] expectedTput = {
             // Processors [0-8]
-            Double.NaN, 0.0, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN,
+            Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN,
             // Tasks [9-17]
             11.637229666872786, 0.0, 0.9932666576375977, 4.115644489339259, 1.7029703827067317, 3.405940759236035, 1.7029703827067317, 0.7097037403008594, 0.7097037345277388,
             // Entries [18-31]
@@ -375,12 +391,21 @@ public class LayeredExamplesTest {
         
         // Expected values from MATLAB ground truth for lqn_basic
         // Order: P1, P2, T1, T2, T3, E1, E2, E3, AS1, AS2, AS3
-        double[] expectedQLen = {Double.NaN, Double.NaN, 23.4682450470894, 8.67822070268364, 0.120491297980306, 23.4682450470894, 8.67822070268364, 0.120491297980306, 23.4388606730313, 8.66725245115206, 0.124378114044187};
-        double[] expectedUtil = {0.995954019616073, 0.0414593696959083, 0.664070430319683, 0.331883589296389, 0.0414593696959083, 0.663965587471123, 0.331973531468444, 0.0414593696959083, 0.664070430319683, 0.331883589296389, 0.0414593696959083};
-        double[] expectedRespT = {Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, 1.76699970180812, 0.653709687866906, 0.0193750007720929, 1.76478725771209, 0.652883475613173, 0.0200000007969991};
-        double[] expectedResidT = {Double.NaN, Double.NaN, 1.09193140773878, 0.556095776529935, 0.0200000007969991, Double.NaN, Double.NaN, Double.NaN, 1.09193140773878, 0.556095776529935, 0.0200000007969991};
+        //
+        // Re-recorded 2026-08-10, when a served task's declared think time stopped
+        // entering the thread cycle as a per-request delay (SolverLN.refThinkTime).
+        // T3 is a served task with think time 4 and demand 0.02, and charging it per
+        // request capped E3 at 25/(4+0.02) = 6.2189 completions per second, the rate
+        // the rows here replace. AS2 makes five calls per E2 request at X(E2)=13.279,
+        // so call-flow balance alone puts X(E3) at 66.4, and LDES (500k samples, seed
+        // 23000) reads 66.744 with P2 utilization 0.44518 against the 0.44263 below.
+        // MATLAB SolverLN reproduces these rows digit for digit.
+        double[] expectedQLen = {Double.NaN, Double.NaN, 23.438871284695853, 8.7, 1.3278875842291844, 23.438871284695853, 8.7, 1.3278875842291844, 23.441553568169066, 8.7, 1.3278875842291264};
+        double[] expectedUtil = {0.9959344198398389, 0.44262927744750075, 0.6639624468785424, 0.33197197296129644, 0.44262927744750075, 0.6639624468785424, 0.33197197296129644, 0.44262927744750075, 0.6639624468785424, 0.33197197296129644, 0.44262927744750075};
+        double[] expectedRespT = {Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, 1.765075072761118, 0.6554023155872206, 0.019999996263038014, 1.7652770633620782, 0.6555033822101997, 0.019999996263037143};
+        double[] expectedResidT = {Double.NaN, Double.NaN, 1.090033703344034, 0.5551306450196893, 0.019999996263038014, Double.NaN, Double.NaN, Double.NaN, 1.090033703344034, 0.5551306450196893, 0.019999996263038014};
         double[] expectedArvR = {Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN};
-        double[] expectedTput = {Double.NaN, Double.NaN, 13.2814086063937, 13.2753435718556, 6.21890545438625, 13.2814086063937, 13.2753435718556, 6.21890545438625, 13.2814086063937, 13.2753435718556, 6.21890545438625};
+        double[] expectedTput = {Double.NaN, Double.NaN, 13.279248937570843, 13.278878918451866, 66.4, 13.279248937570843, 13.278878918451866, 66.4, 13.279248937570848, 13.27887891845186, 66.4};
         
         // Verify table size
         assertEquals(11, lnAvgTable.getQLen().size(),

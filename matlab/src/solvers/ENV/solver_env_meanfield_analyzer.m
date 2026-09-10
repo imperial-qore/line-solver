@@ -134,8 +134,27 @@ function [results_e, runtime] = analyze_(self, it, e)
             runtime = toc(T0);
             %% initialize
             try
+                % The resolved horizon is set for THIS stage solve and put back
+                % after it: a stage solver's own getters branch on whether a
+                % horizon is set, and leaving it there changes what the caller's
+                % later getEnsembleAvgTables() returns. cdfGrid_ below needs a
+                % finite one, and getTranAvg would otherwise resolve it into a
+                % local copy nobody else sees. See SolverENV.stageHorizon_.
+                tsStage = self.stageHorizon_(e);
+                if numel(tsStage) >= 2
+                    tsSaved = self.solvers{e}.options.timespan;
+                    self.solvers{e}.options.timespan = tsStage;
+                    restoreTs = onCleanup(@() self.setStageTimespan_(e, tsSaved)); %#ok<NASGU>
+                end
                 [Qt,Ut,Tt] = self.ensemble{e}.getTranHandles;
                 self.solvers{e}.reset();
+                % ASK FOR THE POINTS THE SOJOURN WEIGHT NEEDS, rather than
+                % interpolating the integrator's own grid onto them afterwards:
+                % interpolation cannot recover resolution the trajectory never
+                % had. Honoured by the fluid iteration (options.tranpoints); a
+                % stage solver that ignores it still gets refined in post_.
+                self.solvers{e}.options.tranpoints = ...
+                    cdfGrid_(self.solvers{e}.options.timespan, self.envObj.holdTime{e});
                 [QNt,UNt,TNt] = self.solvers{e}.getTranAvg(Qt,Ut,Tt);
                 results_e.Tran.Avg.Q = QNt;
                 results_e.Tran.Avg.U = UNt;
@@ -169,16 +188,13 @@ function post_(self, it)
                     for i=1:size(self.results{it,e}.Tran.Avg.Q,1)
                         for r=1:size(self.results{it,e}.Tran.Avg.Q,2)
                             Qir = self.results{it,e}.Tran.Avg.Q{i,r};
-                            if isstruct(Qir) && isfield(Qir,'t') && isfield(Qir,'metric') && ~isempty(Qir.t)
-                                Qd(i,r) = detEval_(Qir.t, Qir.metric, dvals(e));
-                                Uir = self.results{it,e}.Tran.Avg.U{i,r};
-                                if isstruct(Uir) && isfield(Uir,'metric') && ~isempty(Uir.metric)
-                                    Ud(i,r) = detEval_(Qir.t, Uir.metric, dvals(e));
-                                end
-                                Tir = self.results{it,e}.Tran.Avg.T{i,r};
-                                if isstruct(Tir) && isfield(Tir,'metric') && ~isempty(Tir.metric)
-                                    Td(i,r) = detEval_(Qir.t, Tir.metric, dvals(e));
-                                end
+                            Uir = self.results{it,e}.Tran.Avg.U{i,r};
+                            Tir = self.results{it,e}.Tran.Avg.T{i,r};
+                            tref = tranTimeBase_(Qir, Uir, Tir);
+                            if ~isempty(tref)
+                                Qd(i,r) = tranExit_(Qir, tref, [], true, dvals(e));
+                                Ud(i,r) = tranExit_(Uir, tref, [], true, dvals(e));
+                                Td(i,r) = tranExit_(Tir, tref, [], true, dvals(e));
                             end
                         end
                     end
@@ -194,19 +210,22 @@ function post_(self, it)
                     for i=1:size(self.results{it,e}.Tran.Avg.Q,1)
                         for r=1:size(self.results{it,e}.Tran.Avg.Q,2)
                             Qir = self.results{it,e}.Tran.Avg.Q{i,r};
-                            % Check if result is a valid struct with required fields
-                            if isstruct(Qir) && isfield(Qir, 't') && isfield(Qir, 'metric') && ~isempty(Qir.t)
-                                w{e,h} = [0, map_cdf(self.envObj.proc{e}{h}, Qir.t(2:end)) - map_cdf(self.envObj.proc{e}{h}, Qir.t(1:end-1))]';
+                            Uir = self.results{it,e}.Tran.Avg.U{i,r};
+                            Tir = self.results{it,e}.Tran.Avg.T{i,r};
+                            tref = tranTimeBase_(Qir, Uir, Tir);
+                            if ~isempty(tref)
+                                % The weight lives on the sojourn scale, so the
+                                % grid has to as well; see refineForCdf_.
+                                [tref, Qir, Uir, Tir] = refineForCdf_(tref, ...
+                                    self.envObj.holdTime{e}, Qir, Uir, Tir);
+                                % The handoff averages over the SOJOURN, not over the e->h clock:
+                                % competing exponentials leave the exit time independent of the
+                                % destination. see _kb/06-solver-catalog.md (ENV meanfield)
+                                w{e,h} = [0, map_cdf(self.envObj.holdTime{e}, tref(2:end)) - map_cdf(self.envObj.holdTime{e}, tref(1:end-1))]';
                                 if ~isnan(w{e,h})
-                                    Qexit{e,h}(i,r) = Qir.metric'*w{e,h}/sum(w{e,h});
-                                    Uir = self.results{it,e}.Tran.Avg.U{i,r};
-                                    if isstruct(Uir) && isfield(Uir, 'metric') && ~isempty(Uir.metric)
-                                        Uexit{e,h}(i,r) = Uir.metric'*w{e,h}/sum(w{e,h});
-                                    end
-                                    Tir = self.results{it,e}.Tran.Avg.T{i,r};
-                                    if isstruct(Tir) && isfield(Tir, 'metric') && ~isempty(Tir.metric)
-                                        Texit{e,h}(i,r) = Tir.metric'*w{e,h}/sum(w{e,h});
-                                    end
+                                    Qexit{e,h}(i,r) = tranExit_(Qir, tref, w{e,h}, false, 0);
+                                    Uexit{e,h}(i,r) = tranExit_(Uir, tref, w{e,h}, false, 0);
+                                    Texit{e,h}(i,r) = tranExit_(Tir, tref, w{e,h}, false, 0);
                                 else
                                     Qexit{e,h}(i,r) = 0;
                                     Uexit{e,h}(i,r) = 0;
@@ -273,39 +292,23 @@ function finish_(self)
                     for i=1:size(self.results{it,e}.Tran.Avg.Q,1)
                         for r=1:size(self.results{it,e}.Tran.Avg.Q,2)
                             Qir = self.results{it,e}.Tran.Avg.Q{i,r};
-                            % Check if result is a valid struct with required fields
-                            if isstruct(Qir) && isfield(Qir, 't') && isfield(Qir, 'metric') && ~isempty(Qir.t)
+                            Uir = self.results{it,e}.Tran.Avg.U{i,r};
+                            Tir = self.results{it,e}.Tran.Avg.T{i,r};
+                            tref = tranTimeBase_(Qir, Uir, Tir);
+                            if ~isempty(tref)
                                 if detSojourn
                                     % Deterministic sojourn: evaluate at t=d_e.
-                                    QExit{e}(i,r) = detEval_(Qir.t, Qir.metric, dvals(e));
-                                    Uir = self.results{it,e}.Tran.Avg.U{i,r};
-                                    if isstruct(Uir) && isfield(Uir, 'metric') && ~isempty(Uir.metric)
-                                        UExit{e}(i,r) = detEval_(Qir.t, Uir.metric, dvals(e));
-                                    else
-                                        UExit{e}(i,r) = 0;
-                                    end
-                                    Tir = self.results{it,e}.Tran.Avg.T{i,r};
-                                    if isstruct(Tir) && isfield(Tir, 'metric') && ~isempty(Tir.metric)
-                                        TExit{e}(i,r) = detEval_(Qir.t, Tir.metric, dvals(e));
-                                    else
-                                        TExit{e}(i,r) = 0;
-                                    end
+                                    QExit{e}(i,r) = tranExit_(Qir, tref, [], true, dvals(e));
+                                    UExit{e}(i,r) = tranExit_(Uir, tref, [], true, dvals(e));
+                                    TExit{e}(i,r) = tranExit_(Tir, tref, [], true, dvals(e));
                                     continue
                                 end
-                                w{e} = [0, map_cdf(self.envObj.holdTime{e}, Qir.t(2:end)) - map_cdf(self.envObj.holdTime{e}, Qir.t(1:end-1))]';
-                                QExit{e}(i,r) = Qir.metric'*w{e}/sum(w{e});
-                                Uir = self.results{it,e}.Tran.Avg.U{i,r};
-                                if isstruct(Uir) && isfield(Uir, 'metric') && ~isempty(Uir.metric)
-                                    UExit{e}(i,r) = Uir.metric'*w{e}/sum(w{e});
-                                else
-                                    UExit{e}(i,r) = 0;
-                                end
-                                Tir = self.results{it,e}.Tran.Avg.T{i,r};
-                                if isstruct(Tir) && isfield(Tir, 'metric') && ~isempty(Tir.metric)
-                                    TExit{e}(i,r) = Tir.metric'*w{e}/sum(w{e});
-                                else
-                                    TExit{e}(i,r) = 0;
-                                end
+                                [tref, Qir, Uir, Tir] = refineForCdf_(tref, ...
+                                    self.envObj.holdTime{e}, Qir, Uir, Tir);
+                                w{e} = [0, map_cdf(self.envObj.holdTime{e}, tref(2:end)) - map_cdf(self.envObj.holdTime{e}, tref(1:end-1))]';
+                                QExit{e}(i,r) = tranExit_(Qir, tref, w{e}, false, 0);
+                                UExit{e}(i,r) = tranExit_(Uir, tref, w{e}, false, 0);
+                                TExit{e}(i,r) = tranExit_(Tir, tref, w{e}, false, 0);
                             else
                                 QExit{e}(i,r) = 0;
                                 UExit{e}(i,r) = 0;
@@ -522,4 +525,133 @@ function v = detEval_(t, metric, d)
 t = t(:); metric = metric(:);
 d = max(t(1), min(d, t(end)));
 v = interp1(t, metric, d, 'linear');
+end
+
+function t = tranTimeBase_(varargin)
+% Grid of the first transient metric that carries one, in the order given.
+% A station may report one metric and not another -- a Source has no queue
+% but does have a throughput -- so the grid cannot be taken from Q alone.
+t = [];
+for k = 1:numel(varargin)
+    m = varargin{k};
+    if isstruct(m) && isfield(m,'t') && isfield(m,'metric') && ~isempty(m.t)
+        t = m.t;
+        return
+    end
+end
+end
+
+function t = cdfGrid_(timespan, holdMap)
+% T = CDFGRID_(TIMESPAN, HOLDMAP)
+% The instants an exit average should be summed over, given the horizon and the
+% sojourn distribution. Empty when the horizon is not finite, i.e. when there is
+% no grid to ask for.
+%
+% The exit metric is the Stieltjes sum sum_k m(t_k)*[F(t_k)-F(t_{k-1})]. Summed
+% on the ODE solver's OWN output grid it is an artifact of step placement,
+% because that grid is chosen for the HORIZON and not for the sojourn: on
+% renv_node_breakdown's DOWN stage 34 of 532 MATLAB points lay below 5*E[S] and
+% the exit read 0.876192 against 0.8394 refined.
+%
+% NINTERP IS 5000 AND THE GRID IS BUILT UNCONDITIONALLY, which is a deliberate
+% departure from native python's former rule (500 points, skipped whenever 50 of
+% the solver's own already fell inside the support). That escape does not
+% converge: with every stage refined the sum runs 0.462260, 0.460580, 0.459704,
+% 0.459272, 0.459138, 0.459122 as NINTERP goes 500, 1e3, 2e3, 5e3, 2e4, 5e4, and
+% the C++ engine on a 1e5-point uniform grid of its own answers 0.459171. The
+% error is first order because the sum reads the RIGHT endpoint and the
+% integrand is not small in the tail: an unstable stage (DOWN here serves 0.5
+% against arrivals of 0.8) has a queue growing linearly in t, so the mass beyond
+% 5*E[S] multiplies a large metric. 5000 points sit 3.3e-4 from the 5e4-point
+% value at a twentieth of the cost. All four codebases build the same grid, so
+% each then differs only by its own trajectory.
+NINTERP = 5000;
+t = [];
+if isempty(holdMap) || numel(timespan) < 2 ...
+        || ~isfinite(timespan(2)) || ~(timespan(2) > timespan(1))
+    return
+end
+t0 = timespan(1);
+tend = timespan(2);
+meanSojourn = map_mean(holdMap);
+if ~(meanSojourn > 0) || ~isfinite(meanSojourn)
+    meanSojourn = (tend - t0) / 10;
+end
+tcdf = min(tend, 5 * meanSojourn);
+if tcdf <= t0
+    tcdf = tend;
+end
+ndense = floor(0.9 * NINTERP);
+ntail = NINTERP - ndense;
+tf = linspace(t0, tcdf, ndense);
+if tcdf < tend && ntail > 1
+    ttail = linspace(tcdf, tend, ntail + 1);
+    tf = [tf, ttail(2:end)];
+end
+t = tf(:);
+end
+
+function [t, varargout] = refineForCdf_(t, holdMap, varargin)
+% [T, M1, M2, ...] = REFINEFORCDF_(T, HOLDMAP, M1, M2, ...)
+% The FALLBACK path onto the grid cdfGrid_ describes, for a trajectory that was
+% not integrated on it.
+%
+% `analyze_` asks the stage solver for those instants directly
+% (`options.tranpoints`), and the fluid iteration honours the request, so this
+% returns immediately for a fluid stage: interpolation cannot recover resolution
+% a trajectory never had, and asking the integrator costs nothing. A stage
+% solver that ignores the request -- a CTMC stage, say -- still arrives here and
+% is resampled, which is better than summing on a grid the weight cannot see.
+varargout = varargin;
+if isempty(t) || numel(t) < 2 || isempty(holdMap)
+    return
+end
+wasrow = isrow(t);
+tv = t(:);
+tf = cdfGrid_([tv(1), tv(end)], holdMap);
+if isempty(tf)
+    return
+end
+% Already integrated on this scale: the dense block of cdfGrid_ runs up to
+% tf(ndense), so a trajectory carrying at least that many points below it is
+% the requested grid (or finer) and needs nothing done to it.
+ndense = floor(0.9 * numel(tf));
+if ndense >= 1 && sum(tv <= tf(ndense)) >= ndense
+    return
+end
+for k = 1:numel(varargin)
+    m = varargin{k};
+    if isstruct(m) && isfield(m,'metric') && ~isempty(m.metric) ...
+            && numel(m.metric) == numel(tv)
+        mv = interp1(tv, m.metric(:), tf, 'linear');
+        m.metric = reshape(mv, size(tf));
+        if isfield(m,'t')
+            m.t = tf;
+        end
+        varargout{k} = m;
+    end
+end
+if wasrow
+    t = tf.';
+else
+    t = tf;
+end
+end
+
+function v = tranExit_(m, t, w, detSojourn, d)
+% One exit metric: the transient averaged over the holding time, or read at
+% the deterministic sojourn d. Absent metrics are 0; a PRESENT one is never
+% dropped because a DIFFERENT metric of the same station is absent.
+v = 0;
+if ~(isstruct(m) && isfield(m,'metric') && ~isempty(m.metric))
+    return
+end
+if numel(m.metric) ~= numel(t)
+    return
+end
+if detSojourn
+    v = detEval_(t, m.metric, d);
+else
+    v = m.metric(:)'*w(:)/sum(w);
+end
 end

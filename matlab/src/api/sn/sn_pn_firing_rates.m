@@ -61,7 +61,7 @@ if isempty(placeNodes) || isempty(transNodes) || isempty(TN)
     return
 end
 
-% see _kb/04-networkstruct.md (api/sn/*.m derived-field helpers) for rationale
+% see _kb/04-networkstruct.md (api/sn derived-field helpers) for rationale
 if any(sn.nodetype == NodeType.Source) || any(sn.nodetype == NodeType.Sink)
     return
 end
@@ -129,7 +129,7 @@ for mm = 1:nModes
     end
 end
 
-% see _kb/04-networkstruct.md (api/sn/*.m derived-field helpers) for rationale
+% see _kb/04-networkstruct.md (api/sn derived-field helpers) for rationale
 nEq = 2 * length(placeNodes) * R;
 A = zeros(nEq, nModes);
 b = zeros(nEq, 1);

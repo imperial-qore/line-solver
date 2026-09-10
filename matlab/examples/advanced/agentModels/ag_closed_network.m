@@ -1,9 +1,9 @@
-%% Closed Network with MAM
+%% Closed Network with AG
 %
-% This example demonstrates MAM with RCAT methods on a closed queueing network
+% This example demonstrates SolverAG, the agent-based solver, on a closed queueing network
 % with processor-sharing (PS) queues using the INAP algorithm.
 %
-% The RCAT (Reversed Compound Agent Theorem) decomposes the network
+% The solver decomposes the network
 % into interacting stochastic processes and uses fixed-point iteration
 % to compute equilibrium measures.
 %
@@ -29,8 +29,8 @@ queue2.setService(cclass, Exp(mu2));
 
 model.link(Network.serialRouting({queue1, queue2}));
 
-%% Solve with MAM using INAP method (default)
-solverINAP = MAM(model, 'method', 'inap');
+%% Solve with AG using INAP method (default)
+solverINAP = AG(model, 'method', 'inap');
 avgTableINAP = solverINAP.getAvgTable()
 
 %% Solve with MVA for comparison
@@ -39,6 +39,6 @@ avgTableMVA = solverMVA.getAvgTable()
 
 %% Solve with CTMC for exact results (if state space is small)
 if N <= 20
-    solverCTMC = CTMC(model);
+    solverCTMC = CTMC(model,'exact');
     avgTableCTMC = solverCTMC.getAvgTable()
 end

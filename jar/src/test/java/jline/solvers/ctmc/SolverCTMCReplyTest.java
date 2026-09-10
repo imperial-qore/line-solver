@@ -207,10 +207,11 @@ public class SolverCTMCReplyTest {
     }
 
     /**
-     * Holding a server across a call has no representation in the state of the
-     * non-FCFS disciplines, so a caller declared PS must be REJECTED rather than
-     * silently solved with the hold dropped -- which would report the carried
-     * load and understate the caller by the whole call duration.
+     * The per-class counter that encodes a held server is exact only at FCFS and
+     * INF, so a caller declared PS must be REJECTED rather than silently solved
+     * with the hold dropped -- which would report the carried load and understate
+     * the caller by the whole call duration. The other disciplines are not yet
+     * encoded rather than infeasible.
      */
     @Test
     public void nonFcfsCallerIsRejected() {
@@ -240,6 +241,6 @@ public class SolverCTMCReplyTest {
         } catch (RuntimeException e) {
             rejected = true;
         }
-        assertTrue(rejected, "a PS caller was accepted; the held server cannot be represented there");
+        assertTrue(rejected, "a PS caller was accepted; the held server is not encoded there");
     }
 }

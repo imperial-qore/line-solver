@@ -308,6 +308,75 @@ public class Prior extends Distribution implements Serializable {
      *
      * @return true
      */
+    /** A prior reduced to weighted alternatives, i.e. one UQ design. */
+    public static final class Design {
+        /** The concrete distribution of each design point. */
+        public final List<Distribution> dists;
+        /** The weight of each design point; sums to 1. */
+        public final double[] weights;
+
+        public Design(List<Distribution> dists, double[] weights) {
+            this.dists = dists;
+            this.weights = weights;
+        }
+    }
+
+    /**
+     * Reduce the prior to n weighted alternatives.
+     *
+     * <p>The method is honoured, which is what makes SolverUQ's own
+     * 'quadrature'/'montecarlo' methods mean anything:
+     *
+     * <ul>
+     * <li>{@code quadrature} -- the alternatives and their probabilities
+     * unchanged, and n is ignored: a discrete set is already exact.</li>
+     * <li>{@code montecarlo} -- n i.i.d. draws of the ALTERNATIVE INDEX against
+     * its probabilities, weights 1/n. Returning the alternatives unweighted here
+     * would silently drop the prior.</li>
+     * </ul>
+     *
+     * <p>Mirrors {@code Prior.discretize} in MATLAB. The CONTINUOUS form of the
+     * prior -- a parameter density plus a distribution factory -- is not
+     * representable by this class, which holds an explicit alternative list, so
+     * there is no continuous branch to take here.
+     *
+     * @param n      number of alternatives (ignored by 'quadrature')
+     * @param method 'quadrature' or 'montecarlo'
+     * @param random the stream the draws are taken from
+     * @return the design points and their weights
+     */
+    public Design discretize(int n, String method, Random random) {
+        if (!"quadrature".equals(method) && !"montecarlo".equals(method)) {
+            throw new RuntimeException("Unknown discretization method: " + method);
+        }
+        if ("quadrature".equals(method)) {
+            return new Design(new ArrayList<Distribution>(getDistributions()),
+                    getProbabilities().clone());
+        }
+        int draws = n > 0 ? n : 11;
+        double[] probs = getProbabilities();
+        double[] cumprob = new double[probs.length];
+        double acc = 0;
+        for (int i = 0; i < probs.length; i++) {
+            acc += probs[i];
+            cumprob[i] = acc;
+        }
+        List<Distribution> dists = new ArrayList<Distribution>();
+        for (int i = 0; i < draws; i++) {
+            double u = random.nextDouble();
+            int idx = 0;
+            while (idx < cumprob.length - 1 && u > cumprob[idx]) {
+                idx++;
+            }
+            dists.add(getAlternative(idx));
+        }
+        double[] weights = new double[draws];
+        for (int i = 0; i < draws; i++) {
+            weights[i] = 1.0 / draws;
+        }
+        return new Design(dists, weights);
+    }
+
     public boolean isPrior() {
         return true;
     }

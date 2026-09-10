@@ -146,20 +146,16 @@ classdef Node < NetworkElement
                         if length(self.output.outputStrategy{1, class.index})<3
                             self.output.outputStrategy{1, class.index}{3}{1} = {destination, weight};
                         else
-                            self.output.outputStrategy{1, class.index}{3}{end+1} = {destination, weight};
+                            pos = Node.findRoutingEntry(self.output.outputStrategy{1, class.index}{3}, destination);
+                            if pos > 0
+                                self.output.outputStrategy{1, class.index}{3}{pos} = {destination, weight};
+                            else
+                                self.output.outputStrategy{1, class.index}{3}{end+1} = {destination, weight};
+                            end
                         end
                     else
                         line_error(mfilename,'Weighted round robin weights must be integers.')
                     end
-                case RoutingStrategy.RL
-                    self.output.outputStrategy{1, class.index}{2} = RoutingStrategy.toText(strategy);
-                    if nargin < 4
-                        par1 = -1;
-                        par2 = {-1, -1};
-                    end
-                    self.output.outputStrategy{1, class.index}{3} = par1;      % part1 is value function (tabular or FA)
-                    self.output.outputStrategy{1, class.index}{4} = par2{1};      % part2{2} is nodes that need action
-                    self.output.outputStrategy{1, class.index}{5} = par2{2};      % part2{2} is state size (truncation_value + 1)
                 otherwise
                     switch nargin
                         case 3 % no destination specified
@@ -171,10 +167,81 @@ classdef Node < NetworkElement
                             if length(self.output.outputStrategy{1, class.index})<3
                                 self.output.outputStrategy{1, class.index}{3}{1} = {destination, probability};
                             else
-                                self.output.outputStrategy{1, class.index}{3}{end+1} = {destination, probability};
+                                % re-declaring (class,destination) overwrites, never appends
+                                pos = Node.findRoutingEntry(self.output.outputStrategy{1, class.index}{3}, destination);
+                                if pos > 0
+                                    self.output.outputStrategy{1, class.index}{3}{pos} = {destination, probability};
+                                else
+                                    self.output.outputStrategy{1, class.index}{3}{end+1} = {destination, probability};
+                                end
                             end
                     end
             end
+        end
+
+        function setStateDepRouting(self, class, departure, branches, level, C, d)
+            % SETSTATEDEPROUTING(CLASS, DEPARTURE, BRANCHES, LEVEL, C, D)
+            %
+            % Declares this node to be the entry center e of a subnetwork
+            % Q(V,V) served by the product-form state-dependent routing of
+            % Krzesinski (1987), "Multiclass Queueing Networks with
+            % State-Dependent Routing", Performance Evaluation 7:125-143.
+            %
+            % DEPARTURE is the departure center d of Q(V,V), which may be this
+            % node itself in a central server model. BRANCHES is a cell array
+            % following the paper's own indexing: BRANCHES{1} must be empty
+            % because branch index 1 denotes the complement M-V, and
+            % BRANCHES{b} for b >= 2 lists the nodes of branch b with its entry
+            % center first and its departure center last. A single-center
+            % branch is written {node}. LEVEL(b) is the index t of the
+            % subnetwork with B_b in V_t - V_{t+1}, and LEVEL(1) is ignored. C
+            % is the 1xT vector of coefficients C_t and D the TxB matrix of
+            % coefficients d_tb, of which entry (t,b) is read for
+            % 1 <= t <= LEVEL(b) and 2 <= b <= B.
+            %
+            % Negative C_t and positive d_tb make the routing prefer the least
+            % congested branches and impose the population bounds
+            % m_b <= d_{t,b}/(-C_t) and v_t <= D_tt/(-C_t).
+            %
+            % Example, the central server of Section 2.5 with two peripheral
+            % centers, C = (-1,-1), d_12 = 1, d_13 = 2, d_23 = 3:
+            %   d = zeros(2,3); d(1,2) = 1; d(1,3) = 2; d(2,3) = 3;
+            %   node1.setStateDepRouting(class, node1, {[], {node2}, {node3}}, ...
+            %                            [0 1 2], [-1 -1], d);
+
+            if ~iscell(branches) || isempty(branches) || ~isempty(branches{1})
+                line_error(mfilename,'BRANCHES must be a cell array whose first entry is empty: branch index 1 denotes the complement M-V.');
+            end
+            B = numel(branches);
+            T = numel(C);
+            if numel(level) ~= B
+                line_error(mfilename,'LEVEL must have one entry per branch index, including the unused index 1.');
+            end
+            if size(d,1) < T || size(d,2) < B
+                line_error(mfilename,sprintf('D must be at least %dx%d.',T,B));
+            end
+            sdr = struct();
+            sdr.departure = departure;
+            sdr.branch = cell(1,B);
+            sdr.entryOf = cell(1,B);
+            sdr.departureOf = cell(1,B);
+            for b = 2:B
+                bnodes = branches{b};
+                if ~iscell(bnodes)
+                    bnodes = {bnodes};
+                end
+                if isempty(bnodes)
+                    line_error(mfilename,sprintf('Branch %d is empty.',b));
+                end
+                sdr.branch{b} = bnodes;
+                sdr.entryOf{b} = bnodes{1};
+                sdr.departureOf{b} = bnodes{end};
+            end
+            sdr.level = level(:)';
+            sdr.C = C(:)';
+            sdr.d = d;
+            self.output.outputStrategy{1, class.index}{2} = RoutingStrategy.toText(RoutingStrategy.SDR);
+            self.output.outputStrategy{1, class.index}{3} = {sdr};
         end
 
         function bool = hasClassSwitching(self)
@@ -285,6 +352,24 @@ classdef Node < NetworkElement
             %self.input.summary;
             %            self.server.summary;
             %            self.output.summary;
+        end
+    end
+
+    methods (Static)
+        function pos = findRoutingEntry(entries, destination)
+            % POS = FINDROUTINGENTRY(ENTRIES, DESTINATION)
+            % Index of the {destination, value} pair naming DESTINATION, 0 if absent.
+            pos = 0;
+            if isempty(entries) || ~isa(destination,'Node')
+                return
+            end
+            for e = 1:length(entries)
+                entry = entries{e};
+                if iscell(entry) && ~isempty(entry) && isa(entry{1},'Node') && strcmp(entry{1}.name, destination.name)
+                    pos = e;
+                    return
+                end
+            end
         end
     end
 end

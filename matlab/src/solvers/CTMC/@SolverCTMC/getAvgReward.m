@@ -21,6 +21,16 @@ function [R, names] = getAvgReward(self)
 % Copyright (c) 2012-2026, Imperial College London
 % All rights reserved.
 
+% lang='cpp' runs the reward analysis in line-cli (-a reward). Only a reward
+% built from a Reward.* template crosses the wire; a bare function handle has
+% no serializable form and linemodel_save refuses to emit one, naming it.
+if isfield(self.options,'lang') && strcmp(self.options.lang,'cpp')
+    [R, names] = CPPLINE.avgReward(self.name, self.model, self.options);
+    self.result.Reward.steadyState = R;
+    self.result.Reward.names = names;
+    return
+end
+
 % Check if results are already cached
 if isfield(self.result, 'Reward') && ~isempty(self.result.Reward) && ...
         isfield(self.result.Reward, 'steadyState') && ~isempty(self.result.Reward.steadyState)

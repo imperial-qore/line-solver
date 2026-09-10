@@ -117,7 +117,7 @@ classdef Fork < Node
             end
         end
         
-        function setTasksPerLink(self, nTasks)
+        function setTasksPerLink(self, nTasks, varargin)
             % SETTASKSPERLINK Configure number of tasks per output link
             %
             % Sets the number of tasks sent out on each outgoing link. By default,
@@ -130,16 +130,103 @@ classdef Fork < Node
             %   - SolverJMT: Fully supported - simulation handles multiple tasks correctly
             %   - SolverLDES: Fully supported - simulation handles multiple tasks correctly
             %   - SolverMVA (H-T method): Not supported - throws error
-            %   - SolverMVA (MMT method): Supported - analytical approximation
+            %   - SolverMVA/SolverNC (MMT method): Supported - the auxiliary open
+            %     class carries the load of all (links x nTasks) siblings and the
+            %     join synchronises on the order statistic of that many branch
+            %     times, each branch replicated nTasks times. That is the same
+            %     approximation an ordinary fork-join gets, but the warning below
+            %     still stands for the per-link and DISTRIBUTION forms, where the
+            %     analytical solvers see only the mean fanout.
+            %
+            % SETTASKSPERLINK(JOBCLASS, NTASKS) sets it for one class only,
+            % leaving every other class on the node-wide value.
+            %
+            % SETTASKSPERLINK(JOBCLASS, NTASKS, DESTNODE) sets it for the link
+            % towards DESTNODE only, leaving the other links alone.
             %
             % @param nTasks Number of tasks per link (default: 1)
 
+            if nargin > 2
+                % (jobclass, nTasks [, destNode]) form
+                jobclass = nTasks;
+                nTasks = varargin{1};
+                if length(varargin) > 1
+                    destName = varargin{2}.getName();
+                else
+                    destName = '';
+                end
+                self.output.tasksPerLinkByDest(end+1) = struct('dest',destName, ...
+                    'class',jobclass.index,'value',nTasks);
+                if nTasks ~= 1
+                    line_warning(mfilename, 'The setTasksPerLink feature is experimental and results may be inaccurate for analytical solvers.');
+                end
+                return
+            end
             if nTasks ~= 1
                 line_warning(mfilename, 'The setTasksPerLink feature is experimental and results may be inaccurate for analytical solvers.');
             end
             self.output.tasksPerLink = nTasks;
         end
-        
+
+        function setTasksPerLinkDistribution(self, jobclass, dist, destNode)
+            % SETTASKSPERLINKDISTRIBUTION Configure a RANDOM number of tasks per link
+            %
+            % SETTASKSPERLINKDISTRIBUTION(JOBCLASS, DIST) makes the number of
+            % tasks emitted on each outgoing link a draw from DIST, a
+            % DiscreteSampler over a non-negative integer support, redrawn
+            % independently for every link and every forked job. This is the
+            % variable forking level of JMT's JobsPerLinkDis.
+            %
+            % SETTASKSPERLINKDISTRIBUTION(JOBCLASS, DIST, DESTNODE) restricts it
+            % to the link towards DESTNODE, leaving the other links alone.
+            %
+            % Exact under SolverJMT and SolverLDES, which draw the degree at the
+            % fork epoch. The analytical solvers see E[DIST]: SolverMVA's MMT
+            % method uses it as the mean fanout, and SolverNC/SolverCTMC obtain
+            % the visit ratios from sn_fj_visits_spn.
+            %
+            % @param jobclass Job class the distribution applies to
+            % @param dist DiscreteSampler over the tasks-per-link support
+            % @param destNode Optional destination node restricting the link
+
+            if ~isa(dist,'DiscreteDistribution')
+                line_error(mfilename, 'The tasks-per-link distribution must be a DiscreteDistribution (e.g. DiscreteSampler).');
+            end
+            if nargin < 4
+                destName = '';
+            else
+                destName = destNode.getName();
+            end
+            self.output.tasksPerLinkDist(end+1) = struct('dest',destName, ...
+                'class',jobclass.index,'dist',dist);
+        end
+
+        function setBranchProbability(self, jobclass, destNode, prob)
+            % SETBRANCHPROBABILITY Activate an outgoing branch only with probability PROB
+            %
+            % SETBRANCHPROBABILITY(JOBCLASS, DESTNODE, PROB) makes the branch
+            % towards DESTNODE fire with probability PROB for jobs of JOBCLASS,
+            % and emit nothing otherwise. The branches are activated
+            % independently, so the number of siblings a job produces is random
+            % even when the tasks per link are deterministic.
+            %
+            % The matched Join must be told what to wait for: with a standard
+            % join a job that skipped a branch would block forever, so a fork
+            % with any branch probability below one requires JoinStrategy.PARTIAL
+            % (see Join.setRequired) or a quorum.
+            %
+            % @param jobclass Job class the probability applies to
+            % @param destNode Destination node of the branch
+            % @param prob Activation probability in [0,1]
+
+            if prob < 0 || prob > 1
+                line_error(mfilename, 'A branch activation probability must lie in [0,1].');
+            end
+            self.output.branchProb(end+1) = struct('dest',destNode.getName(), ...
+                'class',jobclass.index,'value',prob);
+        end
+
+
         function summary(self)
             % SUMMARY Display fork node configuration summary
             %

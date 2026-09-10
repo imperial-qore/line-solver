@@ -3,12 +3,15 @@ State-vector analyzer for SolverENV (options.method='statevec').
 
 Carries the full per-stage state distribution across environment switches
 instead of collapsing it to marginal mean queue lengths. Mirrors
-matlab/src/solvers/ENV/solver_env_statevec_analyzer.m and the Java/Kotlin
+matlab/src/solvers/ENV/solver_env_statevec_analyzer.m and the Java
 ports. Supports a CTMC backend (explicit enumerated generator, reusing
 solver_ctmc_basic + _compute_metrics_sync) and a MAM/LDQBD backend
 (single-class Delay+Queue closed or Source+Queue open, exact M/M/c boundary,
-PH service and load-dependent scaling, open handled by level truncation).
+PH service at any number of servers via the busy-server phase multiset of
+ldqbd_mphc, load-dependent scaling, open handled by level truncation).
 """
+
+import warnings
 
 import numpy as np
 
@@ -16,6 +19,7 @@ from ...api.mc.ctmc import ctmc_timeaverage, ctmc_solve_reducible
 from ...api.solvers.ctmc.handler import solver_ctmc_basic, SolverCTMCOptions
 from ...api.state.marginal import toMarginal
 from ...api.mam.map_analysis import map_pie, map_mean, map_cdf
+from ...api.mam.ldqbd_mphc import ldqbd_mphc
 from ...api.sn.predicates import sn_has_load_dependence
 from ...constants import SchedStrategy
 
@@ -94,9 +98,14 @@ def ldqbd_ld(sn, cutoff=None):
         lld_row = np.asarray(lldscaling)[queue_idx, :]
         lldlimit = lld_row.size
         sf_max = lld_row[lldlimit - 1]
+        # Peak capacity normalizes the utilization: the LARGEST factor declared,
+        # not the saturated one, matching CTMC's
+        # ceff = max(nservers, max(lldscaling[ist, :])).
+        util_peak = max(float(n_servers), float(np.max(lld_row)))
     else:
         lldlimit = 0
         sf_max = n_servers
+        util_peak = float(n_servers)
 
     rt = np.asarray(sn.rt)
     if is_open:
@@ -139,20 +148,16 @@ def ldqbd_ld(sn, cutoff=None):
         for n in range(1, Nlev + 1):
             Q2.append(np.array([[sf[n - 1] * mu]]))
     else:
-        Q0.append(arr_rate[0] * alpha)
-        for n in range(1, Nlev):
-            Q0.append(arr_rate[n] * np.eye(n_phases))
-        Q1.append(np.array([[-arr_rate[0]]]))
-        for n in range(1, Nlev + 1):
-            Q1.append(sf[n - 1] * D0 - arr_rate[n] * np.eye(n_phases))
-        Q2.append(sf[0] * D1 @ np.ones((n_phases, 1)))
-        for n in range(2, Nlev + 1):
-            Q2.append(sf[n - 1] * D1)
+        # PH service: the level carries the multiset of the phases the min(n,c)
+        # busy servers sit in, exact at any c and identical to the plain phase
+        # indexing at c == 1. Same builder the steady-state LDQBD solver uses.
+        Q0, Q1, Q2 = ldqbd_mphc(D0, D1, alpha, n_servers, arr_rate, sf)
 
     ld = {
         'Q0': Q0, 'Q1': Q1, 'Q2': Q2, 'Nlev': Nlev, 'nPhases': n_phases,
         'isPH': is_ph, 'isOpen': is_open, 'queueIdx': queue_idx, 'M': M,
         'nServers': n_servers, 'meanService': mean_service, 'hasLLD': has_lld,
+        'sf': sf, 'utilPeak': util_peak,
         'lambdaEff': lambda_eff,
     }
     if is_open:
@@ -189,7 +194,7 @@ def ldqbd_flatten(ld):
 
 def ldqbd_avg(ld, piflat, level_of):
     """Map a flat LD-QBD distribution to per-(station,class) mean metrics."""
-    Nlev = ld['Nlev']; M = ld['M']; qi = ld['queueIdx']; ri = ld['refIdx']; c = ld['nServers']
+    Nlev = ld['Nlev']; M = ld['M']; qi = ld['queueIdx']; ri = ld['refIdx']
     pf = np.asarray(piflat).ravel().astype(float)
     pf[pf < 0] = 0
     psum = pf.sum()
@@ -200,12 +205,15 @@ def ldqbd_avg(ld, piflat, level_of):
         pLevel[level_of[i]] += pf[i]
     mean_queue = float(np.dot(np.arange(Nlev + 1), pLevel))
 
-    if ld['hasLLD'] or c == 1:
-        util = 1 - pLevel[0]
-    else:
-        util = 0.0
-        for n in range(1, Nlev + 1):
-            util += (min(n, c) / c) * pLevel[n]
+    # Utilization is the fraction of PEAK capacity in use,
+    # sum_n p(n)*sf(n)/utilPeak, the work-based convention CTMC/MVA/NC report.
+    # Without load dependence sf(n) = min(n,c) and utilPeak = c, so this is the
+    # average fraction of c servers in use; at c = 1 it collapses to 1 - p(0).
+    sf = ld['sf']
+    util_peak = ld['utilPeak']
+    util = 0.0
+    for n in range(1, Nlev + 1):
+        util += (sf[n - 1] / util_peak) * pLevel[n]
 
     QN = np.zeros((M, 1)); UN = np.zeros((M, 1)); RN = np.zeros((M, 1)); TN = np.zeros((M, 1))
     if ld['isOpen']:
@@ -219,7 +227,8 @@ def ldqbd_avg(ld, piflat, level_of):
         R_queue = mean_queue / X if X > 0 else 0.0
         R_delay = 1.0 / ld['delayRate']
         QN[ri, 0] = mean_delay; UN[ri, 0] = mean_delay; RN[ri, 0] = R_delay; TN[ri, 0] = X
-        QN[qi, 0] = mean_queue; UN[qi, 0] = util / c; RN[qi, 0] = R_queue; TN[qi, 0] = X
+        # util is already per-server: the /utilPeak is inside the sum above
+        QN[qi, 0] = mean_queue; UN[qi, 0] = util; RN[qi, 0] = R_queue; TN[qi, 0] = X
     return QN, UN, RN, TN
 
 
@@ -239,11 +248,15 @@ def _station_has_lldcd(sn, ist):
 
 def _avg_from_pi(sn, pi, SSaggr, hashed, arvRates, depRates):
     """Discipline-aware mapping of a distribution to mean metrics. Mirrors
-    matlab solver_ctmc_avg_from_pi.m (max(UNarv,UNdep) for non-PS disciplines)."""
+    matlab solver_ctmc_avg_from_pi.m."""
     M = sn.nstations
     K = sn.nclasses
     pi = np.asarray(pi, dtype=float).ravel()
-    pi[pi < 1e-14] = 0
+    # Skipped under a matrix exponential: the vector is then a genuinely signed
+    # measure and the clamp would delete real mass. See ctmc handler.
+    from ...api.solvers.ctmc.handler import _sn_all_phasetype
+    if _sn_all_phasetype(sn):
+        pi[pi < 1e-14] = 0
     s = pi.sum()
     if s > 0:
         pi = pi / s
@@ -271,10 +284,9 @@ def _avg_from_pi(sn, pi, SSaggr, hashed, arvRates, depRates):
                 pr = sn.proc[ist][k]
                 if pr is None or len(pr) < 2:
                     continue
+                # Departure-rate estimator only; see _kb/06-solver-catalog.md
                 mean = map_mean(np.asarray(pr[0]), np.asarray(pr[1]))
-                UNarv = float(pi @ arvRates[:, isf, k]) * mean / S
-                UNdep = TN[ist, k] * mean / S
-                UN[ist, k] = max(UNarv, UNdep)
+                UN[ist, k] = TN[ist, k] * mean / S
         else:
             # Load/class-dependent (or PAS): per-state marginal in-service share.
             # Weight the per-class capacity share by the current scaling and
@@ -415,8 +427,45 @@ def solver_env_statevec(env, solvers, options):
                       arvRates=res.arvRates, depRates=res.depRates, hashed=res.space_hashed,
                       sn=res.sn if res.sn is not None else sn_e)
         stages.append(st)
-        pi0 = ctmc_solve_reducible(st['Q'])
-        pi_enter[e] = _row_normalize_nonneg(pi0)
+
+    # Warm start. A stage's OWN stationary distribution is not a usable seed
+    # here: a stage that is individually unstable or critical (arrival rate >=
+    # its own service rate) has no stationary law at all, and
+    # ctmc_solve_reducible then returns the stationary law of the TRUNCATED
+    # generator, which piles mass against the truncation wall and whose mean
+    # grows linearly with the cutoff (for a critical M/M/1 truncated at N it is
+    # uniform, with mean N/2).
+    #
+    # The fixed point chained in post() is exact -- it is the stationary
+    # equation of the joint (queue,stage) chain,
+    # phi_e = (sum_h phi_h q_he) (s_e I - Q_e)^-1 -- and it does contract to the
+    # right answer from that seed, but the number of sweeps needed grows with
+    # the cutoff. At a finite iter_max the reported result therefore drifts
+    # further from the truth as the cutoff is RAISED, i.e. the natural user
+    # response to a suspect number makes it worse.
+    #
+    # Seed instead from the environment-averaged generator sum_e probEnv[e]*Q_e,
+    # which is positive recurrent exactly when the model is stable on average --
+    # the regime in which the answer exists -- so its stationary law is
+    # cutoff-independent. Averaging needs one common state space; when the
+    # stages differ in size (reset_state is what bridges them) fall back to the
+    # per-stage law, which is no worse than before.
+    dims = [stages[e]['Q'].shape[0] for e in range(E)]
+    pi_shared = None
+    if E > 1 and all(d == dims[0] for d in dims):
+        w = np.asarray(env.probEnv, dtype=float).ravel()
+        if w.size != E or not np.all(np.isfinite(w)) or w.sum() <= 0:
+            w = np.ones(E) / E  # stage probabilities unavailable: weight equally
+        else:
+            w = w / w.sum()
+        Qbar = sum(w[e] * stages[e]['Q'] for e in range(E))
+        pi_shared = _row_normalize_nonneg(ctmc_solve_reducible(Qbar))
+    for e in range(E):
+        if pi_shared is None:
+            pi_enter[e] = _row_normalize_nonneg(ctmc_solve_reducible(stages[e]['Q']))
+        else:
+            pi_shared = pi_shared.copy()
+            pi_enter[e] = pi_shared
 
     pi_exit_dest = [[None] * E for _ in range(E)]
     pi_time_avg = [None] * E
@@ -506,12 +555,25 @@ def solver_env_statevec(env, solvers, options):
 
     # ---- iterate ----
     max_iter = _opt(options, 'iter_max', 100)
+    has_converged = False
     for _ in range(int(max_iter)):
         for e in range(E):
             analyze(e)
         post()
         if converged():
+            has_converged = True
             break
+    if not has_converged:
+        # Exiting on iter_max is a NON-convergence: the last iterate can be far
+        # from the fixed point (and, before the warm start above was fixed,
+        # was reliably so). Returning it silently is what makes a wrong number
+        # indistinguishable from a right one.
+        warnings.warn(
+            "The SolverENV statevec fixed point did not converge in "
+            "options.iter_max=%d iterations; the returned solution is the last "
+            "iterate and may be far from the fixed point. Raise options.iter_max, "
+            "or loosen options.iter_tol only if the residual is already small."
+            % int(max_iter), RuntimeWarning, stacklevel=2)
 
     # ---- finish: environment-averaged blend ----
     M = ensemble[0].get_struct().nstations

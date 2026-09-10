@@ -19,12 +19,21 @@ public final class MG1_pi {
         return mg1_pi(B, A, new MG1PiOptions());
     }
 
+    /**
+     * Stationary vector of an M/G/1-type chain by the stable Ramaswami formula.
+     *
+     * <p>A = [A_0 A_1 ... A_dega] repeats from level one, B = [B_0 B_1 ... B_degb]
+     * is the boundary row, and G is computed here from the solver named in the
+     * options. The recursion is level-by-level, so it costs O(levels * m^3) and
+     * not O((levels*m)^3), and it is exact for the chain rather than for a
+     * skip-free-to-the-right approximation of it: pi_i = pi_0 R^i holds only in
+     * the G/M/1-type case, where a level rises by at most one.
+     *
+     * <p>MATLAB twin: MG1_pi.m (SMCSolver, Van Houdt).
+     */
     public static Matrix mg1_pi(Matrix B, Matrix A, MG1PiOptions options) {
         int m = A.getNumRows();
         int dega = A.getNumCols() / m - 1;
-
-        // Use boundary or default to A's first row structure
-        Matrix boundary = (B != null) ? B : A;
 
         // First, compute G using appropriate solver
         Matrix G;
@@ -37,60 +46,134 @@ public final class MG1_pi {
             G = MG1_FI.mg1_fi(A, new MG1FIOptions(options.getVerbose() ? 1 : 0));
         }
 
-        // Compute R matrix: R = sum(i=0 to dega) A_i * G^i
-        Matrix R = A.extractCols(0, m).copy();
-        Matrix Gpow = G.copy();
-        for (int i = 1; i <= dega; i++) {
-            R = R.add(A.extractCols(i * m, (i + 1) * m).mult(Gpow));
-            Gpow = Gpow.mult(G);
+        Matrix C0 = options.getBoundary();
+        Matrix Awork = A.copy();
+        Matrix Bwork = (B != null) ? B.copy() : null;
+        int mb;
+        int degb;
+        if (Bwork == null) {
+            mb = m;
+            degb = dega;
+            if (C0 != null) {
+                // the general boundary keeps B0..Bdegb equal to A0..Adega
+                Bwork = A.copy();
+            }
+        } else {
+            mb = Bwork.getNumRows();
+            if ((Bwork.getNumCols() - mb) % m != 0) {
+                throw new RuntimeException("Matrix B has an incorrect number of columns");
+            }
+            degb = (Bwork.getNumCols() - mb) / m;
+        }
+        if (C0 == null && mb != m) {
+            throw new RuntimeException("The Boundary option must be used as dimension of B0 is not "
+                    + "identical to A0");
+        }
+        if (C0 != null && (C0.getNumRows() != m || C0.getNumCols() != mb)) {
+            throw new RuntimeException("The Boundary parameter value has an incorrect dimension");
         }
 
-        // Compute stationary distribution
-        int degb = boundary.getNumCols() / m - 1;
-
-        Matrix Bhat = boundary.extractCols(0, m).copy();
-        Gpow = G.copy();
-        for (int i = 1; i <= degb; i++) {
-            Bhat = Bhat.add(boundary.extractCols(i * m, (i + 1) * m).mult(Gpow));
-            Gpow = Gpow.mult(G);
+        // sumA accumulates the original blocks while Awork becomes the partial
+        // sums hatA_i = sum_{v>=i} A_v G^(v-i); beta is the mean level drift
+        Matrix sumA = Awork.extractCols(dega * m, (dega + 1) * m).copy();
+        Matrix beta = sumA.sumRows();
+        for (int i = dega - 1; i >= 1; i--) {
+            sumA = sumA.add(1.0, Awork.extractCols(i * m, (i + 1) * m));
+            Matrix hat = Awork.extractCols(i * m, (i + 1) * m)
+                    .add(1.0, Awork.extractCols((i + 1) * m, (i + 2) * m).mult(G));
+            writeCols(Awork, i * m, hat);
+            beta = beta.add(1.0, sumA.sumRows());
+        }
+        sumA = sumA.add(1.0, Awork.extractCols(0, m));
+        Matrix theta = Stat.stat(sumA);
+        double drift = theta.mult(beta).get(0, 0);
+        if (drift >= 1) {
+            throw new RuntimeException("The Markov chain characterized by A is not positive recurrent");
         }
 
-        // Compute pi_0 as stationary distribution of Bhat
-        Matrix pi0 = Stat.stat(Bhat);
+        Matrix A0 = Awork.extractCols(0, m);
+        Matrix hatA1 = Awork.extractCols(m, 2 * m);
+        Matrix invBarA1 = Matrix.eye(m).add(-1.0, hatA1).inv();
 
-        // Compute higher levels using pi_i = pi_0 * R^i
-        java.util.List<Matrix> result = new java.util.ArrayList<Matrix>();
-        result.add(pi0);
-
-        Matrix Rpow = R.copy();
-        for (int i = 1; i < options.getMaxNumComp(); i++) {
-            Matrix pi_i = pi0.mult(Rpow);
-
-            double mass = pi_i.elementSum();
-            if (mass < 1e-15) {
-                break;
+        Matrix pi0;
+        Matrix sumBB0 = null;
+        if (Bwork == null) {
+            pi0 = Stat.stat(G).scale(1 - drift);
+        } else {
+            // sumBB0 = sum_{v>=1} B_v, Bbeta = sum_{v>=1} (v-1) B_v e, and Bwork
+            // becomes hatB_i = sum_{v>=i} B_v G^(v-i)
+            sumBB0 = Bwork.extractCols(mb + (degb - 1) * m, mb + degb * m).copy();
+            Matrix Bbeta = new Matrix(mb, 1);
+            for (int i = degb - 1; i >= 1; i--) {
+                Bbeta = Bbeta.add(1.0, sumBB0.sumRows());
+                sumBB0 = sumBB0.add(1.0, Bwork.extractCols(mb + (i - 1) * m, mb + i * m));
+                Matrix hat = Bwork.extractCols(mb + (i - 1) * m, mb + i * m)
+                        .add(1.0, Bwork.extractCols(mb + i * m, mb + (i + 1) * m).mult(G));
+                writeCols(Bwork, mb + (i - 1) * m, hat);
             }
 
-            result.add(pi_i);
-            Rpow = Rpow.mult(R);
+            Matrix hatB1 = Bwork.extractCols(mb, mb + m);
+            Matrix Kmat;
+            if (C0 == null) {
+                Kmat = Bwork.extractCols(0, mb).add(1.0, hatB1.mult(G));
+            } else {
+                Kmat = Bwork.extractCols(0, mb).add(1.0, hatB1.mult(invBarA1.mult(C0)));
+            }
+            Matrix kappa = Stat.stat(Kmat);
+
+            Matrix g = Stat.stat(G);
+            Matrix temp = Matrix.eye(m).add(-1.0, sumA)
+                    .add(-1.0, Matrix.ones(m, 1).add(-1.0, beta).mult(g)).inv().sumRows();
+            Matrix psi1 = Matrix.eye(m).add(-1.0, A0).add(-1.0, hatA1).mult(temp)
+                    .add(1.0 / (1 - drift), A0.sumRows());
+            Matrix psi2 = Matrix.ones(mb, 1).add(1.0, sumBB0.add(-1.0, hatB1).mult(temp))
+                    .add(1.0 / (1 - drift), Bbeta);
+            Matrix tildekappa1 = psi2.add(1.0, hatB1.mult(invBarA1).mult(psi1));
+            pi0 = kappa.scale(1.0 / kappa.mult(tildekappa1).get(0, 0));
         }
 
-        // Normalize the distribution
-        double totalMass = 0.0;
-        for (Matrix pi_i : result) {
-            totalMass += pi_i.elementSum();
+        // Stable Ramaswami recursion
+        java.util.List<Matrix> pi = new java.util.ArrayList<Matrix>();
+        pi.add(pi0);
+        double sumpi = pi0.elementSum();
+        int numit = 1;
+        while (sumpi < 1 - 1e-10 && numit < options.getMaxNumComp()) {
+            Matrix pin = new Matrix(1, m);
+            if (numit <= degb) {
+                if (Bwork == null) {
+                    pin = pi0.mult(Awork.extractCols(numit * mb, (numit + 1) * mb));
+                } else {
+                    pin = pi0.mult(Bwork.extractCols(mb + (numit - 1) * m, mb + numit * m));
+                }
+            }
+            for (int j = 1; j <= Math.min(numit - 1, dega - 1); j++) {
+                pin = pin.add(1.0, pi.get(numit - j).mult(Awork.extractCols((j + 1) * m, (j + 2) * m)));
+            }
+            pin = pin.mult(invBarA1);
+            pi.add(pin);
+            sumpi += pin.elementSum();
+            numit++;
         }
 
-        // Return as single row vector
-        int totalSize = result.size() * m;
-        Matrix piVec = new Matrix(1, totalSize);
-        for (int i = 0; i < result.size(); i++) {
+        Matrix piVec = new Matrix(1, mb + (pi.size() - 1) * m);
+        for (int j = 0; j < mb; j++) {
+            piVec.set(0, j, pi.get(0).get(0, j));
+        }
+        for (int i = 1; i < pi.size(); i++) {
             for (int j = 0; j < m; j++) {
-                piVec.set(0, i * m + j, result.get(i).get(0, j) / totalMass);
+                piVec.set(0, mb + (i - 1) * m + j, pi.get(i).get(0, j));
             }
         }
-
         return piVec;
+    }
+
+    /** Overwrites the block of {@code target} starting at column {@code col0}. */
+    private static void writeCols(Matrix target, int col0, Matrix block) {
+        for (int r = 0; r < block.getNumRows(); r++) {
+            for (int c = 0; c < block.getNumCols(); c++) {
+                target.set(r, col0 + c, block.get(r, c));
+            }
+        }
     }
 
     /**

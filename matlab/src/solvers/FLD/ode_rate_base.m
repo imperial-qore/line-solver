@@ -35,7 +35,8 @@ end
 for i = 1 : M   %state changes from "next service phase" transition in phases 2...
     for c = 1:K
         if enabled(i,c)
-            for kic = 1 : (Kic(i,c) - 1)
+            % must match the ki range of ode_jumps_new event for event
+            for kic = 1 : Kic(i,c)
                 for kicp = 1 : Kic(i,c) % (ki+1), PH distribution
                     if kicp ~= kic
                         rateIdx = rateIdx + 1;

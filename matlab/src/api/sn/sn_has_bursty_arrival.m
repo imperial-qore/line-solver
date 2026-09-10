@@ -42,11 +42,14 @@ for ist = 1:sn.nstations
         continue;
     end
     for r = 1:sn.nclasses
-        pc = sn.proc{ist,r};
-        if isempty(pc)
+        % sn.proc is a per-station cell of per-class representations, so the
+        % class index is the SECOND brace: sn.proc{ist,r} reads the station cell
+        % and only ever reached class 1 (and threw for r>1 on a multiclass
+        % model, which the nclasses==1 gates of its callers hid).
+        if isempty(sn.proc) || numel(sn.proc) < ist || numel(sn.proc{ist}) < r
             continue;
         end
-        map = pc{1};
+        map = sn.proc{ist}{r};
         if isempty(map) || numel(map) < 2 || isempty(map{1})
             continue;
         end

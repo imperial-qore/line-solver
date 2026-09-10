@@ -3,8 +3,8 @@ Native-Python CTMC tests for pass-and-swap (PAS) / order-independent queues.
 
 The PAS station has the order-independent product-form stationary distribution
 (Dorsman & Gardner 2024). Golden QLen/Util/Tput values for the PASQueue station
-rows match the MATLAB reference and agree across MATLAB, Python-native, Java and
-Kotlin to CTMC precision. The three models mirror the examples in
+rows match the MATLAB reference and agree across MATLAB, Python-native and Java
+to CTMC precision. The three models mirror the examples in
 ``python/examples/advanced/passAndSwap/``.
 """
 
@@ -177,6 +177,68 @@ def test_pas_compatibility_ssa_matches_ctmc():
     _assert_sim('QLen', q, [0.561490291, 0.4214071462, 0.3053202126, 0.1123506815, 0.1017734042], tol=3e-2)
     _assert_sim('Tput', tp, [0.3909908962, 0.3127927169, 0.2345945377, 0.1563963585, 0.07819817923], tol=3e-2)
 # ---------------------------------------------------------------------------
+
+def test_a_class_dependent_oi_rate_survives_the_json_round_trip(tmp_path):
+    """The wire MATLAB, native Python and the native engine share for mu(c).
+
+    A rate that READS THE CLASSES is the only kind that can detect a shifted
+    class index: mu(c) = min(n, K), which every other case here uses, is the same
+    function whoever is holding the servers. The LDES wrapper reaches the engine
+    only through this file, so the round trip is where a shift would be
+    introduced -- and it cannot be, because the table is keyed by per-class
+    COUNTS. Python evaluates mu on 0-based tags on both ends; the native C++
+    engine decodes the same table on 1-based ones. The base never crosses the
+    boundary, and this pins that.
+    """
+    import json
+
+    from line_solver.io.linemodel_io import load_model, save_model
+
+    beta = [2.0, 1.0]
+
+    def mu(c):
+        return float(sum(beta[int(x)] for x in np.atleast_1d(np.asarray(c)).ravel()))
+
+    model = _build('oicls', [1.0, 0.5], mu, np.zeros((2, 2)), 4, 4)
+    path = str(tmp_path / 'model.json')
+    save_model(model, path)
+
+    with open(path) as fh:
+        blob = json.load(fh)
+    tbl = _find_key(blob, 'oiServiceRate')
+    assert tbl is not None, 'the OI rate table did not reach the wire'
+    # keyed by COUNTS, so the two single-job states are told apart by their key
+    # and not by any ordering convention
+    assert float(tbl['1,0']) == beta[0]
+    assert float(tbl['0,1']) == beta[1]
+
+    back = [n for n in load_model(path).get_nodes() if n.get_name() == 'PASQueue'][0]
+    mu_back = back.get_service_rate_function()
+    # the discriminating trio: each class alone earns ITS OWN rate, and a mixed
+    # list earns the sum. Under a shifted index the first class earns the
+    # second's rate, or none at all, and its jobs never complete.
+    assert abs(mu_back(np.array([0])) - beta[0]) < TOL
+    assert abs(mu_back(np.array([1])) - beta[1]) < TOL
+    assert abs(mu_back(np.array([0, 1])) - (beta[0] + beta[1])) < TOL
+    assert abs(mu_back(np.array([0, 0])) - 2 * beta[0]) < TOL
+
+
+def _find_key(obj, key):
+    """The first value stored under KEY anywhere in the model.json tree."""
+    if isinstance(obj, dict):
+        if key in obj:
+            return obj[key]
+        for v in obj.values():
+            found = _find_key(v, key)
+            if found is not None:
+                return found
+    if isinstance(obj, list):
+        for v in obj:
+            found = _find_key(v, key)
+            if found is not None:
+                return found
+    return None
+
 
 def _build_oi_mix(n_oi, use_delay, ps_servers):
     """Closed cyclic network: n_oi OI stations, an optional delay, and a PS queue

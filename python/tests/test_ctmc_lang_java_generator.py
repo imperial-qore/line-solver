@@ -155,3 +155,34 @@ def test_java_getprob_station_matches_native():
         assert abs(got - ref) < TOL, \
             'getProb(station %d): java %g vs native %g' % (ist, got, ref)
         assert 0.0 <= got <= 1.0, 'getProb(station %d) is not a probability: %g' % (ist, got)
+
+
+def _closed_cqn_with_state(nq):
+    """The same closed model with `nq` of the 2 jobs parked at the Queue."""
+    m = _closed_cqn()
+    d, q = m.getStations()[0], m.getStations()[1]
+    d.setState([2 - nq])
+    q.setState([nq])
+    return m
+
+
+def test_java_getprobaggr_answers_at_the_state_that_was_set():
+    """getProbAggr must name its cell over the wire.
+
+    model.json carries no per-station initial state, so a delegated query that
+    does not pass `state=` is answered by the JAR at ITS default initialization
+    -- every setState() is silently discarded and the number comes back
+    plausible and wrong. Asserting one state is not enough to catch that: the
+    default happens to be "all jobs at the reference station", which one of the
+    cells below IS. Sweeping nq is what separates "reads the state" from
+    "always answers the same cell".
+    """
+    _require_jar()
+    for nq in (0, 1, 2):
+        java = _solve(_closed_cqn_with_state(nq), 'java', cutoff=3, seed=1)
+        native = _solve(_closed_cqn_with_state(nq), 'python', cutoff=3, seed=1)
+        got = float(java.getProbAggr(java.model.getStations()[1]))
+        ref = float(native.getProbAggr(native.model.getStations()[1]))
+        assert abs(got - ref) < TOL, \
+            'getProbAggr(Queue1) with %d job(s) queued: java %g vs native %g' \
+            % (nq, got, ref)

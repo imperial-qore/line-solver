@@ -13,5 +13,10 @@ cluster = (Cluster()
         .set_scheduling(SchedStrategy.PS)
         .set_closed(10, 1.0))
 
-print(MVA(cluster.build()).get_avg_table())
-print(SSA(cluster.build(), seed=23000, samples=20000).get_avg_table())
+# Bound rather than built inline: the parity rows serialize the example's own
+# Network, and an unbound `cluster.build()` leaves them nothing to export.
+model = cluster.build()
+model2 = cluster.build()
+
+print(MVA(model).get_avg_table())
+print(SSA(model2, seed=23000, samples=20000).get_avg_table())

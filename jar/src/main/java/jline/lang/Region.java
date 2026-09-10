@@ -35,6 +35,7 @@ public class Region implements Serializable {
     private double globalMaxMemory;  // double so fractional budgets pair with fractional classSize footprints
     private Matrix constraintA;  // Linear constraint matrix A (C x K), null if not set
     private Matrix constraintB;  // Linear constraint vector b (C x 1), null if not set
+    private transient Network model;  // owning network, so a mutation can invalidate its cached struct
 
     public Region(List<Node> nodes, List<JobClass> classes) {
         this.nodes = nodes;
@@ -59,6 +60,23 @@ public class Region implements Serializable {
         }
     }
 
+    /**
+     * Records the owning network so that changing this region invalidates the
+     * network's cached NetworkStruct. Set by Network.addRegion.
+     *
+     * @param model the network this region belongs to
+     */
+    public void setModel(Network model) {
+        this.model = model;
+    }
+
+    /** Invalidates the owning network's cached struct after a change to this region. */
+    private void invalidate() {
+        if (this.model != null) {
+            this.model.resetStruct();
+        }
+    }
+
     // Global methods
     public int getGlobalMaxJobs() {
         return globalMaxJobs;
@@ -66,6 +84,7 @@ public class Region implements Serializable {
 
     public void setGlobalMaxJobs(int njobs) {
         this.globalMaxJobs = njobs;
+        invalidate();
     }
 
     public double getGlobalMaxMemory() {
@@ -74,15 +93,18 @@ public class Region implements Serializable {
 
     public void setGlobalMaxMemory(int memlim) {
         this.globalMaxMemory = memlim;
+        invalidate();
     }
 
     public void setGlobalMaxMemory(double memlim) {
         this.globalMaxMemory = memlim;
+        invalidate();
     }
 
     // Per-class methods
     public void setClassMaxJobs(JobClass jobClass, int njobs) {
         classMaxJobs.put(jobClass, njobs);
+        invalidate();
     }
 
     public int getClassMaxJobs(JobClass jobClass) {
@@ -91,6 +113,7 @@ public class Region implements Serializable {
 
     public void setClassMaxMemory(JobClass jobClass, int memlim) {
         classMaxMemory.put(jobClass, memlim);
+        invalidate();
     }
 
     public int getClassMaxMemory(JobClass jobClass) {
@@ -105,6 +128,7 @@ public class Region implements Serializable {
      */
     public void setDropRule(JobClass jobClass, DropStrategy strategy) {
         dropRule.put(jobClass, strategy);
+        invalidate();
     }
 
     /**
@@ -119,6 +143,7 @@ public class Region implements Serializable {
         } else {
             dropRule.put(jobClass, DropStrategy.WaitingQueue);
         }
+        invalidate();
     }
 
     /**
@@ -145,10 +170,12 @@ public class Region implements Serializable {
 
     public void setClassSize(JobClass jobClass, int size) {
         classSize.put(jobClass, (double) size);
+        invalidate();
     }
 
     public void setClassSize(JobClass jobClass, double size) {
         classSize.put(jobClass, size);
+        invalidate();
     }
 
     public double getClassSize(JobClass jobClass) {
@@ -157,6 +184,7 @@ public class Region implements Serializable {
 
     public void setClassWeight(JobClass jobClass, double weight) {
         classWeight.put(jobClass, weight);
+        invalidate();
     }
 
     public double getClassWeight(JobClass jobClass) {
@@ -185,6 +213,7 @@ public class Region implements Serializable {
     public void setLinearConstraints(Matrix A, Matrix b) {
         this.constraintA = A;
         this.constraintB = b;
+        invalidate();
     }
 
     /**

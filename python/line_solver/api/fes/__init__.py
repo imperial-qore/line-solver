@@ -14,7 +14,7 @@ Key functions:
 
 References:
     Original MATLAB: matlab/src/api/fes/fes_*.m
-    JAR: jar/src/main/kotlin/jline/api/fes/FESAggregator.kt
+    JAR: jar/src/main/java/jline/api/fes/FESAggregator.java
     Chandy, Herzog, Woo, "Parametric analysis of queueing networks", 1975
 """
 
@@ -81,7 +81,6 @@ def fes_aggregate_with_options(model, station_subset, solver='mva',
     from ...distributions.continuous import Exp, Disabled
     from ..pfqn.ljd import ljd_linearize
     from line_solver.lib.kpctoolbox.mc import dtmc_stochcomp
-    from ..pfqn.mva import pfqn_mva
 
     # Validate inputs
     _validate_inputs(model, station_subset)
@@ -512,7 +511,7 @@ def _build_isolated_model(model, station_subset, subset_indices, stoch_comp_s, s
 def _compute_throughputs(isolated_model, cutoffs, sn, solver_name, verbose):
     """Compute throughputs for all population states using BFS enumeration."""
     from ..pfqn.ljd import ljd_linearize
-    from ..pfqn.mva import pfqn_mva
+    from ..pfqn.mvald import pfqn_mvams
 
     K = sn.nclasses
     table_size = _compute_table_size(cutoffs)
@@ -561,123 +560,131 @@ def _compute_throughputs(isolated_model, cutoffs, sn, solver_name, verbose):
             for k in range(K):
                 throughput_table[k][idx - 1] = 0.0  # ljd_linearize returns 1-based
         else:
-            try:
-                # Build demands and think times for pfqn_mva
-                # L = service demands at queue stations (M_queues x K)
-                # Z = think times at delay stations (1 x K)
-                N = nvec_arr.astype(float)
+            # Build demands and think times for the MVA solve. A failure is
+            # NOT caught: an FES table silently filled with zeros is a wrong
+            # aggregate, not a degraded one, and every downstream beta_r(n)
+            # reads it as "the subnetwork serves nothing".
+            # L = service demands at queue stations (M_queues x K)
+            # Z = think times at delay stations (1 x K)
+            N = nvec_arr.astype(float)
 
-                # Compute visits for the isolated model
-                # For a closed network, visits are derived from the routing matrix
-                iso_sn_fresh = isolated_model.get_struct()
-                iso_visits = None
-                if hasattr(iso_sn_fresh, 'visits') and iso_sn_fresh.visits is not None:
-                    # visits is a list of per-chain visit matrices
-                    # For single-chain (no class switching), aggregate visits
-                    nchains = len(iso_sn_fresh.visits)
-                    iso_visits = np.zeros((iso_sn_fresh.nstateful, K))
-                    for c in range(nchains):
-                        if iso_sn_fresh.visits[c] is not None:
-                            v = np.asarray(iso_sn_fresh.visits[c])
-                            iso_visits[:v.shape[0], :v.shape[1]] += v
+            # Compute visits for the isolated model
+            # For a closed network, visits are derived from the routing matrix
+            iso_sn_fresh = isolated_model.get_struct()
+            iso_visits = None
+            if hasattr(iso_sn_fresh, 'visits') and iso_sn_fresh.visits is not None:
+                # visits is a list of per-chain visit matrices
+                # For single-chain (no class switching), aggregate visits
+                nchains = len(iso_sn_fresh.visits)
+                iso_visits = np.zeros((iso_sn_fresh.nstateful, K))
+                for c in range(nchains):
+                    if iso_sn_fresh.visits[c] is not None:
+                        v = np.asarray(iso_sn_fresh.visits[c])
+                        iso_visits[:v.shape[0], :v.shape[1]] += v
 
-                # Build L (demands) and Z (think times) from rates and visits
-                if iso_visits is not None:
-                    # Demands = visits / rate (i.e., visits * service_time)
-                    Z = np.zeros(K)
-                    L_list = []
-                    mi_list = []
-                    for i in queue_indices:
-                        isf = int(iso_sn_fresh.stationToStateful[i])
-                        demands = np.zeros(K)
-                        for k_cls in range(K):
-                            rate = iso_rates[i, k_cls]
-                            visit = iso_visits[isf, k_cls] if isf < iso_visits.shape[0] else 0.0
-                            if rate > 0 and not np.isnan(rate) and visit > 0:
-                                demands[k_cls] = visit / rate
-                        L_list.append(demands)
-                        mi_list.append(iso_nservers[i])
-
-                    for i in delay_indices:
-                        isf = int(iso_sn_fresh.stationToStateful[i])
-                        for k_cls in range(K):
-                            rate = iso_rates[i, k_cls]
-                            visit = iso_visits[isf, k_cls] if isf < iso_visits.shape[0] else 0.0
-                            if rate > 0 and not np.isnan(rate) and visit > 0:
-                                Z[k_cls] += visit / rate
-
-                    if len(L_list) > 0:
-                        L = np.array(L_list)
-                        mi = np.array(mi_list)
-                    else:
-                        # All delays, no queues
-                        L = np.zeros((1, K))
-                        mi = np.array([1.0])
-                        # With only delays, throughput = N / Z
-                        for k_cls in range(K):
-                            if Z[k_cls] > 0 and N[k_cls] > 0:
-                                throughput_table[k_cls][idx - 1] = N[k_cls] / Z[k_cls]
-                            else:
-                                throughput_table[k_cls][idx - 1] = 0.0
-                        # Skip pfqn_mva call
-                        # Add neighboring states
-                        for k_cls in range(K):
-                            if nvec[k_cls] < cutoffs[k_cls]:
-                                new_state = list(nvec)
-                                new_state[k_cls] += 1
-                                new_state_t = tuple(new_state)
-                                if new_state_t not in visited:
-                                    queue.append(new_state_t)
-                        continue
-
-                    # Call pfqn_mva
-                    XN, CN, QN, UN, RN, TN, AN = pfqn_mva(L, N, Z, mi)
-
-                    # Extract system throughputs
-                    XN_flat = np.asarray(XN).flatten()
+            # Build L (demands) and Z (think times) from rates and visits
+            if iso_visits is not None:
+                # Demands = visits / rate (i.e., visits * service_time)
+                Z = np.zeros(K)
+                L_list = []
+                mi_list = []
+                for i in queue_indices:
+                    isf = int(iso_sn_fresh.stationToStateful[i])
+                    demands = np.zeros(K)
                     for k_cls in range(K):
-                        if nvec[k_cls] > 0 and k_cls < len(XN_flat):
-                            throughput_table[k_cls][idx - 1] = XN_flat[k_cls]
-                        else:
-                            throughput_table[k_cls][idx - 1] = 0.0
+                        rate = iso_rates[i, k_cls]
+                        visit = iso_visits[isf, k_cls] if isf < iso_visits.shape[0] else 0.0
+                        if rate > 0 and not np.isnan(rate) and visit > 0:
+                            demands[k_cls] = visit / rate
+                    L_list.append(demands)
+                    mi_list.append(iso_nservers[i])
+
+                for i in delay_indices:
+                    isf = int(iso_sn_fresh.stationToStateful[i])
+                    for k_cls in range(K):
+                        rate = iso_rates[i, k_cls]
+                        visit = iso_visits[isf, k_cls] if isf < iso_visits.shape[0] else 0.0
+                        if rate > 0 and not np.isnan(rate) and visit > 0:
+                            Z[k_cls] += visit / rate
+
+                if len(L_list) > 0:
+                    L = np.array(L_list)
+                    mi = np.array(mi_list)
                 else:
-                    # Fallback: use rates directly as demands (visits = 1)
-                    Z = np.zeros(K)
-                    L_list = []
-                    mi_list = []
-                    for i in queue_indices:
-                        demands = np.zeros(K)
-                        for k_cls in range(K):
-                            rate = iso_rates[i, k_cls]
-                            if rate > 0 and not np.isnan(rate):
-                                demands[k_cls] = 1.0 / rate
-                        L_list.append(demands)
-                        mi_list.append(iso_nservers[i])
-
-                    for i in delay_indices:
-                        for k_cls in range(K):
-                            rate = iso_rates[i, k_cls]
-                            if rate > 0 and not np.isnan(rate):
-                                Z[k_cls] += 1.0 / rate
-
-                    L = np.array(L_list) if L_list else np.zeros((1, K))
-                    mi = np.array(mi_list) if mi_list else np.array([1.0])
-
-                    XN, CN, QN, UN, RN, TN, AN = pfqn_mva(L, N, Z, mi)
-                    XN_flat = np.asarray(XN).flatten()
+                    # All delays, no queues
+                    L = np.zeros((1, K))
+                    mi = np.array([1.0])
+                    # With only delays, throughput = N / Z
                     for k_cls in range(K):
-                        if nvec[k_cls] > 0 and k_cls < len(XN_flat):
-                            throughput_table[k_cls][idx - 1] = XN_flat[k_cls]
+                        if Z[k_cls] > 0 and N[k_cls] > 0:
+                            throughput_table[k_cls][idx - 1] = N[k_cls] / Z[k_cls]
                         else:
                             throughput_table[k_cls][idx - 1] = 0.0
+                    # Skip pfqn_mva call
+                    # Add neighboring states
+                    for k_cls in range(K):
+                        if nvec[k_cls] < cutoffs[k_cls]:
+                            new_state = list(nvec)
+                            new_state[k_cls] += 1
+                            new_state_t = tuple(new_state)
+                            if new_state_t not in visited:
+                                queue.append(new_state_t)
+                    continue
 
-                if verbose:
-                    print(f"  FES: nvec={nvec_arr}, X={[throughput_table[k][idx-1] for k in range(K)]}")
+                # pfqn_mva's `mi` is NOT a server count -- it enters only as
+                # the additive term of C(i,s)=L(i,s)*(mi(i)+Qarv), so passing
+                # the real multiplicity INFLATES the residence time instead of
+                # adding servers. pfqn_mvams forwards to pfqn_mva when every
+                # station is a single server and to the load-dependent
+                # recursion with mu(i,n)=min(n,S(i)) when one is not.
+                # See _kb/03-api-layer.md (pfqn_mva: mi is not S).
+                XN, QN, UN, CN, _lG = pfqn_mvams(
+                    np.zeros(K), L, N, Z, np.ones(L.shape[0]), mi)
 
-            except Exception:
-                # If solver fails, set throughput to 0
+                # Extract system throughputs
+                XN_flat = np.asarray(XN).flatten()
                 for k_cls in range(K):
-                    throughput_table[k_cls][idx - 1] = 0.0
+                    if nvec[k_cls] > 0 and k_cls < len(XN_flat):
+                        throughput_table[k_cls][idx - 1] = XN_flat[k_cls]
+                    else:
+                        throughput_table[k_cls][idx - 1] = 0.0
+            else:
+                # Fallback: use rates directly as demands (visits = 1)
+                Z = np.zeros(K)
+                L_list = []
+                mi_list = []
+                for i in queue_indices:
+                    demands = np.zeros(K)
+                    for k_cls in range(K):
+                        rate = iso_rates[i, k_cls]
+                        if rate > 0 and not np.isnan(rate):
+                            demands[k_cls] = 1.0 / rate
+                    L_list.append(demands)
+                    mi_list.append(iso_nservers[i])
+
+                for i in delay_indices:
+                    for k_cls in range(K):
+                        rate = iso_rates[i, k_cls]
+                        if rate > 0 and not np.isnan(rate):
+                            Z[k_cls] += 1.0 / rate
+
+                L = np.array(L_list) if L_list else np.zeros((1, K))
+                mi = np.array(mi_list) if mi_list else np.array([1.0])
+
+                # `mi` is the additive C=L*(mi+Qarv) term, not a server
+                # count: multiservers go through pfqn_mvams (see above)
+                XN, QN, UN, CN, _lG = pfqn_mvams(
+                    np.zeros(K), L, N, Z, np.ones(L.shape[0]), mi)
+                XN_flat = np.asarray(XN).flatten()
+                for k_cls in range(K):
+                    if nvec[k_cls] > 0 and k_cls < len(XN_flat):
+                        throughput_table[k_cls][idx - 1] = XN_flat[k_cls]
+                    else:
+                        throughput_table[k_cls][idx - 1] = 0.0
+
+            if verbose:
+                print(f"  FES: nvec={nvec_arr}, X={[throughput_table[k][idx-1] for k in range(K)]}")
+
 
         # Add neighboring states
         for k_cls in range(K):
@@ -841,11 +848,162 @@ def fes_build_isolated(sn, subsystem_nodes: np.ndarray) -> Dict[str, Any]:
     }
 
 
+from .map_fes import (
+    fes_map_levels,
+    fes_map_interdeparture,
+    fes_map_euler,
+    fes_map_moments,
+    fes_map_grid,
+    fes_map_interp,
+    fes_map_aggregate,
+    fes_map_solve,
+    fes_map_deaggregate,
+)
+
 __all__ = [
     'FesResult',
+    'fes_map_levels',
+    'fes_map_interdeparture',
+    'fes_map_euler',
+    'fes_map_moments',
+    'fes_map_grid',
+    'fes_map_interp',
+    'fes_map_aggregate',
+    'fes_map_solve',
+    'fes_map_deaggregate',
     'fes_aggregate',
     'fes_aggregate_with_options',
     'fes_validate',
     'fes_compute_throughputs',
     'fes_build_isolated',
 ]
+
+
+def fes_compute_metrics(isolated_model, cutoffs, K):
+    """Per-station metrics of the ISOLATED subnetwork at every population state.
+
+    The companion of :func:`_compute_throughputs`. That function returns the
+    aggregate throughput X(n) that becomes the flow-equivalent server's rate,
+    which is all the REDUCED model needs; it is not enough to report the
+    COLLAPSED stations' own metrics. Those are recovered by conditioning on the
+    FES population,
+
+        E[Q_i] = sum_n P(N_fes = n) * Q_i(n),
+
+    the Chandy-Herzog-Woo hierarchical decomposition, which is EXACT when the
+    subnetwork is product-form. This supplies the Q_i(n) and U_i(n) the sum is
+    taken over, indexed by ljd_linearize exactly as the throughput table is.
+    Throughput needs no table: flow is fixed by the ROUTING, so the caller
+    derives it from the original model's visit ratios.
+
+    Args:
+        isolated_model: the isolated subnetwork Network built by the transform
+        cutoffs: per-class population cutoffs
+        K: number of classes
+
+    Returns:
+        (Qtable, Utable): lists indexed by the 0-based linearized population
+        state, each entry an (M_sub x K) array over the subnetwork's stations
+        in their own order.
+
+    References:
+        MATLAB: matlab/src/api/fes/fes_compute_metrics.m
+    """
+    import numpy as _np
+
+    from ..pfqn.ljd import ljd_linearize
+    from ..pfqn.mvald import pfqn_mvams
+    from ...lang.base import SchedStrategy
+
+    cutoffs = _np.asarray(cutoffs, dtype=int).flatten()
+    table_size = int(_np.prod(cutoffs + 1))
+
+    iso_sn = isolated_model.get_struct()
+    iso_rates = _np.asarray(iso_sn.rates)
+    iso_nservers = _np.asarray(iso_sn.nservers).flatten()
+    M_sub = iso_sn.nstations
+
+    delay_indices, queue_indices = [], []
+    for i in range(M_sub):
+        if iso_sn.sched.get(i) == SchedStrategy.INF or _np.isinf(iso_nservers[i]):
+            delay_indices.append(i)
+        else:
+            queue_indices.append(i)
+
+    iso_visits = _np.zeros((iso_sn.nstateful, K))
+    if getattr(iso_sn, 'visits', None) is not None:
+        for c in range(len(iso_sn.visits)):
+            if iso_sn.visits[c] is not None:
+                v = _np.asarray(iso_sn.visits[c])
+                iso_visits[:v.shape[0], :v.shape[1]] += v
+
+    def _demand(i, k):
+        isf = int(iso_sn.stationToStateful[i])
+        rate = iso_rates[i, k]
+        visit = iso_visits[isf, k] if isf < iso_visits.shape[0] else 0.0
+        if rate > 0 and not _np.isnan(rate) and visit > 0:
+            return visit / rate
+        return 0.0
+
+    L = _np.array([[_demand(i, k) for k in range(K)] for i in queue_indices]) \
+        if queue_indices else _np.zeros((0, K))
+    mi = _np.array([iso_nservers[i] for i in queue_indices]) if queue_indices else _np.zeros(0)
+    Z = _np.zeros(K)
+    for i in delay_indices:
+        for k in range(K):
+            Z[k] += _demand(i, k)
+
+    Qtable = [_np.zeros((M_sub, K)) for _ in range(table_size)]
+    Utable = [_np.zeros((M_sub, K)) for _ in range(table_size)]
+
+    for idx0 in range(table_size):
+        nvec = _ljd_delinearize(idx0 + 1, cutoffs)
+        if nvec.sum() == 0:
+            continue  # an empty subnetwork holds nothing and serves nothing
+        # `mi` is the additive C=L*(mi+Qarv) term of pfqn_mva, not a server
+        # count: multiservers go through pfqn_mvams. Its UN is per STATION on
+        # the closed multiserver branch and per station-class elsewhere, so it
+        # is not read here -- utilization is recomputed analytically as U=X*L/S,
+        # the [0,1] convention LINE uses at every queueing station whatever its
+        # multiplicity. See _kb/03-api-layer.md (pfqn_mva: mi is not S).
+        XN, QN, _UN, _CN, _lG = pfqn_mvams(
+            _np.zeros(K), L, nvec.astype(float), Z,
+            _np.ones(L.shape[0]), mi)
+        Q = _np.zeros((M_sub, K))
+        U = _np.zeros((M_sub, K))
+        QN = _np.atleast_2d(_np.asarray(QN))
+        XN_row = _np.asarray(XN).flatten()
+        for a, i in enumerate(queue_indices):
+            if a < QN.shape[0]:
+                Q[i, :QN.shape[1]] = QN[a, :]
+            srv = max(1.0, float(mi[a])) if a < len(mi) else 1.0
+            U[i, :] = XN_row[:K] * L[a, :] / srv
+        # A Delay holds X_k * Z_i(k) jobs by Little's law on a station with no
+        # queueing, and its INF "utilization" is that same population.
+        XN_flat = _np.asarray(XN).flatten()
+        for i in delay_indices:
+            for k in range(K):
+                Q[i, k] = XN_flat[k] * _demand(i, k) if k < len(XN_flat) else 0.0
+                U[i, k] = Q[i, k]
+        Qtable[idx0] = Q
+        Utable[idx0] = U
+
+    return Qtable, Utable
+
+
+def _ljd_delinearize(idx, cutoffs):
+    """Inverse of ljd_linearize: the population vector behind a linear index.
+
+    The forward map is a mixed-radix numeral with class k in radix (Nk+1), so
+    the inverse is the digit-by-digit division that reads it back.
+    """
+    import numpy as _np
+
+    cutoffs = _np.asarray(cutoffs, dtype=int).flatten()
+    nvec = _np.zeros(len(cutoffs), dtype=int)
+    rem = int(idx) - 1
+    for k in range(len(cutoffs)):
+        radix = int(cutoffs[k]) + 1
+        nvec[k] = rem % radix
+        rem //= radix
+    return nvec

@@ -13,6 +13,7 @@ sn = self.getStruct;
 RD = cell(sn.nstations, sn.nclasses);
 cdfmodel = self.model.copy;
 cdfmodel.resetNetwork;
+cdfmodel.reset;
 isNodeClassLogged = false(cdfmodel.getNumberOfNodes, cdfmodel.getNumberOfClasses);
 for i= 1:cdfmodel.getNumberOfStations
     for r=1:cdfmodel.getNumberOfClasses
@@ -26,7 +27,9 @@ Plinked = sn.rtorig;
 isNodeLogged = max(isNodeClassLogged,[],2);
 logpath = lineTempDir;
 cdfmodel.linkAndLog(Plinked, isNodeLogged, logpath);
-SolverJMT(cdfmodel, self.getOptions).getAvg(); % log data
+cdfOptions = self.getOptions;
+cdfOptions.lang = 'matlab'; % CDF computation requires log files from native JMT
+SolverJMT(cdfmodel, cdfOptions).getAvg(); % log data
 logData = SolverJMT.parseLogs(cdfmodel, isNodeLogged, MetricType.toText(MetricType.RespT));
 % from here convert from nodes in logData to stations
 for i= 1:cdfmodel.getNumberOfStations

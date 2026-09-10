@@ -505,7 +505,13 @@ public class JobClass extends NetworkElement implements Serializable {
         System.out.println();
     }
 
-    // Parity gap: MATLAB methods not yet ported here - see _kb/07-cross-language-parity.md
+    /**
+     * Prints the one-line class summary, twin of MATLAB {@code JobClass.summary}.
+     * Distinct from {@link #printSummary()}, which is the multi-line form.
+     */
+    public void summary() {
+        System.out.format("Class (%s): %s\n", this.type, this.getName());
+    }
 
     // =================== IMMEDIATE FEEDBACK METHODS ===================
 

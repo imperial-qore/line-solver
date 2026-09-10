@@ -232,12 +232,12 @@ classdef ParamEstimator < handle
         estVal = estimator_ekf(self, nodes);
         estVal = estimator_mcmc(self, nodes);
         estVal = estimator_mle(self, nodes);
-        estVal = estimator_rnn(self, nodes);
         estVal = estimator_mlps(self, nodes);
         estVal = estimator_fmlps(self, nodes);
         estVal = estimator_qmle(self, nodes);
         [eqModel, eqNode] = buildClosedEquivalentForPS(self, node);
         estVal = estimator_gibbs(self, nodes);
+        estVal = estimator_variational(self, nodes);
     end
 
     methods (Static)
@@ -270,8 +270,6 @@ classdef ParamEstimator < handle
                     desc = 'QLen (aggregate). Gibbs sampling with MCMC. Open/mixed via closed equivalence.';
                 case 'mle'
                     desc = 'ArvR (per-class) + RespT (per-class) + Util (aggregate)';
-                case 'rnn'
-                    desc = 'QLen (per-class, trace format). Transient queue-length traces.';
                 case 'mlps'
                     desc = 'ArvR (per-class, trace) + RespT (per-class, trace). PS stations only. Open/mixed via closed equivalence.';
                 case 'fmlps'
@@ -280,6 +278,8 @@ classdef ParamEstimator < handle
                     desc = 'QLen (per-class). Open/mixed via closed equivalence (Z_r = N_r / lambda_r).';
                 case 'gibbs'
                     desc = 'ArvR (per-class, trace) + RespT (per-class, trace) + Tput (per-class). Gibbs sampling.';
+                case 'vi'
+                    desc = 'QLen (per-class, timeseries) at every station. Variational inference over transition counts; noisy readings, Gamma posteriors.';
                 otherwise
                     desc = sprintf('Unknown method: %s', method);
             end

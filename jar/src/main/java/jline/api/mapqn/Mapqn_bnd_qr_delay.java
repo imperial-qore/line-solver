@@ -99,7 +99,26 @@ public final class Mapqn_bnd_qr_delay {
             int objectiveQueue,
             int objectivePhase,
             int objectiveN) {
+        return solve(params, objectiveQueue, objectivePhase, objectiveN, "max");
+    }
+
+    /**
+     * As above, optimizing in the requested direction. The LP is a relaxation
+     * containing the exact solution, so "max" is a valid upper bound on the
+     * marginal probability and "min" the matching lower bound.
+     *
+     * @param sense "min" or "max"
+     */
+    public static Mapqn_solution solve(
+            QuadraticDelayParameters params,
+            int objectiveQueue,
+            int objectivePhase,
+            int objectiveN,
+            String sense) {
         params.validate();
+        if (!("min".equals(sense) || "max".equals(sense))) {
+            throw new IllegalArgumentException("Sense must be 'min' or 'max'");
+        }
         if (objectiveQueue < 1 || objectiveQueue > params.M) {
             throw new IllegalArgumentException("Objective queue must be in range 1..M");
         }
@@ -130,7 +149,7 @@ public final class Mapqn_bnd_qr_delay {
         PointValuePair solution = solver.optimize(
                 objectiveFunction,
                 constraintSet,
-                GoalType.MAXIMIZE);
+                "min".equals(sense) ? GoalType.MINIMIZE : GoalType.MAXIMIZE);
 
         return new Mapqn_solution(solution.getValue(), extractVariableValues(model, solution.getPoint()));
     }
@@ -695,7 +714,7 @@ public final class Mapqn_bnd_qr_delay {
         return result;
     }
 
-    /** Convenience accessor (Kotlin extension fn equivalent). */
+    /** Convenience accessor (extension-function equivalent). */
     public static double getP2(Mapqn_solution sol, int j, int nj, int k, int i, int ni, int h) {
         return sol.getVariable("p2_" + j + "_" + nj + "_" + k + "_" + i + "_" + ni + "_" + h);
     }

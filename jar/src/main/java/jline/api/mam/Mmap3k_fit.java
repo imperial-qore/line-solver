@@ -2,7 +2,7 @@
  * @file MMAP(3,K) closed-form marking fit: a marked MAP of third order
  *
  * The MMAP(2,K) argument does not depend on the order. Two facts carry over
- * (verified symbolically, see sage/proofs/mmap3k_marking_inverse.py):
+ * (verified symbolically, see io/sage/proofs/mmap3k_marking_inverse.py):
  *
  * 1. every per-class characteristic in which the class matrix appears exactly
  *    once is LINEAR in the marking fractions, so z = nnz(D1) fractions per

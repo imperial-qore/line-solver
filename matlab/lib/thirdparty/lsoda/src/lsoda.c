@@ -492,7 +492,6 @@ void lsoda_free(struct lsoda_context_t * ctx) {
 int lsoda(struct lsoda_context_t * ctx, double *y, double *t, double tout) {
 
 		int kflag;
-		int jstart;
 
 		struct lsoda_common_t * common = ctx->common;
 		const struct lsoda_opt_t * opt = ctx->opt;
@@ -547,7 +546,7 @@ int lsoda(struct lsoda_context_t * ctx, double *y, double *t, double tout) {
 		   If ctx->state = 3, set flag to signal parameter changes to stoda.
 		 */
 		if (ctx->state == 3) {
-			jstart = -1;
+			_C(jstart) = -1;
 		}
 		/*
 		   Block c.
@@ -570,7 +569,7 @@ int lsoda(struct lsoda_context_t * ctx, double *y, double *t, double tout) {
 				if (h0 != 0. && (*t + h0 - tcrit) * h0 > 0.)
 					h0 = tcrit - *t;
 			}
-			jstart = 0;
+			_C(jstart) = 0;
 			/* set the order to 1*/
 			_C(nq) = 1;
 
@@ -660,7 +659,8 @@ int lsoda(struct lsoda_context_t * ctx, double *y, double *t, double tout) {
 		   and is to check stop conditions before taking a step.
 		 */
 		if (ctx->state == 2 || ctx->state == 3) {
-			jstart = 1;
+			/* LINE fix: jstart is NOT rebuilt here, see common.h. stoda left it
+			   at 1, or block f left it at -1 with a method switch to complete. */
 			_C(nslast) = _C(nst);
 			switch (itask) {
 				case 1:
@@ -706,7 +706,7 @@ int lsoda(struct lsoda_context_t * ctx, double *y, double *t, double tout) {
 						break;
 					_C(h) = (tcrit - _C(tn)) * (1. - 4. * ETA);
 					if (ctx->state == 2)
-						jstart = -2;
+						_C(jstart) = -2;
 					break;
 			}		/* end switch   */
 		}			/* end if ( ctx->state == 2 || ctx->state == 3 )   */
@@ -760,7 +760,7 @@ int lsoda(struct lsoda_context_t * ctx, double *y, double *t, double tout) {
 			/*
 			   Call stoda
 			 */
-			kflag = stoda(ctx, y, jstart);
+			kflag = stoda(ctx, y);
 			/*
 			   printf( "_C(meth)= %d,   order= %d,   _C(nfe)= %d,   _C(nje)= %d\n",
 			   _C(meth), _C(nq), _C(nfe), _C(nje) );
@@ -779,10 +779,10 @@ int lsoda(struct lsoda_context_t * ctx, double *y, double *t, double tout) {
 				   and do extra printing of data if ixpr = 1.
 				   Then, in any case, check for stop conditions.
 				 */
-				jstart = 1;
+				_C(jstart) = 1;
 				if (_C(meth) != _C(mused)) {
 					_C(tsw) = _C(tn);
-					jstart = -1;
+					_C(jstart) = -1;
 					if (opt->ixpr) {
 						if (_C(meth) == 2)
 							fprintf(stderr, "[lsoda] a switch to the stiff method has occurred ");
@@ -834,7 +834,7 @@ int lsoda(struct lsoda_context_t * ctx, double *y, double *t, double tout) {
 						if ((tnext - tcrit) * _C(h) <= 0.)
 							continue;
 						_C(h) = (tcrit - _C(tn)) * (1. - 4. * ETA);
-						jstart = -2;
+						_C(jstart) = -2;
 						continue;
 					}
 				}	/* end if ( itask == 4 )   */

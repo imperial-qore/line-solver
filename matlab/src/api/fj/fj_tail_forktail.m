@@ -119,9 +119,31 @@ if nbranch == 1 && numel(K) > 1
         line_error(mfilename, 'The fanout probabilities P must be non-negative and sum to one.');
     end
     mixcdf = @(x) sum(P .* (1 - exp(-x/beta)).^(K*alpha));
+    mixres = @(x) mixcdf(x) - p;
     xlo = -beta * log(1 - p^(1/(min(K)*alpha)));
     xhi = -beta * log(1 - p^(1/(max(K)*alpha)));
-    xp = fzero(@(x) mixcdf(x) - p, [xlo, xhi]);
+    lo = min(xlo, xhi);
+    hi = max(xlo, xhi);
+    if lo == hi
+        xp = lo;
+        return
+    end
+    % G(x)^(K*alpha) decreases in K, so the mixture obeys mixres(lo) <= 0 <=
+    % mixres(hi) exactly -- with EQUALITY when P puts all its mass on min(K)
+    % or on max(K). There the root sits ON an endpoint, the residual there is
+    % roundoff of either sign rather than the strict straddle fzero demands,
+    % and the endpoint is already the answer.
+    flo = mixres(lo);
+    fhi = mixres(hi);
+    if flo >= 0
+        xp = lo;
+        return
+    end
+    if fhi <= 0
+        xp = hi;
+        return
+    end
+    xp = fzero(mixres, [lo, hi]);
     return
 end
 
@@ -153,29 +175,4 @@ if residual(xlo) > 0
     end
 end
 xp = fzero(residual, [xlo, xhi]);
-end
-
-function [alpha, beta] = ge_fit(ET, VT)
-% [ALPHA, BETA] = GE_FIT(ET, VT)
-% Match a generalized exponential law on a mean and a variance. The squared
-% coefficient of variation depends on the shape alone and decreases
-% monotonically in it, so the shape is recovered by a scalar root-find on a
-% logarithmic scale and the scale then follows in closed form. SCV = 1 is the
-% exponential case alpha = 1, kept exact.
-scv = VT / ET^2;
-if abs(scv - 1) < GlobalConstants.FineTol
-    alpha = 1;
-else
-    scvOf = @(a) (psi(1,1) - psi(1,a+1)) / (psi(0,a+1) - psi(0,1))^2;
-    residual = @(la) scvOf(exp(la)) - scv;
-    lo = -30; hi = 30;
-    while residual(lo) < 0 && lo > -700
-        lo = lo - 30;   % smaller shape -> larger SCV
-    end
-    while residual(hi) > 0 && hi < 700
-        hi = hi + 30;   % larger shape -> smaller SCV
-    end
-    alpha = exp(fzero(residual, [lo, hi]));
-end
-beta = ET / (psi(0,alpha+1) - psi(0,1));
 end

@@ -22,7 +22,15 @@ public final class Solver_nc_analyzer {
         Matrix nservers = sn.nservers;
         Matrix nserversFinite = nservers.copy();
         nserversFinite.removeInfinity();
-        if (nserversFinite.elementMax() > 1 && "exact".equals(options.method)) {
+        // The refusal is for an OPEN or MIXED multiserver model, as the message says:
+        // a CLOSED one has an exact answer and MATLAB's solver_nc_analyzer.m:78 and
+        // C++'s nc_dispatch.h:161 both gate on it. This copy omitted
+        // `sn.njobs.hasInfinite()`, which its own ncld twin (Solver_ncld_analyzer:25)
+        // carries, and so refused closed multiserver models too. Latent until
+        // config.multiserver='seidmann' gave 'exact' a route to this analyzer with a
+        // multiserver station still un-converted. See _kb/06-solver-catalog.md (NC)
+        if (nserversFinite.elementMax() > 1 && sn.njobs.hasInfinite()
+                && "exact".equals(options.method)) {
             throw new RuntimeException("NC solver cannot provide exact solutions for open or mixed queueing networks. Remove the 'exact' option.");
         }
         NetworkStruct snfloor = sn.copy();
@@ -84,6 +92,9 @@ public final class Solver_nc_analyzer {
         }
         res.runtime = (double) (System.nanoTime() - Tstart) / 1000000000.0;
 
+        if (!Double.isNaN(res.lG) && !Double.isInfinite(res.lG)) {
+            jline.io.LineConsole.step("normalizing constant obtained: log G = %.6g", res.lG);
+        }
         return res;
     }
 }

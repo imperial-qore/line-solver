@@ -7,6 +7,7 @@ package jline.lang.constant;
 
 import jline.lang.Element;
 import jline.lang.JobClass;
+import jline.lang.layered.LayeredNetworkElement;
 import jline.lang.nodes.Queue;
 
 import java.io.Serializable;
@@ -50,6 +51,16 @@ public class ServerType extends Element implements Serializable {
     /** The queue this server type belongs to (set when added to queue) */
     private Queue parentQueue;
 
+    private double rate = 1.0;
+
+    /**
+     * Compatible operands when this pool is declared on a LAYERED server: the
+     * tasks of a Processor or the entries of a Task, by name. Kept apart from
+     * compatibleClasses because a layer operand is a LayeredNetworkElement and
+     * not a JobClass, and erasure would make the two constructors ambiguous.
+     */
+    private List<String> compatibleOperands = new ArrayList<String>();
+
     /**
      * Creates a new server type with the specified name and number of servers.
      * By default, no job classes are compatible until explicitly added.
@@ -84,6 +95,55 @@ public class ServerType extends Element implements Serializable {
         this.numOfServers = numOfServers;
         this.compatibleClasses = new ArrayList<JobClass>(compatibleClasses);
         this.id = -1;
+    }
+
+    /**
+     * Creates a pool for a LAYERED server: {@code numOfServers} identical
+     * servers, each running at {@code rate}, eligible for the named operands.
+     *
+     * <p>The operands are the tasks of a Processor or the entries of a Task.
+     * The rate is per POOL, not per (pool, operand): the activated-server law of
+     * {@code SnCompatRate} reads only which pools are active, and a per-operand
+     * rate would need to know WHICH compatible operand each server picked, which
+     * is a matching and not order independent.
+     *
+     * @param name the name identifying this pool
+     * @param numOfServers the number of servers of this pool (must be &gt;= 1)
+     * @param rate the per-server rate of this pool
+     * @param operands the layer operands this pool may serve
+     * @throws IllegalArgumentException if numOfServers is less than 1
+     */
+    public ServerType(String name, int numOfServers, double rate,
+                      LayeredNetworkElement... operands) {
+        super(name);
+        if (numOfServers < 1) {
+            throw new IllegalArgumentException("Number of servers must be at least 1");
+        }
+        this.numOfServers = numOfServers;
+        this.compatibleClasses = new ArrayList<JobClass>();
+        this.rate = rate;
+        for (int i = 0; i < operands.length; i++) {
+            this.compatibleOperands.add(operands[i].getName());
+        }
+        this.id = -1;
+    }
+
+    /** Per-server rate of this pool; read on a layered server. */
+    public double getRate() {
+        return rate;
+    }
+
+    /** Sets the per-server rate of this pool. */
+    public void setRate(double rate) {
+        if (!(rate > 0)) {
+            throw new IllegalArgumentException("Server type rate must be a positive scalar");
+        }
+        this.rate = rate;
+    }
+
+    /** Compatible layer operands by name, empty when this pool is on a Queue. */
+    public List<String> getCompatibleOperands() {
+        return compatibleOperands;
     }
 
     /**

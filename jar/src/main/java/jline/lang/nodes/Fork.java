@@ -15,6 +15,7 @@ import jline.lang.sections.ServiceTunnel;
 import java.io.Serializable;
 import java.util.List;
 
+import static jline.io.InputOutput.line_error;
 import static jline.io.InputOutput.line_warning;
 import static jline.io.InputOutput.mfilename;
 
@@ -92,5 +93,75 @@ public class Fork extends Node implements Serializable {
         }
         Forker f = (Forker) this.output;
         f.tasksPerLink = nTasks;
+    }
+
+    /**
+     * Sets the tasks per link for one class only, leaving every other class on
+     * the node-wide value.
+     *
+     * @param jobClass the class the count applies to
+     * @param nTasks   the number of tasks emitted on each outgoing link
+     */
+    public void setTasksPerLink(JobClass jobClass, double nTasks) {
+        if (nTasks != 1) {
+            line_warning(mfilename(new Object() {}), "The setTasksPerLink feature is experimental and results may be inaccurate for analytical solvers.");
+        }
+        Forker f = (Forker) this.output;
+        f.tasksPerLinkByDest.add(new Forker.ForkOverride("", jobClass.getIndex(), nTasks));
+    }
+
+    /**
+     * Makes the number of tasks emitted on each outgoing link RANDOM.
+     *
+     * <p>The degree is redrawn independently for every link and every forked
+     * job, which is the variable forking level of JMT's JobsPerLinkDis. Exact
+     * under SolverJMT and SolverLDES, which draw it at the fork epoch; the
+     * analytical solvers see E[dist].</p>
+     *
+     * @param jobClass the class the distribution applies to
+     * @param dist     a DiscreteSampler over the tasks-per-link support
+     */
+    public void setTasksPerLinkDistribution(JobClass jobClass,
+                                            jline.lang.processes.DiscreteSampler dist) {
+        setTasksPerLinkDistribution(jobClass, dist, null);
+    }
+
+    /**
+     * Makes the number of tasks emitted on ONE outgoing link random.
+     *
+     * @param jobClass the class the distribution applies to
+     * @param dist     a DiscreteSampler over the tasks-per-link support
+     * @param destNode the destination node of the link, or null for every link
+     */
+    public void setTasksPerLinkDistribution(JobClass jobClass,
+                                            jline.lang.processes.DiscreteSampler dist,
+                                            Node destNode) {
+        if (dist == null) {
+            line_error(mfilename(new Object() {}), "The tasks-per-link distribution must be a DiscreteSampler.");
+        }
+        Forker f = (Forker) this.output;
+        String dest = (destNode == null) ? "" : destNode.getName();
+        f.tasksPerLinkDist.add(new Forker.ForkOverride(dest, jobClass.getIndex(), dist.getMean(), dist));
+    }
+
+    /**
+     * Activates an outgoing branch only with probability {@code prob}.
+     *
+     * <p>Branches are activated independently, so the number of siblings a job
+     * produces is random even when the tasks per link are deterministic. The
+     * matched Join must be told what to wait for: under a standard join a job
+     * that skipped a branch would block forever, so any probability below one
+     * requires JoinStrategy.PARTIAL or a quorum.</p>
+     *
+     * @param jobClass the class the probability applies to
+     * @param destNode the destination node of the branch
+     * @param prob     the activation probability, in [0,1]
+     */
+    public void setBranchProbability(JobClass jobClass, Node destNode, double prob) {
+        if (prob < 0.0 || prob > 1.0) {
+            line_error(mfilename(new Object() {}), "A branch activation probability must lie in [0,1].");
+        }
+        Forker f = (Forker) this.output;
+        f.branchProb.add(new Forker.ForkOverride(destNode.getName(), jobClass.getIndex(), prob));
     }
 }

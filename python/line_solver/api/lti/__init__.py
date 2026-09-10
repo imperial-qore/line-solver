@@ -183,9 +183,23 @@ def gaver_stehfest_get_alpha(n: int) -> np.ndarray:
     return res
 
 def laplace_invert_euler(F: Callable[[complex], complex], t: float,
-                         n: int = 99) -> float:
+                         n: int = 41) -> float:
     """
     Invert Laplace transform using Euler method.
+
+    The default is 41, odd so the rounding rule below leaves it alone. THE OLD
+    DEFAULT OF 99 WAS UNUSABLE IN DOUBLE PRECISION: the weights carry a factor
+    10**((n-1)/6) against an ALTERNATING sum, so accuracy is a race between the
+    series converging and the cancellation eating the mantissa. Worst relative
+    error on F(s) = 2/(s+2), whose inverse is 2*exp(-2t), over
+    t in {0.1, 0.5, 1, 2}:
+
+        n   =    11      21      31      41      51      71      99
+        err = 4.4e-3  2.1e-6  1.6e-9  1.6e-10 4.7e-8  1.7e-4  1.4e+0
+
+    At 99 the scale is 2.2e16, past what a double resolves, and the result is
+    140 per cent wrong and negative at some t. Pass a larger n only in higher
+    precision; in double, 41 is the optimum.
 
     Args:
         F: Laplace transform function F(s)
@@ -260,6 +274,128 @@ def laplace_invert_gaver_stehfest(F: Callable[[float], float], t: float,
 
     return result / t
 
+def laplace_weeks_coeffs(F: Callable[[complex], complex], sigma: float = 0.0,
+                         b: float = 1.0, p0: int = 200) -> np.ndarray:
+    """
+    Laguerre coefficients q_n, n = 0..2*p0-1, of the damped and scaled function
+    f_{sigma,b}(t) = exp(-sigma t) f(t/b), whose Laguerre generating function is
+
+        Q_{sigma,b}(z) = b/(1-z) * L( b(1+z)/(2(1-z)) + b*sigma )
+
+    (Harrison and Knottenbelt 2002, Sec. 4.2) and q_n = the n-th Laurent
+    coefficient of Q on the circle |z| = r.
+
+    NOTE ON THE PAPER. Eq. 10 as printed carries the factor (1-z) rather than
+    1/(1-z). The scaled form above, printed later in the same section, carries
+    1/(1-z) and is the correct one: with l_n(t) = exp(-t/2) L_n(t) the
+    transform of l_n is (s-1/2)^n/(s+1/2)^{n+1}, so L(s) = Q(z)/(s+1/2) with
+    z = (s-1/2)/(s+1/2) and s+1/2 = 1/(1-z). Implementing the printed (1-z)
+    is wrong at every t (163 per cent at t = 0.1 on Exp(2)).
+
+    Sec. 4.3 fixes the trapezoid count at 2*p0 and the radius at
+    r = 0.1^(4/p0) for every n instead of letting them grow with n. The
+    quadrature is then a DFT of Q sampled on the circle, so one FFT yields all
+    the coefficients and the transform is evaluated 2*p0 times in total.
+    """
+    if b <= 0:
+        raise ValueError("The scaling parameter b must be positive.")
+    N = 2 * p0
+    r = 0.1 ** (4.0 / p0)
+    j = np.arange(N)
+    z = r * np.exp(2j * np.pi * j / N)
+    s = b * (1.0 + z) / (2.0 * (1.0 - z)) + b * sigma
+    Qz = np.array([b / (1.0 - z[k]) * F(s[k]) for k in range(N)])
+    q = np.fft.fft(Qz).real / N
+    return q / (r ** j)
+
+def laplace_weeks_scaling(F: Callable[[complex], complex], p0: int = 200,
+                          tol: float = 1e-10) -> Tuple[float, float, np.ndarray]:
+    """
+    Automatic damping sigma and scaling b for the Laguerre inversion, following
+    the algorithm of Fig. 1 of Harrison and Knottenbelt 2002: accept the first
+    (sigma, b) at which the coefficients have decayed by term p0, doubling
+    sigma from 0.001, and stepping b by 4 whenever sigma passes 0.2.
+
+    Raising b too far is counterproductive and excessive damping is unstable in
+    finite precision, so the search is bounded. When it exhausts the box the
+    failure is REFUSED BY NAME: a density with a discontinuity in itself or its
+    derivatives has no usable Laguerre representation (Sec. 4.2), and returning
+    the last iterate would report noise as an answer. Use 'euler' for those.
+    """
+    sigma, b = 0.0, 1.0
+    while True:
+        q = laplace_weeks_coeffs(F, sigma, b, p0)
+        if abs(q[p0]) <= tol and abs(q[p0 + 1]) <= tol:
+            return sigma, b, q
+        sigma = 0.001 if sigma == 0.0 else 2.0 * sigma
+        if sigma > 0.2:
+            b = b + 4.0
+            if b > 10.0:
+                raise ValueError(
+                    "no suitable scaling parameters were found for the Laguerre "
+                    "inversion: the transform's density is not smooth enough for "
+                    "a Laguerre series. Use laplace_invert(F, t, 'euler') instead.")
+            sigma = 0.0
+
+def _weeks_nterms(q: np.ndarray) -> int:
+    """
+    Truncate at the FIRST index where the coefficients have decayed, never the
+    last. The quadrature divides by r^n with r < 1, so past the genuine decay
+    the entries are rounding noise amplified by r^-n: at n = 2*p0 that factor is
+    1e8, and scanning for the last entry above a threshold sums 1e-8 of pure
+    noise (worst error on Exp(2) 2.7e-09 instead of 1.9e-14).
+    """
+    p0 = len(q) // 2
+    for n in range(1, p0 - 1):
+        if abs(q[n]) <= 1e-13 and abs(q[n + 1]) <= 1e-13:
+            return n
+    return p0
+
+def _laguerre_functions(t: float, N: int) -> np.ndarray:
+    """l_n(t) = exp(-t/2) L_n(t) by the stable recursion of Sec. 4.1."""
+    l = np.zeros(N)
+    l[0] = np.exp(-t / 2.0)
+    if N > 1:
+        l[1] = (1.0 - t) * l[0]
+    for n in range(2, N):
+        l[n] = ((2 * n - 1 - t) / n) * l[n - 1] - ((n - 1.0) / n) * l[n - 2]
+    return l
+
+def laplace_invert_weeks(F: Callable[[complex], complex], t,
+                         q: Optional[np.ndarray] = None,
+                         sigma: Optional[float] = None,
+                         b: Optional[float] = None):
+    """
+    Invert a Laplace transform by the Laguerre (Weeks) series
+    f(t) = sum_n q_n l_n(t), recovered as exp(sigma*b*t) f_{sigma,b}(b*t).
+
+    Unlike Euler and Talbot the coefficients do not depend on t, so ONE
+    coefficient set serves an arbitrary number of time points: the transform is
+    evaluated 2*p0 times in total, not 2*p0 times per t. That is the property
+    this method is here for, so pass a q from laplace_weeks_scaling when
+    inverting on a grid rather than letting each call rebuild it.
+
+    Reference: Weeks, JACM 13, 1966; Abate, Choudhury and Whitt, INFORMS J.
+    Computing 8(4), 1996; Harrison and Knottenbelt 2002, Sec. 4.1-4.3.
+    """
+    if q is None:
+        sigma, b, q = laplace_weeks_scaling(F)
+    elif sigma is None or b is None:
+        raise ValueError(
+            "When q is supplied, sigma and b must be supplied with it: they are "
+            "the parameters q was built at, and evaluating q at other values "
+            "silently returns a different function.")
+    nterms = _weeks_nterms(q)
+    scalar = np.isscalar(t)
+    tv = np.atleast_1d(np.asarray(t, dtype=float))
+    out = np.zeros(len(tv))
+    for i, tval in enumerate(tv):
+        if tval <= 0:
+            continue
+        l = _laguerre_functions(b * tval, nterms)
+        out[i] = np.exp(sigma * b * tval) * float(np.dot(q[:nterms], l))
+    return float(out[0]) if scalar else out
+
 def laplace_invert(F: Callable, t: float, method: str = 'euler',
                    n: Optional[int] = None) -> float:
     """
@@ -268,14 +404,19 @@ def laplace_invert(F: Callable, t: float, method: str = 'euler',
     Args:
         F: Laplace transform function F(s)
         t: Time point to evaluate at
-        method: 'euler', 'talbot', or 'gaver-stehfest'
-        n: Number of terms (default depends on method)
+        method: 'euler', 'talbot', 'gaver-stehfest', 'cme' or 'weeks'
+        n: Number of terms (default depends on method: 41 euler, 32 talbot,
+           12 gaver-stehfest, 25 cme, 200 weeks -- the p0 of its search)
 
     Returns:
         Approximate value of f(t)
     """
+    if method == 'weeks':
+        n = n or 200
+        sigma, b, q = laplace_weeks_scaling(F, n)
+        return laplace_invert_weeks(F, t, q, sigma, b)
     if method == 'euler':
-        n = n or 99
+        n = n or 41
         return laplace_invert_euler(F, t, n)
     elif method == 'talbot':
         n = n or 32
@@ -313,6 +454,12 @@ def laplace_invert_cdf(F: Callable[[complex], complex], t_values: np.ndarray,
             return 1.0
         return F(s) / s
 
+    if method == 'weeks':
+        # One coefficient set serves the whole grid; this is the point of Weeks.
+        sigma, b, q = laplace_weeks_scaling(F_cdf, n or 200)
+        result = laplace_invert_weeks(F_cdf, t_values, q, sigma, b)
+        return np.maximum.accumulate(np.clip(result, 0, 1))
+
     for i, t in enumerate(t_values):
         if t <= 0:
             result[i] = 0.0
@@ -342,6 +489,10 @@ def laplace_invert_pdf(F: Callable[[complex], complex], t_values: np.ndarray,
     """
     t_values = np.asarray(t_values)
     result = np.zeros_like(t_values, dtype=float)
+
+    if method == 'weeks':
+        sigma, b, q = laplace_weeks_scaling(F, n or 200)
+        return np.maximum(laplace_invert_weeks(F, t_values, q, sigma, b), 0)
 
     for i, t in enumerate(t_values):
         if t <= 0:
@@ -501,6 +652,9 @@ __all__ = [
     'laplace_invert_euler',
     'laplace_invert_talbot',
     'laplace_invert_gaver_stehfest',
+    'laplace_weeks_coeffs',
+    'laplace_weeks_scaling',
+    'laplace_invert_weeks',
     'laplace_invert',
     'laplace_invert_cdf',
     'laplace_invert_pdf',

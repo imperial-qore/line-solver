@@ -27,7 +27,11 @@ T = [];
 if size(Q22,1) > GMRES_MIN_STATES
     [T,gflag] = ctmc_gmres_multi(-Q22, Q21);
     if gflag ~= 0
-        T = [];
+        % Short-recurrence retry before the cubic factorization, as in ctmc_solve.
+        [T,bflag] = ctmc_bicgstab_multi(-Q22, Q21);
+        if bflag ~= 0
+            T = [];
+        end
     end
 end
 if isempty(T)

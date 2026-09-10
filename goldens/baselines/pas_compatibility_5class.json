@@ -1,0 +1,110 @@
+{
+  "class": {
+    "CTMC": "deterministic"
+  },
+  "example": "pas_compatibility_5class",
+  "solvers": {
+    "CTMC": [
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class1",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.39099,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class2",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.31279,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class3",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.23459,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class4",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.1564,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class5",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.078198,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.39099,
+        "JobClass": "Class1",
+        "QLen": 0.56149,
+        "ResidT": 1.4361,
+        "RespT": 1.4361,
+        "Station": "PASQueue",
+        "Tput": 0.39099,
+        "Util": 0.13033
+      },
+      {
+        "ArvR": 0.31279,
+        "JobClass": "Class2",
+        "QLen": 0.42141,
+        "ResidT": 1.3472,
+        "RespT": 1.3472,
+        "Station": "PASQueue",
+        "Tput": 0.31279,
+        "Util": 0.10426
+      },
+      {
+        "ArvR": 0.23459,
+        "JobClass": "Class3",
+        "QLen": 0.30532,
+        "ResidT": 1.3015,
+        "RespT": 1.3015,
+        "Station": "PASQueue",
+        "Tput": 0.23459,
+        "Util": 0.078198
+      },
+      {
+        "ArvR": 0.1564,
+        "JobClass": "Class4",
+        "QLen": 0.11235,
+        "ResidT": 0.71837,
+        "RespT": 0.71837,
+        "Station": "PASQueue",
+        "Tput": 0.1564,
+        "Util": 0.033661
+      },
+      {
+        "ArvR": 0.078198,
+        "JobClass": "Class5",
+        "QLen": 0.10177,
+        "ResidT": 1.3015,
+        "RespT": 1.3015,
+        "Station": "PASQueue",
+        "Tput": 0.078198,
+        "Util": 0.026066
+      }
+    ]
+  }
+}

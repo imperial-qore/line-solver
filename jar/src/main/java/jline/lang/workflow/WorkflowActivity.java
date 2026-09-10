@@ -9,6 +9,7 @@ import jline.GlobalConstants;
 import jline.lang.Element;
 import jline.lang.processes.APH;
 import jline.lang.processes.Distribution;
+import jline.lang.processes.DistributionScaling;
 import jline.lang.processes.Exp;
 import jline.lang.processes.Immediate;
 import jline.lang.processes.Markovian;
@@ -20,6 +21,13 @@ import java.util.Map;
 
 /**
  * A computational activity in a Workflow.
+ * <p>
+ * Unlike Activity in LayeredNetwork, it carries no call list: an external call
+ * is represented as an activity whose host demand is the law of the call
+ * response time, so that a synchronous call and a local computation compose in
+ * the same way. An asynchronous call blocks the caller for no time and is
+ * simply left out of the workflow.
+ * </p>
  */
 public class WorkflowActivity extends Element {
 
@@ -27,7 +35,7 @@ public class WorkflowActivity extends Element {
     private double hostDemandMean;
     private double hostDemandSCV;
     private Workflow workflow;
-    private int index;
+    private int index = -1;
     private Map<String, Object> metadata;
 
     public WorkflowActivity(Workflow workflow, String name, double meanServiceTime) {
@@ -52,12 +60,53 @@ public class WorkflowActivity extends Element {
             this.hostDemandMean = meanServiceTime;
             this.hostDemandSCV = 1.0;
         }
+        invalidateParent();
     }
 
     public void setHostDemand(Distribution hostDemand) {
         this.hostDemand = hostDemand;
         this.hostDemandMean = hostDemand.getMean();
         this.hostDemandSCV = hostDemand.getSCV();
+        invalidateParent();
+    }
+
+    /**
+     * Change the mean, preserving the shape.
+     * <p>
+     * Scales the current law in time rather than refitting it, so the SCV, the
+     * skewness and the order are preserved and the cached series-parallel tree
+     * keeps its shape.
+     * </p>
+     *
+     * @param meanValue new mean, positive and finite
+     */
+    public void setHostDemandMean(double meanValue) {
+        if (!(meanValue > 0) || Double.isInfinite(meanValue)) {
+            throw new IllegalArgumentException("The activity mean must be a positive finite scalar.");
+        }
+
+        double oldMean = hostDemandMean;
+        if (hostDemand == null || hostDemand instanceof Immediate || !(oldMean > 0)
+                || Double.isInfinite(oldMean)) {
+            setHostDemand(Exp.fitMean(meanValue));
+            return;
+        }
+
+        double factor = oldMean / meanValue;
+        this.hostDemand = DistributionScaling.scaleRate(hostDemand, factor);
+        this.hostDemandMean = meanValue;
+        // The SCV is invariant under a time scaling
+        if (workflow != null && index >= 0) {
+            workflow.rescaleActivityLeaf(index, factor);
+        }
+    }
+
+    private void invalidateParent() {
+        // The parent caches the composed law, so the leaf must be marked dirty
+        // here as well as on a topology change
+        if (workflow != null && index >= 0) {
+            workflow.invalidateActivity(index);
+        }
     }
 
     public Distribution getHostDemand() {
@@ -87,7 +136,7 @@ public class WorkflowActivity extends Element {
     public Pair<Matrix, Matrix> getPHRepresentation() {
         if (hostDemand instanceof Immediate) {
             Matrix alpha = Matrix.singleton(1.0);
-            Matrix T = Matrix.singleton(-1e10);
+            Matrix T = Matrix.singleton(-GlobalConstants.Immediate);
             return new Pair<Matrix, Matrix>(alpha, T);
         }
 

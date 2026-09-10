@@ -38,15 +38,24 @@ public final class Solver_ssa_findenabled {
                                               Map<Integer, Sync> sync,
                                               Map<Integer, Integer> node_a_sf,
                                               Map<Integer, Integer> node_p_sf,
+                                              Map<Integer, Matrix> startRatesSamples,
+                                              Map<Integer, Matrix> preemptRatesSamples,
+                                              Map<Integer, int[][]> enabled_tags,
                                               Map<Integer, Matrix> depRatesSamples,
                                               int samples_collected,
                                               Map<Integer, Matrix> arvRatesSamples,
+                                              Map<Integer, Matrix> dlyRatesSamples,
+                                              int[] cacheVarW,
                                               Matrix csmask,
                                               Map<Integer, Double> enabled_rates,
                                               Map<Integer, Integer> enabled_sync,
                                               Map<Integer, int[]> enabled_fcr,
                                               SolverSSA solverSSA,
                                               AfterEventContext aectx) {
+        // The two halves' annotations are kept per action so the tag rates can be
+        // accumulated at the point where the transition is declared enabled.
+        Map<Integer, jline.io.Ret.EventResult> resultA = new HashMap<Integer, jline.io.Ret.EventResult>();
+        Map<Integer, jline.io.Ret.EventResult> resultP = new HashMap<Integer, jline.io.Ret.EventResult>();
         // see _kb/06-solver-catalog.md for rationale
         int nreg = sn.nregions;
         boolean fcrOn = nreg > 0;
@@ -110,10 +119,14 @@ public final class Solver_ssa_findenabled {
                 }
             }
         }
+        // Global (Whittle) rate scaling declared through setGlobalDependence. It
+        // reads the FULL population matrix, so it is a constant within one state
+        // and factors out of the per-transition rates, as in Solver_ctmc.
+        Matrix gdNow = (sn.gdscaling != null) ? gdFactorNow(sn, stateCell) : null;
         for (int act = 0; act < A; act++) {
             Map<Integer, Matrix> rate_a = new HashMap<Integer, Matrix>();
             int isf_a = (int) sn.nodeToStateful.get(node_a.get(act));
-            int isf_p;
+            int isf_p = -1;
             // next_state[act] = stateCell.mapValues { it.copy() }.toMutableMap()
             Map<Integer, Matrix> initial = new HashMap<Integer, Matrix>();
             for (Map.Entry<Integer, Matrix> entry : stateCell.entrySet()) {
@@ -137,7 +150,7 @@ public final class Solver_ssa_findenabled {
                 }
             }
 
-            // solverSSA.run { ... } — inline the block (Kotlin scope receiver)
+            // solverSSA.run {... } — inline the block
             {
                 jline.io.Ret.EventResult eventResult = State.afterEvent(sn,
                         node_a.get(act),
@@ -148,6 +161,7 @@ public final class Solver_ssa_findenabled {
                         eventCache,
                         aectx,
                         noPromote);
+                resultA.put(act, eventResult);
                 if (!eventResult.outspace.isEmpty()) {
                     next_state.get(act).put((int) sn.nodeToStateful.get(node_a.get(act)), eventResult.outspace);
                 } else {
@@ -167,6 +181,20 @@ public final class Solver_ssa_findenabled {
 
             if (!next_state.get(act).containsKey(isf_a) || !rate_a.containsKey(act)) {
                 continue;
+            }
+
+            // PHASE matters as much as DEP: refreshSync emits phase moves as
+            // active station events, so phase-type service would otherwise
+            // advance unscaled.
+            if (gdNow != null && sn.isstation.get(node_a.get(act)) == 1.0
+                    && (event_a.get(act) == EventType.DEP || event_a.get(act) == EventType.PHASE)) {
+                int istGd = (int) sn.nodeToStation.get(node_a.get(act));
+                double fGd = gdNow.get(istGd, class_a.get(act));
+                Matrix scaled = rate_a.get(act).copy();
+                for (int ig = 0; ig < scaled.length(); ig++) {
+                    scaled.set(ig, scaled.get(ig) * fGd);
+                }
+                rate_a.put(act, scaled);
             }
 
             // see _kb/06-solver-catalog.md for rationale
@@ -190,6 +218,25 @@ public final class Solver_ssa_findenabled {
                     continue;
                 }
 
+                // A delayed hit is the ONLY cache transition that empties the node:
+                // the request merges onto the in-flight fetch and is held in block B,
+                // so it departs later in the hit class and is otherwise
+                // indistinguishable there from a true hit.
+                boolean isMergeA = false;
+                if (cacheVarW != null && isf_a < cacheVarW.length && cacheVarW[isf_a] >= 0
+                        && event_a.get(act) == EventType.READ) {
+                    Matrix rowsA = next_state.get(act).get(isf_a);
+                    Matrix preA = stateCell.get(isf_a);
+                    int eA = rowsA.getNumCols() - cacheVarW[isf_a];
+                    int eP = preA.getNumCols() - cacheVarW[isf_a];
+                    if (eA >= sn.nclasses && eP >= sn.nclasses) {
+                        double sA = 0, sP = 0;
+                        for (int c = eA - sn.nclasses; c < eA; c++) { sA += rowsA.get(ia, c); }
+                        for (int c = eP - sn.nclasses; c < eP; c++) { sP += preA.get(0, c); }
+                        isMergeA = (sA - sP) == -1.0;
+                    }
+                }
+
                 // boolean update_cond = true;
                 boolean becomeBlocked = false;   // true BAS: this DEP holds a completed job (not a departure)
                 if (rate_a.get(act).get(ia) > 0) {
@@ -206,6 +253,7 @@ public final class Solver_ssa_findenabled {
                                     isSimulation,
                                     eventCache,
                                     aectx);
+                            resultP.put(act, eventResult);
                             if (!eventResult.outspace.isEmpty()) {
                                 next_state.get(act).put(isf_p, eventResult.outspace);
                             } else {
@@ -225,6 +273,7 @@ public final class Solver_ssa_findenabled {
                                     eventCache,
                                     aectx);
 
+                            resultP.put(act, eventResult);
                             if (!eventResult.outspace.isEmpty()) {
                                 next_state.get(act).put(isf_p, eventResult.outspace);
                             } else {
@@ -394,12 +443,40 @@ public final class Solver_ssa_findenabled {
                                             + class_a.get(act) + " -> class " + class_p.get(act) + ").");
                                 }
 
+                                if (isMergeA && !blockFCR && dlyRatesSamples != null) {
+                                    // Weighted like enabled_rates, NOT like depRates:
+                                    // for a simulated READ the item is already sampled
+                                    // from pread, so folding outprob_a back in would
+                                    // count p(k) twice.
+                                    Matrix dm = dlyRatesSamples.get(samples_collected - 1);
+                                    double dlyAdd = rate_a.get(act).get(ia) * prob_sync_p.get(act);
+                                    dm.set(class_a.get(act), isf_a,
+                                            dm.get(class_a.get(act), isf_a) + dlyAdd);
+                                }
                                 if (!blockFCR) {
                                     int ctr = enabled_rates.size();
                                     enabled_rates.put(ctr, rate_a.get(act).get(ia) * prob_sync_p.get(act));
                                     enabled_sync.put(ctr, act);
                                     if (fcrMark != null && enabled_fcr != null) {
                                         enabled_fcr.put(ctr, fcrMark);
+                                    }
+                                    // START/PREEMPT tags of this arc, weighted like
+                                    // enabled_rates: they annotate the transition itself,
+                                    // so their rate is its rate. Written for EVERY action,
+                                    // not only for departures -- a retrial or a polling
+                                    // switchover starts service without being a DEP, and
+                                    // the arrival half of a departure is where most starts
+                                    // happen.
+                                    double wTag = rate_a.get(act).get(ia) * prob_sync_p.get(act);
+                                    java.util.List<int[]> tagsHere = new java.util.ArrayList<int[]>();
+                                    accumulateTags(sn, startRatesSamples, preemptRatesSamples, samples_collected - 1,
+                                            isf_a, resultA.get(act), ia, wTag, tagsHere);
+                                    if (!node_p.get(act).equals(local)) {
+                                        accumulateTags(sn, startRatesSamples, preemptRatesSamples, samples_collected - 1,
+                                                isf_p, resultP.get(act), 0, wTag, tagsHere);
+                                    }
+                                    if (enabled_tags != null) {
+                                        enabled_tags.put(ctr, tagsHere.toArray(new int[tagsHere.size()][]));
                                     }
                                 }
                             }
@@ -408,5 +485,83 @@ public final class Solver_ssa_findenabled {
                 }
             }
         }
+    }
+
+    /**
+     * Add the START/PREEMPT counts of one successor row to the per-sample rate
+     * accumulators, and append them to TAGSHERE as [statefulIndex, class] pairs
+     * so the trace can report the tags of the transition that actually fires.
+     */
+    private static void accumulateTags(NetworkStruct sn, Map<Integer, Matrix> startRatesSamples,
+                                       Map<Integer, Matrix> preemptRatesSamples, int sample, int isf,
+                                       jline.io.Ret.EventResult res, int row, double w,
+                                       java.util.List<int[]> tagsHere) {
+        if (res == null || w == 0 || startRatesSamples == null || isf < 0) {
+            return;
+        }
+        Matrix startM = startRatesSamples.get(sample);
+        Matrix preemptM = preemptRatesSamples.get(sample);
+        if (startM == null || preemptM == null) {
+            return;
+        }
+        for (int r = 0; r < sn.nclasses; r++) {
+            double st = res.startOf(row, r);
+            if (st != 0) {
+                startM.set(r, isf, startM.get(r, isf) + w * st);
+                for (int c = 0; c < (int) st; c++) {
+                    tagsHere.add(new int[]{isf, r, 0});
+                }
+            }
+            double pr = res.preemptOf(row, r);
+            if (pr != 0) {
+                preemptM.set(r, isf, preemptM.get(r, isf) + w * pr);
+                for (int c = 0; c < (int) pr; c++) {
+                    tagsHere.add(new int[]{isf, r, 1});
+                }
+            }
+        }
+    }
+
+    /**
+     * Evaluates the global (Whittle) rate scaling phi(n) on the CURRENT
+     * sample-path state, returning the (nstations x nclasses) matrix of
+     * scalings. Solver_ctmc tabulates phi once per state of the enumerated
+     * space; a simulator has one state at a time, so the same factorization
+     * applies with the table collapsed to a single row.
+     */
+    private static Matrix gdFactorNow(NetworkStruct sn, Map<Integer, Matrix> stateCell) {
+        int M = sn.nstations;
+        int K = sn.nclasses;
+        Matrix n = new Matrix(M, K);
+        for (int ind = 0; ind < sn.nnodes; ind++) {
+            if (sn.isstation.get(ind, 0) != 1.0) {
+                continue;
+            }
+            int isf = (int) sn.nodeToStateful.get(ind);
+            int ist = (int) sn.nodeToStation.get(ind);
+            Matrix nir = ToMarginal.toMarginal(sn, ind, stateCell.get(isf), null, null, null, null, null).nir;
+            for (int r = 0; r < K; r++) {
+                n.set(ist, r, nir.get(0, r));
+            }
+        }
+        Matrix v = sn.gdscaling.apply(n);
+        Matrix out = new Matrix(M, K);
+        for (int i = 0; i < M; i++) {
+            for (int r = 0; r < K; r++) {
+                double f;
+                if (v.length() == 1) {
+                    f = v.get(0);
+                } else if (v.getNumCols() == 1) {
+                    f = v.get(i, 0);
+                } else {
+                    f = v.get(i, r);
+                }
+                if (!Double.isFinite(f) || f < 0) {
+                    throw new IllegalArgumentException("The global dependence handle returned a non-finite or negative scaling.");
+                }
+                out.set(i, r, f);
+            }
+        }
+        return out;
     }
 }

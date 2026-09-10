@@ -34,8 +34,16 @@ function [Rt, t, names] = getTranReward(self, rewardName)
 % Copyright (c) 2012-2026, Imperial College London
 % All rights reserved.
 
+
 if nargin < 2
     rewardName = [];
+end
+
+% lang='cpp' takes the transient expectations from line-cli (-a tranreward),
+% which integrates E[r(X(t))] over the same horizon on the same generator.
+if isfield(self.options,'lang') && strcmp(self.options.lang,'cpp')
+    [Rt, t, names] = CPPLINE.tranReward(self.name, self.model, self.options, rewardName);
+    return
 end
 
 options = self.getOptions;
@@ -80,8 +88,8 @@ pi0(state0) = 1;
 pit(pit < GlobalConstants.Zero) = 0;
 
 % Build index maps for RewardState
-nodeToStationMap = containers.Map('KeyType', 'int32', 'ValueType', 'int32');
-classToIndexMap = containers.Map('KeyType', 'int32', 'ValueType', 'int32');
+nodeToStationMap = configureDictionary('int32', 'int32');
+classToIndexMap = configureDictionary('int32', 'int32');
 
 for ind = 1:sn.nnodes
     if sn.isstation(ind)

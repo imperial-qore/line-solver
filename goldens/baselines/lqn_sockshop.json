@@ -1,0 +1,510 @@
+{
+  "class": {
+    "LN": "deterministic"
+  },
+  "example": "lqn_sockshop",
+  "solvers": {
+    "LN": [
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": "NaN",
+        "ResidT": "NaN",
+        "RespT": "NaN",
+        "Station": "P1",
+        "Tput": "NaN",
+        "Util": 1.4245e-05
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": "NaN",
+        "ResidT": "NaN",
+        "RespT": "NaN",
+        "Station": "P2_1",
+        "Tput": "NaN",
+        "Util": 0.31643
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": "NaN",
+        "ResidT": "NaN",
+        "RespT": "NaN",
+        "Station": "P2_2",
+        "Tput": "NaN",
+        "Util": 0.55965
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": "NaN",
+        "ResidT": "NaN",
+        "RespT": "NaN",
+        "Station": "P2_3",
+        "Tput": "NaN",
+        "Util": 0.28406
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": "NaN",
+        "ResidT": "NaN",
+        "RespT": "NaN",
+        "Station": "P3_1",
+        "Tput": "NaN",
+        "Util": 0.43718
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": "NaN",
+        "ResidT": "NaN",
+        "RespT": "NaN",
+        "Station": "P3_2",
+        "Tput": "NaN",
+        "Util": 0.078739
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": "NaN",
+        "ResidT": "NaN",
+        "RespT": "NaN",
+        "Station": "P3_3",
+        "Tput": "NaN",
+        "Util": 0.078425
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 2.8814,
+        "ResidT": 1e-07,
+        "RespT": "NaN",
+        "Station": "T0",
+        "Tput": 142.4,
+        "Util": 1.4245e-05
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 2.8753,
+        "ResidT": 0.0026149,
+        "RespT": "NaN",
+        "Station": "T1",
+        "Tput": 142.4,
+        "Util": 0.31643
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 2.4711,
+        "ResidT": 0.0079918,
+        "RespT": "NaN",
+        "Station": "T2",
+        "Tput": 142.4,
+        "Util": 0.55965
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.39449,
+        "ResidT": 0.0056044,
+        "RespT": "NaN",
+        "Station": "T6",
+        "Tput": 70.4,
+        "Util": 0.28406
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 1.1635,
+        "ResidT": 0.010917,
+        "RespT": "NaN",
+        "Station": "T3",
+        "Tput": 70.4,
+        "Util": 0.43718
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.17006,
+        "ResidT": 0.0035122,
+        "RespT": "NaN",
+        "Station": "T4",
+        "Tput": 24.2,
+        "Util": 0.078739
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.085043,
+        "ResidT": 0.0035171,
+        "RespT": "NaN",
+        "Station": "T5",
+        "Tput": 24.2,
+        "Util": 0.078425
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 2.8814,
+        "ResidT": "NaN",
+        "RespT": 0.020228,
+        "Station": "E0",
+        "Tput": 142.4,
+        "Util": 1.4245e-05
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 2.8753,
+        "ResidT": "NaN",
+        "RespT": 0.020188,
+        "Station": "E1",
+        "Tput": 142.4,
+        "Util": 0.31643
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.20365,
+        "ResidT": "NaN",
+        "RespT": 0.0043345,
+        "Station": "E2",
+        "Tput": 47.0,
+        "Util": 0.10017
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.35495,
+        "ResidT": "NaN",
+        "RespT": 0.014665,
+        "Station": "E3",
+        "Tput": 24.2,
+        "Util": 0.090912
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 1.9125,
+        "ResidT": "NaN",
+        "RespT": 0.026866,
+        "Station": "E4",
+        "Tput": 71.2,
+        "Util": 0.36857
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.39449,
+        "ResidT": "NaN",
+        "RespT": 0.0056044,
+        "Station": "E11",
+        "Tput": 70.4,
+        "Util": 0.28406
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.25323,
+        "ResidT": "NaN",
+        "RespT": 0.010785,
+        "Station": "E5",
+        "Tput": 23.5,
+        "Util": 0.069195
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.64048,
+        "ResidT": "NaN",
+        "RespT": 0.027277,
+        "Station": "E6",
+        "Tput": 23.5,
+        "Util": 0.28935
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.26983,
+        "ResidT": "NaN",
+        "RespT": 0.011492,
+        "Station": "E7",
+        "Tput": 23.5,
+        "Util": 0.078632
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.088141,
+        "ResidT": "NaN",
+        "RespT": 0.0072859,
+        "Station": "E8",
+        "Tput": 12.1,
+        "Util": 0.04225
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.081923,
+        "ResidT": "NaN",
+        "RespT": 0.0067719,
+        "Station": "E9",
+        "Tput": 12.1,
+        "Util": 0.036488
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.085043,
+        "ResidT": "NaN",
+        "RespT": 0.0035171,
+        "Station": "E10",
+        "Tput": 24.2,
+        "Util": 0.078425
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 7.1223e-06,
+        "ResidT": 5e-08,
+        "RespT": 5e-08,
+        "Station": "AS",
+        "Tput": 142.4,
+        "Util": 7.1223e-06
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 2.8814,
+        "ResidT": 5e-08,
+        "RespT": 0.020228,
+        "Station": "AS0",
+        "Tput": 142.4,
+        "Util": 7.1223e-06
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 8.382e-06,
+        "ResidT": 5.8851e-08,
+        "RespT": 5.8851e-08,
+        "Station": "AS1",
+        "Tput": 142.4,
+        "Util": 7.1214e-06
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 2.8753,
+        "ResidT": 0.0026148,
+        "RespT": 0.020188,
+        "Station": "AS2",
+        "Tput": 142.4,
+        "Util": 0.31642
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 4.7761e-06,
+        "ResidT": 3.3546e-08,
+        "RespT": 1.0166e-07,
+        "Station": "AH1",
+        "Tput": 47.0,
+        "Util": 2.3492e-06
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.20364,
+        "ResidT": 0.0014303,
+        "RespT": 0.0043344,
+        "Station": "AH2",
+        "Tput": 47.0,
+        "Util": 0.10016
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 2.4604e-06,
+        "ResidT": 1.7281e-08,
+        "RespT": 1.0166e-07,
+        "Station": "AH3",
+        "Tput": 24.2,
+        "Util": 1.2102e-06
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.35495,
+        "ResidT": 0.0012982,
+        "RespT": 0.014665,
+        "Station": "AH4",
+        "Tput": 24.2,
+        "Util": 0.090911
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 7.2366e-06,
+        "ResidT": 5.0828e-08,
+        "RespT": 1.0166e-07,
+        "Station": "AH5",
+        "Tput": 71.2,
+        "Util": 3.5594e-06
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 1.9125,
+        "ResidT": 0.0052631,
+        "RespT": 0.026866,
+        "Station": "AH6",
+        "Tput": 71.2,
+        "Util": 0.36856
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 9.7755e-07,
+        "ResidT": 1.3888e-08,
+        "RespT": 1.3888e-08,
+        "Station": "AH15",
+        "Tput": 70.4,
+        "Util": 7.039e-07
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.39449,
+        "ResidT": 0.0056044,
+        "RespT": 0.0056044,
+        "Station": "AH16",
+        "Tput": 70.4,
+        "Util": 0.28406
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 4.1302e-07,
+        "ResidT": 0.0,
+        "RespT": 1.759e-08,
+        "Station": "AH7",
+        "Tput": 23.5,
+        "Util": 2.3481e-07
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.25323,
+        "ResidT": 0.0017279,
+        "RespT": 0.010785,
+        "Station": "AH8",
+        "Tput": 23.5,
+        "Util": 0.069195
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 4.1302e-07,
+        "ResidT": 0.0,
+        "RespT": 1.759e-08,
+        "Station": "AH9",
+        "Tput": 23.5,
+        "Util": 2.3481e-07
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.64048,
+        "ResidT": 0.0072253,
+        "RespT": 0.027277,
+        "Station": "AH10",
+        "Tput": 23.5,
+        "Util": 0.28935
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 4.1302e-07,
+        "ResidT": 0.0,
+        "RespT": 1.759e-08,
+        "Station": "AH11",
+        "Tput": 23.5,
+        "Util": 2.3481e-07
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.26983,
+        "ResidT": 0.0019635,
+        "RespT": 0.011492,
+        "Station": "AH12",
+        "Tput": 23.5,
+        "Util": 0.078632
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 1.3056e-07,
+        "ResidT": 0.0,
+        "RespT": 1.0792e-08,
+        "Station": "AS3",
+        "Tput": 12.1,
+        "Util": 1.2097e-07
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.088141,
+        "ResidT": 0.0018846,
+        "RespT": 0.0072859,
+        "Station": "AS4",
+        "Tput": 12.1,
+        "Util": 0.04225
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 1.3056e-07,
+        "ResidT": 0.0,
+        "RespT": 1.0792e-08,
+        "Station": "AS5",
+        "Tput": 12.1,
+        "Util": 1.2097e-07
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.081922,
+        "ResidT": 0.0016276,
+        "RespT": 0.0067719,
+        "Station": "AS6",
+        "Tput": 12.1,
+        "Util": 0.036488
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 2.622e-07,
+        "ResidT": 1.0844e-08,
+        "RespT": 1.0844e-08,
+        "Station": "AH13",
+        "Tput": 24.2,
+        "Util": 2.418e-07
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.085043,
+        "ResidT": 0.0035171,
+        "RespT": 0.0035171,
+        "Station": "AH14",
+        "Tput": 24.2,
+        "Util": 0.078424
+      }
+    ]
+  }
+}

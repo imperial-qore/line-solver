@@ -13,5 +13,4 @@ Packages:
     mapmsg       - MAP/M/s+G call center models (Gursoy, Mehr, Akar)
     iltcme       - Inverse Laplace Transform via CME
     hurst_estimators - Hurst parameter estimators (Chu Chen)
-    uniqueperms  - Unique permutations (John D'Errico)
 """

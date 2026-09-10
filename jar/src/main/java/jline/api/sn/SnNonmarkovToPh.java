@@ -26,11 +26,18 @@ import jline.lang.constant.NodeType;
 import jline.lang.constant.ProcessType;
 import jline.lang.Mode;
 import jline.lang.nodeparam.TransitionNodeParam;
+import jline.lang.nodes.ServiceStation;
+import jline.lang.nodes.Source;
 import jline.lang.nodes.Station;
 import jline.lang.nodes.StatefulNode;
 import jline.lang.nodes.Transition;
+import jline.lang.processes.Distribution;
 import jline.lang.processes.Gamma;
 import jline.lang.processes.Lognormal;
+import jline.api.mam.HyperexpFitLongtail;
+import jline.lang.processes.ContinuousDistribution;
+import jline.lang.processes.Pareto;
+import jline.lang.processes.Uniform;
 import jline.lang.processes.Weibull;
 import jline.solvers.SolverOptions;
 import jline.util.Pair;
@@ -57,7 +64,7 @@ public final class SnNonmarkovToPh {
             ProcessType.MMPP2,
             ProcessType.IMMEDIATE,
             // see _kb/03-api-layer.md for rationale
-            ProcessType.NHPP,
+            ProcessType.NHPP, ProcessType.MAPT, ProcessType.PHT,
             ProcessType.DISABLED));
 
     public static NetworkStruct snNonmarkovToPh(NetworkStruct snInput, SolverOptions options) {
@@ -114,7 +121,21 @@ public final class SnNonmarkovToPh {
                 if (origProc == null) continue;
 
                 MatrixCell map;
-                if (procType == ProcessType.GAMMA) {
+                // The DECLARED law's own density, when the station still holds it.
+                //
+                // The five branches below read raw parameters out of origProc, which
+                // is what MATLAB's sn.proc carries for these families. THIS PORT'S
+                // sn.proc DOES NOT: refreshProcessRepresentations replaces them by an
+                // Erlang MAP approximation, so a Gamma of mean 1 arrived here as
+                // {-1, 1} and `new Gamma(-1, 1)` threw NotStrictlyPositiveException,
+                // which made SolverMAM refuse every M/Gamma/1 model outright. Reading
+                // the density off the distribution needs no parameter layout at all.
+                Distribution declared = declaredLaw(snInput, ist, jobClass);
+                DoubleUnaryOperator declaredPdf = declaredPdf(declared);
+                if (declaredPdf != null && RAW_PARAM_FAMILIES.contains(procType)) {
+                    map = fitShapeOrMoments(declaredPdf, declaredCcdf(declared), targetMean,
+                            snInput.scv != null ? snInput.scv.get(ist, r) : 1.0, nPhases, phfit);
+                } else if (procType == ProcessType.GAMMA) {
                     final double shape = origProc.get(0).toDouble();
                     final double scale = origProc.get(1).toDouble();
                     DoubleUnaryOperator pdfFunc = new DoubleUnaryOperator() {
@@ -195,6 +216,87 @@ public final class SnNonmarkovToPh {
     }
 
 
+    /** The families whose branches below read raw parameters out of sn.proc. */
+    private static final Set<ProcessType> RAW_PARAM_FAMILIES = new HashSet<ProcessType>(
+            Arrays.asList(ProcessType.GAMMA, ProcessType.WEIBULL, ProcessType.LOGNORMAL,
+                    ProcessType.PARETO, ProcessType.UNIFORM));
+
+    /**
+     * The density of a declared law, or null when it has none to offer here.
+     *
+     * `evalPDF` is declared per family rather than on `Distribution`, so the
+     * dispatch is written out. The five are exactly `RAW_PARAM_FAMILIES`.
+     */
+    private static DoubleUnaryOperator declaredPdf(Distribution d) {
+        if (d instanceof Gamma) {
+            final Gamma law = (Gamma) d;
+            return new DoubleUnaryOperator() {
+                @Override
+                public double applyAsDouble(double x) {
+                    return x <= 0 ? 0.0 : law.evalPDF(x);
+                }
+            };
+        }
+        if (d instanceof Weibull) {
+            final Weibull law = (Weibull) d;
+            return new DoubleUnaryOperator() {
+                @Override
+                public double applyAsDouble(double x) {
+                    return x <= 0 ? 0.0 : law.evalPDF(x);
+                }
+            };
+        }
+        if (d instanceof Lognormal) {
+            final Lognormal law = (Lognormal) d;
+            return new DoubleUnaryOperator() {
+                @Override
+                public double applyAsDouble(double x) {
+                    return x <= 0 ? 0.0 : law.evalPDF(x);
+                }
+            };
+        }
+        if (d instanceof Pareto) {
+            final Pareto law = (Pareto) d;
+            return new DoubleUnaryOperator() {
+                @Override
+                public double applyAsDouble(double x) {
+                    return x <= 0 ? 0.0 : law.evalPDF(x);
+                }
+            };
+        }
+        if (d instanceof Uniform) {
+            final Uniform law = (Uniform) d;
+            return new DoubleUnaryOperator() {
+                @Override
+                public double applyAsDouble(double x) {
+                    return x <= 0 ? 0.0 : law.evalPDF(x);
+                }
+            };
+        }
+        return null;
+    }
+
+    /**
+     * The law a station declares for a class, service or arrival, or null.
+     *
+     * Null whenever the struct was not built from a live Network (a struct read
+     * back from JSON, say), which is why every caller keeps its parameter path.
+     */
+    private static Distribution declaredLaw(NetworkStruct sn, int ist, JobClass jobClass) {
+        try {
+            Station station = sn.stations.get(ist);
+            if (station instanceof Source) {
+                return ((Source) station).getArrivalDistribution(jobClass);
+            }
+            if (station instanceof ServiceStation) {
+                return ((ServiceStation) station).getServiceProcess(jobClass);
+            }
+        } catch (Exception e) {
+            return null;
+        }
+        return null;
+    }
+
     /**
      * Builds the Markovian surrogate of a concrete distribution.
      *
@@ -231,11 +333,105 @@ public final class SnNonmarkovToPh {
      */
     private static MatrixCell fitShapeOrMoments(DoubleUnaryOperator pdfFunc, double targetMean,
                                                 double targetScv, int nPhases, String phfit) {
+        return fitShapeOrMoments(pdfFunc, null, targetMean, targetScv, nPhases, phfit);
+    }
+
+    /**
+     * The same, with the declared law's complementary cdf when one is available.
+     *
+     * <p>{@code phfit="hyperexp"} fits a mixture of exponentials to that ccdf
+     * ITSELF at points spread over decades of time scale
+     * (Hyperexp_fit_longtail, Feldmann and Whitt 1998), which is the only one of
+     * the three families that says anything about a LONG TAIL: a Pareto with
+     * tail index below 2 has no finite variance, so a two-moment fit does not
+     * exist at all, and even where the moments are finite they say nothing about
+     * the several orders of magnitude over which such a law acts.
+     *
+     * @param pdfFunc    the declared density
+     * @param ccdfFunc   the declared complementary cdf, or null
+     * @param targetMean the mean to rescale to
+     * @param targetScv  the SCV recorded in the struct
+     * @param nPhases    the phase budget
+     * @param phfit      the surrogate family
+     * @return the fitted MAP pair
+     */
+    private static MatrixCell fitShapeOrMoments(DoubleUnaryOperator pdfFunc,
+                                                DoubleUnaryOperator ccdfFunc, double targetMean,
+                                                double targetScv, int nPhases, String phfit) {
+        if ("hyperexp".equals(phfit) && ccdfFunc != null) {
+            MatrixCell lt = fitLongTailSurrogate(ccdfFunc, targetMean);
+            if (lt != null) {
+                return lt;
+            }
+        }
         if ("cme".equals(phfit) && targetScv >= 0.0 && targetScv < 1.0) {
             return fitConcentratedSurrogate(targetMean, targetScv, nPhases, phfit);
         }
         Pair<Matrix, Matrix> dd = Aph_bernstein.aph_bernstein(pdfFunc, nPhases);
         return Map_scale.map_scale(pairToMatrixCell(dd.getLeft(), dd.getRight()), targetMean);
+    }
+
+    /**
+     * A hyperexponential fitted to the ccdf across decades (Feldmann and Whitt
+     * 1998), returned as its MAP pair and rescaled to the mean the struct
+     * carries.
+     *
+     * <p>Null when the recursion declines the law: the components have to
+     * dominate one another at their own time scales, which a light-tailed law
+     * does not provide, and answering with a fit that does not hold is worse
+     * than falling through to the two-moment surrogate.
+     *
+     * @param ccdfFunc   F^c(t) of the declared law
+     * @param targetMean the mean to rescale to
+     * @return the MAP pair, or null
+     */
+    private static MatrixCell fitLongTailSurrogate(DoubleUnaryOperator ccdfFunc, double targetMean) {
+        Map<String, Object> fit;
+        try {
+            fit = HyperexpFitLongtail.hyperexp_fit_longtail(ccdfFunc);
+        } catch (RuntimeException e) {
+            return null;
+        }
+        double[] p = (double[]) fit.get("p");
+        double[] lambda = (double[]) fit.get("lambda");
+        if (p == null || lambda == null || p.length == 0) {
+            return null;
+        }
+        int n = p.length;
+        Matrix D0 = new Matrix(n, n);
+        Matrix D1 = new Matrix(n, n);
+        for (int i = 0; i < n; i++) {
+            if (!Double.isFinite(lambda[i]) || lambda[i] <= 0) {
+                return null;
+            }
+            D0.set(i, i, -lambda[i]);
+            for (int j = 0; j < n; j++) {
+                D1.set(i, j, lambda[i] * p[j]);
+            }
+        }
+        return Map_scale.map_scale(pairToMatrixCell(D0, D1), targetMean);
+    }
+
+    /**
+     * The declared law's complementary cdf, for the families whose tail the
+     * long-tail fit is stated for. Null for every other law, which is what makes
+     * {@code phfit="hyperexp"} fall through to the two-moment surrogate there.
+     *
+     * @param d the declared law
+     * @return F^c(t), or null
+     */
+    private static DoubleUnaryOperator declaredCcdf(final Distribution d) {
+        if (d instanceof Gamma || d instanceof Weibull || d instanceof Lognormal
+                || d instanceof Pareto) {
+            final ContinuousDistribution law = (ContinuousDistribution) d;
+            return new DoubleUnaryOperator() {
+                @Override
+                public double applyAsDouble(double x) {
+                    return x <= 0 ? 1.0 : 1.0 - law.evalCDF(x);
+                }
+            };
+        }
+        return null;
     }
 
     /**

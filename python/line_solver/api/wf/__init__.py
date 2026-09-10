@@ -27,7 +27,7 @@ Data Classes:
     UpdatedWorkflow: Optimized workflow structure
 
 References:
-    Original Kotlin: jar/src/main/kotlin/jline/api/wf/
+    Original JAR: jar/src/main/java/jline/api/wf/
     MDN toolbox AUTO solver algorithms
 """
 

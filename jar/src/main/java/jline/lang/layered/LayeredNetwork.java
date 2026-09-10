@@ -19,6 +19,8 @@ import jline.lang.NetworkStruct;
 import jline.lang.constant.CallType;
 import jline.lang.constant.ActivityPrecedenceType;
 import jline.lang.constant.ProcessType;
+import jline.lang.constant.ReplacementStrategy;
+import jline.lang.constant.RoutingStrategy;
 import jline.lang.constant.SchedStrategy;
 import jline.lang.processes.*;
 import jline.util.matrix.MatrixCell;
@@ -60,6 +62,7 @@ import static jline.io.InputOutput.mfilename;
 import static jline.io.SysUtils.jlqnGetPath;
 import static jline.io.SysUtils.lineTempName;
 import static jline.lang.constant.ActivityPrecedenceType.*;
+import jline.VerboseLevel;
 
 /**
  * LayeredNetwork represents a layered queueing network (LQN) model for performance analysis
@@ -100,6 +103,86 @@ import static jline.lang.constant.ActivityPrecedenceType.*;
  * @see Processor
  */
 public class LayeredNetwork extends Ensemble implements Copyable {
+
+    /**
+     * Which solvers and solver methods can analyze THIS layered model.
+     *
+     * <pre>
+     * model.findSolver()             every (solver, method) pair that runs
+     * model.findSolver("tran", false)  ... that returns transients
+     * model.findSolver("", true)     also the pairs that are refused, and why
+     * </pre>
+     *
+     * <p>One row per pair; see {@link jline.solvers.auto.SolverCandidate} for
+     * the columns and {@code SolverCandidate.toTable} to print them.
+     *
+     * <p>The families in play are the layered ones, "ln" and "lqns": the flat
+     * Network families describe what they accept INSIDE a layer, so answering
+     * with them would answer a question that was not asked.
+     *
+     * <p>{@link #findMethod()} and {@link #help()} are aliases.
+     *
+     * @return one row per runnable (family, method) pair
+     */
+    public java.util.List<jline.solvers.auto.SolverCandidate> findSolver() {
+        return findSolver("", false);
+    }
+
+    /**
+     * Which solvers and solver methods can analyze this layered model, narrowed
+     * to one measure and optionally including the refused pairs.
+     *
+     * @param metric  a measure group ("tran") or the accessor that returns it
+     *                ("getTranAvg"); "" or "any" keeps every pair
+     * @param showAll keep the refused pairs too, with the reason each was refused
+     * @return the matching rows
+     */
+    public java.util.List<jline.solvers.auto.SolverCandidate> findSolver(String metric,
+                                                                        boolean showAll) {
+        return jline.solvers.auto.SolverAUTO.findSolverLayered(this, metric, showAll);
+    }
+
+    /**
+     * Alias of {@link #findSolver()}.
+     *
+     * @return one row per runnable (family, method) pair
+     */
+    public java.util.List<jline.solvers.auto.SolverCandidate> findMethod() {
+        return findSolver("", false);
+    }
+
+    /**
+     * Alias of {@link #findSolver(String, boolean)}.
+     *
+     * @param metric  a measure group or the accessor that returns it
+     * @param showAll keep the refused pairs too
+     * @return the matching rows
+     */
+    public java.util.List<jline.solvers.auto.SolverCandidate> findMethod(String metric,
+                                                                        boolean showAll) {
+        return findSolver(metric, showAll);
+    }
+
+    /**
+     * Alias of {@link #findSolver()}: what can this model be solved with?
+     *
+     * @return one row per runnable (family, method) pair
+     */
+    public java.util.List<jline.solvers.auto.SolverCandidate> help() {
+        return findSolver("", false);
+    }
+
+    /**
+     * Alias of {@link #findSolver(String, boolean)}.
+     *
+     * @param metric  a measure group or the accessor that returns it
+     * @param showAll keep the refused pairs too
+     * @return the matching rows
+     */
+    public java.util.List<jline.solvers.auto.SolverCandidate> help(String metric,
+                                                                  boolean showAll) {
+        return findSolver(metric, showAll);
+    }
 
     private final Param param;
     protected Map<Integer, Host> hosts;
@@ -230,6 +313,7 @@ public class LayeredNetwork extends Ensemble implements Copyable {
         }
 
         doc.getDocumentElement().normalize();
+        validateInputModel(doc);
 
         if (verbose) {
             System.out.println("Parsing LQN file" + filename);
@@ -319,8 +403,52 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                 } else {
                     thinkTime = Exp.fitMean(tThinkTimeMean);
                 }
-                Task newTask = new Task(myLN, tName, (int) tMultiplicity, SchedStrategy.fromText(tScheduling), thinkTime);
+                /* LINE .lqnx dialect: the presence of <cache> is what makes this a CacheTask.
+                 * itemLevelCap is read back as the ARRAY it is, one entry per <level>. */
+                Element cacheElement = firstDirectChild(taskElement, "cache");
+                Task newTask;
+                if (cacheElement != null) {
+                    String itemsStr = cacheElement.getAttribute("items");
+                    int cacheItems = itemsStr.isEmpty() ? 1 : Integer.parseInt(itemsStr);
+                    String replStr = cacheElement.getAttribute("replacement");
+                    ReplacementStrategy repl = replStr.isEmpty()
+                            ? ReplacementStrategy.FIFO : ReplacementStrategy.fromText(replStr);
+                    List<Integer> caps = new ArrayList<Integer>();
+                    NodeList levelList = cacheElement.getElementsByTagName("level");
+                    for (int lv = 0; lv < levelList.getLength(); lv++) {
+                        String capStr = ((Element) levelList.item(lv)).getAttribute("capacity");
+                        caps.add(capStr.isEmpty() ? 1 : Integer.parseInt(capStr));
+                    }
+                    if (caps.isEmpty()) {
+                        caps.add(1);
+                    }
+                    int[] levelCaps = new int[caps.size()];
+                    for (int lv = 0; lv < caps.size(); lv++) {
+                        levelCaps[lv] = caps.get(lv);
+                    }
+                    CacheTask newCacheTask = new CacheTask(myLN, tName, cacheItems, levelCaps, repl,
+                            (int) tMultiplicity, SchedStrategy.fromText(tScheduling));
+                    if (Boolean.parseBoolean(cacheElement.getAttribute("retrieval"))) {
+                        newCacheTask.setRetrieval(true);
+                    }
+                    newCacheTask.setThinkTime(thinkTime);
+                    newTask = newCacheTask;
+                } else {
+                    newTask = new Task(myLN, tName, (int) tMultiplicity, SchedStrategy.fromText(tScheduling), thinkTime);
+                }
                 newTask.setReplication((int) replication);
+
+                /* LINE .lqnx dialect: setup and delay-off times. Reconstructed through the
+                 * model's own setters so a mean plus an SCV rebuilds the family the setter
+                 * would have built (Exp at SCV 1, an APH fit otherwise). */
+                Element setupElement = firstDirectChild(taskElement, "setup");
+                if (setupElement != null) {
+                    newTask.setSetupTime(distFromMeanAndSCV(setupElement));
+                }
+                Element delayOffElement = firstDirectChild(taskElement, "delay-off");
+                if (delayOffElement != null) {
+                    newTask.setDelayOffTime(distFromMeanAndSCV(delayOffElement));
+                }
 
                 // Parse priority attribute if present
                 String tPriorityString = taskElement.getAttribute("priority");
@@ -357,7 +485,28 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                 for (int k = 0; k < entryList.getLength(); k++) {
                     Element entryElement = (Element) entryList.item(k);
                     String eName = entryElement.getAttribute("name");
-                    Entry newEntry = new Entry(myLN, eName);
+                    /* LINE .lqnx dialect: the presence of <item-entry> is what makes this an
+                     * ItemEntry. Its popularity is rebuilt from the flat parameter list, split
+                     * on the declared cardinality. */
+                    Element itemElement = firstDirectChild(entryElement, "item-entry");
+                    Entry newEntry;
+                    if (itemElement != null) {
+                        String cardStr = itemElement.getAttribute("cardinality");
+                        int cardinality = cardStr.isEmpty() ? 1 : Integer.parseInt(cardStr);
+                        Distribution popularity = readAccessPopularity(itemElement, cardinality);
+                        if (popularity == null) {
+                            // An ItemEntry with no popularity is still an ItemEntry; give it the
+                            // uniform law over its items rather than degrading it to a plain Entry.
+                            Matrix uniform = new Matrix(1, cardinality);
+                            for (int q = 0; q < cardinality; q++) {
+                                uniform.set(0, q, 1.0 / cardinality);
+                            }
+                            popularity = new DiscreteSampler(uniform);
+                        }
+                        newEntry = new ItemEntry(myLN, eName, cardinality, popularity);
+                    } else {
+                        newEntry = new Entry(myLN, eName);
+                    }
 
                     // Parse entry type attribute if present
                     String eType = entryElement.getAttribute("type");
@@ -392,6 +541,16 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                         Element entryPhaseActsElement = (Element) entryPhaseActsList.item(0);
                         NodeList actList = entryPhaseActsElement.getElementsByTagName("activity");
                         Map<Integer, String> nameList = new HashMap<>();
+                        // the lowest phase present is bound to the entry; an entry
+                        // declaring only phase 2 would otherwise have no bound
+                        // activity and its host demand would never be routed
+                        int minPhase = Integer.MAX_VALUE;
+                        for (int l = 0; l < actList.getLength(); l++) {
+                            int ph = (int) Double.parseDouble(((Element) actList.item(l)).getAttribute("phase"));
+                            if (ph < minPhase) {
+                                minPhase = ph;
+                            }
+                        }
                         for (int l = 0; l < actList.getLength(); l++) {
                             Element actElement = (Element) actList.item(l);
                             double phase = Double.parseDouble(actElement.getAttribute("phase"));
@@ -414,7 +573,7 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                                 }
                             }
                             String boundToEntry;
-                            if (phase == 1) {
+                            if ((int) phase == minPhase) {
                                 boundToEntry = newEntry.getName();
                             } else {
                                 boundToEntry = "";
@@ -450,6 +609,9 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                                 double mean = Double.parseDouble(callElement.getAttribute("calls-mean"));
                                 newAct.asynchCall(dest, mean);
                             }
+
+                            parseCallGroups(actElement, newAct);
+
                             Map<String, List<Integer>> tempMap = new HashMap<>();
                             List<Integer> tempList = new ArrayList<>();
                             tempList.add(taskID);
@@ -548,6 +710,8 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                                     newAct.asynchCall(dest, mean);
                                 }
 
+                                parseCallGroups(actElement, newAct);
+
                                 Map<String, List<Integer>> tempMap = new HashMap<>();
                                 List<Integer> tempList = new ArrayList<>();
                                 tempList.add(taskID);
@@ -601,16 +765,25 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                                 preActs.add(preActElement.getAttribute("name"));
                             }
 
-                            // Post-activity parsing
+                            // Post-activity parsing. The post side is minOccurs="0" in
+                            // lqn-core.xsd: a precedence carrying only a pre element declares a
+                            // TERMINAL activity and no successor, so it contributes no edge.
                             String[] postTypes = {ActivityPrecedenceType.POST_SEQ, ActivityPrecedenceType.POST_AND, ActivityPrecedenceType.POST_OR, ActivityPrecedenceType.POST_LOOP, ActivityPrecedenceType.POST_CACHE};
                             NodeList postList = null;
                             String postType = null;
+                            boolean hasPost = false;
                             for (String type : postTypes) {
                                 postType = type;
                                 postList = precElement.getElementsByTagName(postType);
-                                if (postList.getLength() > 0) break;
+                                if (postList.getLength() > 0) {
+                                    hasPost = true;
+                                    break;
+                                }
                             }
-                            
+                            if (!hasPost) {
+                                continue;
+                            }
+
                             Element postElement = (Element) postList.item(0);
                             NodeList postActList = postElement.getElementsByTagName("activity");
                             List<String> postActs = new ArrayList<>();
@@ -631,6 +804,38 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                                     postParams.set(0, m, Double.parseDouble(postActElement.getAttribute("count")));
                                 }
                                 postActs.add(postElement.getAttribute("end"));
+                            } else if (postType.equals(ActivityPrecedenceType.POST_CACHE)) {
+                                // cache-result is explicit; a file written without it (or by
+                                // another codebase) still loads, on document order.
+                                String hitAct = null, missAct = null;
+                                List<String> unlabelled = new ArrayList<>();
+                                for (int m = 0; m < postActList.getLength(); m++) {
+                                    Element postActElement = (Element) postActList.item(m);
+                                    String actName = postActElement.getAttribute("name");
+                                    String result = postActElement.getAttribute("cache-result");
+                                    if ("hit".equalsIgnoreCase(result)) {
+                                        hitAct = actName;
+                                    } else if ("miss".equalsIgnoreCase(result)) {
+                                        missAct = actName;
+                                    } else {
+                                        unlabelled.add(actName);
+                                    }
+                                }
+                                for (String actName : unlabelled) {
+                                    if (hitAct == null) {
+                                        hitAct = actName;
+                                    } else if (missAct == null) {
+                                        missAct = actName;
+                                    } else {
+                                        postActs.add(actName);
+                                    }
+                                }
+                                if (hitAct != null) {
+                                    postActs.add(0, hitAct);
+                                }
+                                if (missAct != null) {
+                                    postActs.add(Math.min(1, postActs.size()), missAct);
+                                }
                             } else {
                                 for (int m = 0; m < postActList.getLength(); m++) {
                                     Element postActElement = (Element) postActList.item(m);
@@ -671,8 +876,201 @@ public class LayeredNetwork extends Ensemble implements Copyable {
     }
 
     /**
+     * Rejects a structurally inconsistent LQN document.
+     *
+     * Run on the parsed document before any object is built, so that a defective
+     * input is named at its source instead of surfacing as a downstream failure.
+     * The same checks, in the same order and with the same messages, are applied
+     * by the MATLAB, Python and C++ readers.
+     *
+     * @param doc the parsed LQN document
+     */
+    private static void validateInputModel(Document doc) {
+        final double tol = 1e-6;
+        List<String> procNames = new ArrayList<String>();
+        List<String> taskNames = new ArrayList<String>();
+        List<String> entryNames = new ArrayList<String>();
+        List<String> entryOwner = new ArrayList<String>(); // task owning entryNames.get(k)
+        List<Boolean> isRefEntry = new ArrayList<Boolean>();
+        List<String> callDests = new ArrayList<String>();
+        List<String> replyEntries = new ArrayList<String>();
+        boolean hasRefTask = false;
+        boolean hasOpenArrival = false;
+
+        NodeList procList = doc.getElementsByTagName("processor");
+        for (int i = 0; i < procList.getLength(); i++) {
+            Element procElement = (Element) procList.item(i);
+            String procName = procElement.getAttribute("name");
+            if (procNames.contains(procName)) {
+                line_error(mfilename(new Object() {}), String.format("Duplicate processor name \"%s\".", procName));
+            }
+            procNames.add(procName);
+
+            NodeList taskList = procElement.getElementsByTagName("task");
+            for (int j = 0; j < taskList.getLength(); j++) {
+                Element taskElement = (Element) taskList.item(j);
+                String taskName = taskElement.getAttribute("name");
+                if (taskNames.contains(taskName)) {
+                    line_error(mfilename(new Object() {}), String.format("Duplicate task name \"%s\".", taskName));
+                }
+                taskNames.add(taskName);
+                boolean isRef = "ref".equalsIgnoreCase(taskElement.getAttribute("scheduling"));
+                hasRefTask = hasRefTask || isRef;
+
+                NodeList entryList = taskElement.getElementsByTagName("entry");
+                if (entryList.getLength() == 0) {
+                    line_error(mfilename(new Object() {}), String.format("Task \"%s\" has no entries.", taskName));
+                }
+                for (int k = 0; k < entryList.getLength(); k++) {
+                    Element entryElement = (Element) entryList.item(k);
+                    String entryName = entryElement.getAttribute("name");
+                    if (entryNames.contains(entryName)) {
+                        line_error(mfilename(new Object() {}), String.format("Duplicate entry name \"%s\".", entryName));
+                    }
+                    entryNames.add(entryName);
+                    entryOwner.add(taskName);
+                    isRefEntry.add(isRef);
+
+                    String openArrivalRateString = entryElement.getAttribute("open-arrival-rate");
+                    if (!openArrivalRateString.isEmpty()) {
+                        double openArrivalRate = parseProb(openArrivalRateString, Double.NaN);
+                        if (openArrivalRate > 0) {
+                            hasOpenArrival = true;
+                            if (isRef) {
+                                line_error(mfilename(new Object() {}), String.format("Entry \"%s\" belongs to reference task \"%s\" and cannot have open arrivals.", entryName, taskName));
+                            }
+                        }
+                    }
+
+                    NodeList fwdList = entryElement.getElementsByTagName("forwarding");
+                    if (isRef && fwdList.getLength() > 0) {
+                        line_error(mfilename(new Object() {}), String.format("Entry \"%s\" belongs to reference task \"%s\" and cannot forward requests.", entryName, taskName));
+                    }
+                    double fwdTotal = 0.0;
+                    for (int fw = 0; fw < fwdList.getLength(); fw++) {
+                        Element fwdElement = (Element) fwdList.item(fw);
+                        double prob = parseProb(fwdElement.getAttribute("prob"), 1.0);
+                        if (Double.isNaN(prob) || prob < 0.0 || prob > 1.0) {
+                            line_error(mfilename(new Object() {}), String.format("Forwarding from entry \"%s\" to entry \"%s\" has an invalid probability of %s.", entryName, fwdElement.getAttribute("dest"), fmtNum(prob)));
+                        }
+                        fwdTotal += prob;
+                    }
+                    if (fwdTotal > 1.0 + tol) {
+                        line_error(mfilename(new Object() {}), String.format("Entry \"%s\" has a total forwarding probability of %s.", entryName, fmtNum(fwdTotal)));
+                    }
+                }
+
+                // activity names are unique within their task; a name under a pre or post list is a reference, not a declaration
+                List<String> actNames = new ArrayList<String>();
+                NodeList actList = taskElement.getElementsByTagName("activity");
+                for (int l = 0; l < actList.getLength(); l++) {
+                    Element actElement = (Element) actList.item(l);
+                    String parentTag = actElement.getParentNode().getNodeName();
+                    if (!"task-activities".equals(parentTag) && !"entry-phase-activities".equals(parentTag)) {
+                        continue;
+                    }
+                    String actName = actElement.getAttribute("name");
+                    if (actNames.contains(actName)) {
+                        line_error(mfilename(new Object() {}), String.format("Duplicate activity name \"%s\" in task \"%s\".", actName, taskName));
+                    }
+                    actNames.add(actName);
+                }
+
+                NodeList synchCalls = taskElement.getElementsByTagName("synch-call");
+                for (int m = 0; m < synchCalls.getLength(); m++) {
+                    callDests.add(((Element) synchCalls.item(m)).getAttribute("dest"));
+                }
+                NodeList asynchCalls = taskElement.getElementsByTagName("asynch-call");
+                for (int m = 0; m < asynchCalls.getLength(); m++) {
+                    callDests.add(((Element) asynchCalls.item(m)).getAttribute("dest"));
+                }
+                NodeList taskFwdList = taskElement.getElementsByTagName("forwarding");
+                for (int fw = 0; fw < taskFwdList.getLength(); fw++) {
+                    callDests.add(((Element) taskFwdList.item(fw)).getAttribute("dest"));
+                }
+
+                NodeList orList = taskElement.getElementsByTagName("post-OR");
+                for (int l = 0; l < orList.getLength(); l++) {
+                    NodeList branchList = ((Element) orList.item(l)).getElementsByTagName("activity");
+                    double branchTotal = 0.0;
+                    for (int m = 0; m < branchList.getLength(); m++) {
+                        Element branchElement = (Element) branchList.item(m);
+                        double prob = parseProb(branchElement.getAttribute("prob"), 1.0);
+                        if (Double.isNaN(prob) || prob < 0.0 || prob > 1.0) {
+                            line_error(mfilename(new Object() {}), String.format("Activity \"%s\" in task \"%s\" has an invalid branch probability of %s.", branchElement.getAttribute("name"), taskName, fmtNum(prob)));
+                        }
+                        branchTotal += prob;
+                    }
+                    if (Math.abs(branchTotal - 1.0) > tol) {
+                        line_error(mfilename(new Object() {}), String.format("Branch probabilities of an OR-fork in task \"%s\" sum to %s instead of 1.", taskName, fmtNum(branchTotal)));
+                    }
+                }
+
+                NodeList replyList = taskElement.getElementsByTagName("reply-entry");
+                for (int l = 0; l < replyList.getLength(); l++) {
+                    replyEntries.add(((Element) replyList.item(l)).getAttribute("name"));
+                }
+            }
+        }
+
+        for (int c = 0; c < callDests.size(); c++) {
+            int idx = entryNames.indexOf(callDests.get(c));
+            if (idx >= 0 && isRefEntry.get(idx)) {
+                line_error(mfilename(new Object() {}), String.format("Entry \"%s\" belongs to reference task \"%s\" and cannot receive requests.", entryNames.get(idx), entryOwner.get(idx)));
+            }
+        }
+
+        for (int r = 0; r < replyEntries.size(); r++) {
+            int idx = entryNames.indexOf(replyEntries.get(r));
+            if (idx >= 0 && isRefEntry.get(idx)) {
+                line_error(mfilename(new Object() {}), String.format("Entry \"%s\" belongs to reference task \"%s\" and cannot be replied to.", entryNames.get(idx), entryOwner.get(idx)));
+            }
+        }
+
+        if (!hasRefTask && !hasOpenArrival) {
+            line_error(mfilename(new Object() {}), "The model has no reference task and no open arrivals.");
+        }
+    }
+
+    /**
+     * Reads a numeric attribute of the input document, as the other readers do.
+     *
+     * @param s     the attribute value, empty when the attribute is absent
+     * @param dflt  the value an absent attribute stands for
+     * @return the parsed value, or NaN when the text is not a number
+     */
+    private static double parseProb(String s, double dflt) {
+        if (s == null || s.isEmpty()) {
+            return dflt;
+        }
+        try {
+            return Double.parseDouble(s);
+        } catch (NumberFormatException e) {
+            return Double.NaN;
+        }
+    }
+
+    /**
+     * Formats a number the way the MATLAB, Python and C++ readers do, so that the
+     * validation messages agree across the codebases.
+     *
+     * @param v the value to format
+     * @return the shortest general-format rendering of v
+     */
+    private static String fmtNum(double v) {
+        String s = String.format(java.util.Locale.US, "%g", v);
+        if (s.indexOf('.') >= 0 && s.indexOf('e') < 0 && s.indexOf('E') < 0) {
+            s = s.replaceAll("0+$", "");
+            if (s.endsWith(".")) {
+                s = s.substring(0, s.length() - 1);
+            }
+        }
+        return s;
+    }
+
+    /**
      * Reads a layered queueing network from an XML file with default verbose setting.
-     * 
+     *
      * @param filename the path to the XML file to read
      * @return the read LayeredNetwork instance
      */
@@ -712,14 +1110,12 @@ public class LayeredNetwork extends Ensemble implements Copyable {
             filename = Paths.get(java.lang.System.getProperty("user.dir"), filename).toString();
         }
 
-        String redirectOutput = " > /dev/null";
-        if (java.lang.System.getProperty("os.name").startsWith("Windows")) {
-            redirectOutput = " > nul 2>&1";
-        }
-
+        // No shell is involved (SysUtils.system spawns the argv directly), so a
+        // redirection appended here would reach JLQN as extra arguments. The
+        // launcher is resolved rather than assumed to be on the PATH.
         String cmd = String.format(
-                "java -cp %s jlqn.commandline.Jlqn %s %s",
-                jlqnPath, filename, redirectOutput
+                "\"%s\" -cp \"%s\" jlqn.commandline.Jlqn \"%s\"",
+                SysUtils.javaLauncher(), jlqnPath, filename
         );
 
         java.lang.System.out.println("JLQN view model command: " + cmd);
@@ -818,7 +1214,9 @@ public class LayeredNetwork extends Ensemble implements Copyable {
         Element task = document.createElement("task");
         task.setAttribute("multiplicity", "" + t.multiplicity);
         task.setAttribute("name", t.getName());
-        task.setAttribute("priority", "0");
+        // The reader parses this attribute back into Task.priority, so writing a
+        // constant 0 would silently drop the priority of a prioritised task.
+        task.setAttribute("priority", "" + t.getPriority());
         task.setAttribute("processor", t.parent.getName());
         task.setAttribute("replicas", "1");
         task.setAttribute("scheduling", t.scheduling.toString());
@@ -1106,7 +1504,9 @@ public class LayeredNetwork extends Ensemble implements Copyable {
 
         // analyze static properties
         lsn.nidx = lsn.nhosts + lsn.ntasks + lsn.nentries + lsn.nacts;
-        int idx = 1;
+        // Element indices are 0-based: local h,t,e,a run 0..n-1 and the absolute
+        // index is shift+local, so 0..nidx-1. See _kb/04-networkstruct.md
+        int idx = 0;
 
         lsn.tasksof = new HashMap<>(lsn.nhosts);
         lsn.entriesof = new HashMap<>(lsn.nhosts + lsn.ntasks);
@@ -1140,20 +1540,22 @@ public class LayeredNetwork extends Ensemble implements Copyable {
         lsn.names = new HashMap<>();
         lsn.hashnames = new HashMap<>();
 
-        lsn.mult = new Matrix(1, lsn.nhosts + lsn.ntasks + 1, lsn.nhosts + lsn.ntasks);
-        lsn.maxmult = new Matrix(1, lsn.nhosts + lsn.ntasks + 1, lsn.nhosts + lsn.ntasks);
+        lsn.mult = new Matrix(1, lsn.nhosts + lsn.ntasks, lsn.nhosts + lsn.ntasks);
+        lsn.maxmult = new Matrix(1, lsn.nhosts + lsn.ntasks, lsn.nhosts + lsn.ntasks);
 
-        lsn.repl = new Matrix(1, lsn.nhosts + lsn.ntasks + 1, lsn.nhosts + lsn.ntasks);
-        lsn.type = new Matrix(1, lsn.nidx + 1, lsn.nidx);
-        lsn.graph = new Matrix(lsn.nidx + 1, lsn.nidx + 1, lsn.nidx * lsn.nidx);
-        lsn.dag = new Matrix(lsn.nidx + 1, lsn.nidx + 1, lsn.nidx * lsn.nidx);
-        lsn.replygraph = new Matrix(lsn.nacts + 1, lsn.nentries + 1, lsn.nentries * lsn.nacts);
-        lsn.actphase = new Matrix(1, lsn.nacts + 1, lsn.nacts);  // Phase for each activity (default=1)
-        for (int a = 1; a <= lsn.nacts; a++) {
+        lsn.repl = new Matrix(1, lsn.nhosts + lsn.ntasks, lsn.nhosts + lsn.ntasks);
+        // Task scheduling priority, read by the priority disciplines; 0 elsewhere.
+        lsn.prio = new Matrix(1, lsn.nhosts + lsn.ntasks, lsn.nhosts + lsn.ntasks);
+        lsn.type = new Matrix(1, lsn.nidx, lsn.nidx);
+        lsn.graph = new Matrix(lsn.nidx, lsn.nidx, lsn.nidx * lsn.nidx);
+        lsn.dag = new Matrix(lsn.nidx, lsn.nidx, lsn.nidx * lsn.nidx);
+        lsn.replygraph = new Matrix(lsn.nacts, lsn.nentries, lsn.nentries * lsn.nacts);
+        lsn.actphase = new Matrix(1, lsn.nacts, lsn.nacts);  // Phase for each activity (default=1)
+        for (int a = 0; a < lsn.nacts; a++) {
             lsn.actphase.set(0, a, 1.0);  // Default phase is 1
         }
 
-        lsn.nitems = new Matrix(1, lsn.nidx + 1, lsn.ntasks + lsn.nacts);
+        lsn.nitems = new Matrix(1, lsn.nidx, lsn.ntasks + lsn.nacts);
 
         lsn.itemcap = new HashMap<>();
         lsn.itemproc = new HashMap<>();
@@ -1164,9 +1566,9 @@ public class LayeredNetwork extends Ensemble implements Copyable {
         lsn.itemproc_proc = new HashMap<>();
 
 
-        lsn.iscache = new Matrix(1, lsn.nidx + 1, lsn.nhosts + lsn.ntasks);
-        lsn.hasretrieval = new Matrix(1, lsn.nidx + 1, lsn.nhosts + lsn.ntasks);
-        lsn.replacestrat = new Matrix(1, lsn.nidx + 1, lsn.nhosts + lsn.ntasks);
+        lsn.iscache = new Matrix(1, lsn.nidx, lsn.nhosts + lsn.ntasks);
+        lsn.hasretrieval = new Matrix(1, lsn.nidx, lsn.nhosts + lsn.ntasks);
+        lsn.replacestrat = new Matrix(1, lsn.nidx, lsn.nhosts + lsn.ntasks);
 
         lsn.setuptime = new HashMap<>();
         lsn.setuptime_type = new HashMap<>();
@@ -1182,7 +1584,18 @@ public class LayeredNetwork extends Ensemble implements Copyable {
         lsn.delayofftime_scv = new HashMap<>();
         lsn.delayofftime_proc = new HashMap<>();
 
-        lsn.isfunction = new Matrix(1, lsn.nidx + 1, lsn.nidx);
+        lsn.hassetup = new Matrix(1, lsn.nidx, lsn.nidx);
+
+        // Admission constraints on the layer station of a host or task -- see _kb/04-networkstruct.md
+        lsn.lincon = new HashMap<>();
+
+        // Service-rate dependences on the layer station of a host or task -- see _kb/04-networkstruct.md
+        lsn.lldscaling = new HashMap<>();
+        lsn.cdscaling = new HashMap<>();
+        lsn.cdscalingpeak = new HashMap<>();
+        lsn.jdscaling = new HashMap<>();
+        lsn.jdscalingpeak = new HashMap<>();
+        lsn.pools = new HashMap<>();
 
         lsn.arrival = new HashMap<>();
         lsn.arrival_type = new HashMap<>();
@@ -1191,7 +1604,12 @@ public class LayeredNetwork extends Ensemble implements Copyable {
         lsn.arrival_scv = new HashMap<>();
         lsn.arrival_proc = new HashMap<>();
 
-        lsn.parent = new Matrix(1, lsn.nidx + 1, lsn.nidx);
+        // A host has no parent. -1 is the unset sentinel: 0 is now the first host,
+        // so it can no longer double as "absent" the way it did when idx was 1-based.
+        lsn.parent = new Matrix(1, lsn.nidx, lsn.nidx);
+        for (int i = 0; i < lsn.nidx; i++) {
+            lsn.parent.set(0, i, -1);
+        }
 
         for (int i = 0; i < lsn.nhosts; i++) {
             lsn.sched.put(idx, this.hosts.get(i).scheduling);
@@ -1202,6 +1620,9 @@ public class LayeredNetwork extends Ensemble implements Copyable {
             lsn.names.put(idx, this.hosts.get(i).getName());
             lsn.hashnames.put(idx, "P:" + lsn.names.get(idx));
             lsn.type.set(0, idx, LayeredNetworkElement.HOST);
+            if (this.hosts.get(i).hasLinearConstraints()) {
+                lsn.lincon.put(idx, this.hosts.get(i).getLinearConstraints());
+            }
             idx = idx + 1;
         }
 
@@ -1226,6 +1647,7 @@ public class LayeredNetwork extends Ensemble implements Copyable {
             int taskMult = this.tasks.get(i).multiplicity;
             lsn.mult.set(0, idx, taskMult == Integer.MAX_VALUE ? Inf : taskMult);
             lsn.repl.set(0, idx, this.tasks.get(i).replication);
+            lsn.prio.set(0, idx, this.tasks.get(i).getPriority());
             lsn.names.put(idx, this.tasks.get(i).getName());
 
             if (lsn.sched.get(idx) == SchedStrategy.REF) {
@@ -1244,7 +1666,7 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                 }
                 lsn.hashnames.put(idx, "C:" + lsn.names.get(idx));
             } else if (this.tasks.get(i).hasSetupDelayoff()) {
-                // Task has setup/delayoff configured (not just FunctionTask)
+                // Task has setup/delayoff configured (not just SetupTask)
                 Distribution setupDist = this.tasks.get(i).getSetupTime();
                 lsn.setuptime.put(idx, setupDist);
                 DistParams setupParams = extractDistParams(setupDist);
@@ -1261,18 +1683,18 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                 lsn.delayofftime_mean.put(idx, delayoffParams.mean);
                 lsn.delayofftime_scv.put(idx, delayoffParams.scv);
                 lsn.delayofftime_proc.put(idx, delayoffParams.proc);
-                lsn.hashnames.put(idx, "F:" + lsn.names.get(idx));
-                lsn.isfunction.set(0, idx, 1);  // Store at idx to match setuptime/delayofftime indexing
+                lsn.hashnames.put(idx, "T:" + lsn.names.get(idx));
+                lsn.hassetup.set(0, idx, 1);  // Store at idx to match setuptime/delayofftime indexing
             }
 
-            int pidx = 0;
+            int pidx = -1;
             Task currentTask = this.tasks.get(i);
             if (currentTask.parent == null) {
                 line_error(mfilename(new Object() {}), "Task " + currentTask.getName() + " has no parent processor assigned during XML parsing");
             }
             for (int id = 0; id < this.hosts.size(); id++) {
                 if (this.hosts.get(id).getName().equals(currentTask.parent.getName())) {
-                    pidx = id + 1;
+                    pidx = lsn.hshift + id;
                     break;
                 }
             }
@@ -1281,13 +1703,16 @@ public class LayeredNetwork extends Ensemble implements Copyable {
             lsn.graph.set(idx, pidx, 1);
 
             lsn.type.set(0, idx, LayeredNetworkElement.TASK);
+            if (this.tasks.get(i).hasLinearConstraints()) {
+                lsn.lincon.put(idx, this.tasks.get(i).getLinearConstraints());
+            }
             idx++;
         }
 
         // Adjust task replication to account for host processor replication.
         // In LQN, task repl >= host repl. If task repl is 1 (default), inherit host repl.
         for (int t = 0; t < lsn.ntasks; t++) {
-            int tidx = lsn.tshift + t + 1;
+            int tidx = lsn.tshift + t;
             int pidx2 = (int) lsn.parent.get(0, tidx);
             double hostRepl = lsn.repl.get(0, pidx2);
             double taskRepl = lsn.repl.get(0, tidx);
@@ -1296,16 +1721,16 @@ public class LayeredNetwork extends Ensemble implements Copyable {
 
         // Build fan-out matrix from Task objects' fanOutMap
         // fanout(source_task_idx, dest_task_idx) = fan-out value (0 means not set)
-        lsn.fanout = new Matrix(lsn.nidx + 1, lsn.nidx + 1);
+        lsn.fanout = new Matrix(lsn.nidx, lsn.nidx);
         // Build task name -> index mapping
         Map<String, Integer> taskNameToIdx = new HashMap<>();
         for (int t = 0; t < lsn.ntasks; t++) {
-            int tidx = lsn.tshift + t + 1;
+            int tidx = lsn.tshift + t;
             taskNameToIdx.put(this.tasks.get(t).getName(), tidx);
         }
         // Populate fanout matrix
         for (int t = 0; t < lsn.ntasks; t++) {
-            int tidx = lsn.tshift + t + 1;
+            int tidx = lsn.tshift + t;
             Map<String, Integer> fanOutMap = this.tasks.get(t).getFanOutMap();
             for (Map.Entry<String, Integer> entry : fanOutMap.entrySet()) {
                 Integer destIdx = taskNameToIdx.get(entry.getKey());
@@ -1315,12 +1740,12 @@ public class LayeredNetwork extends Ensemble implements Copyable {
             }
         }
 
-        for (int p = 1; p <= lsn.nhosts; p++) {
+        for (int p = lsn.hshift; p < lsn.hshift + lsn.nhosts; p++) {
 
             if (!lsn.tasksof.containsKey(p)) {
                 lsn.tasksof.put(p, new ArrayList<>());
             }
-            for (int id = 1; id < lsn.parent.length(); id++) {
+            for (int id = 0; id < lsn.parent.length(); id++) {
 
                 if (lsn.parent.get(0, id) == p) {
                     lsn.tasksof.get(p).add(id);
@@ -1329,7 +1754,7 @@ public class LayeredNetwork extends Ensemble implements Copyable {
         }
 
         for (int e = 0; e < lsn.nentries; e++) {
-            idx = lsn.eshift + e + 1;
+            idx = lsn.eshift + e;
 
             lsn.names.put(idx, this.entries.get(e).getName());
 
@@ -1380,7 +1805,7 @@ public class LayeredNetwork extends Ensemble implements Copyable {
             }
             for (int id = 0; id < this.tasks.size(); id++) {
                 if (currentEntry.parent.getName().equals(this.tasks.get(id).getName())) {
-                    tidx = lsn.nhosts + id + 1;
+                    tidx = lsn.tshift + id;
                     break;
                 }
             }
@@ -1394,6 +1819,132 @@ public class LayeredNetwork extends Ensemble implements Copyable {
 
             lsn.type.set(0, idx, LayeredNetworkElement.ENTRY);
             idx++;
+        }
+
+        // Admission constraint columns are only resolvable once tasksof/entriesof exist
+        for (int cidx = 0; cidx < lsn.nhosts + lsn.ntasks; cidx++) {
+            LayeredNetworkElement elem;
+            List<Integer> colIdx;
+            String colwhat;
+            if (cidx < lsn.tshift) {
+                elem = this.hosts.get(cidx - lsn.hshift);
+                colIdx = lsn.tasksof.get(cidx);
+                colwhat = "tasks on this host";
+            } else {
+                elem = this.tasks.get(cidx - lsn.tshift);
+                colIdx = lsn.entriesof.get(cidx);
+                colwhat = "entries of this task";
+            }
+            if (colIdx == null) {
+                colIdx = new ArrayList<>();
+            }
+            int ncols = colIdx.size();
+            // Rate dependences share the operand order of the constraint columns
+            if (elem.lldScaling != null) {
+                lsn.lldscaling.put(cidx, elem.lldScaling);
+            }
+            if (elem.lcdScaling != null) {
+                lsn.cdscaling.put(cidx, elem.lcdScaling);
+                lsn.cdscalingpeak.put(cidx, expandPeak(elem.lcdScalingPeak, ncols, lsn.names.get(cidx), colwhat, "Class"));
+            }
+            if (elem.ljdScaling != null) {
+                lsn.jdscaling.put(cidx, elem.ljdScaling);
+                lsn.jdscalingpeak.put(cidx, expandPeak(elem.ljdScalingPeak, ncols, lsn.names.get(cidx), colwhat, "Joint"));
+            }
+            // Compatibility pools name the operands they may serve, so the names
+            // become columns only here, on the same operand order as the
+            // constraints below.
+            if (!elem.serverPools.isEmpty()) {
+                List<String> poolCols = new ArrayList<>();
+                for (int j = 0; j < ncols; j++) {
+                    poolCols.add(lsn.names.get(colIdx.get(j)));
+                }
+                int npools = elem.serverPools.size();
+                Matrix compat = new Matrix(npools, ncols);
+                Matrix counts = new Matrix(1, npools);
+                Matrix rates = new Matrix(1, npools);
+                List<String> poolNames = new ArrayList<>();
+                for (int t = 0; t < npools; t++) {
+                    LayeredNetworkElement.ServerPool pool = elem.serverPools.get(t);
+                    poolNames.add(pool.name);
+                    counts.set(0, t, pool.count);
+                    rates.set(0, t, pool.rate);
+                    for (int k = 0; k < pool.compatible.size(); k++) {
+                        int posCol = poolCols.indexOf(pool.compatible.get(k));
+                        if (posCol < 0) {
+                            throw new IllegalArgumentException("Server pool '" + pool.name + "' on "
+                                    + lsn.names.get(cidx) + " names " + pool.compatible.get(k)
+                                    + ", which is not one of the " + colwhat + ".");
+                        }
+                        compat.set(t, posCol, 1);
+                    }
+                }
+                // An operand no pool can serve would be served at rate zero and
+                // never complete, so it is a declaration error, not an empty column.
+                for (int j = 0; j < ncols; j++) {
+                    boolean served = false;
+                    for (int t = 0; t < npools; t++) {
+                        if (compat.get(t, j) != 0) {
+                            served = true;
+                        }
+                    }
+                    if (!served) {
+                        throw new IllegalArgumentException(poolCols.get(j) + " on "
+                                + lsn.names.get(cidx) + " is compatible with no server pool, so it "
+                                + "can never be served.");
+                    }
+                }
+                // The pools describe HOW the declared servers are shared, not how
+                // many there are, so the two statements have to agree. Letting them
+                // diverge would leave the layer station sized by the multiplicity
+                // and scaled by a peak taken over a different number of servers,
+                // reporting a utilization against a denominator never declared.
+                double totalServers = 0;
+                for (int t = 0; t < npools; t++) {
+                    totalServers += counts.get(0, t);
+                }
+                double multc = lsn.mult.get(0, cidx);
+                if (!Double.isInfinite(multc) && totalServers != multc) {
+                    throw new IllegalArgumentException("Server pools on " + lsn.names.get(cidx)
+                            + " hold " + totalServers + " servers but its multiplicity is " + multc
+                            + "; the pools partition the declared servers, so the two must agree.");
+                }
+                lsn.pools.put(cidx, new LayeredNetworkStruct.ServerPools(poolNames, counts, rates, compat));
+            }
+            Matrix[] pos = lsn.lincon.get(cidx);
+            if (pos != null && pos[0] != null && pos[0].getNumCols() != ncols) {
+                throw new IllegalArgumentException("Admission constraint on " + lsn.names.get(cidx) + " has "
+                        + pos[0].getNumCols() + " columns but there are " + ncols + " " + colwhat + ".");
+            }
+            if (elem.linConRows.isEmpty()) {
+                continue;
+            }
+            // resolve rows declared by operand name against this server's columns
+            List<String> colNames = new ArrayList<>();
+            for (int j = 0; j < ncols; j++) {
+                colNames.add(lsn.names.get(colIdx.get(j)));
+            }
+            int nnamed = elem.linConRows.size();
+            Matrix Anamed = new Matrix(nnamed, ncols);
+            Matrix bnamed = new Matrix(nnamed, 1);
+            for (int r = 0; r < nnamed; r++) {
+                LayeredNetworkElement.LinConRow namedRow = elem.linConRows.get(r);
+                for (int k = 0; k < namedRow.names.size(); k++) {
+                    int position = colNames.indexOf(namedRow.names.get(k));
+                    if (position < 0) {
+                        throw new IllegalArgumentException("Admission constraint on " + lsn.names.get(cidx) + " names "
+                                + namedRow.names.get(k) + ", which is not one of the " + colwhat + ".");
+                    }
+                    Anamed.set(r, position, namedRow.coeffs[k]);
+                }
+                bnamed.set(r, 0, namedRow.cap);
+            }
+            if (pos == null || pos[0] == null || pos[1] == null) {
+                lsn.lincon.put(cidx, new Matrix[]{Anamed, bnamed});
+            } else {
+                lsn.lincon.put(cidx, new Matrix[]{Matrix.concatRows(pos[0], Anamed, null),
+                        Matrix.concatRows(pos[1], bnamed, null)});
+            }
         }
 
         for (int a = 0; a < lsn.nacts; a++) {
@@ -1419,7 +1970,7 @@ public class LayeredNetwork extends Ensemble implements Copyable {
             int tidx = 0;
             for (int id = 0; id < this.tasks.size(); id++) {
                 if (this.activities.get(a).parent != null && this.activities.get(a).parent.getName().equals(this.tasks.get(id).getName())) {
-                    tidx = lsn.nhosts + id + 1;
+                    tidx = lsn.tshift + id;
                     break;
                 }
             }
@@ -1430,31 +1981,32 @@ public class LayeredNetwork extends Ensemble implements Copyable {
             lsn.actsof.get(tidx).add(idx);
             lsn.type.set(0, idx, LayeredNetworkElement.ACTIVITY);
             // Store activity phase (1 or 2)
-            lsn.actphase.set(0, a + 1, this.activities.get(a).getPhase());
+            lsn.actphase.set(0, a, this.activities.get(a).getPhase());
             idx++;
         }
 
         // see _kb/04-networkstruct.md (LayeredNetwork.getStruct() graph/validation rules) for rationale
         for (int e = 0; e < lsn.nentries; e++) {
-            int eidx = lsn.eshift + e + 1;
+            int eidx = lsn.eshift + e;
             for (String ra : this.entries.get(e).replyActivity.values()) {
                 int ractidx = Utils.findString(lsn.hashnames, "A:" + ra);
-                if (ractidx > 0) {
+                if (ractidx >= 0) {
                     lsn.replygraph.set(ractidx - lsn.ashift, eidx - lsn.eshift, 1);
                 }
             }
         }
 
-        lsn.graph.set(lsn.nidx, lsn.nidx, 0);
+        lsn.graph.set(lsn.nidx - 1, lsn.nidx - 1, 0);
 
         Map<Integer, Task> tasks = this.tasks;
-        int cidx = 0;
+        // pre-incremented before each use, so the first call lands on index 0
+        int cidx = -1;
 
         lsn.calltype = new HashMap<>();
-        lsn.iscaller = new Matrix(lsn.nidx + 1, lsn.nidx + 1, (lsn.ntasks + lsn.nacts) * (lsn.ntasks + lsn.nentries));
-        lsn.issynccaller = new Matrix(lsn.nidx + 1, lsn.nidx + 1, (lsn.ntasks + lsn.nacts) * (lsn.ntasks + lsn.nentries));
-        lsn.isasynccaller = new Matrix(lsn.nidx + 1, lsn.nidx + 1, (lsn.ntasks + lsn.nacts) * (lsn.ntasks + lsn.nentries));
-        lsn.callpair = new Matrix(lsn.nidx + 1, 3, lsn.nidx * 3);
+        lsn.iscaller = new Matrix(lsn.nidx, lsn.nidx, (lsn.ntasks + lsn.nacts) * (lsn.ntasks + lsn.nentries));
+        lsn.issynccaller = new Matrix(lsn.nidx, lsn.nidx, (lsn.ntasks + lsn.nacts) * (lsn.ntasks + lsn.nentries));
+        lsn.isasynccaller = new Matrix(lsn.nidx, lsn.nidx, (lsn.ntasks + lsn.nacts) * (lsn.ntasks + lsn.nentries));
+        lsn.callpair = new Matrix(lsn.nidx, 2, lsn.nidx * 2);
         lsn.callproc = new HashMap<>();
         lsn.callproc_type = new HashMap<>();
         lsn.callproc_params = new HashMap<>();
@@ -1463,12 +2015,12 @@ public class LayeredNetwork extends Ensemble implements Copyable {
         lsn.callproc_proc = new HashMap<>();
         lsn.callnames = new HashMap<>();
         lsn.callhashnames = new HashMap<>();
-        lsn.taskgraph = new Matrix(lsn.ntasks + lsn.tshift + 1, lsn.ntasks + lsn.tshift + 1, (lsn.ntasks + lsn.tshift) * (lsn.ntasks + lsn.tshift));
-        lsn.actpretype = new Matrix(1, lsn.nidx + 1, lsn.nacts);
-        lsn.actposttype = new Matrix(1, lsn.nidx + 1, lsn.nacts);
-        lsn.actquorum = new Matrix(1, lsn.nidx + 1, lsn.nacts);
+        lsn.taskgraph = new Matrix(lsn.ntasks + lsn.tshift, lsn.ntasks + lsn.tshift, (lsn.ntasks + lsn.tshift) * (lsn.ntasks + lsn.tshift));
+        lsn.actpretype = new Matrix(1, lsn.nidx, lsn.nacts);
+        lsn.actposttype = new Matrix(1, lsn.nidx, lsn.nacts);
+        lsn.actquorum = new Matrix(1, lsn.nidx, lsn.nacts);
 
-        Matrix loop_back_edges = new Matrix(lsn.nidx + 1, lsn.nidx + 1, lsn.nidx * lsn.nidx);
+        Matrix loop_back_edges = new Matrix(lsn.nidx, lsn.nidx, lsn.nidx * lsn.nidx);
         List<int[]> loopInfoList = new ArrayList<>();
 
         // Track boundToEntry mappings to validate uniqueness
@@ -1478,26 +2030,26 @@ public class LayeredNetwork extends Ensemble implements Copyable {
         for (int i = 0; i < this.activities.size(); i++) {
             Activity activity = this.activities.get(i);
             int aidx = Utils.findString(lsn.hashnames, "A:" + activity.getName());
-            if (aidx > 0 && !lsn.callsof.containsKey(aidx)) {
+            if (aidx >= 0 && !lsn.callsof.containsKey(aidx)) {
                 lsn.callsof.put(aidx, new ArrayList<>());
             }
         }
 
         for (int t = 0; t < lsn.ntasks; t++) {
-            int tidx = lsn.tshift + t + 1;
+            int tidx = lsn.tshift + t;
 
             for (int a = 0; a < tasks.get(t).activities.size(); a++) {
                 int aidx = Utils.findString(lsn.hashnames, "A:" + tasks.get(t).activities.get(a).getName());
-                if (aidx > 0) {
+                if (aidx >= 0) {
                     lsn.callsof.put(aidx, new ArrayList<>());
                 }
 
                 String boundToEntry = tasks.get(t).activities.get(a).boundToEntry;
                 int eidx = Utils.findString(lsn.hashnames, "E:" + boundToEntry);
-                if (eidx <= 0) {
+                if (eidx < 0) {
                     eidx = Utils.findString(lsn.hashnames, "I:" + boundToEntry);
                 }
-                if (eidx > 0) {
+                if (eidx >= 0) {
                     lsn.graph.set(eidx, aidx, 1);
                     
                     // Check if this entry is already bound to another activity
@@ -1514,15 +2066,15 @@ public class LayeredNetwork extends Ensemble implements Copyable {
 
                     int target_eidx = Utils.findString(lsn.hashnames, "E:" + tasks.get(t).activities.get(a).syncCallDests.get(s));
 
-                    if (target_eidx <= 0) {
+                    if (target_eidx < 0) {
                         target_eidx = Utils.findString(lsn.hashnames, "I:" + tasks.get(t).activities.get(a).syncCallDests.get(s));
                     }
                     int target_tidx = (int) lsn.parent.get(target_eidx);
                     cidx++;
 
                     lsn.calltype.put(cidx, CallType.SYNC);
-                    lsn.callpair.set(cidx, 1, aidx);
-                    lsn.callpair.set(cidx, 2, target_eidx);
+                    lsn.callpair.set(cidx, 0, aidx);
+                    lsn.callpair.set(cidx, 1, target_eidx);
                     
                     // Check for self-call: if activity is bound to an entry and calls the same entry
                     boolean isSelfCall = false;
@@ -1546,7 +2098,7 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                     }
                     lsn.callnames.put(cidx, lsn.names.get(aidx) + "=>" + lsn.names.get(target_eidx));
                     lsn.callhashnames.put(cidx, lsn.hashnames.get(aidx) + "=>" + lsn.hashnames.get(target_eidx));
-                    Geometric syncCallDist = new Geometric(1.0 / tasks.get(t).activities.get(a).syncCallMeans.get(s));
+                    Distribution syncCallDist = callCountDist(tasks.get(t).activities.get(a).syncCallMeans.get(s));
                     lsn.callproc.put(cidx, syncCallDist);
                     DistParams syncCallParams = extractDistParams(syncCallDist);
                     lsn.callproc_type.put(cidx, syncCallParams.type);
@@ -1568,14 +2120,31 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                     lsn.graph.set(aidx, target_eidx, 1);
                 }
 
+                for (Activity.CallGroup grp : tasks.get(t).activities.get(a).getSyncCallGroups()) {
+                    List<Integer> gtargets = new ArrayList<>();
+                    for (String dest : grp.dests) {
+                        int geidx = Utils.findString(lsn.hashnames, "E:" + dest);
+                        if (geidx < 0) {
+                            geidx = Utils.findString(lsn.hashnames, "I:" + dest);
+                        }
+                        if (geidx >= 0) {
+                            gtargets.add(geidx);
+                        }
+                    }
+                    if (gtargets.size() >= 2) {
+                        lsn.callgroups.add(new LayeredNetworkStruct.CallGroupStruct(
+                                aidx, grp.strategy, gtargets));
+                    }
+                }
+
                 for (int s = 0; s < tasks.get(t).activities.get(a).asyncCallDests.size(); s++) {
                     String target_entry_name = tasks.get(t).activities.get(a).asyncCallDests.get(s);
                     int target_eidx = Utils.findString(lsn.hashnames, "E:" + target_entry_name);
-                    if (target_eidx <= 0) {
+                    if (target_eidx < 0) {
                         target_eidx = Utils.findString(lsn.hashnames, "I:" + target_entry_name);
                     }
                     // Validate that the target entry exists
-                    if (target_eidx <= 0) {
+                    if (target_eidx < 0) {
                         line_error(mfilename(new Object() {}), "Activity \"" + tasks.get(t).activities.get(a).getName() + "\" has an async call to non-existent entry \"" + target_entry_name + "\".");
                     }
                     int target_tidx = (int) lsn.parent.get(target_eidx);
@@ -1586,11 +2155,11 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                     cidx++;
 
                     lsn.calltype.put(cidx, CallType.ASYNC);
-                    lsn.callpair.set(cidx, 1, aidx);
-                    lsn.callpair.set(cidx, 2, target_eidx);
+                    lsn.callpair.set(cidx, 0, aidx);
+                    lsn.callpair.set(cidx, 1, target_eidx);
                     lsn.callnames.put(cidx, lsn.names.get(aidx) + "->" + lsn.names.get(target_eidx));
                     lsn.callhashnames.put(cidx, lsn.hashnames.get(aidx) + "->" + lsn.hashnames.get(target_eidx));
-                    Geometric asyncCallDist = new Geometric(1.0 / tasks.get(t).activities.get(a).asyncCallMeans.get(s));
+                    Distribution asyncCallDist = callCountDist(tasks.get(t).activities.get(a).asyncCallMeans.get(s));
                     lsn.callproc.put(cidx, asyncCallDist);
                     DistParams asyncCallParams = extractDistParams(asyncCallDist);
                     lsn.callproc_type.put(cidx, asyncCallParams.type);
@@ -1617,10 +2186,10 @@ public class LayeredNetwork extends Ensemble implements Copyable {
         for (int e = 0; e < this.entries.size(); e++) {
             Entry entry = this.entries.get(e);
             int eidx = Utils.findString(lsn.hashnames, "E:" + entry.getName());
-            if (eidx <= 0) {
+            if (eidx < 0) {
                 eidx = Utils.findString(lsn.hashnames, "I:" + entry.getName());
             }
-            if (eidx <= 0) {
+            if (eidx < 0) {
                 continue;
             }
             int source_tidx = (int) lsn.parent.get(eidx);
@@ -1628,10 +2197,10 @@ public class LayeredNetwork extends Ensemble implements Copyable {
             for (int fw = 0; fw < entry.getForwardingDests().size(); fw++) {
                 String target_entry_name = entry.getForwardingDests().get(fw);
                 int target_eidx = Utils.findString(lsn.hashnames, "E:" + target_entry_name);
-                if (target_eidx <= 0) {
+                if (target_eidx < 0) {
                     target_eidx = Utils.findString(lsn.hashnames, "I:" + target_entry_name);
                 }
-                if (target_eidx <= 0) {
+                if (target_eidx < 0) {
                     line_error(mfilename(new Object() {}), "Entry \"" + entry.getName() + "\" forwards to non-existent entry \"" + target_entry_name + "\".");
                 }
                 int target_tidx = (int) lsn.parent.get(target_eidx);
@@ -1643,14 +2212,14 @@ public class LayeredNetwork extends Ensemble implements Copyable {
 
                 cidx++;
                 lsn.calltype.put(cidx, CallType.FWD);
-                lsn.callpair.set(cidx, 1, eidx);
-                lsn.callpair.set(cidx, 2, target_eidx);
+                lsn.callpair.set(cidx, 0, eidx);
+                lsn.callpair.set(cidx, 1, target_eidx);
                 lsn.callnames.put(cidx, lsn.names.get(eidx) + "~>" + lsn.names.get(target_eidx));
                 lsn.callhashnames.put(cidx, lsn.hashnames.get(eidx) + "~>" + lsn.hashnames.get(target_eidx));
 
                 // Forwarding probability (not using callproc as forwarding is deterministic choice)
                 double fwdProb = entry.getForwardingProbs().get(fw);
-                Geometric fwdCallDist = new Geometric(1.0 / fwdProb);
+                Distribution fwdCallDist = callCountDist(fwdProb);
                 lsn.callproc.put(cidx, fwdCallDist); // Store as mean calls
                 DistParams fwdCallParams = extractDistParams(fwdCallDist);
                 lsn.callproc_type.put(cidx, fwdCallParams.type);
@@ -1670,7 +2239,7 @@ public class LayeredNetwork extends Ensemble implements Copyable {
         lsn.ncalls = cidx;  // Update total number of calls
 
         for (int t = 0; t < lsn.ntasks; t++) {
-            int tidx = lsn.tshift + t + 1;
+            int tidx = lsn.tshift + t;
 
             for (int a = 0; a < tasks.get(t).activities.size(); a++) {
 
@@ -1688,10 +2257,10 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                         }
                         for (int prea = 0; prea < preacts.size(); prea++) {
                             int preaidx = Utils.findString(lsn.hashnames, "A:" + preacts.get(prea));
-                            if (preaidx <= 0) {
+                            if (preaidx < 0) {
                                 line_error(mfilename(new Object() {}), "PRE_AND precedence references non-existent activity \"" + preacts.get(prea) + "\" in task \"" + tasks.get(t).getName() + "\".");
                             }
-                            if (preaidx > 0 && lsn.parent.get(preaidx) != tidx) {
+                            if (preaidx >= 0 && lsn.parent.get(preaidx) != tidx) {
                                 line_error(mfilename(new Object() {}), "PRE_AND precedence in task \"" + tasks.get(t).getName() + "\" references activity \"" + preacts.get(prea) + "\" from a different task.");
                             }
                         }
@@ -1723,10 +2292,10 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                         }
                         for (int posta = 0; posta < postacts.size(); posta++) {
                             int postaidx = Utils.findString(lsn.hashnames, "A:" + postacts.get(posta));
-                            if (postaidx <= 0) {
+                            if (postaidx < 0) {
                                 line_error(mfilename(new Object() {}), "POST_AND precedence references non-existent activity \"" + postacts.get(posta) + "\" in task \"" + tasks.get(t).getName() + "\".");
                             }
-                            if (postaidx > 0 && lsn.parent.get(postaidx) != tidx) {
+                            if (postaidx >= 0 && lsn.parent.get(postaidx) != tidx) {
                                 line_error(mfilename(new Object() {}), "POST_AND precedence in task \"" + tasks.get(t).getName() + "\" references activity \"" + postacts.get(posta) + "\" from a different task.");
                             }
                         }
@@ -1819,15 +2388,15 @@ public class LayeredNetwork extends Ensemble implements Copyable {
 
         /* Compute entry-to-activity reachability within the same task */
         for (int eoff = 0; eoff < lsn.nentries; eoff++) {
-            int eidx = lsn.eshift + eoff + 1; // global entry index
+            int eidx = lsn.eshift + eoff; // global entry index
             int tidx = (int) lsn.parent.get(eidx);
-            boolean[] visited = new boolean[lsn.nidx + 1];
+            boolean[] visited = new boolean[lsn.nidx];
             Deque<Integer> stack = new ArrayDeque<>();
             stack.push(eidx);
             visited[eidx] = true;
             while (!stack.isEmpty()) {
                 int v = stack.pop();
-                for (int nbr = 1; nbr <= lsn.nidx; nbr++) {
+                for (int nbr = 0; nbr < lsn.nidx; nbr++) {
                     if (lsn.graph.get(v, nbr) != 0 && !visited[nbr]) {
                         visited[nbr] = true;
                         stack.push(nbr);
@@ -1835,7 +2404,7 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                 }
             }
             List<Integer> acts = new ArrayList<>();
-            for (int n = 1; n <= lsn.nidx; n++) {
+            for (int n = 0; n < lsn.nidx; n++) {
                 if (visited[n] && lsn.type.get(n) == LayeredNetworkElement.ACTIVITY && lsn.parent.get(n) == tidx) {
                     acts.add(n);
                 }
@@ -1844,11 +2413,10 @@ public class LayeredNetwork extends Ensemble implements Copyable {
         }
 
         for (int t = 0; t < lsn.ntasks; t++) {
-            int tidx = lsn.tshift + t + 1;
+            int tidx = lsn.tshift + t;
             for (int aidx : lsn.actsof.getOrDefault(tidx, new ArrayList<>())) {
                 List<Integer> postaidxs = new ArrayList<>();
-                // Start from col=1 to skip the 0-padding column (Java uses 1-based indexing in matrices)
-                for (int col = 1; col < lsn.graph.getNumCols(); col++) {
+                for (int col = 0; col < lsn.graph.getNumCols(); col++) {
                     if (lsn.graph.get(aidx, col) != 0) {
                         postaidxs.add(col);
                     }
@@ -1867,8 +2435,7 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                     int parentidx = aidx;
                     while (lsn.type.get(parentidx) != LayeredNetworkElement.ENTRY) {
                         List<Integer> ancestors = new ArrayList<>();
-                        // Start from row=1 to skip the 0-padding row (Java uses 1-based indexing in matrices)
-                        for (int row = 1; row < lsn.graph.getNumRows(); row++) {
+                        for (int row = 0; row < lsn.graph.getNumRows(); row++) {
                             if (lsn.graph.get(row, parentidx) != 0) {
                                 ancestors.add(row);
                             }
@@ -1889,7 +2456,7 @@ public class LayeredNetwork extends Ensemble implements Copyable {
         lsn.ncalls = lsn.calltype.size();
         List<Integer> toRemove = new ArrayList<>();
         for (
-                int i = lsn.ncalls + 1; i < lsn.callpair.getNumRows(); i++) {
+                int i = lsn.ncalls; i < lsn.callpair.getNumRows(); i++) {
             toRemove.add(i);
         }
         lsn.callpair.removeRows(toRemove);
@@ -1905,8 +2472,7 @@ public class LayeredNetwork extends Ensemble implements Copyable {
         for (int tidx : tidxs) {
             if (lsn.type.get(tidx) == LayeredNetworkElement.TASK) {
                 List<Integer> callers = new ArrayList<>();
-                // Start from row=1 to skip the 0-padding row (Java uses 1-based indexing in matrices)
-                for (int row = 1; row < lsn.taskgraph.getNumRows(); row++) {
+                for (int row = 0; row < lsn.taskgraph.getNumRows(); row++) {
                     if (lsn.taskgraph.get(row, tidx) != 0) {
                         callers.add(row);
                     }
@@ -1922,16 +2488,16 @@ public class LayeredNetwork extends Ensemble implements Copyable {
             }
         }
 
-        lsn.isref = new Matrix(1, lsn.nhosts + lsn.ntasks + 1, lsn.ntasks);
-        for (int col = 1; col <= lsn.sched.size(); col++) {
+        lsn.isref = new Matrix(1, lsn.nhosts + lsn.ntasks, lsn.ntasks);
+        for (int col = 0; col < lsn.sched.size(); col++) {
             if (lsn.sched.get(col) == SchedStrategy.REF) {
                 lsn.isref.set(0, col, 1);
             }
         }
 
         // Create schedid matrix (scheduling strategy ordinal values) for Python compatibility
-        lsn.schedid = new Matrix(1, lsn.nhosts + lsn.ntasks + 1, lsn.nhosts + lsn.ntasks);
-        for (int col = 1; col <= lsn.sched.size(); col++) {
+        lsn.schedid = new Matrix(1, lsn.nhosts + lsn.ntasks, lsn.nhosts + lsn.ntasks);
+        for (int col = 0; col < lsn.sched.size(); col++) {
             SchedStrategy strategy = lsn.sched.get(col);
             if (strategy != null) {
                 lsn.schedid.set(0, col, strategy.ordinal());
@@ -1942,8 +2508,8 @@ public class LayeredNetwork extends Ensemble implements Copyable {
         lsn.replacement = lsn.replacestrat;
 
         // Only process cache items if there are any
-        if (lsn.nitems.getNumCols() > 1) {
-            for (int i = 1; i < lsn.nitems.getNumCols(); i++) {
+        if (lsn.nitems.getNumCols() > 0) {
+            for (int i = 0; i < lsn.nitems.getNumCols(); i++) {
                 if (lsn.nitems.get(0, i) > 0) {
                     lsn.iscache.set(0, i, 1);
                 }
@@ -1954,10 +2520,10 @@ public class LayeredNetwork extends Ensemble implements Copyable {
         Matrix dag = lsn.graph.copy();
         // Reverse edges from TASK to ENTRY for non-reference tasks
         // This enables proper flow propagation in lsn_max_multiplicity
-        for (int i = 1; i <= lsn.nidx; i++) {
+        for (int i = 0; i < lsn.nidx; i++) {
             if (lsn.type.get(i) == LayeredNetworkElement.TASK &&
                     lsn.isref.get(0, i) == 0) {
-                for (int j = 1; j <= lsn.nidx; j++) {
+                for (int j = 0; j < lsn.nidx; j++) {
                     if (lsn.type.get(j) == LayeredNetworkElement.ENTRY && dag.get(i, j) != 0) {
                         dag.set(i, j, 0);
                         dag.set(j, i, 1);
@@ -1965,8 +2531,8 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                 }
             }
         }
-        for (int r = 1; r <= lsn.nidx; r++) {
-            for (int c = 1; c <= lsn.nidx; c++) {
+        for (int r = 0; r < lsn.nidx; r++) {
+            for (int c = 0; c < lsn.nidx; c++) {
                 if (loop_back_edges.get(r, c) != 0) {
                     dag.set(r, c, 0);
                 }
@@ -1975,14 +2541,14 @@ public class LayeredNetwork extends Ensemble implements Copyable {
 
         lsn.dag = dag;
 
-        int newRow = lsn.taskgraph.getNumCols() - lsn.nhosts - 1;
-        int newCol = lsn.taskgraph.getNumRows() - lsn.nhosts - 1;
+        int newRow = lsn.taskgraph.getNumCols() - lsn.nhosts;
+        int newCol = lsn.taskgraph.getNumRows() - lsn.nhosts;
         Matrix taskgraphSection = new Matrix(newRow, newCol);
         for (
                 int r = 0;
                 r < newRow; r++) {
             for (int c = 0; c < newCol; c++) {
-                taskgraphSection.set(r, c, lsn.taskgraph.get(lsn.nhosts + r + 1, lsn.nhosts + c + 1));
+                taskgraphSection.set(r, c, lsn.taskgraph.get(lsn.tshift + r, lsn.tshift + c));
             }
         }
 
@@ -1998,7 +2564,7 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                 isEmpty()) {
             Matrix ccZero = labels.findZero();
             double fue = ccZero.value(); // first unexplored vertex
-            roots.add(fue + 1);
+            roots.add(fue);
             vectorList.add(fue);
             ccc++;
             labels.set(0, (int) fue, ccc);
@@ -2032,7 +2598,11 @@ public class LayeredNetwork extends Ensemble implements Copyable {
 
         }
         //  [conncomps, roots]=graph_connected_components(lsn.taskgraph(lsn.nhosts+1:end, lsn.nhosts+1:end));
-        lsn.conntasks = labels;
+        // Map each component label to the absolute index of that component's root task.
+        // The result gets its own matrix rather than overwriting `labels` in place: a
+        // rewritten entry holds an absolute index, which can coincide with a later
+        // component label and be relabelled a second time.
+        lsn.conntasks = new Matrix(1, newCol);
         for (
                 int r = 1; r < roots.size() + 1; r++) {
             for (int ctidx = 0; ctidx < labels.length(); ctidx++) {
@@ -2054,12 +2624,12 @@ public class LayeredNetwork extends Ensemble implements Copyable {
         lsn.dag = dag;
 
         // see _kb/04-networkstruct.md (Python native layered.py: LayeredNetwork.getStruct() port notes) for rationale
-        for (int tidx = 1; tidx <= lsn.nhosts + lsn.ntasks; tidx++) {
+        for (int tidx = 0; tidx < lsn.nhosts + lsn.ntasks; tidx++) {
             if (lsn.sched.get(tidx) == SchedStrategy.INF &&
                 lsn.type.get(tidx) == LayeredNetworkElement.TASK) {
                 // Sum caller multiplicities (Inf + finite = Inf, matching MATLAB behavior)
                 double totalCallerMult = 0;
-                for (int row = 1; row < lsn.taskgraph.getNumRows(); row++) {
+                for (int row = 0; row < lsn.taskgraph.getNumRows(); row++) {
                     if (lsn.taskgraph.get(row, tidx) != 0) {
                         totalCallerMult += lsn.mult.get(0, row);
                     }
@@ -2079,15 +2649,35 @@ public class LayeredNetwork extends Ensemble implements Copyable {
             }), "A cycle exists in an activity graph.");
         }
 
+        // every entry must have a boundTo activity: getStruct.m's guard, absent here
+        // until 2026-08-15. An entry with an empty <entry-phase-activities> reaches no
+        // activity, so it has no service and no reply; it used to build a struct and
+        // report a row of NaN instead of being named. Checked before the reply guard
+        // below, the order getStruct.m refuses them in.
+        for (int e = 0; e < lsn.nentries; e++) {
+            int eidx = lsn.eshift + e;
+            boolean bound = false;
+            for (int succ = lsn.ashift; succ < lsn.nidx; succ++) {
+                if (lsn.graph.get(eidx, succ) != 0) {
+                    bound = true;
+                    break;
+                }
+            }
+            if (!bound) {
+                line_error(mfilename(new Object() {
+                }), "An entry does not have any boundTo activity.");
+            }
+        }
+
         // non-terminal reply activity validity: see _kb/06-solver-catalog.md ("Activity-graph validity and .lqnx writer rules")
         for (int a = 0; a < lsn.replygraph.getNumRows(); a++) {
             for (int b = 0; b < lsn.replygraph.getNumCols(); b++) {
                 if (lsn.replygraph.get(a, b) > 0) {          // activity 'a' replies
                     int aidx = lsn.ashift + a;                // global activity index
                     for (int succ = 0; succ < lsn.graph.getNumCols(); succ++) {
-                        if (lsn.graph.get(aidx, succ) != 0 && succ > lsn.eshift + lsn.nentries) {
-                            int succActIdx = succ - lsn.ashift;   // 1-based activity number
-                            if (succActIdx >= 1 && succActIdx <= lsn.nacts) {
+                        if (lsn.graph.get(aidx, succ) != 0 && succ >= lsn.ashift) {
+                            int succActIdx = succ - lsn.ashift;   // 0-based activity number
+                            if (succActIdx >= 0 && succActIdx < lsn.nacts) {
                                 int succPhase = (int) lsn.actphase.get(0, succActIdx);
                                 if (succPhase != 2) {             // phase-1 successor => invalid
                                     line_error(mfilename(new Object() {
@@ -2109,7 +2699,7 @@ public class LayeredNetwork extends Ensemble implements Copyable {
             int nCalls = lsn.callpair.getNumRows();
             for (int iter_cidx = 0; iter_cidx < nCalls; iter_cidx++) {
 
-                int targetEidx = (int) lsn.callpair.get(iter_cidx, 2);   // 3-rd column (0-based index)
+                int targetEidx = (int) lsn.callpair.get(iter_cidx, 1);   // callee entry column
                 CallType kind = lsn.calltype.get(iter_cidx);            // SYNC, ASYNC, or FWD
 
                 // Skip FWD calls - they're transformed to SYNC pseudo calls
@@ -2469,12 +3059,185 @@ public class LayeredNetwork extends Ensemble implements Copyable {
         File file = new File(filename);
         StreamResult fileResult = new StreamResult(file);
         transformer.transform(domSource, fileResult);
-        System.out.println("JLQN file saved as " + filename);
+        if (GlobalConstants.Verbose != VerboseLevel.SILENT) {
+            System.out.println("JLQN file saved as " + filename);
+        }
+    }
+
+    /**
+     * The first DIRECT child of {@code parent} with the given tag, or null.
+     *
+     * <p>{@code getElementsByTagName} searches every descendant, which is wrong for
+     * the dialect's task- and entry-level elements: a {@code <cache>} belongs to the
+     * task that declares it, not to any element nested below it.</p>
+     *
+     * @param parent the element to search
+     * @param tag    the child tag name
+     * @return the first matching direct child, or null when there is none
+     */
+    private static Element firstDirectChild(Element parent, String tag) {
+        NodeList children = parent.getChildNodes();
+        for (int i = 0; i < children.getLength(); i++) {
+            org.w3c.dom.Node child = children.item(i);
+            if (child instanceof Element && tag.equals(child.getNodeName())) {
+                return (Element) child;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Rebuilds a distribution from a {@code mean}/{@code scv} pair, choosing the same
+     * family {@code Task.setSetupTime(double)} would: exponential at unit SCV,
+     * deterministic at zero, an APH fit otherwise.
+     *
+     * @param element an element carrying {@code mean} and optionally {@code scv}
+     * @return the reconstructed distribution
+     */
+    private static Distribution distFromMeanAndSCV(Element element) {
+        String meanStr = element.getAttribute("mean");
+        double mean = meanStr.isEmpty() ? 0.0 : Double.parseDouble(meanStr);
+        String scvStr = element.getAttribute("scv");
+        double scv = scvStr.isEmpty() ? 1.0 : Double.parseDouble(scvStr);
+        if (mean <= GlobalConstants.FineTol) {
+            return Immediate.getInstance();
+        }
+        if (scv <= 0) {
+            return new Det(mean);
+        }
+        if (Math.abs(scv - 1.0) <= GlobalConstants.FineTol) {
+            return Exp.fitMean(mean);
+        }
+        return APH.fitMeanAndSCV(mean, scv);
+    }
+
+    /**
+     * Writes an {@code ItemEntry}'s access popularity as the LINE .lqnx dialect
+     * encodes it: the distribution CLASS NAME plus one {@code <parameter value>}
+     * child per constructor argument, in constructor order, mirroring dist2json.
+     *
+     * <p>A vector-valued argument contributes one child per element. The reader
+     * splits them using the {@code cardinality} on the parent {@code <item-entry>},
+     * so a {@code DiscreteSampler} written as n parameters is p over the default
+     * support 1..n, and one written as 2n parameters is p followed by an explicit
+     * support x. That keeps the flat parameter list unambiguous without adding an
+     * element the spec does not have.</p>
+     *
+     * @param doc        the document being built
+     * @param itemElement the {@code <item-entry>} element to append to
+     * @param popularity the popularity distribution, or null when the entry has none
+     * @param entryName  entry name, for the diagnostic on an unsupported class
+     */
+    private static void writeAccessPopularity(Document doc, Element itemElement,
+                                              Distribution popularity, String entryName) {
+        if (popularity == null) {
+            return;
+        }
+        Element popElement = doc.createElement("access-popularity");
+        itemElement.appendChild(popElement);
+        popElement.setAttribute("name", popularity.getName());
+        List<Double> values = new ArrayList<Double>();
+        if (popularity instanceof DiscreteSampler) {
+            Matrix pMat = (Matrix) popularity.getParam(1).getValue();
+            Matrix xMat = (Matrix) popularity.getParam(2).getValue();
+            boolean defaultSupport = xMat != null && xMat.length() == pMat.length();
+            for (int k = 0; defaultSupport && k < xMat.length(); k++) {
+                if (Math.abs(xMat.get(k) - (k + 1)) > GlobalConstants.FineTol) {
+                    defaultSupport = false;
+                }
+            }
+            for (int k = 0; k < pMat.length(); k++) {
+                values.add(pMat.get(k));
+            }
+            // The default support is reconstructible, so it is not written; an explicit
+            // one is, and the doubled length is what tells the reader which it has.
+            if (!defaultSupport) {
+                for (int k = 0; k < xMat.length(); k++) {
+                    values.add(xMat.get(k));
+                }
+            }
+        } else if (popularity instanceof Zipf) {
+            // Zipf stores params 1=p, 2=x, 3=s, 4=n, so its CONSTRUCTOR order is (s, n)
+            // = params 3 and 4. Writing p and x instead would be lossy: the reader
+            // cannot recover s from them. Always exactly two parameters, whatever the
+            // cardinality, because a Zipf DERIVES p and x from (s, n).
+            values.add(((Number) popularity.getParam(3).getValue()).doubleValue());
+            values.add(((Number) popularity.getParam(4).getValue()).doubleValue());
+        } else {
+            line_error(mfilename(new Object() {}),
+                    "Entry " + entryName + " has an access popularity of class "
+                    + popularity.getName() + ", which the .lqnx dialect does not encode yet "
+                    + "(it carries DiscreteSampler and Zipf). Writing it without its parameters "
+                    + "would produce a file describing a different model, so it is refused here "
+                    + "rather than silently degraded.");
+            return;
+        }
+        for (int k = 0; k < values.size(); k++) {
+            Element paramElement = doc.createElement("parameter");
+            popElement.appendChild(paramElement);
+            paramElement.setAttribute("value", Double.toString(values.get(k)));
+        }
+    }
+
+    /**
+     * Rebuilds an access popularity written by {@link #writeAccessPopularity}.
+     *
+     * @param itemElement the {@code <item-entry>} element
+     * @param cardinality the item cardinality, used to split a flat parameter list
+     * @return the distribution, or null when the element carries none
+     */
+    private static Distribution readAccessPopularity(Element itemElement, int cardinality) {
+        NodeList popList = itemElement.getElementsByTagName("access-popularity");
+        if (popList.getLength() == 0) {
+            return null;
+        }
+        Element popElement = (Element) popList.item(0);
+        String className = popElement.getAttribute("name");
+        NodeList paramList = popElement.getElementsByTagName("parameter");
+        List<Double> values = new ArrayList<Double>();
+        for (int k = 0; k < paramList.getLength(); k++) {
+            values.add(Double.parseDouble(((Element) paramList.item(k)).getAttribute("value")));
+        }
+        if ("Zipf".equals(className)) {
+            // Always exactly (s, n); the cardinality split used for DiscreteSampler does
+            // NOT apply, because a Zipf derives p and x from those two. Any other count
+            // is refused by name rather than guessed at.
+            if (values.size() != 2) {
+                line_error(mfilename(new Object() {}),
+                        "An access popularity of class Zipf carries exactly two parameters, "
+                        + "the shape s then the item count n, but this one carries "
+                        + values.size() + ".");
+                return null;
+            }
+            return new Zipf(values.get(0), (int) Math.round(values.get(1)));
+        }
+        if ("DiscreteSampler".equals(className)) {
+            if (values.isEmpty()) {
+                return null;
+            }
+            int n = (values.size() == 2 * cardinality) ? cardinality : values.size();
+            Matrix pMat = new Matrix(1, n);
+            for (int k = 0; k < n; k++) {
+                pMat.set(0, k, values.get(k));
+            }
+            if (values.size() == 2 * cardinality) {
+                Matrix xMat = new Matrix(1, n);
+                for (int k = 0; k < n; k++) {
+                    xMat.set(0, k, values.get(n + k));
+                }
+                return new DiscreteSampler(pMat, xMat);
+            }
+            return new DiscreteSampler(pMat);
+        }
+        line_error(mfilename(new Object() {}),
+                "Access popularity of class " + className + " is not one the .lqnx dialect "
+                + "decodes (it carries DiscreteSampler and Zipf).");
+        return null;
     }
 
     /**
      * Writes the layered network to an XML file with default naming.
-     * 
+     *
      * @param filename the path to write the XML file
      */
     public void writeXML(String filename) {
@@ -2597,6 +3360,58 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                             curTask.getName(), curTask.thinkTimeMean);
                 }
 
+                /* fan-out/fan-in are parsed by this reader, by MATLAB parseXML and by the cpp
+                 * lqn_reader, and were written by no codebase, so a replicated model lost its
+                 * call multiplicities on every round trip. lqn-core.xsd (TaskType) places them
+                 * before the entries. */
+                for (Map.Entry<String, Integer> fo : curTask.getFanOutMap().entrySet()) {
+                    Element fanOutElement = doc.createElement("fan-out");
+                    taskElement.appendChild(fanOutElement);
+                    fanOutElement.setAttribute("dest", nodeHashMap.getOrDefault(fo.getKey(), fo.getKey()));
+                    fanOutElement.setAttribute("value", Integer.toString(fo.getValue()));
+                }
+                if (!curTask.getFanInSource().isEmpty() && curTask.getFanInValue() > 0) {
+                    Element fanInElement = doc.createElement("fan-in");
+                    taskElement.appendChild(fanInElement);
+                    fanInElement.setAttribute("source",
+                            nodeHashMap.getOrDefault(curTask.getFanInSource(), curTask.getFanInSource()));
+                    fanInElement.setAttribute("value", Integer.toString(curTask.getFanInValue()));
+                }
+
+                /* LINE .lqnx dialect: a CacheTask and a task's setup/delay-off times. The
+                 * base schema carries neither, so writing a plain <task> emitted a VALID
+                 * LQN of a DIFFERENT model -- lcq_threehosts then read a cache hit ratio of
+                 * exactly 0.5 (the unweighted POST_CACHE branch) and lqn_setup a processor
+                 * utilization of 0.75 against a true 0.43577. See LQNX_CACHE_SPEC. */
+                if (curTask instanceof CacheTask) {
+                    CacheTask cacheTask = (CacheTask) curTask;
+                    Element cacheElement = doc.createElement("cache");
+                    taskElement.appendChild(cacheElement);
+                    cacheElement.setAttribute("items", Integer.toString(cacheTask.getItems()));
+                    cacheElement.setAttribute("replacement", cacheTask.getReplacestrategy().name());
+                    cacheElement.setAttribute("retrieval", Boolean.toString(cacheTask.hasRetrieval()));
+                    // itemLevelCap is an ARRAY: one <level> per cache list, in order. Never
+                    // collapsed to a scalar, because a multi-list cache is the normal case.
+                    int[] levelCaps = cacheTask.getItemLevelCap();
+                    for (int lv = 0; lv < levelCaps.length; lv++) {
+                        Element levelElement = doc.createElement("level");
+                        cacheElement.appendChild(levelElement);
+                        levelElement.setAttribute("capacity", Integer.toString(levelCaps[lv]));
+                    }
+                }
+                if (curTask.getSetupTime() != null && curTask.getSetupTimeMean() > GlobalConstants.FineTol) {
+                    Element setupElement = doc.createElement("setup");
+                    taskElement.appendChild(setupElement);
+                    setupElement.setAttribute("mean", Double.toString(curTask.getSetupTimeMean()));
+                    setupElement.setAttribute("scv", Double.toString(curTask.getSetupTimeSCV()));
+                }
+                if (curTask.getDelayOffTime() != null && curTask.getDelayOffTimeMean() > GlobalConstants.FineTol) {
+                    Element delayOffElement = doc.createElement("delay-off");
+                    taskElement.appendChild(delayOffElement);
+                    delayOffElement.setAttribute("mean", Double.toString(curTask.getDelayOffTimeMean()));
+                    delayOffElement.setAttribute("scv", Double.toString(curTask.getDelayOffTimeSCV()));
+                }
+
                 /* Track activities that are exported as entry-phase-activities (not to be duplicated in task-activities) */
                 Set<String> phaseActivityNames = new HashSet<>();
 
@@ -2623,6 +3438,16 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                         if (arrMean > 0 && !Double.isInfinite(arrMean)) {
                             entryElement.setAttribute("open-arrival-rate", Double.toString(1.0 / arrMean));
                         }
+                    }
+
+                    /* LINE .lqnx dialect: the presence of <item-entry> is what makes this an
+                     * ItemEntry on read. See LQNX_CACHE_SPEC. */
+                    if (curEntry instanceof ItemEntry) {
+                        ItemEntry itemEntry = (ItemEntry) curEntry;
+                        Element itemElement = doc.createElement("item-entry");
+                        entryElement.appendChild(itemElement);
+                        itemElement.setAttribute("cardinality", Integer.toString(itemEntry.getCardinality()));
+                        writeAccessPopularity(doc, itemElement, itemEntry.getPopularity(), curEntry.getName());
                     }
 
                     /* Get entry type from the entry itself */
@@ -2730,6 +3555,8 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                                 asyncCallElement.setAttribute("dest", nodeHashMap.get(phaseAct.asyncCallDests.get(ac)));
                                 asyncCallElement.setAttribute("calls-mean", Double.toString(phaseAct.asyncCallMeans.get(ac)));
                             }
+
+                            writeCallGroups(doc, phaseActElement, phaseAct, nodeHashMap);
                         }
                     }
 
@@ -2795,6 +3622,8 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                         asyncCallElement.setAttribute("dest", nodeHashMap.get(curAct.asyncCallDests.get(ac)));
                         asyncCallElement.setAttribute("calls-mean", Double.toString(curAct.asyncCallMeans.get(ac)));
                     }
+
+                    writeCallGroups(doc, actElement, curAct, nodeHashMap);
                 }
 
                 /* ----------- PRECEDENCES ---------- */
@@ -2850,6 +3679,16 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                         }
                         postElement.setAttribute("end",
                                 curActPrec.postActs.get(curActPrec.postActs.size() - 1));
+                    } else if (curActPrec.postType.equals(ActivityPrecedenceType.POST_CACHE)) {
+                        // cache-result is explicit rather than positional, so a reader never has
+                        // to infer the hit branch from document order. Readers still fall back to
+                        // that order when the attribute is absent, so older files keep loading.
+                        for (int i = 0; i < curActPrec.postActs.size(); i++) {
+                            Element postActElement = doc.createElement("activity");
+                            postElement.appendChild(postActElement);
+                            postActElement.setAttribute("name", nodeHashMap.get(curActPrec.postActs.get(i)));
+                            postActElement.setAttribute("cache-result", i == 0 ? "hit" : "miss");
+                        }
                     } else {
                         for (String poa : curActPrec.postActs) {
                             Element postActElement = doc.createElement("activity");
@@ -2900,20 +3739,20 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                     if (curEntry.replyActivity.isEmpty()) {
                         LayeredNetworkStruct lsn = this.getStruct();
 
-                        /* locate the 1-based column of this entry inside lsn.replygraph   */
+                        /* locate the column of this entry inside lsn.replygraph   */
                         int eidx = -1;
                         for (Map.Entry<Integer, Entry> kv : this.entries.entrySet()) {
                             if (kv.getValue() == curEntry) {
-                                eidx = kv.getKey() + 1;              // entries are 0-based keyed, replygraph columns are 1-based
+                                eidx = kv.getKey();                  // entry-local index, as replygraph columns are
                                 break;
                             }
                         }
 
                         /* add every activity that replies to this entry, but only if it belongs to this task and is not a phase activity */
-                        if (eidx >= 1 && eidx < lsn.replygraph.getNumCols()) {
-                            for (int ra = 1; ra < lsn.replygraph.getNumRows(); ra++) {
+                        if (eidx >= 0 && eidx < lsn.replygraph.getNumCols()) {
+                            for (int ra = 0; ra < lsn.replygraph.getNumRows(); ra++) {
                                 if (lsn.replygraph.get(ra, eidx) != 0) {
-                                    String actName = lsn.names.get(lsn.ashift + ra); // replygraph rows are 1-based, matching names at ashift+ra
+                                    String actName = lsn.names.get(lsn.ashift + ra); // replygraph rows are activity-local, matching names at ashift+ra
                                     // Only add if the activity belongs to this task and is not already in entry-phase-activities
                                     if (taskActivityNames.contains(actName) && !phaseActivityNames.contains(actName)) {
                                         Integer actIndex = findActivityIndexByName(actName);
@@ -2961,13 +3800,105 @@ public class LayeredNetwork extends Ensemble implements Copyable {
     }
 
     /**
+     * LINE dialect &lt;call-group&gt;: which of the synch-calls written above one
+     * dispatcher issues, and under which strategy. The member calls stay ordinary
+     * synch-calls, so a reader that ignores this element still sees the same
+     * aggregate call means -- which is what lqns and lqsim, having no dispatcher,
+     * should see.
+     */
+    private static void writeCallGroups(Document doc, Element actElement, Activity act,
+                                        Map<String, String> nodeHashMap) {
+        for (Activity.CallGroup grp : act.getSyncCallGroups()) {
+            Element grpElement = doc.createElement("call-group");
+            actElement.appendChild(grpElement);
+            grpElement.setAttribute("strategy", callGroupStrategyName(grp.strategy));
+            for (String dest : grp.dests) {
+                Element destElement = doc.createElement("dest");
+                grpElement.appendChild(destElement);
+                destElement.setAttribute("name", nodeHashMap.get(dest));
+            }
+        }
+    }
+
+    /**
+     * RoutingStrategy -&gt; the wire enum name, spelled as the JSON interchange spells
+     * it. Only the two strategies a call group can be built with are named: WRROBIN
+     * would need per-target weights the group API does not take, and the remaining
+     * strategies are not dispatch policies at all, so an unnamed one is an error
+     * rather than a silent PROB.
+     */
+    private static String callGroupStrategyName(RoutingStrategy strategy) {
+        if (strategy == RoutingStrategy.RROBIN) {
+            return "RROBIN";
+        }
+        if (strategy == RoutingStrategy.JSQ) {
+            return "JSQ";
+        }
+        throw new IllegalArgumentException("Call groups carry RROBIN or JSQ; routing strategy "
+                + strategy + " cannot be written to .lqnx");
+    }
+
+    /**
+     * Wire enum name -&gt; RoutingStrategy, the inverse of callGroupStrategyName.
+     */
+    private static RoutingStrategy callGroupStrategyOf(String name, String actName) {
+        String key = name == null ? "" : name.trim().toUpperCase();
+        if (key.equals("RROBIN")) {
+            return RoutingStrategy.RROBIN;
+        }
+        if (key.equals("JSQ")) {
+            return RoutingStrategy.JSQ;
+        }
+        throw new IllegalArgumentException("Activity \"" + actName + "\" declares a call group with"
+                + " an unrecognized strategy \"" + name + "\"; the dialect spells them RROBIN and JSQ");
+    }
+
+    /**
+     * Reads the LINE dialect &lt;call-group&gt; children of an activity element into ACT.
+     *
+     * The member calls are ordinary synch-call elements and have already been read,
+     * so only the grouping is recorded; issuing them again would double the call rate.
+     */
+    private static void parseCallGroups(Element actElement, Activity act) {
+        NodeList children = actElement.getChildNodes();
+        for (int i = 0; i < children.getLength(); i++) {
+            if (!(children.item(i) instanceof Element)) {
+                continue;
+            }
+            Element grpElement = (Element) children.item(i);
+            if (!"call-group".equals(grpElement.getNodeName())) {
+                continue;
+            }
+            RoutingStrategy strategy =
+                    callGroupStrategyOf(grpElement.getAttribute("strategy"), act.getName());
+            List<String> dests = new ArrayList<>();
+            NodeList destNodes = grpElement.getChildNodes();
+            for (int j = 0; j < destNodes.getLength(); j++) {
+                if (!(destNodes.item(j) instanceof Element)) {
+                    continue;
+                }
+                Element destElement = (Element) destNodes.item(j);
+                if ("dest".equals(destElement.getNodeName())) {
+                    dests.add(destElement.getAttribute("name"));
+                }
+            }
+            act.recordCallGroup(strategy, dests);
+        }
+    }
+
+    /**
      * LQN-valid scheduling name for a processor/task in writeXML. LINE maps the LQN
      * "cfs" (completely fair scheduling) discipline onto GPS; write it back as "cfs"
      * so lqns/lqsim accept the round-tripped model (toText(GPS)="gps" is not valid LQN).
+     * The same holds for "pri", the lqns spelling of preemptive priority resume,
+     * which LINE holds as FCFSPRPRIO (toText gives "fcfsprprio", not valid LQN).
      */
     private static String lqnSchedText(SchedStrategy scheduling) {
         if (scheduling == SchedStrategy.GPS) {
             return "cfs";
+        }
+        if (scheduling == SchedStrategy.FCFSPRPRIO) {
+            return "pri";
         }
         return SchedStrategy.toText(scheduling);
     }
@@ -2999,6 +3930,43 @@ public class LayeredNetwork extends Ensemble implements Copyable {
      * Get the used language features by analyzing the layered network structure
      * @return FeatureSet containing all features used in this layered network
      */
+    /**
+     * Marks a host demand or think time under its registry name.
+     *
+     * Reads getFeatureName, as Network.getUsedLangFeatures does, and applies the
+     * same MarkedMAP / MarkedMMPP to MMAP normalization. The previous
+     * getClass().getSimpleName() was the JAVA CLASS name, which coincides with
+     * the registry name for most distributions and not for all of them -- and
+     * setTrue line_errors on a name it does not know, so an LQN whose host
+     * demand was one of the others crashed the feature scan instead of being
+     * gated by it.
+     *
+     * @param distribution the host demand or think time to mark
+     */
+    private void markDistribution(Distribution distribution) {
+        String feature = distribution.getFeatureName();
+        if ("MarkedMAP".equals(feature) || "MarkedMMPP".equals(feature)) {
+            feature = "MMAP";
+        }
+        this.usedFeatures.setTrue(feature);
+    }
+
+    /**
+     * Marks one side of an activity precedence, skipping the types that gate
+     * nothing (POST_LOOP, and a null side on a precedence built without one).
+     *
+     * @param precedenceType the preType or postType string
+     */
+    private void markPrecedence(String precedenceType) {
+        if (precedenceType == null) {
+            return;
+        }
+        String feature = ActivityPrecedenceType.toFeature(precedenceType);
+        if (feature.length() > 0) {
+            this.usedFeatures.setTrue(feature);
+        }
+    }
+
     public FeatureSet getUsedLangFeatures() {
         if (this.usedFeatures == null) {
             this.usedFeatures = new FeatureSet();
@@ -3006,6 +3974,10 @@ public class LayeredNetwork extends Ensemble implements Copyable {
 
         // Analyze hosts (processors)
         for (Host host : this.hosts.values()) {
+            // Host and Processor are the two registry spellings of the same
+            // construct, and getLNFeatureSet declares both.
+            this.usedFeatures.setTrue("Host");
+            this.usedFeatures.setTrue("Processor");
             // Mark processor scheduling features
             switch (host.scheduling) {
                 case INF:
@@ -3035,6 +4007,15 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                 case POLLING:
                     this.usedFeatures.setTrue("SchedStrategy_POLLING");
                     break;
+                case LCFS:
+                    this.usedFeatures.setTrue("SchedStrategy_LCFS");
+                    break;
+                case SIRO:
+                    this.usedFeatures.setTrue("SchedStrategy_SIRO");
+                    break;
+                case HOL:
+                    this.usedFeatures.setTrue("SchedStrategy_HOL");
+                    break;
                 default:
                     break;
             }
@@ -3042,10 +4023,15 @@ public class LayeredNetwork extends Ensemble implements Copyable {
 
         // Analyze tasks
         for (Task task : this.tasks.values()) {
+            this.usedFeatures.setTrue("Task");
             // Mark task scheduling features
             switch (task.scheduling) {
                 case REF:
-                    // Reference tasks are special in layered networks
+                    // A reference task IS a scheduling discipline, and the only
+                    // one every LQN carries, so leaving it unmarked made the
+                    // SchedStrategy_REF entry unreachable. SolverLDES, the sole
+                    // consumer of this set (getLNFeatureSet), already declares it.
+                    this.usedFeatures.setTrue("SchedStrategy_REF");
                     break;
                 case INF:
                     this.usedFeatures.setTrue("SchedStrategy_INF");
@@ -3053,47 +4039,75 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                 case FCFS:
                     this.usedFeatures.setTrue("SchedStrategy_FCFS");
                     break;
+                case LCFS:
+                    this.usedFeatures.setTrue("SchedStrategy_LCFS");
+                    break;
+                case SIRO:
+                    this.usedFeatures.setTrue("SchedStrategy_SIRO");
+                    break;
+                case HOL:
+                    this.usedFeatures.setTrue("SchedStrategy_HOL");
+                    break;
+                case PS:
+                    // Recorded for completeness. The featset carries one
+                    // SchedStrategy_PS name for hosts and tasks alike, so a PS task
+                    // passes the gate and is rejected imperatively by the engine
+                    // that cannot serve it (a task holds threads, it does not
+                    // divide them).
+                    this.usedFeatures.setTrue("SchedStrategy_PS");
+                    break;
                 default:
                     break;
             }
 
             // Analyze think time distribution
             if (task.thinkTime != null && !(task.thinkTime instanceof Immediate)) {
-                String distName = task.thinkTime.getClass().getSimpleName();
-                this.usedFeatures.setTrue(distName);
+                markDistribution(task.thinkTime);
             }
 
             // Check if it's a cache task
             if (task instanceof CacheTask) {
                 this.usedFeatures.setTrue("Cache");
-                CacheTask cacheTask = (CacheTask) task;
-                // Mark replacement strategy features if available
-                // Note: replacement strategy handling would go here
+                this.usedFeatures.setTrue("CacheTask");
+                this.usedFeatures.setTrue(
+                        ReplacementStrategy.toFeature(((CacheTask) task).replacestrategy));
             }
         }
 
         // Analyze activities
         for (Activity activity : this.activities.values()) {
+            this.usedFeatures.setTrue("Activity");
             // Analyze host demand distribution
             if (activity.hostDemand != null && !(activity.hostDemand instanceof Immediate)) {
-                String distName = activity.hostDemand.getClass().getSimpleName();
-                this.usedFeatures.setTrue(distName);
+                markDistribution(activity.hostDemand);
             }
 
             // Mark call features
             if (!activity.syncCallDests.isEmpty()) {
-                // Has synchronous calls
+                this.usedFeatures.setTrue("SyncCall");
             }
             if (!activity.asyncCallDests.isEmpty()) {
-                // Has asynchronous calls
+                this.usedFeatures.setTrue("AsyncCall");
             }
         }
 
         // Analyze entries
         for (Entry entry : this.entries.values()) {
+            this.usedFeatures.setTrue("Entry");
             if (entry instanceof ItemEntry) {
                 // Item-based entries for cache modeling
                 this.usedFeatures.setTrue("Cache");
+                this.usedFeatures.setTrue("ItemEntry");
+            }
+        }
+
+        // Analyze activity precedences. The six ActivityPrecedence_ entries are
+        // declared by getLNFeatureSet and were emitted by nothing, so an OR-fork
+        // reached a solver that does not implement one exactly as a sequence did.
+        for (Task task : this.tasks.values()) {
+            for (ActivityPrecedence precedence : task.getPrecedences()) {
+                markPrecedence(precedence.getPreType());
+                markPrecedence(precedence.getPostType());
             }
         }
 
@@ -3160,6 +4174,29 @@ public class LayeredNetwork extends Ensemble implements Copyable {
     }
 
     /**
+     * Per-operand peak rate scaling of a class- or joint-dependence declaration,
+     * broadcasting a 1x1 declaration onto the server's operands.
+     */
+    private static Matrix expandPeak(Matrix peak, int ncols, String elemname, String colwhat, String what) {
+        if (peak.length() == 1) {
+            Matrix out = new Matrix(1, ncols);
+            for (int j = 0; j < ncols; j++) {
+                out.set(0, j, peak.get(0));
+            }
+            return out;
+        }
+        if (peak.length() != ncols) {
+            throw new IllegalArgumentException(what + "-dependence peak rate on " + elemname + " has "
+                    + peak.length() + " entries but there are " + ncols + " " + colwhat + ".");
+        }
+        Matrix out = new Matrix(1, ncols);
+        for (int j = 0; j < ncols; j++) {
+            out.set(0, j, peak.get(j));
+        }
+        return out;
+    }
+
+    /**
      * Helper class to hold extracted distribution parameters
      */
     private static class DistParams {
@@ -3176,6 +4213,25 @@ public class LayeredNetwork extends Ensemble implements Copyable {
             this.scv = scv;
             this.proc = proc;
         }
+    }
+
+    /**
+     * Distribution of the number of calls issued per invocation.
+     *
+     * A mean below 1 is a call that either happens or does not, hence Bernoulli.
+     * Geometric(1/m) is undefined there: its parameter would exceed 1 and its SCV
+     * (1-p) would come out negative.
+     *
+     * @param meanCalls mean number of calls
+     * @return the call-count distribution
+     */
+    public static Distribution callCountDist(double meanCalls) {
+        if (Double.isNaN(meanCalls) || meanCalls <= GlobalConstants.FineTol) {
+            return new Immediate();
+        } else if (meanCalls < 1.0) {
+            return new Bernoulli(meanCalls);
+        }
+        return new Geometric(1.0 / meanCalls);
     }
 
     /**

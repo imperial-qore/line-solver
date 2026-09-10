@@ -15,37 +15,28 @@ sched = sn.sched;
 M = sn.nstations;
 K = sn.nchains;
 
-if ~sn_has_product_form(sn)
+% METHOD 'mva' IS THE DELIBERATE APPROXIMATION: SolverMVA.mvaDispatch already
+% warns that the exact recursion is being run outside its hypotheses and
+% promises an answer, so erroring here would contradict its own message. Only
+% an implicit or 'exact' request is refused.
+if ~sn_has_product_form(sn) && ~(isfield(options,'method') && strcmp(options.method,'mva'))
     line_error(mfilename, 'Unsupported exact MVA analysis, the model does not have a product form');
 end
 
-% Check for special LCFS + LCFS-PR 2-station network
+% Check for special LCFS + LCFS-PR 2-station network. The pairing, the station
+% and server counts, the closed population and the self-loop rule are judged by
+% SolverMVA.supportsLcfs, the predicate the report gates on, so a pair the
+% report calls runnable is one that runs here.
 lcfsStat = find(sched == SchedStrategy.LCFS);
-lcfsprStat = find(sched == SchedStrategy.LCFSPR);
-if ~isempty(lcfsStat) && ~isempty(lcfsprStat)
-    % Validate LCFS network topology
-    if length(lcfsStat) ~= 1 || length(lcfsprStat) ~= 1
-        line_error(mfilename, 'LCFS MVA requires exactly one LCFS and one LCFS-PR station.');
+if ~isempty(lcfsStat)
+    [lcfsOk, lcfsReason] = SolverMVA.supportsLcfs(sn, 'mva');
+    if ~lcfsOk
+        line_error(mfilename, lcfsReason);
     end
-    if any(isinf(Nchain))
-        line_error(mfilename, 'LCFS MVA requires a closed queueing network.');
-    end
-    % Check for self-loops in routing matrix
-    rt = sn.rt;
-    nclasses = sn.nclasses;
-    for ist = [lcfsStat, lcfsprStat]
-        for r = 1:nclasses
-            if rt((ist-1)*nclasses+r, (ist-1)*nclasses+r) > 0
-                line_error(mfilename, 'LCFS MVA does not support self-loops at stations.');
-            end
-        end
-    end
+    lcfsprStat = find(sched == SchedStrategy.LCFSPR);
     % Call specialized LCFS MVA solver
     [Q,U,R,T,C,X,lG] = solver_mva_lcfsqn(sn, options, lcfsStat, lcfsprStat);
     return;
-elseif ~isempty(lcfsStat)
-    % LCFS without LCFS-PR is not supported
-    line_error(mfilename, 'LCFS scheduling requires a paired LCFS-PR station.');
 end
 
 infSET =[]; % set of infinite server stations
@@ -77,7 +68,21 @@ if any(isinf(Nchain))
 end
 rset = setdiff(1:K,find(Nchain==0));
 
-[Xchain,Qpf,Uchain,~,lG] = pfqn_mvams(lambda,STchain(qSET,:).*Vchain(qSET,:),Nchain,STchain(infSET,:).*Vchain(infSET,:),ones(length(qSET),1),nservers(qSET));
+% Interlocked flow (Franks 1999, Eq. 4.7): a request cannot queue behind work
+% that its own submission caused, so the arrival-instant queue drops the
+% interlocked share of the other chains. SolverLN supplies the matrix.
+IL = [];
+if isfield(options,'config') && isfield(options.config,'interlock') && ~isempty(options.config.interlock)
+    IL = sn_interlock_chain(sn, options.config.interlock);
+end
+
+% the interlocked recursion is a separate entry point: pfqn_mvams and the
+% pfqn_mva family it dispatches to carry the standard arrival theorem only
+if isempty(IL)
+    [Xchain,Qpf,Uchain,~,lG] = pfqn_mvams(lambda,STchain(qSET,:).*Vchain(qSET,:),Nchain,STchain(infSET,:).*Vchain(infSET,:),ones(length(qSET),1),nservers(qSET));
+else
+    [Xchain,Qpf,Uchain,~,lG] = pfqn_mvams_ilock(lambda,STchain(qSET,:).*Vchain(qSET,:),Nchain,STchain(infSET,:).*Vchain(infSET,:),ones(length(qSET),1),nservers(qSET),IL);
+end
 Qchain(qSET,:) = Qpf;
 Qchain(infSET,:) = repmat(Xchain,numel(infSET),1) .* STchain(infSET,:) .* Vchain(infSET,:);
 

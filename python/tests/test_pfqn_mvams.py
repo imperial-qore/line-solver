@@ -40,7 +40,8 @@ BRANCHES = [
 ]
 
 
-@pytest.mark.parametrize('name,lam,N,S', BRANCHES)
+@pytest.mark.parametrize('name,lam,N,S', BRANCHES,
+                         ids=[b[0] for b in BRANCHES])
 def test_residence_time_contract_on_every_branch(name, lam, N, S):
     """CN must be an (M x R) residence time satisfying QN = XN*CN, on every branch."""
     X, Q, U, C, lG = pfqn_mvams(np.array(lam), L, np.array(N), Z,

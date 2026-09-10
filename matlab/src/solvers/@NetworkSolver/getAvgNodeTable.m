@@ -1,9 +1,22 @@
-function [AvgTable,QT,UT,RT,WT,AT,TT] = getAvgNodeTable(self,Q,U,R,T,A,W,keepDisabled)
+function varargout = getAvgNodeTable(self,varargin)
 % [AVGTABLE,QT,UT,RT,WT,AT,TT] = GETNODEAVGTABLE(SELF,Q,U,R,T,A,W,KEEPDISABLED)
 % Return table of average node metrics
 %
 % Copyright (c) 2012-2026, Imperial College London
 % All rights reserved.
+% The result recorder captures the returned table together with the solver
+% that produced it, so cross-codebase parity is asserted against the values a
+% solver RETURNED rather than the text it printed. Off unless a run asked for
+% it (LineResultRecorder.enable), and then it costs one appdata lookup here.
+% The wrapper exists so that recording happens on EVERY exit path, including
+% the early returns inside the implementation below.
+[scope, scopeGuard] = LineResultRecorder.enter(); %#ok<ASGLU>
+[varargout{1:max(nargout,1)}] = getAvgNodeTable_impl(self,varargin{:});
+LineResultRecorder.capture(scope, self, 'node', varargout{1});
+end
+
+function [AvgTable,QT,UT,RT,WT,AT,TT] = getAvgNodeTable_impl(self,Q,U,R,T,A,W,keepDisabled)
+% GETAVGNODETABLE_IMPL Implementation of GETAVGNODETABLE; see the wrapper above.
 
 if nargin<8 %~exist('keepDisabled','var')
     keepDisabled = false;

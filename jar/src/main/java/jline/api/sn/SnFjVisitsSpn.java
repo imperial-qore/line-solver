@@ -23,6 +23,7 @@ import jline.lang.NetworkStruct;
 import jline.lang.RoutingMatrix;
 import jline.lang.constant.NodeType;
 import jline.lang.constant.TimingStrategy;
+import jline.lang.nodeparam.ForkNodeParam;
 import jline.lang.nodes.Place;
 import jline.lang.nodes.Transition;
 import jline.lang.processes.Exp;
@@ -30,11 +31,23 @@ import jline.solvers.NetworkAvgTable;
 import jline.solvers.ctmc.SolverCTMC;
 import jline.util.matrix.Matrix;
 
+import static jline.io.InputOutput.line_error;
+import static jline.io.InputOutput.mfilename;
+
 public final class SnFjVisitsSpn {
     private SnFjVisitsSpn() {}
 
     /**
      * Compute fork-join node visit ratios via auxiliary SPN models.
+     *
+     * The net is solved through SolverCTMC, as in MATLAB. Its throughput ratios
+     * are NOT uniform across the station Places: the pre-fork transition
+     * consumes all B tokens at once and the Join returns them, so a station
+     * inside a fork-join region fires once per B firings of the cycle. After the
+     * normalisation on the reference station, a station outside the region
+     * carries 1, a station inside it carries 1/B, and a Fork or a Join, which
+     * holds no Place, carries 0. The Python and C++ ports evaluate that rule
+     * analytically instead of enumerating the state space.
      */
     public static List<Matrix> snFjVisitsSpn(NetworkStruct sn) {
         int I = sn.nnodes;
@@ -134,13 +147,34 @@ public final class SnFjVisitsSpn {
     }
 
     private static List<Integer> resolveForkDests(NetworkStruct sn, double[][] P_r, boolean[] visited, int forkNd) {
+        return resolveForkDests(sn, P_r, visited, forkNd, 0, 1.0, null);
+    }
+
+    /**
+     * Recursively resolve a Fork's destinations down to station nodes.
+     *
+     * <p>When {@code weights} is non-null it collects the EXPECTED number of
+     * tasks each leaf receives per firing of the outermost fork: P(branch fires)
+     * times E[tasks on that link], multiplied down through any nesting. A plain
+     * fork gives every link exactly 1, so the weighted leaf count collapses to
+     * the leaf count it always was.</p>
+     */
+    private static List<Integer> resolveForkDests(NetworkStruct sn, double[][] P_r, boolean[] visited,
+                                                  int forkNd, int r, double w, List<Double> weights) {
         List<Integer> stDests = new ArrayList<Integer>();
+        ForkNodeParam fp = null;
+        Object po = (sn.nodeparam != null) ? sn.nodeparam.get(sn.nodes.get(forkNd)) : null;
+        if (po instanceof ForkNodeParam) fp = (ForkNodeParam) po;
+        boolean hasFan = fp != null && fp.fanOutLink != null;
         for (int bd = 0; bd < sn.nnodes; bd++) {
             if (P_r[forkNd][bd] > 0 && visited[bd]) {
+                double wbd = w;
+                if (hasFan) wbd = w * fp.fanOutProb.get(bd, r) * fp.fanOutLink.get(bd, r);
                 if (sn.nodetype.get(bd) == NodeType.Fork) {
-                    stDests.addAll(resolveForkDests(sn, P_r, visited, bd));
+                    stDests.addAll(resolveForkDests(sn, P_r, visited, bd, r, wbd, weights));
                 } else if (sn.isstation.get(bd, 0) > 0) {
                     stDests.add(bd);
+                    if (weights != null) weights.add(Double.valueOf(wbd));
                 }
             }
         }
@@ -188,7 +222,7 @@ public final class SnFjVisitsSpn {
             }
         }
 
-        int B = 0;
+        double B = 0.0;
         for (Integer fnd : forkNodes) {
             boolean isOutermost = true;
             for (int srcNd = 0; srcNd < I; srcNd++) {
@@ -200,11 +234,55 @@ public final class SnFjVisitsSpn {
                 }
             }
             if (isOutermost) {
-                List<Integer> leafs = resolveForkDests(sn, P_r, visited, fnd);
-                if (leafs.size() > B) B = leafs.size();
+                List<Double> leafw = new ArrayList<Double>();
+                List<Integer> leafs = resolveForkDests(sn, P_r, visited, fnd, r, 1.0, leafw);
+                if (leafs.isEmpty()) {
+                    line_error(mfilename(new Object() {}),
+                            "A Fork reaches no station on any branch, so the auxiliary net has "
+                            + "nothing to synchronize.");
+                }
+                // The EXPECTED sibling count, which is the leaf count exactly
+                // when every link is certain and carries one task.
+                double expected = 0.0;
+                for (Double d : leafw) expected += d.doubleValue();
+                if (expected <= 0.0) {
+                    line_error(mfilename(new Object() {}),
+                            "A Fork emits no task in expectation, so its Join can never fire; at "
+                            + "least one branch must be certain to emit at least one task.");
+                }
+                if (expected > B) B = expected;
             }
         }
-        if (B == 0) B = 1;
+        if (B == 0.0) B = 1.0;
+
+        // THE NET BELOW IS THE PLAIN FORK'S NET. It puts B tokens in a closed
+        // SPN whose pre-fork transition emits ONE token per branch, so it is
+        // balanced only when every branch carries exactly one task: give it a
+        // fork whose links carry three each, and it deadlocks and reports zero
+        // throughput everywhere. Under a variable forking level B is the
+        // expected sibling count, which is generally not an integer either --
+        // and a fractional token population is not a net anyone can enumerate.
+        // The rule that solve produces is available in closed form and is what
+        // answers whenever the fork varies. The plain fork keeps taking the
+        // solve, which is what holds the two in step.
+        boolean isVariableFork = false;
+        for (Integer fnd : forkNodes) {
+            Object po = (sn.nodeparam != null) ? sn.nodeparam.get(sn.nodes.get(fnd)) : null;
+            if (!(po instanceof ForkNodeParam)) continue;
+            ForkNodeParam fp = (ForkNodeParam) po;
+            if (fp.fanOutLink == null) continue;
+            for (int k = 0; k < fp.fanOutLink.getNumRows() && !isVariableFork; k++)
+                for (int rr = 0; rr < fp.fanOutLink.getNumCols() && !isVariableFork; rr++) {
+                    if (fp.fanOutProb.get(k, rr) == 0.0) continue;  // link not taken
+                    if (fp.fanOutProb.get(k, rr) != 1.0) isVariableFork = true;
+                    if (fp.fanOutLink.get(k, rr) != fp.fanOut) isVariableFork = true;
+                    if (fp.fanOutDist != null && fp.fanOutDist[k][rr] != null) isVariableFork = true;
+                }
+        }
+        if (isVariableFork || Math.abs(B - Math.round(B)) > GlobalConstants.FineTol) {
+            return closedFormVisits(sn, P_r, visited, forkNodes, stationNodes, B);
+        }
+        int Bint = (int) Math.round(B);
 
         Network model = new Network("fj_spn_aux");
 
@@ -242,7 +320,7 @@ public final class SnFjVisitsSpn {
             }
         }
 
-        ClosedClass jobclass = new ClosedClass(model, "Token", B, places[refnode]);
+        ClosedClass jobclass = new ClosedClass(model, "Token", Bint, places[refnode]);
 
         List<Transition> transitions = new ArrayList<Transition>();
         List<List<Place>> transInfoInPlaces = new ArrayList<List<Place>>();
@@ -268,7 +346,7 @@ public final class SnFjVisitsSpn {
 
                 if (sn.nodetype.get(dstNd) == NodeType.Fork) {
                     List<Integer> forkDests = resolveForkDests(sn, P_r, visited, dstNd);
-                    enableCount = B;
+                    enableCount = Bint;
                     for (Integer fd : forkDests) {
                         if (places[fd] != null) outPlaces.add(places[fd]);
                     }
@@ -385,8 +463,8 @@ public final class SnFjVisitsSpn {
                 T.setTimingStrategy(mode, TimingStrategy.IMMEDIATE);
                 T.setFiringWeights(mode, 1.0);
 
-                T.setEnablingConditions(mode, jobclass, interJF[jnd], B);
-                T.setFiringOutcome(mode, jobclass, interJF[jnd], -B);
+                T.setEnablingConditions(mode, jobclass, interJF[jnd], Bint);
+                T.setFiringOutcome(mode, jobclass, interJF[jnd], -Bint);
                 List<Place> forkOut = new ArrayList<Place>();
                 for (Integer fd : forkDests) {
                     if (places[fd] != null) {
@@ -417,7 +495,7 @@ public final class SnFjVisitsSpn {
         }
         model.link(R);
 
-        places[refnode].setState(B);
+        places[refnode].setState(Bint);
         for (int i = 0; i < I; i++) {
             if (places[i] != null && i != refnode) {
                 places[i].setState(0);
@@ -448,6 +526,45 @@ public final class SnFjVisitsSpn {
             InputOutput.line_warning("snFjVisitsSpn", "SPN CTMC solve failed for class " + r + ": " + e.getMessage());
         }
 
+        return visits_r;
+    }
+
+    /**
+     * The visit rule the SPN solve produces, evaluated directly.
+     *
+     * <p>Used when the circulating population B is FRACTIONAL, which a variable
+     * forking level makes it: there is no net with a fractional token count to
+     * build, so there is nothing to solve. A station outside the fork-join
+     * region carries 1, one inside it carries 1/B, and a Fork or a Join, which
+     * holds no Place, carries 0.</p>
+     */
+    private static double[] closedFormVisits(NetworkStruct sn, double[][] P_r, boolean[] visited,
+                                             List<Integer> forkNodes, List<Integer> stationNodes,
+                                             double B) {
+        int I = sn.nnodes;
+        double[] visits_r = new double[I];
+        boolean[] inRegion = new boolean[I];
+        for (Integer fnd : forkNodes) {
+            boolean outermost = true;
+            for (int srcNd = 0; srcNd < I && outermost; srcNd++)
+                if (P_r[srcNd][fnd] > 0 && visited[srcNd]
+                        && sn.nodetype.get(srcNd) == NodeType.Join) outermost = false;
+            if (!outermost) continue;  // a serial stage, inside a region already fixed
+            List<Integer> frontier = new ArrayList<Integer>();
+            frontier.add(fnd);
+            for (int h = 0; h < frontier.size(); h++) {
+                int nd = frontier.get(h).intValue();
+                for (int j = 0; j < I; j++) {
+                    if (!(P_r[nd][j] > 0) || !visited[j]) continue;
+                    if (sn.nodetype.get(j) == NodeType.Join || inRegion[j]) continue;
+                    inRegion[j] = true;
+                    frontier.add(Integer.valueOf(j));
+                }
+            }
+        }
+        for (Integer nd : stationNodes) {
+            visits_r[nd.intValue()] = inRegion[nd.intValue()] ? (1.0 / B) : 1.0;
+        }
         return visits_r;
     }
 }

@@ -152,6 +152,10 @@ def sn_get_buffer_size(sn, ist) -> float:
     never refuse a job and is returned as inf. The population sum is inf as
     soon as one class is open, so any finite capacity reachable by an open
     class binds.
+
+    The population counted is the one that can REACH this station, not the
+    model's total: summing every class made a MIXED model read as
+    finite-buffered at stations an open class never visits.
     """
     n = np.inf
     cap = getattr(sn, 'cap', None)
@@ -159,18 +163,24 @@ def sn_get_buffer_size(sn, ist) -> float:
         cap = np.asarray(cap, dtype=float).ravel()
         if ist < cap.size and cap[ist] >= 0:
             n = min(n, cap[ist])
+    reach = None
     classcap = getattr(sn, 'classcap', None)
     if classcap is not None:
         classcap = np.asarray(classcap, dtype=float)
         if ist < classcap.shape[0]:
-            row = classcap[ist, :]
-            row = row[row > 0]
+            reach = classcap[ist, :] > 0
+            row = classcap[ist, :][reach]
             if row.size:
                 n = min(n, float(np.sum(row)))
     njobs = getattr(sn, 'njobs', None)
     if njobs is not None:
-        total_jobs = float(np.sum(np.asarray(njobs, dtype=float)))
-        if n >= total_jobs:
+        njobs = np.asarray(njobs, dtype=float).ravel()
+        if reach is not None and reach.size >= njobs.size:
+            sel = reach[:njobs.size]
+        else:
+            sel = np.ones(njobs.size, dtype=bool)
+        reachable_jobs = float(np.sum(njobs[sel])) if np.any(sel) else 0.0
+        if n >= reachable_jobs:
             n = np.inf  # declared but unreachable: it can never refuse a job
     return n
 

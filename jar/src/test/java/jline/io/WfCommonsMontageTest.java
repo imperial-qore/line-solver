@@ -6,6 +6,7 @@
 package jline.io;
 
 import jline.lang.processes.APH;
+import jline.lang.processes.Markovian;
 import jline.lang.workflow.Workflow;
 import jline.lang.workflow.WorkflowActivity;
 import org.junit.jupiter.api.Test;
@@ -132,7 +133,7 @@ public class WfCommonsMontageTest {
         assertNotNull(wf.getActivity("ID0000006"));
 
         // Verify PH representation can be computed
-        APH ph = wf.toPH();
+        Markovian ph = wf.toPH();
         assertNotNull(ph);
         assertTrue(ph.getMean() > 0);
     }
@@ -200,7 +201,7 @@ public class WfCommonsMontageTest {
         Workflow wf = WfCommonsLoader.loadFromString(json);
         assertEquals(5, wf.getActivities().size());
 
-        APH ph = wf.toPH();
+        Markovian ph = wf.toPH();
         // Critical path: mProject1 (15) + mDiffFit1 (0.1) + mConcatFit (0.2) = 15.3
         // or mProject2 (12) + ... so max is around 15.3
         // Due to parallel structure, mean should be > individual task times
@@ -225,7 +226,7 @@ public class WfCommonsMontageTest {
 
         WfCommonsOptions options = WfCommonsOptions.deterministic();
         Workflow wf = WfCommonsLoader.loadFromString(json, options);
-        APH ph = wf.toPH();
+        Markovian ph = wf.toPH();
 
         // Serial workflow: mean = 5.0 + 3.0 = 8.0
         assertEquals(8.0, ph.getMean(), VERY_COARSE_TOL);
@@ -253,7 +254,7 @@ public class WfCommonsMontageTest {
         writer.close();
 
         Workflow wf = WfCommonsLoader.load(tempFile.getAbsolutePath());
-        APH ph = wf.toPH();
+        Markovian ph = wf.toPH();
 
         assertEquals(5.0, ph.getMean(), VERY_COARSE_TOL);
         assertEquals(2, wf.getActivities().size());
@@ -311,7 +312,7 @@ public class WfCommonsMontageTest {
         assertNotNull(wf.getActivity("mShrink_1"));
 
         // Verify PH representation
-        APH ph = wf.toPH();
+        Markovian ph = wf.toPH();
         assertNotNull(ph);
         assertTrue(ph.getMean() > 0);
 

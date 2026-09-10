@@ -229,7 +229,7 @@ classdef WfCommonsLoader < handle
             end
 
             % Build execution data map if available
-            execMap = containers.Map();
+            execMap = configureDictionary('string','cell');
             if options.useExecutionData
                 if isLegacySchema
                     % Schema 1.4: runtime data is embedded in task objects
@@ -237,13 +237,13 @@ classdef WfCommonsLoader < handle
                         for i = 1:length(tasks)
                             task = tasks(i);
                             taskId = WfCommonsLoader.getTaskId(task, i);
-                            execMap(taskId) = task;
+                            execMap{taskId} = task;
                         end
                     elseif iscell(tasks)
                         for i = 1:length(tasks)
                             task = tasks{i};
                             taskId = WfCommonsLoader.getTaskId(task, i);
-                            execMap(taskId) = task;
+                            execMap{taskId} = task;
                         end
                     end
                 elseif isfield(data.workflow, 'execution')
@@ -253,11 +253,11 @@ classdef WfCommonsLoader < handle
                         execTasks = exec.tasks;
                         if isstruct(execTasks)
                             for i = 1:length(execTasks)
-                                execMap(execTasks(i).id) = execTasks(i);
+                                execMap{execTasks(i).id} = execTasks(i);
                             end
                         elseif iscell(execTasks)
                             for i = 1:length(execTasks)
-                                execMap(execTasks{i}.id) = execTasks{i};
+                                execMap{execTasks{i}.id} = execTasks{i};
                             end
                         end
                     end
@@ -265,8 +265,8 @@ classdef WfCommonsLoader < handle
             end
 
             % Phase 1: Create all activities
-            taskMap = containers.Map();
-            taskIdxMap = containers.Map();
+            taskMap = configureDictionary('string','cell');
+            taskIdxMap = configureDictionary('string','double');
             n = length(tasks);
 
             for i = 1:n
@@ -282,7 +282,7 @@ classdef WfCommonsLoader < handle
                 % Get runtime from execution data
                 runtime = options.defaultRuntime;
                 if isKey(execMap, taskId)
-                    execData = execMap(taskId);
+                    execData = execMap{taskId};
                     if isfield(execData, 'runtimeInSeconds')
                         runtime = execData.runtimeInSeconds;
                     end
@@ -293,7 +293,7 @@ classdef WfCommonsLoader < handle
 
                 % Create activity
                 act = wf.addActivity(taskId, dist);
-                taskMap(taskId) = act;
+                taskMap{taskId} = act;
                 taskIdxMap(taskId) = i;
 
                 % Store metadata if requested
@@ -363,7 +363,7 @@ classdef WfCommonsLoader < handle
             end
 
             if isKey(execMap, taskId)
-                exec = execMap(taskId);
+                exec = execMap{taskId};
                 fields = {'executedAt', 'command', 'coreCount', 'avgCPU', ...
                           'readBytes', 'writtenBytes', 'memoryInBytes', ...
                           'energyInKWh', 'avgPowerInW', 'priority', 'machines'};
@@ -443,7 +443,7 @@ classdef WfCommonsLoader < handle
                         end
 
                         preTaskId = WfCommonsLoader.getTaskId(preTask, i);
-                        preAct = taskMap(preTaskId);
+                        preAct = taskMap{preTaskId};
                         postActs = cell(1, length(children));
                         for j = 1:length(children)
                             if isstruct(tasks)
@@ -452,10 +452,10 @@ classdef WfCommonsLoader < handle
                                 childTask = tasks{children(j)};
                             end
                             childTaskId = WfCommonsLoader.getTaskId(childTask, children(j));
-                            postActs{j} = taskMap(childTaskId);
+                            postActs{j} = taskMap{childTaskId};
                         end
                         postTaskId = WfCommonsLoader.getTaskId(postTask, joinPoint);
-                        postAct = taskMap(postTaskId);
+                        postAct = taskMap{postTaskId};
 
                         % Add fork and join
                         wf.addPrecedence(Workflow.AndFork(preAct, postActs));
@@ -484,8 +484,8 @@ classdef WfCommonsLoader < handle
 
                         preTaskId = WfCommonsLoader.getTaskId(preTask, i);
                         postTaskId = WfCommonsLoader.getTaskId(postTask, j);
-                        preAct = taskMap(preTaskId);
-                        postAct = taskMap(postTaskId);
+                        preAct = taskMap{preTaskId};
+                        postAct = taskMap{postTaskId};
                         wf.addPrecedence(Workflow.Serial(preAct, postAct));
                     end
                 end

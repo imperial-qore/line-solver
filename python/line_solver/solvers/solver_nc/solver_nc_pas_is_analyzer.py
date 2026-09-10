@@ -67,12 +67,39 @@ def nc_is_pas_model(sn) -> bool:
     return True
 
 
+#: Count vectors kept per rank-rate handle. Each entry is one small index
+#: array; the cap bounds the memo on models whose population makes the set of
+#: reachable count vectors large, and a miss past it simply rebuilds.
+_MICROSTATE_MEMO_LIMIT = 1 << 17
+
+
 def _make_rank_rate(fun):
     """OI rank rate on a per-class count vector n. svcRateFun(c) takes an
     ordered microstate list; for an OI station it is permutation-invariant, so
-    evaluate it on a canonical microstate holding n_r copies of class r."""
-    return lambda n: fun(np.repeat(np.arange(np.asarray(n).size),
-                                   np.round(np.asarray(n)).astype(int)))
+    evaluate it on a canonical microstate holding n_r copies of class r.
+
+    The microstate is MEMOIZED on the count vector, because the importance
+    sampler walks the same prefix occupancies over and over: pfqn_pas_is calls
+    this handle 2*(ell+1) times per sampled ordering, and rebuilding the
+    representative each time made the arange/repeat/round/astype quartet -- not
+    the balance function it exists to evaluate -- the single largest cost of
+    SolverNC method='sampling'. The value depends on nothing but the counts, so
+    the memo returns what the rebuild would have returned, bit for bit.
+    """
+    memo = {}
+
+    def rank_rate(n):
+        counts = np.asarray(n)
+        key = counts.tobytes()
+        micro = memo.get(key)
+        if micro is None:
+            micro = np.repeat(np.arange(counts.size),
+                              np.round(counts).astype(int))
+            if len(memo) < _MICROSTATE_MEMO_LIMIT:
+                memo[key] = micro
+        return fun(micro)
+
+    return rank_rate
 
 
 def solver_nc_pas_is_analyzer(sn, options):
@@ -154,12 +181,16 @@ def solver_nc_pas_is_analyzer(sn, options):
     Q[1, :] = Qpas[1, :]
 
     # ---- per-class throughput X_r = G(N - e_r)/G(N) (common random numbers)-
+    # Only the constant is read here, so these runs skip the prefix-count
+    # coefficients: same stream, same G, none of the queue-length bookkeeping.
+    isopt_G = dict(isopt)
+    isopt_G['qlen'] = False
     X = np.zeros(K)
     for r in range(K):
         if N[r] > 0:
             er = np.zeros(K, dtype=int)
             er[r] = 1
-            Gr, _, _ = pfqn_pas_is(N - er, mu, H, isopt)
+            Gr, _, _ = pfqn_pas_is(N - er, mu, H, isopt_G)
             if G > 0:
                 X[r] = Gr / G
 

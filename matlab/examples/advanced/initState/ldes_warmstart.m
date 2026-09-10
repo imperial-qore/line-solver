@@ -39,7 +39,7 @@ fprintf('Warm placement from SolverMVA (%.3fs): %s\n\n', initTime, mat2str(initS
 % On a small instance, SolverCTMC yields the mode of the exact stationary
 % distribution instead (feasible when the state space is small):
 mS = buildModel(20);
-protoCtmc = SolverLDES(mS, SolverCTMC(mS));
+protoCtmc = SolverLDES(mS, SolverCTMC(mS,'exact'));
 fprintf('CTMC distribution-mode placement (N=20): %s\n\n', mat2str(protoCtmc.options.init_sol));
 
 % Compare accuracy and wall-clock time of cold vs warm starts

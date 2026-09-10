@@ -305,18 +305,29 @@ while max(max(abs(TN-TN_1))) > tol && it <= options.iter_max %#ok<max>
                                 end
                                 chainIsMarkovian = mam_chain_arrival_is_markovian(sn, c);
                                 if c == 1
-                                    if chainIsMarkovian
-                                        aggrArrivalAtNode = mmap_super_safe({chainArrivalAtNode{c}, mmap_exponential(0,1)}, config.space_max, 'default');
-                                        aggrArrivalAtNode = {aggrArrivalAtNode{1} aggrArrivalAtNode{2} aggrArrivalAtNode{2}};
-                                    else
-                                        % ME/RAP: build {D0,D1,D1} shape directly (avoid
-                                        % mmap_super normalize); see _kb/06-solver-catalog.md for rationale
-                                        aggrArrivalAtNode = {chainArrivalAtNode{c}{1}, chainArrivalAtNode{c}{2}, chainArrivalAtNode{c}{2}};
-                                    end
-                                    lc = map_lambda(chainArrivalAtNode{c});
-                                    if lc>0
-                                        aggrArrivalAtNode = mmap_scale(aggrArrivalAtNode, 1/lc, 0); % non-iterative approximation
-                                    end
+                                    % CHAIN 1 KEEPS ITS OWN PER-CLASS MARKS. This
+                                    % used to superpose the chain with a zero-rate
+                                    % exponential and then take {D0, D1, D1}, which
+                                    % LUMPS every class of chain 1 into ONE mark,
+                                    % and then rescale that lump to the chain rate.
+                                    % Chains 2..C contribute their per-class marks,
+                                    % so the aggregate carried
+                                    % 1 + sum_{c>1}|inchain_c| marks instead of K
+                                    % and every downstream read indexed by class was
+                                    % off. It only agreed when chain 1 held exactly
+                                    % one class, which is why every model with a
+                                    % class-switching chain failed outright:
+                                    % cqn_multiserver raised "Arrays have
+                                    % incompatible sizes" at the aggrUtil division
+                                    % and a two-class single-chain model raised
+                                    % "varargout{2} not assigned" inside MMAPPH1FCFS.
+                                    %
+                                    % The dropped 1/lc rescale was the same
+                                    % asymmetry: chains 2..C never got one, and for a
+                                    % single-class chain it merely repeated the
+                                    % mmap_scale already applied above, which is why
+                                    % removing it leaves those models bit-identical.
+                                    aggrArrivalAtNode = chainArrivalAtNode{c};
                                 else
                                     if ~chainIsMarkovian
                                         % ME/RAP correlation only approximated under superposition;
@@ -327,6 +338,22 @@ while max(max(abs(TN-TN_1))) > tol && it <= options.iter_max %#ok<max>
                                     end
                                     aggrArrivalAtNode = mmap_super_safe({aggrArrivalAtNode, chainArrivalAtNode{c}}, config.space_max, 'default');
                                 end
+                            end
+                            % THE MARKS COME OUT CHAIN BY CHAIN, and every reader
+                            % below indexes them BY CLASS: mmap_lambda(aggr) is
+                            % divided by sn.rates(ist,1:K) and Qret{k} is a class
+                            % slot. The concatenation [inchain{1} ... inchain{C}]
+                            % equals 1:K only when the chains happen to partition
+                            % the classes into ascending contiguous blocks, so the
+                            % marks are permuted into class order here rather than
+                            % left to that coincidence.
+                            markorder = [];
+                            for c=1:C
+                                markorder = [markorder; sn.inchain{c}(:)]; %#ok<AGROW>
+                            end
+                            if numel(markorder) == numel(aggrArrivalAtNode)-2 && ~issorted(markorder)
+                                [~,perm] = sort(markorder);
+                                aggrArrivalAtNode = {aggrArrivalAtNode{1}, aggrArrivalAtNode{2}, aggrArrivalAtNode{2+perm}};
                             end
                             Qret = cell(1,K);
                             if (sn.sched(ist)==SchedStrategy.HOL && any(sn.classprio ~= sn.classprio(1))) % if priorities are not identical; sched holds numeric ids so == must be used (strcmp on numerics is always false)
@@ -405,13 +432,30 @@ while max(max(abs(TN-TN_1))) > tol && it <= options.iter_max %#ok<max>
                                                 end
                                             end
                                         end
+                                        % Check for MAP/M/c: single-class open, exp service at this
+                                        % queue, c>1 servers, and an aggregate arrival stream that the
+                                        % PH/M/c gate above refused because it is NOT renewal. The
+                                        % generic path would answer such a station with the
+                                        % single-fast-server surrogate, which ignores the arrival
+                                        % correlation; Q-MAM's level-dependent QBD is exact.
+                                        isMapMc = false;
+                                        if K == 1 && ~isMapDc && ~isDMc && ~isPhM1 ...
+                                                && sn.procid(ist, 1) == ProcessType.EXP ...
+                                                && isfinite(sn.nservers(ist)) && sn.nservers(ist) > 1
+                                            isMapMc = true;
+                                        end
                                         % Finite buffer takes precedence over infinite-buffer
                                         % closed forms; see _kb/06-solver-catalog.md for rationale
-                                        isFiniteCap = isfinite(sn.cap(ist));
+                                        % The gate must be a buffer that can BIND, not a finite
+                                        % sn.cap: refreshCapacity derives one from the chain
+                                        % population for every closed model, and isfinite alone
+                                        % sent every closed station into the loss branch
+                                        isFiniteCap = isfinite(sn_get_buffer_size(sn, ist));
                                         if isFiniteCap
                                             isPhM1 = false;
                                             isDMc = false;
                                             isMapDc = false;
+                                            isMapMc = false;
                                         end
                                         if isPhM1
                                             muQ = 1.0 / S(ist, 1);
@@ -444,7 +488,57 @@ while max(max(abs(TN-TN_1))) > tol && it <= options.iter_max %#ok<max>
                                                 isDMc = false;
                                             end
                                         end
-                                        if isPhM1 || isDMc
+                                        if isMapMc
+                                            % Exact MAP/M/c: level-dependent QBD below level c,
+                                            % matrix-geometric above it
+                                            D0_arr = aggrArrivalAtNode{1};
+                                            D1_arr = aggrArrivalAtNode{2};
+                                            muQ = 1.0 / S(ist, 1);
+                                            try
+                                                mapmcResult = qsys_mapmc(D0_arr, D1_arr, muQ, sn.nservers(ist));
+                                                Qret{1} = mapmcResult.meanQueueLength;
+                                                mapdcUsed = true;
+                                                mapdcStations(ist) = true;
+                                                line_debug(options, 'Using exact MAP/M/%d solver: Q=%.4f, W=%.4f', ...
+                                                    sn.nservers(ist), mapmcResult.meanQueueLength, mapmcResult.meanWaitingTime);
+                                            catch
+                                                isMapMc = false;
+                                            end
+                                        end
+                                        % Exact MAP/PH/c: the branches above cover c>1 only for
+                                        % EXPONENTIAL service. With a phase-type service law the
+                                        % generic path scales the service by nservers and adds a
+                                        % surrogate delay, which is an approximation; the multiset
+                                        % QBD is exact. The service law must be RENEWAL, since the
+                                        % configuration blocks restart each freed server at alpha.
+                                        isMapPhc = false;
+                                        if ~isMapDc && ~isDMc && ~isPhM1 && ~isMapMc && ~isFiniteCap ...
+                                                && K == 1 && isfinite(sn.nservers(ist)) && sn.nservers(ist) > 1 ...
+                                                && sn.procid(ist, 1) ~= ProcessType.DET ...
+                                                && sn.procid(ist, 1) ~= ProcessType.ME ...
+                                                && sn.procid(ist, 1) ~= ProcessType.RAP ...
+                                                && ~isempty(PH{ist}{1})
+                                            svcTrue = map_scale(PH{ist}{1}, S(ist, 1));
+                                            if mam_is_renewal_map(svcTrue{1}, svcTrue{2})
+                                                isMapPhc = true;
+                                            end
+                                        end
+                                        if isMapPhc
+                                            try
+                                                mapphcResult = qsys_mapphc(aggrArrivalAtNode{1}, ...
+                                                    aggrArrivalAtNode{2}, map_pie(svcTrue), svcTrue{1}, ...
+                                                    sn.nservers(ist), 'numWMoms', 1);
+                                                Qret{1} = mapphcResult.meanQueueLength;
+                                                mapdcUsed = true;
+                                                mapdcStations(ist) = true;
+                                                line_debug(options, 'Using exact MAP/PH/%d solver: Q=%.4f, W=%.4f', ...
+                                                    sn.nservers(ist), mapphcResult.meanQueueLength, ...
+                                                    mapphcResult.meanWaitingTime);
+                                            catch
+                                                isMapPhc = false;
+                                            end
+                                        end
+                                        if isPhM1 || isDMc || isMapMc || isMapPhc
                                             % handled above; skip the MAP/D/c, finite-cap, and MMAPPH1FCFS branches
                                         elseif isMapDc
                                             % Use exact MAP/D/c solver from Q-MAM
@@ -504,7 +598,7 @@ while max(max(abs(TN-TN_1))) > tol && it <= options.iter_max %#ok<max>
                                                 Qret{k} = NaN;  % filled per class in result loop
                                             end
                                             mapdcStations(ist) = true;  % skip surrogate delay 2nd pass
-                                        elseif sn.isfunction(ist)
+                                        elseif sn.hassetup(ist)
                                             % Open setup/delay-off via qbd_setupdelayoff; nodeparam
                                             % is NODE-indexed; see _kb/06-solver-catalog.md for rationale
                                             mapdcUsed = false;
@@ -551,14 +645,31 @@ while max(max(abs(TN-TN_1))) > tol && it <= options.iter_max %#ok<max>
                                             % RAP/RAP/1; see _kb/06-solver-catalog.md for rationale
                                             isMEorRAPsvc = any(sn.procid(ist,:) == ProcessType.ME | ...
                                                 sn.procid(ist,:) == ProcessType.RAP);
+                                            % RAP/RAP/1 owns a service the user DECLARED
+                                            % matrix-exponential or rational. A surrogate merely
+                                            % TAGGED ME by sn_nonmarkov_toph (a Uniform fit, say) is
+                                            % not that station, and its declared law is the one
+                                            % MMAP[K]/G[K]/1 exists to read.
+                                            if isfield(sn, 'procidDeclared') && ~isempty(sn.procidDeclared)
+                                                declaredMEorRAP = any(sn.procidDeclared(ist,:) == ProcessType.ME | ...
+                                                    sn.procidDeclared(ist,:) == ProcessType.RAP);
+                                            else
+                                                declaredMEorRAP = isMEorRAPsvc;
+                                            end
+                                            % MMAP[K]/G[K]/1 is decided FIRST, because it is what
+                                            % the ME/RAP warning below would otherwise announce a
+                                            % fallback from: a station it takes is answered from the
+                                            % ORIGINAL service laws through sn.lst, so no phase-type
+                                            % approximation is made and there is nothing to warn of.
+                                            useMmapGk1 = mam_gk1_applicable(sn, ist, K);
                                             useRapRap1 = false;
                                             if isMEorRAPsvc
-                                                if (K == 1) && (sn.nservers(ist) == 1)
+                                                if declaredMEorRAP && (K == 1) && (sn.nservers(ist) == 1)
                                                     useRapRap1 = true;
                                                 else
                                                     % Multi-class/server ME falls back to MMAPPH1FCFS
                                                     % with a warning; see _kb/06-solver-catalog.md for rationale
-                                                    if ~meWarned(ist)
+                                                    if ~meWarned(ist) && ~useMmapGk1
                                                         meWarned(ist) = true;
                                                         line_warning_always(mfilename, ...
                                                             'Station %s has a matrix-exponential or rational service process, which the RAP/RAP/1 analysis supports only with a single class at a single server (here %d classes, %g servers). Falling back to the phase-type approximation MMAPPH1FCFS, which is not exact for this service process.', ...
@@ -580,20 +691,58 @@ while max(max(abs(TN-TN_1))) > tol && it <= options.iter_max %#ok<max>
                                                 ql = ql(:);
                                                 Qret{1} = sum((0:numel(ql)-1)' .* ql);
                                             else
-                                                [Qret{1:K}] = MMAPPH1FCFS({aggrArrivalAtNode{[1,3:end]}}, {pie{ist}{:}}, {D0{ist,:}}, 'ncMoms', 1);
+                                                % MMAP[K]/G[K]/1 whenever a class carries a service
+                                                % law that is NOT phase type. MMAPPH1FCFS would read
+                                                % its PH FIT out of sn.proc, which matches the mean
+                                                % and, above SCV 1, nothing else; He's transform
+                                                % analysis takes the original law, which sn.lst
+                                                % carries. Single server only: the result is a /1.
+                                                if useMmapGk1
+                                                    try
+                                                        svcLaws = cell(1, K);
+                                                        for k = 1:K
+                                                            m1 = S(ist, k);
+                                                            svcLaws{k} = struct('lst', sn.lst{ist}{k}, ...
+                                                                'moments', [m1, m1^2 * (1 + sn.scv(ist, k))]);
+                                                        end
+                                                        gkRes = qsys_mmapgk1({aggrArrivalAtNode{[1,2,3:end]}}, ...
+                                                            svcLaws, 'numWMoms', 1);
+                                                        for k = 1:K
+                                                            Qret{k} = gkRes.lambda(k) * gkRes.meanSojournTime(k);
+                                                        end
+                                                        mapdcStations(ist) = true;
+                                                        line_debug(options, 'Using exact MMAP[%d]/G[%d]/1 solver', K, K);
+                                                    catch
+                                                        useMmapGk1 = false;
+                                                    end
+                                                end
+                                                if ~useMmapGk1
+                                                    [Qret{1:K}] = MMAPPH1FCFS({aggrArrivalAtNode{[1,3:end]}}, {pie{ist}{:}}, {D0{ist,:}}, 'ncMoms', 1);
+                                                end
                                             end
                                         end
                                     else % all closed classes
                                         maxLevel = sum(N(isfinite(N)))+1;
                                         D = {aggrArrivalAtNode{[1,3:end]}};
                                         pdistr_k = cell(1,K);
-                                        if map_lambda(D)< GlobalConstants.FineTol
+                                        % "the station receives no arrivals" is a property of the
+                                        % AGGREGATE stream, and map_lambda reads only its second
+                                        % argument, so map_lambda(D) tested CLASS 1 alone: a station
+                                        % whose class 1 is disabled fell here however busy the other
+                                        % classes were. sn.rates(ist) is that same class-1 rate, so it
+                                        % also divided by zero and returned Inf.
+                                        aggrRate = map_lambda({aggrArrivalAtNode{1}, aggrArrivalAtNode{2}});
+                                        if aggrRate < GlobalConstants.FineTol
                                             for k=1:K
                                                 pdistr_k = [1-GlobalConstants.FineTol, GlobalConstants.FineTol];
-                                                Qret{k} = GlobalConstants.FineTol / sn.rates(ist);
+                                                if sn.rates(ist,1) > 0
+                                                    Qret{k} = GlobalConstants.FineTol / sn.rates(ist,1);
+                                                else
+                                                    Qret{k} = 0;
+                                                end
                                             end
                                         else
-                                            if sn.isfunction(ist)
+                                            if sn.hassetup(ist)
                                                 alpharate = map_lambda(sn.nodeparam{sn.stationToNode(ist)}{end}.setupTime);
                                                 betarate = map_lambda(sn.nodeparam{sn.stationToNode(ist)}{end}.delayoffTime);
                                                 betascv = map_scv(sn.nodeparam{sn.stationToNode(ist)}{end}.delayoffTime);
@@ -608,39 +757,96 @@ while max(max(abs(TN-TN_1))) > tol && it <= options.iter_max %#ok<max>
                                                     end
                                                 end
                                                 if any(active_k)
-                                                    % Closed setup/delay-off: per-instance cold-start race,
-                                                    % p_cold = LST_delayoff(1/ZT); see _kb/06-solver-catalog.md for rationale
-                                                    setupMean = 1/alpharate;
-                                                    if betascv == 1.0
-                                                        % rate taken directly, as in qbd_setupdelayoff
-                                                        betaProc = {-betarate, betarate};
-                                                    else
-                                                        betaProc = APH.fitMeanAndSCV(1/betarate, betascv).getProcess;
-                                                    end
-                                                    Tb = betaProc{1};
-                                                    pie_b = map_pie(betaProc);
+                                                    % THE CLOSED VACATION QUEUE, SOLVED. What stood here
+                                                    % was the per-instance cold-start race
+                                                    % R = p_cold*E[setup] + S: it raced the delay-off
+                                                    % against the per-instance idle time and carried NO
+                                                    % queueing term, so it described a serverless
+                                                    % instance pool rather than a single-server vacation
+                                                    % queue and reported the SAME response time across a
+                                                    % tenfold change in the setup mean (BUG-78).
+                                                    % qbd_setupdelayoff_closed solves the finite
+                                                    % level-dependent chain the simulator walks.
+                                                    alphascv = map_scv(sn.nodeparam{sn.stationToNode(ist)}{end}.setupTime);
                                                     infstat = isinf(sn.nservers);
                                                     for k=1:K
-                                                        if active_k(k) && lambda_k(k) > 0 && isfinite(S(ist,k))
-                                                            c = find(sn.chains(:,k), 1);
-                                                            inchain_k = find(sn.chains(c,:));
-                                                            % ZT = chain think demand per visit;
-                                                            % see _kb/06-solver-catalog.md for rationale
-                                                            Vtot = sum(V(ist, inchain_k));
-                                                            ZT = sum(Lchain(infstat, c), 'omitnan') / max(Vtot, GlobalConstants.FineTol);
-                                                            nu = 1 / max(ZT, GlobalConstants.FineTol);
-                                                            pcold = pie_b * ((nu*eye(size(Tb,1)) - Tb) \ (-Tb*ones(size(Tb,1),1)));
-                                                            % service part S/nservers, delay correction adds rest;
-                                                            % see _kb/06-solver-catalog.md for rationale
-                                                            Qret{k} = lambda_k(k) * (pcold*setupMean + S(ist,k)/sn.nservers(ist));
-                                                        elseif active_k(k)
-                                                            % Zero-load class holds no jobs (NaN guard);
-                                                            % see _kb/06-solver-catalog.md for rationale
-                                                            Qret{k} = 0;
+                                                        % NaN guard: an inactive or zero-load class holds no jobs
+                                                        Qret{k} = 0;
+                                                    end
+                                                    for cc = 1:C
+                                                        inchain_c = find(sn.chains(cc,:));
+                                                        if isempty(inchain_c) || ~any(active_k(inchain_c))
+                                                            continue
+                                                        end
+                                                        Nc = sum(sn.njobs(inchain_c), 'omitnan');
+                                                        if ~isfinite(Nc) || Nc <= 0
+                                                            continue
+                                                        end
+                                                        % ZT = chain think demand per visit;
+                                                        % see _kb/06-solver-catalog.md for rationale
+                                                        Vtot = sum(V(ist, inchain_c));
+                                                        ZT = sum(Lchain(infstat, cc), 'omitnan') / max(Vtot, GlobalConstants.FineTol);
+                                                        % THE COMPLEMENTARY DELAY, not the think demand
+                                                        % alone. lambda(n) = (Nc-n)/Z is exact only when
+                                                        % everything away from this station is a pure
+                                                        % delay; with other queues in the network the
+                                                        % think demand OVERSTATES the arrival rate and
+                                                        % saturates the station. Z is the mean time a
+                                                        % customer currently spends away,
+                                                        % (Nc - QN_here)/lambda_here at this iterate,
+                                                        % floored at ZT so it can never be shorter than
+                                                        % the think time it contains. On a Delay+Queue the
+                                                        % two coincide at convergence.
+                                                        lamHere = sum(lambda_k(inchain_c), 'omitnan');
+                                                        qnHere = sum(QN(ist, inchain_c), 'omitnan');
+                                                        Zc = ZT;
+                                                        if lamHere > GlobalConstants.FineTol && Nc - qnHere > 0
+                                                            Zc = max(ZT, (Nc - qnHere)/lamHere);
+                                                        end
+                                                        % One server serves the whole chain, so the
+                                                        % vacation cycle is a property of the STATION: the
+                                                        % chain is solved on the aggregate and split back
+                                                        % by R_k = W + S_k, the decomposition the
+                                                        % finite-capacity branch already uses.
+                                                        svc = S(ist, inchain_c);
+                                                        tnc = lambda_k(inchain_c);
+                                                        tnc(~isfinite(tnc)) = 0;
+                                                        svc(~isfinite(svc)) = 0;
+                                                        if sum(tnc) > GlobalConstants.FineTol
+                                                            Sbar = sum(tnc .* svc) / sum(tnc);
                                                         else
-                                                            % Inactive class holds no jobs (NaN guard);
-                                                            % see _kb/06-solver-catalog.md for rationale
-                                                            Qret{k} = 0;
+                                                            Sbar = mean(svc(svc > 0));
+                                                        end
+                                                        if isempty(Sbar) || ~isfinite(Sbar) || Sbar <= GlobalConstants.FineTol
+                                                            continue
+                                                        end
+                                                        [QNc, Xc] = qbd_setupdelayoff_closed(Nc, Zc, 1/Sbar, ...
+                                                            alpharate, alphascv, betarate, betascv);
+                                                        if ~isfinite(QNc) || Xc <= 0
+                                                            continue
+                                                        end
+                                                        Wq = max(0, QNc/Xc - Sbar);
+                                                        for k = inchain_c
+                                                            if active_k(k) && lambda_k(k) > 0 && isfinite(S(ist,k))
+                                                                % S/c, NOT S: the loop below adds the
+                                                                % surrogate-delay jobs
+                                                                % TN*S*(c-1)/c back, so a full S here
+                                                                % counts the service term
+                                                                % (2c-1)/c times -- 1.5x at c=2,
+                                                                % approaching twice as c grows. The two
+                                                                % together make S, which is what Little's
+                                                                % law wants and what the branch this
+                                                                % replaced also produced. At c=1 the
+                                                                % division is the identity, so the
+                                                                % single-server results are unchanged.
+                                                                % Wq itself still comes from a
+                                                                % SINGLE-SERVER chain: a closed
+                                                                % multiserver setup station is
+                                                                % approximated, not solved, which is why
+                                                                % ISCLOSEDDELAYQUEUE keeps c>1 away from
+                                                                % the exact ldqbd path.
+                                                                Qret{k} = lambda_k(k) * (Wq + S(ist,k)/sn.nservers(ist));
+                                                            end
                                                         end
                                                     end
                                                 else
@@ -710,7 +916,7 @@ while max(max(abs(TN-TN_1))) > tol && it <= options.iter_max %#ok<max>
                                     c = find(sn.chains(:,k),1);
                                     TN(ist,k) = rates{ist,c}(k);
                                     UN(ist,k) = TN(ist,k) * S(ist,k) / sn.nservers(ist);
-                                    if sn.isfunction(ist) && ~isfinite(UN(ist,k))
+                                    if sn.hassetup(ist) && ~isfinite(UN(ist,k))
                                         % Unfreeze NaN-service util at setup station only;
                                         % see _kb/06-solver-catalog.md for rationale
                                         UN(ist,k) = 0;
@@ -723,6 +929,10 @@ while max(max(abs(TN-TN_1))) > tol && it <= options.iter_max %#ok<max>
                                             RN(ist,k) = phm1Result.meanSojournTime;
                                         elseif isDMc
                                             RN(ist,k) = dmcResult.meanSojournTime;
+                                        elseif isMapMc
+                                            RN(ist,k) = mapmcResult.meanSojournTime;
+                                        elseif isMapPhc
+                                            RN(ist,k) = mapphcResult.meanSojournTime;
                                         else
                                             RN(ist,k) = mapdcResult.meanSojournTime;
                                         end
@@ -745,6 +955,8 @@ while max(max(abs(TN-TN_1))) > tol && it <= options.iter_max %#ok<max>
             end
         end
     end
+    % Calibrate the fixed point on the REPORTED QN; see _kb/06-solver-catalog.md (MAM closed-chain population)
+    [QN,RN] = mam_resptime_floor(QN, RN, TN, S, V, sn, mapdcStations);
     %it
     %max(max(abs(TN-TN_1)))
 end
@@ -759,37 +971,29 @@ for it=1:2 % second pass to rescale again QN based on RN correction
             QNc = sum(sum(QN(:,inchain)));
             QN(:,inchain) = QN(:,inchain) * (Nc / QNc);
         end
-        for ind=1:I
-            for k=inchain
-                if sn.isstation(ind)
-                    ist = sn.nodeToStation(ind);
-                    % Skip stations using exact MAP/D/c solver (already have exact values)
-                    if mapdcStations(ist)
-                        continue;
-                    end
-                    if V(ist,k)>0
-                        if isinf(sn.nservers(ist))
-                            RN(ist,k) = S(ist,k);
-                        else
-                            RN(ist,k) = max([S(ist,k), QN(ist,k) ./ TN(ist,k)]);
-                        end
-                    else
-                        RN(ist,k) = 0;
-                    end
-                    QN(ist,k) = RN(ist,k) .* TN(ist,k);
-                end
-            end
-        end
+        [QN,RN] = mam_resptime_floor(QN, RN, TN, S, V, sn, mapdcStations, inchain);
         Nc = sum(sn.njobs(inchain)); % closed population
         if Nc == 0 % if closed chain
-            QN(:,c)=0;
-            UN(:,c)=0;
-            RN(:,c)=0;
-            TN(:,c)=0;
-            CN(c)=0;
-            XN(c)=0;
+            % Index by the chain's CLASSES, not by the chain number. QN/UN/RN/TN
+            % are (nstations x nclasses) and CN/XN are (1 x nclasses), so
+            % QN(:,c) zeroes whichever class happens to share the chain's index
+            % -- the same class only when there is no class switching. On a
+            % chain-1={C1,C2}, chain-2={C3} model with N(C3)=0 it silently wiped
+            % class 2, which belongs to the OTHER chain.
+            QN(:,inchain)=0;
+            UN(:,inchain)=0;
+            RN(:,inchain)=0;
+            TN(:,inchain)=0;
+            CN(inchain)=0;
+            XN(inchain)=0;
         end
     end
+end
+
+% System throughput per class: the chain arrival rate; see _kb/06-solver-catalog.md
+for c=1:C
+    inchain = sn.inchain{c};
+    XN(inchain) = lambda(c);
 end
 
 % SLC clamp: closed-form leftover-capacity U_slc = 1 - sum_j U_j, applied last;
@@ -848,5 +1052,39 @@ if ~isempty(slcAll)
         end
     end
     CN = sum(RN,1);
+end
+end
+
+function [QN,RN] = mam_resptime_floor(QN, RN, TN, S, V, sn, mapdcStations, klist)
+% [QN,RN] = MAM_RESPTIME_FLOOR(QN, RN, TN, S, V, SN, MAPDCSTATIONS, KLIST)
+%
+% Floor the per-station response time at one full service time and restate the
+% queue length as Q = R*T for the classes in KLIST (all classes when omitted).
+% Stations answered by an exact solver (MAP/D/c, D/M/c, PH/M/c) are left alone.
+%
+% This is the form in which SOLVER_MAM_BASIC reports QN and RN, so the
+% closed-chain fixed point has to be calibrated against it rather than against
+% the pre-floor queue lengths; see _kb/06-solver-catalog.md.
+
+if nargin < 8 || isempty(klist)
+    klist = 1:sn.nclasses;
+end
+
+for ist=1:sn.nstations
+    if mapdcStations(ist)
+        continue;
+    end
+    for k=klist(:)'
+        if V(ist,k)>0
+            if isinf(sn.nservers(ist))
+                RN(ist,k) = S(ist,k);
+            else
+                RN(ist,k) = max([S(ist,k), QN(ist,k) ./ TN(ist,k)]);
+            end
+        else
+            RN(ist,k) = 0;
+        end
+        QN(ist,k) = RN(ist,k) .* TN(ist,k);
+    end
 end
 end

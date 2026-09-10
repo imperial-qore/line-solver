@@ -65,6 +65,21 @@ public class Pair<T, U> implements Comparable<Pair<T, U>>, Serializable {
         return 0;
     }
 
+    /** Value equality on both components; see _kb/11-conventions-and-gotchas.md. */
+    @Override
+    public boolean equals(Object other) {
+        if (this == other) return true;
+        if (!(other instanceof Pair)) return false;
+        Pair<?, ?> that = (Pair<?, ?>) other;
+        return java.util.Objects.equals(this.left, that.left)
+                && java.util.Objects.equals(this.right, that.right);
+    }
+
+    @Override
+    public int hashCode() {
+        return java.util.Objects.hash(this.left, this.right);
+    }
+
     public T getLeft() {
         return this.left;
     }
@@ -81,12 +96,12 @@ public class Pair<T, U> implements Comparable<Pair<T, U>>, Serializable {
         this.right = right;
     }
 
-    /** Kotlin-style alias for {@link #getLeft()}. */
+    /** Alias for {@link #getLeft}. */
     public T getFirst() {
         return this.left;
     }
 
-    /** Kotlin-style alias for {@link #getRight()}. */
+    /** Alias for {@link #getRight}. */
     public U getSecond() {
         return this.right;
     }

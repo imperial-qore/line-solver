@@ -5,16 +5,23 @@ function line_verbosity(level)
 %   MATLAB's warning behavior accordingly.
 %
 %   LEVEL should be one of the following (defined in VerboseLevel):
-%       - VerboseLevel.SILENT  : Disables warnings and suppresses console output.
+%       - VerboseLevel.SILENT  : Disables warnings and suppresses all output.
 %       - VerboseLevel.STD     : Enables standard verbosity and warning backtrace.
-%       - VerboseLevel.DEBUG   : Enables debug-level output if supported.
+%       - VerboseLevel.DEBUG   : Turns the SOLVER CONSOLE on -- a running
+%                                progress log of every solver run (LineConsole).
+%
+%   DEBUG is the only way to switch the console on; there is no separate
+%   console switch and no 'console' solver option. A single run can ask for it
+%   on its own through the 'verbose' option:
+%
+%       SolverMVA(model,'verbose',VerboseLevel.DEBUG).getAvgTable
 %
 %   If LEVEL is not provided, it defaults to VerboseLevel.STD.
 %
 %   Example:
 %       line_verbosity(VerboseLevel.SILENT);
 %
-%   See also: VerboseLevel, warning
+%   See also: VerboseLevel, LineConsole, warning
 
 % Copyright (c) 2012-2026, Imperial College London
 % All rights reserved.
@@ -36,4 +43,11 @@ end
 
 % Apply selected verbosity level globally
 LINEVerbose = level;
+
+% The console follows this level, so an interrupted solve that left a run open
+% must not colour the next one: a fresh setting starts clean. The status row
+% is forgotten rather than closed: it is already lost, and closing it would
+% backspace over whatever has been printed since.
+LineConsole.reset();
+LineStatus.reset();
 end

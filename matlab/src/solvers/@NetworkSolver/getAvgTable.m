@@ -1,4 +1,4 @@
-function [AvgTable,QT,UT,RT,WT,AT,TT] = getAvgTable(self,Q,U,R,T,A,W,keepDisabled)
+function varargout = getAvgTable(self,varargin)
 % [AVGTABLE,QT,UT,RT,WT,TT,AT] = GETAVGTABLE(SELF,Q,U,R,T,A,W,KEEPDISABLED)
 % Return table of average station metrics
 %
@@ -6,6 +6,20 @@ function [AvgTable,QT,UT,RT,WT,AT,TT] = getAvgTable(self,Q,U,R,T,A,W,keepDisable
 %
 % Copyright (c) 2012-2026, Imperial College London
 % All rights reserved.
+% The result recorder captures the returned table together with the solver
+% that produced it, so cross-codebase parity is asserted against the values a
+% solver RETURNED rather than the text it printed. Off unless a run asked for
+% it (LineResultRecorder.enable), and then it costs one appdata lookup here.
+% The wrapper exists so that recording happens on EVERY exit path, including
+% the early returns inside the implementation below.
+[scope, scopeGuard] = LineResultRecorder.enter(); %#ok<ASGLU>
+[varargout{1:max(nargout,1)}] = getAvgTable_impl(self,varargin{:});
+LineResultRecorder.capture(scope, self, 'avg', varargout{1});
+end
+
+function [AvgTable,QT,UT,RT,WT,AT,TT] = getAvgTable_impl(self,Q,U,R,T,A,W,keepDisabled)
+% GETAVGTABLE_IMPL Implementation of GETAVGTABLE; see the wrapper above.
+self.assertNotChainModel('getAvgTable');
 if GlobalConstants.DummyMode
     [AvgTable, QT, UT, RT, TT, WT, AT] = deal(Table());
     AvgTable = IndexedTable(AvgTable);

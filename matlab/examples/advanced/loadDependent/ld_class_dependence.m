@@ -31,7 +31,7 @@ P{1,1} = cdmodel.serialRouting(node);
 P{2,2} = cdmodel.serialRouting(node);
 cdmodel.link(P);
 
-cdAvgTableCTMC=CTMC(cdmodel).getAvgTable
+cdAvgTableCTMC=CTMC(cdmodel,'exact').getAvgTable
 cdAvgTableCD=MVA(cdmodel,'method','qd').getAvgTable
 % JMT is not solved here: the JSIM writer has no representation for the
 % class-dependence handle, so SolverJMT rejects the model rather than

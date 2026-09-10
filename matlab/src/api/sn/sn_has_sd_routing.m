@@ -34,7 +34,9 @@ function bool = sn_has_sd_routing(sn)
 
 % Product-form requires state-independent (Markovian) routing.
 % PROB and RAND are product-form compatible.
-% RROBIN, WRROBIN, JSQ, SQ, RL are state-dependent and violate product-form.
+% RROBIN, WRROBIN, JSQ, SQ violate product-form. SDR is state-dependent
+% but keeps a product form of its own (Krzesinski 1987), evaluated by
+% pfqn_sdr rather than by the standard convolution or MVA.
 
 if isempty(sn.routing)
     bool = false;
@@ -46,5 +48,5 @@ bool = any(sn.routing(:) == RoutingStrategy.RROBIN | ...
            sn.routing(:) == RoutingStrategy.WRROBIN | ...
            sn.routing(:) == RoutingStrategy.JSQ | ...
            sn.routing(:) == RoutingStrategy.SQ | ...
-           sn.routing(:) == RoutingStrategy.RL);
+           sn.routing(:) == RoutingStrategy.SDR);
 end

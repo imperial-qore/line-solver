@@ -110,11 +110,11 @@ end
 dims = N + 1;
 ngrid = prod(dims);
 strides = [1, cumprod(dims(1:end-1))];
+% mixed radix rather than ind2sub, which rejects a single-class (scalar) dims
 counts = zeros(ngrid, R);
-sub = cell(1, R);
-for k = 1:ngrid
-    [sub{:}] = ind2sub(dims, k);
-    counts(k, :) = [sub{:}] - 1;
+lin0 = (0:ngrid-1)';
+for r = 1:R
+    counts(:, r) = mod(floor(lin0 / strides(r)), dims(r));
 end
 [~, ord] = sort(sum(counts, 2)); % population-increasing sweep order
 

@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any, Union
 from enum import Enum, IntEnum
 
-from .constants import SchedStrategy
+from .constants import SchedStrategy, RoutingStrategy
 
 
 class LayeredNetworkElement(IntEnum):
@@ -21,7 +21,7 @@ class LayeredNetworkElement(IntEnum):
     ACTIVITY = 3
     CALL = 4
 from .lang.base import ReplacementStrategy
-from .distributions import Immediate, Exp
+from .distributions import Immediate, Exp, Bernoulli, Geometric
 
 
 class CallType(Enum):
@@ -73,6 +73,21 @@ def _get_dist_scv(dist) -> float:
         return dist.get_scv()
     else:
         return 1.0
+
+
+def _call_count_dist(mean_calls):
+    """Distribution of the number of calls issued per invocation.
+
+    A mean below 1 is a call that either happens or does not, hence Bernoulli.
+    Geometric(1/m) is undefined there: its parameter would exceed 1 and its SCV
+    (1-p) would come out negative.
+    """
+    m = float(mean_calls)
+    if not np.isfinite(m) or m <= 0:
+        return Immediate()
+    if m < 1.0:
+        return Bernoulli(m)
+    return Geometric(1.0 / m)
 
 
 @dataclass
@@ -341,6 +356,206 @@ def _dist_from_mean_scv(mean, scv):
     return HyperExp.fit_mean_and_scv(mean, scv)
 
 
+# --- LINE .lqnx dialect: cache, item entry, setup / delay-off -----------------
+#
+# See scratchpad LQNX_CACHE_SPEC.md. The stock LQN schema has no element for any
+# of these, so a model carrying them used to export as a DIFFERENT model. The
+# field set is the JSON interchange's (linemodel_save.m), so the two transports
+# carry the same information and a model round-trips through either.
+
+
+def _callgroup_to_lqnx(strategy):
+    """RoutingStrategy -> the wire enum name, spelled as the JSON interchange
+    spells it. Only the two strategies a call group can be built with are named:
+    WRROBIN would need per-target weights the group API does not take, and the
+    remaining strategies are not dispatch policies at all, so an unnamed one is
+    an error rather than a silent PROB."""
+    if strategy == RoutingStrategy.RROBIN:
+        return 'RROBIN'
+    if strategy == RoutingStrategy.JSQ:
+        return 'JSQ'
+    raise ValueError('Call groups carry RROBIN or JSQ; routing strategy %s cannot '
+                     'be written to .lqnx' % strategy)
+
+
+def _callgroup_from_lqnx(name, act_name):
+    """Wire enum name -> RoutingStrategy, the inverse of _callgroup_to_lqnx."""
+    key = (name or '').strip().upper()
+    if key == 'RROBIN':
+        return RoutingStrategy.RROBIN
+    if key == 'JSQ':
+        return RoutingStrategy.JSQ
+    raise ValueError('Activity "%s" declares a call group with an unrecognized '
+                     'strategy "%s"; the dialect spells them RROBIN and JSQ'
+                     % (act_name, name))
+
+
+def _parse_call_groups(act_elem, activity):
+    """Read the LINE dialect <call-group> children of an activity element.
+
+    The member calls are ordinary synch-call elements and have already been read
+    into _pending_calls, so only the grouping is recorded here; issuing them again
+    would double the call rate. Target names are resolved to Entry objects with
+    the calls, once every entry exists.
+    """
+    for grp_elem in act_elem.findall('./call-group'):
+        strategy = _callgroup_from_lqnx(grp_elem.get('strategy', ''), activity.name)
+        dests = [d.get('name', '') for d in grp_elem.findall('./dest')]
+        if not hasattr(activity, '_pending_call_groups'):
+            activity._pending_call_groups = []
+        activity._pending_call_groups.append((strategy, dests))
+
+
+def _cap_list(cap):
+    """Per-list capacities as a list. `itemLevelCap` is an ARRAY in MATLAB and a
+    multi-list cache is the normal case, so a scalar is the one-list special
+    case rather than the other way round."""
+    if cap is None:
+        return []
+    if isinstance(cap, (int, float)):
+        return [int(cap)]
+    try:
+        return [int(c) for c in cap]
+    except TypeError:
+        return [int(cap)]
+
+
+def _write_cache_elem(task_elem, task):
+    """<cache items= replacement= retrieval=> with one <level capacity=> per list."""
+    if type(task).__name__ != 'CacheTask':
+        return
+    import xml.etree.ElementTree as ET
+    cache = ET.SubElement(task_elem, 'cache')
+    cache.set('items', str(int(task.total_items)))
+    rs = task.replacement_strategy
+    # The wire spelling is the enum NAME, the same mapping the JSON interchange
+    # uses (linemodel_io: `rs.name`); no second spelling table.
+    cache.set('replacement', rs.name if hasattr(rs, 'name') else str(rs))
+    if getattr(task, 'retrieval', False):
+        cache.set('retrieval', 'true')
+    for cap in _cap_list(task.cache_capacity):
+        ET.SubElement(cache, 'level').set('capacity', str(int(cap)))
+
+
+def _write_setup_elems(task_elem, task):
+    """<setup mean= scv=/> and <delay-off mean= scv=/>, emitted only when set."""
+    import xml.etree.ElementTree as ET
+    for tag, dist in (('setup', getattr(task, 'setup_time', None)),
+                      ('delay-off', getattr(task, 'delay_off_time', None))):
+        if dist is None:
+            continue
+        mean = _get_dist_mean(dist)
+        if mean <= 0:
+            continue
+        elem = ET.SubElement(task_elem, tag)
+        elem.set('mean', repr(float(mean)))
+        elem.set('scv', repr(float(_get_dist_scv(dist))))
+
+
+def _write_item_entry_elem(entry_elem, entry):
+    """<item-entry cardinality=> with an <access-popularity> of the class name and
+    its constructor parameters, in order, one <parameter value=> each.
+
+    A VECTOR constructor parameter is flattened, which is unambiguous here because
+    the reader knows the cardinality: a DiscreteSampler written with n parameters
+    is p alone, with 2n it is p then x. Flagged to the coordinator as the one
+    place the spec's flat <parameter> list needs a stated rule.
+    """
+    if type(entry).__name__ != 'ItemEntry':
+        return
+    import xml.etree.ElementTree as ET
+    ie = ET.SubElement(entry_elem, 'item-entry')
+    ie.set('cardinality', str(int(entry.total_items)))
+    dist = getattr(entry, 'access_prob', None)
+    if dist is None:
+        return
+    params = _popularity_params(dist)
+    ap = ET.SubElement(ie, 'access-popularity')
+    ap.set('name', type(dist).__name__)
+    for value in params:
+        ET.SubElement(ap, 'parameter').set('value', repr(float(value)))
+
+
+def _popularity_params(dist):
+    """Constructor parameters of an access-popularity distribution, in order.
+
+    A class this encoding cannot express is REFUSED BY NAME. That is not the
+    warning-and-drop this whole change exists to remove: the three constructs the
+    dialect must carry (cache, item entry, setup/delay-off) are carried
+    unconditionally, and writing a popularity element without the parameters that
+    define it would reproduce exactly the bug being fixed -- a file that loads as
+    a different access law.
+    """
+    import numpy as _np
+    name = type(dist).__name__
+    if name == 'DiscreteSampler':
+        probs = list(_np.asarray(dist._probs).flatten())
+        values = getattr(dist, '_values', None)
+        # The default support 1..n is reconstructible, so it is omitted and the
+        # common uniform sampler writes exactly the n probabilities of the spec
+        # example; a non-default support is appended, giving 2n. The reader
+        # splits on the cardinality already declared on <item-entry>.
+        if values is not None:
+            xs = list(_np.asarray(values).flatten())
+            if len(xs) == len(probs) and not _np.allclose(xs, _np.arange(1, len(xs) + 1)):
+                return probs + xs
+        return probs
+    if name == 'Zipf':
+        # Constructor order is (s, n). NOTE for the other codebases: MATLAB's
+        # Zipf stores params 1=p, 2=x, 3=s, 4=n, so "constructor order" there
+        # means params 3 and 4 -- writing p and x would be lossy, since s cannot
+        # be recovered from them. Python's Zipf holds `_s`/`_n` directly, so the
+        # trap does not arise here, but the WIRE form is the same two values.
+        return [float(getattr(dist, 's', getattr(dist, '_s', 1.0))),
+                float(getattr(dist, 'n', getattr(dist, '_n', 1)))]
+    raise RuntimeError(
+        "the .lqnx access-popularity encoding carries a DiscreteSampler or a Zipf, "
+        "and this ItemEntry uses a '%s'. Writing it as anything else would load as a "
+        "different access law, so the export is refused by name. Use model.json "
+        "(line_solver.io.save_model), whose distribution encoding is general."
+        % name)
+
+
+def _popularity_from_params(name, params, cardinality):
+    """Rebuild an access-popularity distribution from its written parameters.
+
+    THE `name` ATTRIBUTE SELECTS THE RULE, so there is no ambiguity between a
+    Zipf and a 2-item DiscreteSampler. A parameter count the named class cannot
+    take is REFUSED BY NAME rather than guessed: silently substituting a uniform
+    law would load as a different access law, which is the defect this dialect
+    exists to remove.
+    """
+    import numpy as _np
+    from .distributions import DiscreteSampler, Zipf
+    n = int(cardinality) if cardinality else 0
+    if name == 'DiscreteSampler':
+        # The cardinality split: n parameters is p over the default support
+        # 1..n, 2n is p followed by an explicit support x.
+        if n > 0 and len(params) == n:
+            return DiscreteSampler(_np.array(params))
+        if n > 0 and len(params) == 2 * n:
+            return DiscreteSampler(_np.array(params[:n]), _np.array(params[n:]))
+        if n <= 0 and params:
+            return DiscreteSampler(_np.array(params))
+        raise RuntimeError(
+            "access-popularity 'DiscreteSampler' carries %d parameters, which is neither "
+            "the cardinality %d (probabilities over the default support) nor twice it "
+            "(probabilities followed by an explicit support); the file is malformed."
+            % (len(params), n))
+    if name == 'Zipf':
+        # Two parameters, s then n. The cardinality split does NOT apply here.
+        if len(params) != 2:
+            raise RuntimeError(
+                "access-popularity 'Zipf' takes exactly two parameters, the exponent s "
+                "and the support size n, and this one carries %d; the file is malformed."
+                % len(params))
+        return Zipf(float(params[0]), int(params[1]))
+    raise RuntimeError(
+        "access-popularity names the class '%s', which the .lqnx dialect does not carry "
+        "(it carries DiscreteSampler and Zipf). Reading it as anything else would load a "
+        "different access law." % name)
+
+
 @dataclass
 class Distribution:
     """Simple distribution representation for service times."""
@@ -391,6 +606,11 @@ class Activity:
         self.bound_entry = None
         self.reply_entry = None
         self.calls = []  # List of (entry, mean_calls, call_type)
+        # Call groups dispatched by a routing strategy instead of independently.
+        # Each element is (RoutingStrategy, [entry, ...]); the calls themselves
+        # stay in self.calls so every consumer that ignores dispatch order still
+        # sees the same aggregate call means.
+        self.call_groups = []
         self.think_time = 0.0  # Activity-level think time (LQNX think-time attribute)
         self.phase = 1  # Phase number (1 or 2), default=1
 
@@ -445,19 +665,73 @@ class Activity:
         self.calls.append((entry, mean_calls, CallType.ASYNC))
         return self
 
+    def synch_call_rrobin(self, entries, mean_calls: float = 1.0) -> 'Activity':
+        """Dispatch synchronous calls round-robin over a set of target entries.
+
+        MEAN_CALLS is the total mean number of calls the activity issues per
+        invocation; successive calls go to the targets in cyclic order, so each
+        target receives MEAN_CALLS/len(ENTRIES) of them. The probabilistic model
+        with the same per-target means is the ungrouped equivalent: what the
+        group adds is the deterministic interleaving, not a different call rate.
+
+        Only the squashed ('flat') layering can represent this, because under
+        'srvn' the targets never share a submodel. See SolverLN._assert_call_groups.
+        """
+        return self._add_call_group(RoutingStrategy.RROBIN, entries, mean_calls,
+                                    'synch_call_rrobin')
+
+    def synch_call_jsq(self, entries, mean_calls: float = 1.0) -> 'Activity':
+        """Dispatch synchronous calls to the least loaded of a set of target entries.
+
+        Same contract as SYNCH_CALL_RROBIN, with the cyclic pointer replaced by
+        join-the-shortest-queue: each call goes to the target task whose station
+        holds the fewest jobs at dispatch time, ties split uniformly. The
+        probabilistic twin with MEAN_CALLS/len(ENTRIES) per target is again the
+        ungrouped equivalent.
+
+        Only the squashed ('flat') layering can represent this, and only a layer
+        solver with state-dependent routing can honour it; see
+        SolverLN._assert_call_groups.
+        """
+        return self._add_call_group(RoutingStrategy.JSQ, entries, mean_calls,
+                                    'synch_call_jsq')
+
+    def _add_call_group(self, strategy, entries, mean_calls, caller: str) -> 'Activity':
+        """Record a routed call group and its per-target call means."""
+        if entries is None or len(entries) < 2:
+            raise ValueError('%s needs at least two target entries' % caller)
+        share = float(mean_calls) / len(entries)
+        for entry in entries:
+            self.calls.append((entry, share, CallType.SYNC))
+        return self.record_call_group(strategy, entries)
+
+    def record_call_group(self, strategy, entries) -> 'Activity':
+        """Record the grouping of synchronous calls this activity ALREADY declares.
+
+        _ADD_CALL_GROUP issues the member calls and then records them; the .lqnx
+        reader has read them back as ordinary synch-call elements, so it records
+        the grouping alone and must not issue them a second time.
+        """
+        if entries is None or len(entries) < 2:
+            raise ValueError('A call group needs at least two target entries')
+        self.call_groups.append((strategy, list(entries)))
+        return self
+
     def replies_to(self, entry: 'Entry') -> 'Activity':
         """Mark this activity as replying to an entry."""
         self.reply_entry = entry
         return self
 
     def setPhase(self, phase_num: int) -> 'Activity':
-        """Set the phase number for this activity (1 or 2).
+        """Set the phase number for this activity (1, 2 or 3).
 
-        Phase 1 is the default; phase 2 marks a second-phase (post-reply)
-        activity whose demand is incurred after the entry has replied.
+        Phase 1 is the default; phases 2 and 3 mark post-reply activities whose
+        demand is incurred after the entry has replied. The range is 1..3
+        because lqn-core.xsd bounds the phase attribute there, and every
+        consumer of lqn.actphase tests phase > 1, so 3 is served as 2 is.
         """
-        if not isinstance(phase_num, (int, float)) or phase_num < 1 or phase_num > 2:
-            raise ValueError('Phase number must be 1 or 2')
+        if not isinstance(phase_num, (int, float)) or phase_num < 1 or phase_num > 3:
+            raise ValueError('Phase number must be 1, 2 or 3')
         self.phase = int(phase_num)
         return self
 
@@ -466,7 +740,7 @@ class Activity:
         return self.setPhase(phase_num)
 
     def getPhase(self) -> int:
-        """Get the phase number (1 or 2)."""
+        """Get the phase number (1..3)."""
         return self.phase
 
     def get_phase(self) -> int:
@@ -565,6 +839,17 @@ class Activity:
     get_async_call_dests = getAsyncCallDests
     get_async_call_means = getAsyncCallMeans
     get_think_time_mean = getThinkTimeMean
+
+    # camelCase aliases, under the names MATLAB and the JAR use, so an LQN
+    # script transliterates unchanged. The setters already had them; the
+    # activity-graph builders did not, which is what a caller reaches for first.
+    boundTo = bound_to
+    synchCall = synch_call
+    asynchCall = asynch_call
+    synchCallRRobin = synch_call_rrobin
+    synchCallJSQ = synch_call_jsq
+    repliesTo = replies_to
+    recordCallGroup = record_call_group
 
 
 class Entry:
@@ -680,7 +965,320 @@ class Entry:
     forward = addForwarding  # MATLAB/JAR API name
 
 
-class Task:
+class AdmissionConstrained:
+    """
+    Admission constraints on the layer station of a Task or a Processor.
+
+    A server declares ``A*n <= b`` on the station that represents it in its
+    layer, where ``n`` counts the jobs in service or queueing there. Only a Task
+    or a Processor becomes a server station, so only those carry constraints.
+    """
+
+    @property
+    def lincon_a(self):
+        """Positional constraint matrix, or None."""
+        return getattr(self, '_lincon_a', None)
+
+    @property
+    def lincon_b(self):
+        """Positional capacity vector, or None."""
+        return getattr(self, '_lincon_b', None)
+
+    @property
+    def lincon_rows(self):
+        """Rows declared by operand name, as (names, coeffs, cap) tuples."""
+        if not hasattr(self, '_lincon_rows'):
+            self._lincon_rows = []
+        return self._lincon_rows
+
+    def addConstraint(self, operands, coeffs=None, cap=None):
+        """
+        Append one admission constraint row naming its operands, so the meaning
+        does not depend on declaration order::
+
+            t2.addConstraint([e2, e3], [1, 1], 2)  # n(E2) + n(E3) <= 2
+            t2.addConstraint(e3, 1, 1)             # n(E3) <= 1
+
+        Operands are the entries of a Task, or the tasks of a Processor, given as
+        objects, names, or a mix. Names are resolved against the model in
+        LayeredNetwork.getStruct, where an operand that does not belong to this
+        server is an error rather than a silent mis-mapping.
+        """
+        names = _operand_names(operands)
+        n = len(names)
+        if coeffs is None:
+            coeffs = np.ones(n)
+        coeffs = np.atleast_1d(np.asarray(coeffs, dtype=float)).ravel()
+        if coeffs.size == 1 and n > 1:
+            coeffs = np.full(n, coeffs[0])
+        if coeffs.size != n:
+            raise ValueError(f"Admission constraint has {n} operands but {coeffs.size} coefficients.")
+        if not np.all(np.isfinite(coeffs)) or np.any(coeffs < 0):
+            raise ValueError("Admission constraint coefficients must be finite and non-negative.")
+        if np.all(coeffs == 0):
+            raise ValueError("Admission constraint has all-zero coefficients, which constrains nothing.")
+        if len(set(names)) != n:
+            raise ValueError("Admission constraint names the same operand more than once; give it a single combined coefficient instead.")
+        if cap is None or not np.isscalar(cap) or not np.isfinite(cap) or cap < 1:
+            raise ValueError("Admission constraint capacity must be a finite scalar of at least 1.")
+        self.lincon_rows.append((names, coeffs, float(cap)))
+        return self
+
+    def setConstraint(self, A, b):
+        """
+        Raw form of addConstraint, for programmatic construction. Columns of A
+        are indexed positionally by the entries of a Task, or by the tasks of a
+        Processor, in declaration order, so the mapping shifts if an entry is
+        added later; prefer addConstraint, which names its operands. Only the
+        column count is checked, in LayeredNetwork.getStruct, since entries may
+        be added after this call. Rows from both forms are concatenated.
+        """
+        A = np.atleast_2d(np.asarray(A, dtype=float))
+        b = np.asarray(b, dtype=float).ravel()
+        if A.size == 0 or b.size == 0:
+            raise ValueError("Constraint matrix A and capacity vector b must be non-empty.")
+        if A.ndim > 2:
+            raise ValueError("Constraint matrix A must be two-dimensional.")
+        if A.shape[0] != b.size:
+            raise ValueError("A and b must have matching number of rows.")
+        if not np.all(np.isfinite(A)) or np.any(A < 0):
+            raise ValueError("Constraint matrix A must be finite and non-negative.")
+        if not np.all(np.isfinite(b)) or np.any(b < 1):
+            raise ValueError("Capacity vector b must be finite and at least 1.")
+        if np.any(np.all(A == 0, axis=1)):
+            raise ValueError("Constraint matrix A has an all-zero row, which constrains nothing.")
+        self._lincon_a = A
+        self._lincon_b = b
+        return self
+
+    def getLinearConstraints(self):
+        """Positional constraint pair declared on this element, before name resolution."""
+        return self.lincon_a, self.lincon_b
+
+    def hasLinearConstraints(self):
+        """Whether this element declares any admission constraint, in either form."""
+        return (self.lincon_a is not None and self.lincon_b is not None) or bool(self.lincon_rows)
+
+    add_constraint = addConstraint
+    set_constraint = setConstraint
+    get_linear_constraints = getLinearConstraints
+    has_linear_constraints = hasLinearConstraints
+
+
+class RateDependent:
+    """
+    Service-rate dependences on the layer station of a Task or a Processor.
+
+    A server declares how the rate of the station that represents it in its
+    layer scales with the jobs held there: with the total population
+    (``setLoadDependence``), with the per-operand population in product form
+    (``setClassDependence``), or jointly and outside product form
+    (``setJointDependence``). An operand is task j of a Processor or entry j of
+    a Task, in the same order as the columns of ``setConstraint``.
+    """
+
+    @property
+    def lld_scaling(self):
+        """Load-dependence vector alpha(n), or None."""
+        return getattr(self, '_lld_scaling', None)
+
+    @property
+    def lcd_scaling(self):
+        """Class-dependence handle beta(n) over this server's operands, or None."""
+        return getattr(self, '_lcd_scaling', None)
+
+    @property
+    def lcd_scaling_peak(self):
+        """Per-operand peak rate scaling of the class dependence, or None."""
+        return getattr(self, '_lcd_scaling_peak', None)
+
+    @property
+    def ljd_scaling(self):
+        """Joint-dependence handle eta(n) over this server's operands, or None."""
+        return getattr(self, '_ljd_scaling', None)
+
+    @property
+    def ljd_scaling_peak(self):
+        """Per-operand peak rate scaling of the joint dependence, or None."""
+        return getattr(self, '_ljd_scaling_peak', None)
+
+    @property
+    def server_pools(self):
+        """Declared compatibility pools, a list of dicts, empty when absent."""
+        return getattr(self, '_server_pools', [])
+
+    def addServerType(self, server_type):
+        """
+        Declare one pool of ``server_type.get_num_of_servers()`` identical
+        servers, each running at ``server_type.get_rate()``, eligible only for
+        the operands in ``server_type.get_compatible_classes()``::
+
+            P1.addServerType(ServerType('Fast', 2, [T2]))
+            P1.addServerType(ServerType('Shared', 1, [T2, T3]))
+
+        The operands are the tasks of a Processor, or the entries of a Task,
+        given as objects or names. They are resolved against the model in
+        getStruct, where an operand that does not belong to this server is an
+        error rather than a silent mis-mapping, exactly as for addConstraint.
+
+        SolverLN lowers the whole declaration to the activated-server rate of
+        sn_compat_rate, carried onto the layer station as a joint dependence, so
+        the pools are an APPROXIMATION in a layer for the same reason
+        setJointDependence is.
+        """
+        self._assert_rate_dependent('Compatibility')
+        if self.ljd_scaling is not None:
+            raise ValueError(f"{self.name} already declares a joint dependence, so it cannot "
+                             f"also declare server pools, which are a rate law of their own.")
+        if server_type.get_num_of_servers() < 1:
+            raise ValueError(f"Server pool '{server_type.name}' must hold at least one server")
+        compat = server_type.get_compatible_classes()
+        if not compat:
+            raise ValueError(f"Server pool '{server_type.name}' is compatible with no operand, "
+                             f"so it can never serve")
+        pools = getattr(self, '_server_pools', None)
+        if pools is None:
+            pools = []
+            self._server_pools = pools
+        for p in pools:
+            if p['name'] == server_type.name:
+                raise ValueError(f"Server pool '{server_type.name}' is already declared on "
+                                 f"{self.name}")
+        # Resolved to names here, as addConstraint does: getStruct reads strings.
+        compat_names = [c if isinstance(c, str) else c.name for c in compat]
+        if len(set(compat_names)) != len(compat_names):
+            raise ValueError(f"Server pool '{server_type.name}' names the same operand more "
+                             f"than once")
+        server_type.set_id(len(pools))
+        pools.append({'name': server_type.name,
+                      'count': float(server_type.get_num_of_servers()),
+                      'rate': float(server_type.get_rate()),
+                      'compatible': compat_names})
+        return self
+
+    def getServerTypes(self):
+        """Declared compatibility pools."""
+        return self.server_pools
+
+    def hasServerPools(self):
+        """Whether this element declares compatibility pools."""
+        return bool(self.server_pools)
+
+    add_server_type = addServerType
+    get_server_types = getServerTypes
+    has_server_pools = hasServerPools
+
+    def setLoadDependence(self, alpha):
+        """
+        alpha[n] is the service-rate scaling of the station that represents this
+        server in its layer when that station holds n jobs in total, as in
+        Queue.setLoadDependence. The scaling multiplies the station rate on top
+        of its multiplicity, so a multi-server host applies min(n,m)*alpha[n].
+        """
+        self._assert_rate_dependent('Load')
+        alpha = np.atleast_1d(np.asarray(alpha, dtype=float)).ravel()
+        if alpha.size == 0 or not np.all(np.isfinite(alpha)) or np.any(alpha <= 0):
+            raise ValueError("Load-dependence scalings must be finite and positive.")
+        self._lld_scaling = alpha
+        return self
+
+    def setClassDependence(self, beta, peak_rate_per_operand=None):
+        """
+        beta(n) takes the per-operand population vector of this server: n[j]
+        counts the jobs held on behalf of operand j, which is task j of a
+        Processor or entry j of a Task, in the same order as the columns of
+        setConstraint. It returns a scalar shared by every operand, or a
+        per-operand vector. peak_rate_per_operand is REQUIRED (scalar or
+        per-operand vector) and normalizes Util = T*S/peak. Product form holds
+        only where an operand occupies the layer station through a single job
+        class; otherwise SolverLN emits the equivalent joint dependence, which is
+        numerically identical but carries no exactness guarantee.
+        """
+        self._assert_rate_dependent('Class')
+        _assert_dependence_handle(beta, peak_rate_per_operand, 'Class')
+        self._lcd_scaling = beta
+        self._lcd_scaling_peak = np.atleast_1d(np.asarray(peak_rate_per_operand, dtype=float)).ravel()
+        return self
+
+    def setJointDependence(self, eta, peak_rate_per_operand=None):
+        """
+        eta(n) reads the per-operand population vector of this server arbitrarily
+        (e.g. min(n[0],c)) and is therefore non-product-form: solvers treat it as
+        an approximation. Operand order and the required peak_rate_per_operand
+        are as in setClassDependence.
+        """
+        self._assert_rate_dependent('Joint')
+        _assert_dependence_handle(eta, peak_rate_per_operand, 'Joint')
+        if self.server_pools:
+            raise ValueError(f"{self.name} already declares server pools, which are themselves a "
+                             f"rate law, so it cannot also take a joint dependence.")
+        self._ljd_scaling = eta
+        self._ljd_scaling_peak = np.atleast_1d(np.asarray(peak_rate_per_operand, dtype=float)).ravel()
+        return self
+
+    def hasRateDependence(self):
+        """Whether this element declares any service-rate dependence."""
+        return (self.lld_scaling is not None or self.lcd_scaling is not None
+                or self.ljd_scaling is not None or bool(self.server_pools))
+
+    def _assert_rate_dependent(self, what):
+        """Reject servers whose layer station does not admit a rate scaling."""
+        sched = getattr(self, 'sched_strategy', None)
+        if sched not in (SchedStrategy.PS, SchedStrategy.FCFS):
+            raise ValueError(f"{what}-dependence supported only for processor sharing (PS) and "
+                             f"first-come first-serve (FCFS) servers, but {self.name} is scheduled {sched}.")
+
+    set_load_dependence = setLoadDependence
+    set_class_dependence = setClassDependence
+    set_joint_dependence = setJointDependence
+    has_rate_dependence = hasRateDependence
+
+
+def _assert_dependence_handle(f, peak, what):
+    """Common validation of a class- or joint-dependence declaration."""
+    if not callable(f):
+        raise ValueError(f"{what} dependence must be specified through a function handle.")
+    if peak is None:
+        raise ValueError(f"{what} dependence requires an explicit peak rate: pass a scalar "
+                         f"(identical peak for every operand) or a per-operand vector.")
+    peak = np.atleast_1d(np.asarray(peak, dtype=float)).ravel()
+    if peak.size == 0 or not np.all(np.isfinite(peak)) or np.any(peak <= 0):
+        raise ValueError("peak_rate_per_operand must be a finite positive scalar or per-operand vector.")
+
+
+def _expand_peak(peak, ncols, elemname, colwhat, what):
+    """Per-operand peak rate scaling of a class- or joint-dependence declaration."""
+    peak = np.atleast_1d(np.asarray(peak, dtype=float)).ravel()
+    if peak.size == 1:
+        return np.full(ncols, peak[0])
+    if peak.size != ncols:
+        raise ValueError(f"{what}-dependence peak rate on {elemname} has {peak.size} entries "
+                         f"but there are {ncols} {colwhat}.")
+    return peak
+
+
+def _operand_names(operands):
+    """Operand names from objects, names, or a sequence mixing the two."""
+    if operands is None:
+        raise ValueError("Admission constraint requires at least one operand.")
+    if isinstance(operands, str):
+        return [operands]
+    if not isinstance(operands, (list, tuple, np.ndarray)):
+        operands = [operands]
+    if len(operands) == 0:
+        raise ValueError("Admission constraint requires at least one operand.")
+    names = []
+    for k, op in enumerate(operands):
+        if isinstance(op, str):
+            names.append(op)
+        elif hasattr(op, 'name'):
+            names.append(op.name)
+        else:
+            raise ValueError(f"Admission constraint operand {k + 1} is neither a name nor a LayeredNetwork element.")
+    return names
+
+
+class Task(AdmissionConstrained, RateDependent):
     """
     Task in a layered queueing network.
 
@@ -723,6 +1321,9 @@ class Task:
         self.think_time = None
         self.setup_time = None
         self.delay_off_time = None
+        # Scheduling priority; lower is served first, the convention sn.classprio
+        # uses in a Network. Read by the HOL disciplines of a host or a task.
+        self.priority = 0
         self.entries = []
         self.activities = []
         self.precedences = []
@@ -745,6 +1346,18 @@ class Task:
     def obj(self):
         """Return self for compatibility with wrapper code that accesses .obj"""
         return self
+
+    def set_priority(self, priority: int) -> 'Task':
+        """Set the scheduling priority of this task (lower is served first)."""
+        self.priority = int(priority)
+        return self
+
+    def get_priority(self) -> int:
+        """Scheduling priority of this task."""
+        return self.priority
+
+    setPriority = set_priority
+    getPriority = get_priority
 
     def on(self, processor: 'Processor') -> 'Task':
         """Deploy this task on a processor."""
@@ -899,6 +1512,9 @@ class Task:
     get_think_time_scv = getThinkTimeSCV
     get_parent = getParent
     get_precedences = getPrecedences
+    # camelCase alias, under the name MATLAB and the JAR use: an LQN script
+    # reaches for addPrecedence right after building the activity graph.
+    addPrecedence = add_precedence
     get_setup_time_mean = getSetupTimeMean
     get_delay_off_time_mean = getDelayOffTimeMean
     set_fan_in = setFanIn
@@ -906,12 +1522,12 @@ class Task:
     set_fan_out = setFanOut
     get_fan_out = getFanOut
 
-    def is_function_task(self) -> bool:
-        """Return False for regular Task. FunctionTask overrides this."""
+    def has_setup_delayoff(self) -> bool:
+        """Return False for regular Task. SetupTask overrides this."""
         return False
 
 
-class Processor:
+class Processor(AdmissionConstrained, RateDependent):
     """
     Processor in a layered queueing network.
 
@@ -1036,28 +1652,12 @@ class CacheTask(Task):
             replacement_strategy: Cache replacement policy (FIFO, LRU, RR, etc.)
             multiplicity: Number of task instances
         """
-        # Initialize base Task fields
-        self._model = model
-        self.name = name
-        self.multiplicity = multiplicity
-        self.sched_strategy = SchedStrategy.FCFS
-        self.processor = None
-        self.think_time = None
-        self.setup_time = None
-        self.delay_off_time = None
-        self.entries = []
-        self.activities = []
-        self.precedences = []
-        self._fan_in = {}
-        self._fan_out = {}
+        super().__init__(model, name, multiplicity, SchedStrategy.FCFS)
         # CacheTask specific fields
         self.total_items = total_items
         self.cache_capacity = cache_capacity
         self.replacement_strategy = replacement_strategy
         self.retrieval = False
-        # Register with model
-        if model is not None and hasattr(model, 'tasks'):
-            model.tasks.append(self)
 
     def __hash__(self):
         return id(self)
@@ -1160,6 +1760,7 @@ class LayeredNetworkStruct:
     # Matrices
     mult: np.ndarray = None          # Multiplicities
     repl: np.ndarray = None          # Replication factors
+    prio: np.ndarray = None          # Task scheduling priority (0 elsewhere); lower is served first
     maxmult: np.ndarray = None       # Max multiplicities (for servers)
     graph: np.ndarray = None         # Adjacency graph
     iscaller: np.ndarray = None      # Caller matrix
@@ -1173,9 +1774,13 @@ class LayeredNetworkStruct:
     replacestrat: np.ndarray = None  # Cache replacement strategy
     itemproc: Dict[int, object] = field(default_factory=dict)     # Item popularity distribution
     callpair: np.ndarray = None      # Call pairs (caller_act, callee_entry, mean_calls)
+    # Calls dispatched as a group by a routing strategy, as
+    # (caller_activity_idx, RoutingStrategy, [target_entry_idx, ...]).
+    # Requires the squashed layering; see SolverLN._assert_call_groups.
+    callgroups: List = field(default_factory=list)
     parent: np.ndarray = None        # Parent relationships
     replygraph: np.ndarray = None    # Reply graph (nacts x nentries)
-    actphase: np.ndarray = None      # Activity phase (1 or 2) for each activity
+    actphase: np.ndarray = None      # Activity phase (1..3) for each activity
     actposttype: np.ndarray = None   # Activity post-precedence type (POST_AND, POST_OR, POST_SEQ)
     actpretype: np.ndarray = None    # Activity pre-precedence type (PRE_AND, PRE_OR, PRE_SEQ)
     # Quorum count of an AND-join, indexed by the join target activity. Equals the number
@@ -1183,6 +1788,26 @@ class LayeredNetworkStruct:
     actquorum: np.ndarray = None
 
     # Names
+    # lincon[i] is the (A, b) pair of the admission constraint A*n <= b on the layer
+    # station of host or task i. Columns are that host's tasks, or that task's
+    # entries, in tasksof/entriesof order. Absent where unconstrained -- see
+    # _kb/04-networkstruct.md
+    lincon: dict = None
+
+    # Service-rate dependences on the layer station of host or task i, keyed by absolute index i.
+    # lldscaling[i] is the vector alpha(n) applied at total population n; cdscaling and jdscaling
+    # are handles over that server's operands, in the tasksof/entriesof order used by lincon
+    # columns, with cdscalingpeak/jdscalingpeak their per-operand peak rate scaling. Absent where
+    # undeclared -- see _kb/04-networkstruct.md
+    lldscaling: dict = None
+    cdscaling: dict = None
+    cdscalingpeak: dict = None
+    jdscaling: dict = None
+    jdscalingpeak: dict = None
+    # pools[i] is dict(names, counts, rates, compat) of the compatibility pools declared on
+    # that server; compat[t, j] nonzero = pool t may serve operand j. Absent where not declared
+    pools: dict = None
+
     names: np.ndarray = None
     hashnames: np.ndarray = None
 
@@ -1194,8 +1819,11 @@ class LayeredNetworkStruct:
 
     # Service demands and think times
     hostdem: Dict[int, float] = field(default_factory=dict)
-    think: Dict[int, float] = field(default_factory=dict)
-    actthink: Dict[int, float] = field(default_factory=dict)
+    # think and actthink hold the Distribution when one is set (0.0 otherwise),
+    # as in MATLAB lsn.think{} / lsn.actthink{}, so the SCV survives.
+    think: Dict[int, object] = field(default_factory=dict)
+    think_scv: Dict[int, float] = field(default_factory=dict)
+    actthink: Dict[int, object] = field(default_factory=dict)
 
     # Full host-demand Distribution objects keyed by absolute index (mirrors
     # MATLAB lqn.hostdem{} / hostdem_proc). lqn.hostdem stays a scalar mean for
@@ -1235,6 +1863,63 @@ class LayeredNetwork:
         >>> A2 = model.add_activity('ServerAct', 1.0, T2)
         >>> A2.bound_to(E2).replies_to(E2)
     """
+
+
+    def findSolver(self, metric: str = '', showAll: bool = False):
+        """Which solvers and solver methods can analyze THIS model.
+
+            model.findSolver()                # every (solver, method) pair that runs
+            model.findSolver('cdf')           # ... that returns a passage-time law
+            model.findSolver('getCdfRespT')   # the same question, asked by accessor
+            model.findSolver('', True)        # also the pairs that are refused, and why
+
+        The returned DataFrame has one row per pair, with columns Solver,
+        Method, Runnable, Class ('exact', 'approx', 'bound' or 'simulation'),
+        Metrics and Reason. Method is the method name to pass as a solver method, so
+        a row can be acted on directly::
+
+            T = model.findSolver('cdf')
+            solver = LINE(model, T.Method[0])
+
+        findMethod and help are aliases of this method.
+
+        Args:
+            metric: measure group ('cdf') or accessor ('getCdfRespT') to narrow
+                the report to; '' or 'any' keeps every pair.
+            showAll: also list the refused pairs, with the reason each was
+                refused.
+
+        Returns:
+            pandas.DataFrame with the six columns above.
+        """
+        # The gate lives in SolverAUTO, which is the class that already knows
+        # every family, how to build one and what each refuses. Asking it here
+        # rather than reimplementing the walk is what keeps the model's answer
+        # and AUTO's own dispatch from being two opinions.
+        from .solvers.solver_auto.solver_auto import SolverAUTO
+        # silenced() wraps the CONSTRUCTION too: it probes every candidate
+        # with supports(model), which warns on a model one of them refuses.
+        with SolverAUTO.silenced():
+            auto = SolverAUTO(self, verbose=False)
+        return auto.findSolver(metric, showAll)
+
+    def findMethod(self, metric: str = '', showAll: bool = False):
+        """Alias of findSolver: which solvers and solver methods can analyze
+        this model.
+
+        The two names exist because the question is asked both ways round --
+        "which solver do I use" and "which method do I pass" -- and the answer
+        is the same table, whose Method column carries the method name either caller
+        needs.
+        """
+        return self.findSolver(metric, showAll)
+
+    def help(self, metric: str = '', showAll: bool = False):
+        """Alias of findSolver: what can this model be solved with?"""
+        return self.findSolver(metric, showAll)
+
+    find_solver = findSolver
+    find_method = findMethod
 
     def __init__(self, name: str):
         """Initialize a new layered queueing network."""
@@ -1336,35 +2021,37 @@ class LayeredNetwork:
     def _build_indices(self):
         """Build index mappings for all elements."""
         # Index layout: [hosts | tasks | entries | activities]
-        idx = 1  # 1-based indexing
+        # Elements are 0-based: local h,t,e,a run 0..n-1 and the absolute index is
+        # shift+local, so 0..nidx-1. MATLAB keeps the 1-based numbering.
+        idx = 0
 
         # Processors (hosts)
         for proc in self.processors:
             self._proc_idx[proc] = idx
             idx += 1
 
-        tshift = idx - 1
+        tshift = idx
 
         # Tasks
         for task in self.tasks:
             self._task_idx[task] = idx
             idx += 1
 
-        eshift = idx - 1
+        eshift = idx
 
         # Entries
         for entry in self.entries:
             self._entry_idx[entry] = idx
             idx += 1
 
-        ashift = idx - 1
+        ashift = idx
 
         # Activities
         for act in self.activities:
             self._act_idx[act] = idx
             idx += 1
 
-        return tshift, eshift, ashift, idx - 1
+        return tshift, eshift, ashift, idx
 
     def _lsn_max_multiplicity(self, lqn: 'LayeredNetworkStruct', nidx: int) -> np.ndarray:
         """
@@ -1383,7 +2070,7 @@ class LayeredNetwork:
         """
         # Use DAG for flow propagation (needs to be built or use graph)
         # The DAG excludes loop-back edges
-        n = nidx + 1
+        n = nidx
 
         # Get the adjacency graph (use dag if available, else graph)
         if hasattr(lqn, 'dag') and lqn.dag is not None:
@@ -1464,15 +2151,15 @@ class LayeredNetwork:
         outflow = np.zeros(n)
 
         # see _kb/04-networkstruct.md (Python native layered.py port notes) for rationale
-        is_function = np.zeros(n)
-        if getattr(lqn, 'isfunction', None) is not None:
-            isf = np.asarray(lqn.isfunction).ravel()
-            is_function[:min(n, isf.size)] = isf[:min(n, isf.size)]
+        has_setup = np.zeros(n)
+        if getattr(lqn, 'hassetup', None) is not None:
+            isf = np.asarray(lqn.hassetup).ravel()
+            has_setup[:min(n, isf.size)] = isf[:min(n, isf.size)]
 
         # Propagate flow through DAG in topological order
         for k in range(len(order)):
             i = order[k]
-            if is_function[i] and inflow[i] > 0:
+            if has_setup[i] and inflow[i] > 0:
                 outflow[i] = mult[i]
             else:
                 outflow[i] = min(inflow[i], mult[i])
@@ -1668,10 +2355,8 @@ class LayeredNetwork:
         lqn.ashift = ashift
 
         # Build names arrays
-        lqn.names = np.empty(nidx + 1, dtype=object)
-        lqn.hashnames = np.empty(nidx + 1, dtype=object)
-        lqn.names[0] = ''
-        lqn.hashnames[0] = ''
+        lqn.names = np.empty(nidx, dtype=object)
+        lqn.hashnames = np.empty(nidx, dtype=object)
 
         for proc in self.processors:
             idx = self._proc_idx[proc]
@@ -1695,7 +2380,7 @@ class LayeredNetwork:
 
         # Build type array (matches MATLAB LayeredNetworkElement enum)
         # 0=PROCESSOR, 1=TASK, 2=ENTRY, 3=ACTIVITY
-        lqn.type = np.zeros(nidx + 1, dtype=int)
+        lqn.type = np.zeros(nidx, dtype=int)
         for proc in self.processors:
             lqn.type[self._proc_idx[proc]] = 0  # PROCESSOR
         for task in self.tasks:
@@ -1733,19 +2418,25 @@ class LayeredNetwork:
                 if repl > 1:
                     lqn.repl[0, self._task_idx[task]] = repl
 
+        # Task scheduling priority, read by the HOL disciplines; 0 elsewhere.
+        lqn.prio = np.zeros((1, nidx + 1))
+        for task in self.tasks:
+            if task in self._task_idx:
+                lqn.prio[0, self._task_idx[task]] = task.get_priority()
+
         # Note: maxmult is computed later after the graph is built
 
         # Build reference task flags
-        lqn.isref = np.zeros((nidx + 1, 1))
+        lqn.isref = np.zeros((nidx, 1))
         for task in self.tasks:
             if task.sched_strategy == SchedStrategy.REF:
                 lqn.isref[self._task_idx[task], 0] = 1
 
         # Build cache task flags (matches MATLAB: lsn.iscache = lsn.nitems > 0)
-        lqn.iscache = np.zeros((nidx + 1, 1))
+        lqn.iscache = np.zeros((nidx, 1))
         # Delayed-hit retrieval flag: 1 on a CacheTask whose miss path is a
         # retrieval system (CacheTask.set_retrieval). Mirrors JAR lsn.hasretrieval.
-        lqn.hasretrieval = np.zeros((nidx + 1, 1))
+        lqn.hasretrieval = np.zeros((nidx, 1))
         for task in self.tasks:
             if isinstance(task, CacheTask):
                 lqn.iscache[self._task_idx[task], 0] = 1
@@ -1753,9 +2444,9 @@ class LayeredNetwork:
                     lqn.hasretrieval[self._task_idx[task], 0] = 1
 
         # Build cache-related arrays (matches MATLAB getStruct.m lines 66-68, 135-137, 183-184)
-        lqn.nitems = np.zeros((nidx + 1, 1))
+        lqn.nitems = np.zeros((nidx, 1))
         lqn.itemcap = {}
-        lqn.replacestrat = np.zeros((nidx + 1, 1), dtype=int)
+        lqn.replacestrat = np.zeros((nidx, 1), dtype=int)
         lqn.itemproc = {}
 
         for task in self.tasks:
@@ -1778,12 +2469,16 @@ class LayeredNetwork:
                 lqn.itemproc[idx] = entry.access_prob
 
         # Build caller matrices
-        lqn.iscaller = np.zeros((nidx + 1, nidx + 1))
-        lqn.issynccaller = np.zeros((nidx + 1, nidx + 1))
-        lqn.isasynccaller = np.zeros((nidx + 1, nidx + 1))
+        lqn.iscaller = np.zeros((nidx, nidx))
+        lqn.issynccaller = np.zeros((nidx, nidx))
+        lqn.isasynccaller = np.zeros((nidx, nidx))
 
         # Build call pairs and caller relationships
         calls = []
+        # Call groups dispatched by a routing strategy, as
+        # (caller_activity_idx, RoutingStrategy, [target_entry_idx, ...]).
+        # Empty for every model that does not use Activity.synch_call_rrobin.
+        lqn.callgroups = []
         for act in self.activities:
             # Skip activities without assigned tasks
             if act.task is None:
@@ -1823,6 +2518,12 @@ class LayeredNetwork:
 
                 calls.append((act_idx, target_entry_idx, mean_calls, call_type))
 
+            for strategy, group_entries in getattr(act, 'call_groups', []):
+                gidx = [self._entry_idx[e] for e in group_entries
+                        if e.task is not None and e in self._entry_idx]
+                if len(gidx) >= 2:
+                    lqn.callgroups.append((act_idx, strategy, gidx))
+
         # see _kb/04-networkstruct.md (Python native layered.py port notes) for rationale
 
         # Collect forwarding calls from entries
@@ -1848,49 +2549,49 @@ class LayeredNetwork:
 
         lqn.ncalls = len(calls) + len(fwd_calls)
         if lqn.ncalls > 0:
-            lqn.callpair = np.zeros((lqn.ncalls + 1, 4))
-            lqn.calltype = np.zeros(lqn.ncalls + 1, dtype=int)
-            lqn.callproc = [None] * (lqn.ncalls + 1)
+            lqn.callpair = np.zeros((lqn.ncalls, 3))
+            lqn.calltype = np.zeros(lqn.ncalls, dtype=int)
+            lqn.callproc = [None] * lqn.ncalls
             # Add sync/async calls
-            for i, (act_idx, entry_idx, mean_calls, call_type) in enumerate(calls, 1):
-                lqn.callpair[i, 1] = act_idx
-                lqn.callpair[i, 2] = entry_idx
-                lqn.callpair[i, 3] = mean_calls
+            for i, (act_idx, entry_idx, mean_calls, call_type) in enumerate(calls):
+                lqn.callpair[i, 0] = act_idx
+                lqn.callpair[i, 1] = entry_idx
+                lqn.callpair[i, 2] = mean_calls
                 # calltype: 1=SYNC, 2=ASYNC (matches MATLAB CallType enum)
                 lqn.calltype[i] = 1 if call_type == CallType.SYNC else 2
                 # callproc: distribution for call multiplicity
-                lqn.callproc[i] = Exp.fit_mean(mean_calls) if mean_calls > 0 else Immediate()
+                lqn.callproc[i] = _call_count_dist(mean_calls)
             # Add forwarding calls (calltype=3=FWD, matching JAR CallType.FWD)
-            # Forwarding callpair: col1=source_entry, col2=target_entry, col3=fwd_prob
+            # Forwarding callpair: col0=source_entry, col1=target_entry, col2=fwd_prob
             # Note: NOT added to issynccaller/isasynccaller (forwarding is not a call
             # dependency); the graph entry->entry edge is added after graph construction
             # below (matches MATLAB getStruct.m lsn.graph(eidx, target_eidx) = 1)
-            fwd_start = len(calls) + 1
+            fwd_start = len(calls)
             for j, (source_eidx, target_eidx, fwd_prob) in enumerate(fwd_calls):
                 cidx = fwd_start + j
-                lqn.callpair[cidx, 1] = source_eidx
-                lqn.callpair[cidx, 2] = target_eidx
-                lqn.callpair[cidx, 3] = fwd_prob
+                lqn.callpair[cidx, 0] = source_eidx
+                lqn.callpair[cidx, 1] = target_eidx
+                lqn.callpair[cidx, 2] = fwd_prob
                 lqn.calltype[cidx] = 3  # CallType.FWD
-                lqn.callproc[cidx] = Exp.fit_mean(fwd_prob)
+                lqn.callproc[cidx] = _call_count_dist(fwd_prob)
         else:
-            lqn.callpair = np.zeros((1, 4))
-            lqn.calltype = np.zeros(1, dtype=int)
-            lqn.callproc = [None]
+            lqn.callpair = np.zeros((0, 3))
+            lqn.calltype = np.zeros(0, dtype=int)
+            lqn.callproc = []
 
         # Build callsof mapping (activity -> list of call indices)
         # This maps each source activity to the calls it makes
         lqn.callsof = {}
-        for cidx in range(1, lqn.ncalls + 1):
+        for cidx in range(lqn.ncalls):
             if cidx < lqn.callpair.shape[0]:
-                src_aidx = int(lqn.callpair[cidx, 1])
-                if src_aidx > 0:
+                src_aidx = int(lqn.callpair[cidx, 0])
+                if src_aidx >= 0:
                     if src_aidx not in lqn.callsof:
                         lqn.callsof[src_aidx] = []
                     lqn.callsof[src_aidx].append(cidx)
 
         # Build parent relationships
-        lqn.parent = np.zeros((nidx + 1, 1))
+        lqn.parent = np.full((nidx, 1), -1.0)
         for task in self.tasks:
             task_idx = self._task_idx[task]
             if task.processor:
@@ -1914,7 +2615,7 @@ class LayeredNetwork:
 
         # Build tasksof mapping (tasks on each host)
         lqn.tasksof = {}
-        for hidx in range(1, lqn.nhosts + 1):
+        for hidx in range(lqn.nhosts):
             lqn.tasksof[hidx] = []
         for task in self.tasks:
             task_idx = self._task_idx[task]
@@ -1924,7 +2625,7 @@ class LayeredNetwork:
 
         # Build entriesof mapping (entries of each task)
         lqn.entriesof = {}
-        for t in range(1, lqn.ntasks + 1):
+        for t in range(lqn.ntasks):
             tidx = lqn.tshift + t
             lqn.entriesof[tidx] = []
         for entry in self.entries:
@@ -1957,6 +2658,100 @@ class LayeredNetwork:
                     lqn.actsof[task_idx] = []
                 if act_idx not in lqn.actsof[task_idx]:
                     lqn.actsof[task_idx].append(act_idx)
+
+        # Admission constraint columns are only resolvable once tasksof/entriesof exist
+        # -- see _kb/04-networkstruct.md
+        lqn.lincon = {}
+        lqn.lldscaling = {}
+        lqn.cdscaling = {}
+        lqn.cdscalingpeak = {}
+        lqn.jdscaling = {}
+        lqn.jdscalingpeak = {}
+        lqn.pools = {}
+        for cidx in range(lqn.nhosts + lqn.ntasks):
+            if cidx < lqn.tshift:
+                elem = self.processors[cidx - lqn.hshift]
+                col_idx = lqn.tasksof.get(cidx, [])
+                colwhat = 'tasks on this host'
+            else:
+                elem = self.tasks[cidx - lqn.tshift]
+                col_idx = lqn.entriesof.get(cidx, [])
+                colwhat = 'entries of this task'
+            ncols = len(col_idx)
+            # Rate dependences share the operand order of the constraint columns
+            if elem.lld_scaling is not None:
+                lqn.lldscaling[cidx] = elem.lld_scaling
+            if elem.lcd_scaling is not None:
+                lqn.cdscaling[cidx] = elem.lcd_scaling
+                lqn.cdscalingpeak[cidx] = _expand_peak(elem.lcd_scaling_peak, ncols,
+                                                       lqn.names[cidx], colwhat, 'Class')
+            if elem.ljd_scaling is not None:
+                lqn.jdscaling[cidx] = elem.ljd_scaling
+                lqn.jdscalingpeak[cidx] = _expand_peak(elem.ljd_scaling_peak, ncols,
+                                                       lqn.names[cidx], colwhat, 'Joint')
+            # Compatibility pools name the operands they may serve, so the names
+            # become columns only here, on the same operand order as the
+            # constraints below.
+            if elem.server_pools:
+                col_names = [lqn.names[c] for c in col_idx]
+                npools = len(elem.server_pools)
+                compat = np.zeros((npools, ncols))
+                counts = np.zeros(npools)
+                rates = np.zeros(npools)
+                pool_names = []
+                for t, pool in enumerate(elem.server_pools):
+                    pool_names.append(pool['name'])
+                    counts[t] = pool['count']
+                    rates[t] = pool['rate']
+                    for cname in pool['compatible']:
+                        if cname not in col_names:
+                            raise ValueError(f"Server pool '{pool['name']}' on "
+                                             f"{lqn.names[cidx]} names {cname}, which is not one "
+                                             f"of the {colwhat}.")
+                        compat[t, col_names.index(cname)] = 1
+                # An operand no pool can serve would be served at rate zero and
+                # never complete, so it is a declaration error, not an empty column.
+                unserved = np.flatnonzero(~np.any(compat != 0, axis=0))
+                if unserved.size:
+                    raise ValueError(f"{col_names[int(unserved[0])]} on {lqn.names[cidx]} is "
+                                     f"compatible with no server pool, so it can never be served.")
+                # The pools describe HOW the declared servers are shared, not how
+                # many there are, so the two statements have to agree. Letting
+                # them diverge would leave the layer station sized by the
+                # multiplicity and scaled by a peak taken over a different number
+                # of servers, reporting a utilization against a denominator the
+                # model never declared.
+                mult_c = float(lqn.mult[0, cidx])
+                if np.isfinite(mult_c) and float(np.sum(counts)) != mult_c:
+                    raise ValueError(f"Server pools on {lqn.names[cidx]} hold "
+                                     f"{float(np.sum(counts)):g} servers but its multiplicity is "
+                                     f"{mult_c:g}; the pools partition the declared servers, so "
+                                     f"the two must agree.")
+                lqn.pools[cidx] = {'names': pool_names, 'counts': counts,
+                                   'rates': rates, 'compat': compat}
+            if not elem.hasLinearConstraints():
+                continue
+            A_pos, b_pos = elem.getLinearConstraints()
+            if A_pos is not None and A_pos.shape[1] != ncols:
+                raise ValueError(f"Admission constraint on {lqn.names[cidx]} has {A_pos.shape[1]} "
+                                 f"columns but there are {ncols} {colwhat}.")
+            blocks_a = [] if A_pos is None else [A_pos]
+            blocks_b = [] if b_pos is None else [np.asarray(b_pos, dtype=float).ravel()]
+            if elem.lincon_rows:
+                # resolve rows declared by operand name against this server's columns
+                col_names = [lqn.names[j] for j in col_idx]
+                a_named = np.zeros((len(elem.lincon_rows), ncols))
+                b_named = np.zeros(len(elem.lincon_rows))
+                for r, (row_names, row_coeffs, row_cap) in enumerate(elem.lincon_rows):
+                    for k, nm in enumerate(row_names):
+                        if nm not in col_names:
+                            raise ValueError(f"Admission constraint on {lqn.names[cidx]} names {nm}, "
+                                             f"which is not one of the {colwhat}.")
+                        a_named[r, col_names.index(nm)] = row_coeffs[k]
+                    b_named[r] = row_cap
+                blocks_a.append(a_named)
+                blocks_b.append(b_named)
+            lqn.lincon[cidx] = (np.vstack(blocks_a), np.concatenate(blocks_b))
 
         # Build entry-level open arrival distributions
         # Mirrors JAR LayeredNetwork.java:1158-1167 — entries that had setArrival(dist)
@@ -2018,27 +2813,30 @@ class LayeredNetwork:
         for task in self.tasks:
             task_idx = self._task_idx[task]
             if task.think_time:
-                lqn.think[task_idx] = _get_dist_mean(task.think_time)
+                # The Distribution itself, as in MATLAB lsn.think{} and the JAR:
+                # a mean would drop the SCV of a non-exponential think time.
+                lqn.think[task_idx] = task.think_time
+                lqn.think_scv[task_idx] = _get_dist_scv(task.think_time)
             else:
                 lqn.think[task_idx] = 0.0
 
-        # Build setup times and delay-off times (for FunctionTask/FaaS modeling)
+        # Build setup times and delay-off times (setup/delay-off tasks)
         lqn.setuptime = {}
         lqn.delayofftime = {}
-        lqn.isfunction = np.zeros((1, nidx + 1))
+        lqn.hassetup = np.zeros((1, nidx + 1))
         for task in self.tasks:
             task_idx = self._task_idx[task]
             has_setup = task.setup_time is not None and _get_dist_mean(task.setup_time) > 0
             has_delayoff = task.delay_off_time is not None and _get_dist_mean(task.delay_off_time) > 0
-            if has_setup or has_delayoff or task.is_function_task():
-                lqn.isfunction[0, task_idx] = 1
+            if has_setup or has_delayoff or task.has_setup_delayoff():
+                lqn.hassetup[0, task_idx] = 1
                 if task.setup_time:
                     lqn.setuptime[task_idx] = task.setup_time
                 if task.delay_off_time:
                     lqn.delayofftime[task_idx] = task.delay_off_time
 
         # Build fan-out matrix from Task objects' fan-out maps
-        lqn.fanout = np.zeros((nidx + 1, nidx + 1))
+        lqn.fanout = np.zeros((nidx, nidx))
         task_name_to_idx = {}
         for task in self.tasks:
             task_name_to_idx[task.name] = self._task_idx[task]
@@ -2062,9 +2860,9 @@ class LayeredNetwork:
         # local space here would need an ashift correction at each read.
         # Values are the ActivityPrecedenceType ids shared with MATLAB and the JAR:
         # PRE_SEQ=1, PRE_AND=2, PRE_OR=3, POST_SEQ=11, POST_AND=12, POST_OR=13.
-        lqn.actposttype = np.ones(nidx + 1) * 11  # Default: POST_SEQ
-        lqn.actpretype = np.ones(nidx + 1) * 1    # Default: PRE_SEQ
-        lqn.actquorum = np.zeros(nidx + 1)
+        lqn.actposttype = np.ones(nidx) * 11  # Default: POST_SEQ
+        lqn.actpretype = np.ones(nidx) * 1    # Default: PRE_SEQ
+        lqn.actquorum = np.zeros(nidx)
 
         # Populate actposttype and actpretype from precedence constraints
         for task in self.tasks:
@@ -2077,7 +2875,7 @@ class LayeredNetwork:
                         for post_act in post_activities:
                             if post_act in self._act_idx:
                                 act_idx = self._act_idx[post_act]
-                                if ashift < act_idx <= ashift + lqn.nacts:
+                                if ashift <= act_idx < ashift + lqn.nacts:
                                     lqn.actposttype[act_idx] = 12  # ID_POST_AND
                     # AND-join: pre_activities are PRE_AND
                     pre_activities = self._get_prec_pre_activities(prec)
@@ -2085,7 +2883,7 @@ class LayeredNetwork:
                         for pre_act in pre_activities:
                             if pre_act in self._act_idx:
                                 act_idx = self._act_idx[pre_act]
-                                if ashift < act_idx <= ashift + lqn.nacts:
+                                if ashift <= act_idx < ashift + lqn.nacts:
                                     lqn.actpretype[act_idx] = 2  # ID_PRE_AND
                         # Record the quorum on the join target. A missing or out-of-range
                         # value means the join waits for all its predecessors.
@@ -2099,7 +2897,7 @@ class LayeredNetwork:
                         for post_act in self._get_prec_post_activities(prec):
                             if post_act in self._act_idx:
                                 act_idx = self._act_idx[post_act]
-                                if ashift < act_idx <= ashift + lqn.nacts:
+                                if ashift <= act_idx < ashift + lqn.nacts:
                                     lqn.actquorum[act_idx] = quorum
                 elif prec_type == PrecedenceType.CHOICE:
                     # OR-fork: post_activities are POST_OR (only if multiple targets = fork, not join)
@@ -2108,7 +2906,7 @@ class LayeredNetwork:
                         for post_act in post_activities:
                             if post_act in self._act_idx:
                                 act_idx = self._act_idx[post_act]
-                                if ashift < act_idx <= ashift + lqn.nacts:
+                                if ashift <= act_idx < ashift + lqn.nacts:
                                     lqn.actposttype[act_idx] = 13  # ID_POST_OR
                     # OR-join: pre_activities are PRE_OR
                     pre_activities = self._get_prec_pre_activities(prec)
@@ -2116,14 +2914,14 @@ class LayeredNetwork:
                         for pre_act in pre_activities:
                             if pre_act in self._act_idx:
                                 act_idx = self._act_idx[pre_act]
-                                if ashift < act_idx <= ashift + lqn.nacts:
+                                if ashift <= act_idx < ashift + lqn.nacts:
                                     lqn.actpretype[act_idx] = 3  # ID_PRE_OR
 
         # Build graph (adjacency matrix)
         # MATLAB convention: graph[child, parent] = 1 (element points to its parent/owner)
-        lqn.graph = np.zeros((nidx + 1, nidx + 1))
+        lqn.graph = np.zeros((nidx, nidx))
         # Track loop-back edges for DAG construction (matches MATLAB loop_back_edges)
-        loop_back_edges = np.zeros((nidx + 1, nidx + 1), dtype=bool)
+        loop_back_edges = np.zeros((nidx, nidx), dtype=bool)
         # Add edges from tasks to processors (task points to its parent processor)
         for task in self.tasks:
             task_idx = self._task_idx[task]
@@ -2281,12 +3079,36 @@ class LayeredNetwork:
         # Add forwarding edges to the element graph (MATLAB getStruct.m:
         # lsn.graph(eidx, target_eidx) = 1). The actsof BFS below filters by
         # parent task, so the cross-task FWD edge does not leak activities.
-        for cidx in range(1, lqn.ncalls + 1):
+        for cidx in range(lqn.ncalls):
             if cidx < len(lqn.calltype) and int(lqn.calltype[cidx]) == 3:  # CallType.FWD
-                fwd_src_eidx = int(lqn.callpair[cidx, 1])
-                fwd_tgt_eidx = int(lqn.callpair[cidx, 2])
+                fwd_src_eidx = int(lqn.callpair[cidx, 0])
+                fwd_tgt_eidx = int(lqn.callpair[cidx, 1])
                 if fwd_src_eidx > 0 and fwd_tgt_eidx > 0:
                     lqn.graph[fwd_src_eidx, fwd_tgt_eidx] = 1
+
+        # Refine actsof for entries into the entry-to-activity reachability
+        # closure, now that graph carries the precedences. The bound activity
+        # alone is not the entry's activity set: a Serial chain puts the rest of
+        # the work on successors that are still executed by the entry, so LQNS
+        # and SolverLN both account them to it. Restricting the closure to the
+        # entry's own task drops the callee entries reached through call edges.
+        # Matches MATLAB getStruct.m and the JAR/C++ readers.
+        for entry in self.entries:
+            eidx = self._entry_idx[entry]
+            tidx = int(lqn.parent[eidx, 0])
+            visited = np.zeros(nidx, dtype=bool)
+            visited[eidx] = True
+            stack = [eidx]
+            while stack:
+                v = stack.pop()
+                for w in np.flatnonzero(lqn.graph[v, :]):
+                    if not visited[w]:
+                        visited[w] = True
+                        stack.append(int(w))
+            lqn.actsof[eidx] = [int(i) for i in range(nidx)
+                                if visited[i]
+                                and lqn.type[i] == LayeredNetworkElement.ACTIVITY
+                                and int(lqn.parent[i, 0]) == tidx]
 
         lqn.dag = lqn.graph.copy()
         lqn.dag[loop_back_edges] = 0
@@ -2294,9 +3116,9 @@ class LayeredNetwork:
         # Reverse edges from TASK to ENTRY for non-reference tasks
         # This enables proper flow propagation in _lsn_max_multiplicity
         # Matches MATLAB getStruct.m lines 598-606
-        for i in range(1, nidx + 1):
+        for i in range(nidx):
             if lqn.type[i] == LayeredNetworkElement.TASK and lqn.isref[i, 0] == 0:
-                for j in range(1, nidx + 1):
+                for j in range(nidx):
                     if lqn.type[j] == LayeredNetworkElement.ENTRY and lqn.dag[i, j] != 0:
                         lqn.dag[i, j] = 0
                         lqn.dag[j, i] = 1
@@ -2304,26 +3126,26 @@ class LayeredNetwork:
         # Build replygraph (nacts x nentries) - which activities reply to which entries
         lqn.replygraph = np.zeros((lqn.nacts, lqn.nentries))
         for act in self.activities:
-            act_idx = self._act_idx[act] - ashift - 1  # Convert to 0-based activity index
+            act_idx = self._act_idx[act] - ashift  # activity-local index
             # Check for reply_entry (singular) - set by replies_to() method
             if hasattr(act, 'reply_entry') and act.reply_entry is not None:
                 reply_entry = act.reply_entry
                 if reply_entry in self._entry_idx:
-                    entry_idx = self._entry_idx[reply_entry] - eshift - 1  # Convert to 0-based entry index
+                    entry_idx = self._entry_idx[reply_entry] - eshift  # entry-local index
                     if 0 <= act_idx < lqn.nacts and 0 <= entry_idx < lqn.nentries:
                         lqn.replygraph[act_idx, entry_idx] = 1
             # Also check reply_entries (plural) for backwards compatibility
             if hasattr(act, 'reply_entries') and act.reply_entries:
                 for reply_entry in act.reply_entries:
                     if reply_entry in self._entry_idx:
-                        entry_idx = self._entry_idx[reply_entry] - eshift - 1  # Convert to 0-based entry index
+                        entry_idx = self._entry_idx[reply_entry] - eshift  # entry-local index
                         if 0 <= act_idx < lqn.nacts and 0 <= entry_idx < lqn.nentries:
                             lqn.replygraph[act_idx, entry_idx] = 1
 
-        # Build actphase - phase number (1 or 2) for each activity
+        # Build actphase - phase number (1..3) for each activity
         lqn.actphase = np.ones(lqn.nacts)  # Default phase is 1
         for act in self.activities:
-            act_idx = self._act_idx[act] - ashift - 1  # Convert to 0-based activity index
+            act_idx = self._act_idx[act] - ashift  # activity-local index
             if hasattr(act, 'phase') and act.phase is not None:
                 if 0 <= act_idx < lqn.nacts:
                     lqn.actphase[act_idx] = act.phase
@@ -2332,7 +3154,7 @@ class LayeredNetwork:
         # Matches MATLAB getStruct.m lines 640-658
         # The initial actsof only includes bound activities, but entries may have
         # additional reachable activities (e.g., phase 2 post-reply activities)
-        for eoff in range(1, lqn.nentries + 1):
+        for eoff in range(lqn.nentries):
             eidx = eshift + eoff
             tidx = int(lqn.parent[eidx, 0])
             visited = set()
@@ -2340,7 +3162,7 @@ class LayeredNetwork:
             visited.add(eidx)
             while stack:
                 v = stack.pop()
-                for nbr in range(1, nidx + 1):
+                for nbr in range(nidx):
                     if nbr not in visited and lqn.graph[v, nbr] != 0:
                         visited.add(nbr)
                         stack.append(nbr)
@@ -2368,11 +3190,11 @@ class LayeredNetwork:
                     caller_tasks.append(other_tidx)
             # Forwarding sources also feed jobs into the target task (MATLAB
             # counts them via the taskgraph FWD edge; python has no taskgraph)
-            for cidx in range(1, lqn.ncalls + 1):
+            for cidx in range(lqn.ncalls):
                 if cidx < len(lqn.calltype) and int(lqn.calltype[cidx]) == 3:  # CallType.FWD
-                    fwd_tgt_tidx = int(lqn.parent[int(lqn.callpair[cidx, 2]), 0])
+                    fwd_tgt_tidx = int(lqn.parent[int(lqn.callpair[cidx, 1]), 0])
                     if fwd_tgt_tidx == tidx:
-                        fwd_src_tidx = int(lqn.parent[int(lqn.callpair[cidx, 1]), 0])
+                        fwd_src_tidx = int(lqn.parent[int(lqn.callpair[cidx, 0]), 0])
                         if fwd_src_tidx != tidx and fwd_src_tidx not in caller_tasks:
                             caller_tasks.append(fwd_src_tidx)
             if len(caller_tasks) > 0:
@@ -2392,20 +3214,36 @@ class LayeredNetwork:
         # Must be called AFTER graph is built since it uses the DAG for flow propagation
         lqn.maxmult = self._lsn_max_multiplicity(lqn, nidx)
 
+        # Validation: every entry must have a boundTo activity.
+        # getStruct.m's guard, absent here until 2026-08-15. An entry with an
+        # empty <entry-phase-activities> reaches no activity, so it has no
+        # service and no reply; it used to solve and report a row of NaN
+        # instead of being named. Checked before the reply guard below, the
+        # order getStruct.m refuses them in.
+        for e in range(lqn.nentries):
+            eidx = eshift + e
+            bound = False
+            for succ in range(ashift, nidx):
+                if lqn.graph[eidx, succ] != 0:
+                    bound = True
+                    break
+            if not bound:
+                raise ValueError('An entry does not have any boundTo activity.')
+
         # Validation: Check for non-terminal reply activities
         # An activity that replies to an entry should not have Phase 1 successor activities
         # Phase 2 successors are allowed (post-reply processing)
         for a in range(lqn.nacts):
             if np.any(lqn.replygraph[a, :] > 0):  # activity 'a' replies to some entry
-                aidx = ashift + a + 1  # global activity index (1-based)
-                for succ in range(nidx + 1):
+                aidx = ashift + a  # global activity index
+                for succ in range(nidx):
                     if lqn.graph[aidx, succ] != 0:  # successor exists
-                        if succ > eshift + lqn.nentries:  # successor is an activity
-                            succ_act_idx = succ - ashift - 1  # convert to activity array index
+                        if succ >= ashift:  # successor is an activity
+                            succ_act_idx = succ - ashift  # activity-local index
                             if 0 <= succ_act_idx < lqn.nacts and lqn.actphase[succ_act_idx] == 1:
                                 raise ValueError(
                                     f"Unsupported replyTo in non-terminal activity: "
-                                    f"activity at index {a} has Phase 1 successor"
+                                    f"activity '{lqn.names[aidx]}' has Phase 1 successor"
                                 )
 
         return lqn
@@ -2462,6 +3300,11 @@ class LayeredNetwork:
 
         def sched_to_text(sched):
             """Convert sched_strategy to text (handles both enum and int)."""
+            # FCFSPRPRIO is LINE's reading of the LQN "pri" discipline; its own
+            # name is not valid LQN, so write back the spelling lqns accepts
+            sched_val = sched.value if hasattr(sched, 'value') else sched
+            if sched_val == SchedStrategy.FCFSPRPRIO.value:
+                return 'pri'
             if isinstance(sched, SchedStrategy):
                 return sched.name.lower()
             elif hasattr(sched, 'value'):
@@ -2490,6 +3333,16 @@ class LayeredNetwork:
                 return sched.value == SchedStrategy.REF.value
             else:
                 return sched == SchedStrategy.REF.value
+
+        def is_ps_sched(sched):
+            """Check if scheduling is PS or PSPRIO (the quantum-bearing hosts)."""
+            ps_vals = (SchedStrategy.PS.value, SchedStrategy.PSPRIO.value)
+            if isinstance(sched, SchedStrategy):
+                return sched.value in ps_vals
+            elif hasattr(sched, 'value'):
+                return sched.value in ps_vals
+            else:
+                return sched in ps_vals
 
         def get_dist_mean(dist):
             """Get mean from distribution (handles dataclass and native distributions)."""
@@ -2533,11 +3386,21 @@ class LayeredNetwork:
             proc_elem.set('name', name_map[proc.name])
             proc_elem.set('scheduling', sched_to_text(proc.sched_strategy))
 
+            # replication is read back by parseXML and by the C++ lqnx reader,
+            # so dropping it here silently solves an unreplicated model
+            if proc.getReplication() > 1:
+                proc_elem.set('replication', str(int(proc.getReplication())))
+
             if not is_inf_sched(proc.sched_strategy):
                 mult = proc.multiplicity
                 if np.isinf(mult):
                     mult = 1
                 proc_elem.set('multiplicity', str(int(mult)))
+
+            # only when set: parseXML falls back to 0.001 on an absent quantum,
+            # and writing python's 0.0 default would overwrite that fallback
+            if is_ps_sched(proc.sched_strategy) and proc.getQuantum() > 0:
+                proc_elem.set('quantum', str(proc.getQuantum()))
 
             proc_elem.set('speed-factor', '1')
 
@@ -2546,6 +3409,11 @@ class LayeredNetwork:
                 task_elem = ET.SubElement(proc_elem, 'task')
                 task_elem.set('name', name_map[task.name])
                 task_elem.set('scheduling', sched_to_text(task.sched_strategy))
+                if task.get_priority() != 0:
+                    task_elem.set('priority', str(int(task.get_priority())))
+
+                if task.getReplication() > 1:
+                    task_elem.set('replication', str(int(task.getReplication())))
 
                 if not is_inf_sched(task.sched_strategy):
                     mult = task.multiplicity
@@ -2569,11 +3437,39 @@ class LayeredNetwork:
                                      'on reference tasks only.',
                                      task.name, get_dist_mean(task.think_time))
 
+                # LINE .lqnx dialect: a cache, and a setup / delay-off time, have
+                # no element in the stock LQN schema, so the file used to describe
+                # a DIFFERENT model -- a CacheTask degenerated to a plain task and
+                # its hit/miss split to an unweighted 50/50 <post>. The three
+                # elements below carry the same field set the JSON interchange
+                # carries (linemodel_save.m: totalItems, cacheCapacity,
+                # replacementStrategy, entryType=ItemEntry, accessProb), so the
+                # two transports are informationally equal. lqns/lqsim ignore
+                # unknown children, and so does every LINE reader.
+                _write_cache_elem(task_elem, task)
+                _write_setup_elems(task_elem, task)
+
+                # fan-out/fan-in are parsed by every reader (parseXML, the JAR,
+                # cpp/lqn_reader.h) and were written by none, so a replicated
+                # model lost its call multiplicities on every round trip. The
+                # schema (lqn-core.xsd, TaskType) places them before the entries.
+                for dest_name, fo_val in task.getFanOut().items():
+                    fo_elem = ET.SubElement(task_elem, 'fan-out')
+                    fo_elem.set('dest', name_map.get(dest_name, dest_name))
+                    fo_elem.set('value', str(int(fo_val)))
+                for src_name, fi_val in task.getFanIn().items():
+                    fi_elem = ET.SubElement(task_elem, 'fan-in')
+                    fi_elem.set('source', name_map.get(src_name, src_name))
+                    fi_elem.set('value', str(int(fi_val)))
+
                 # Write entries for this task
                 for entry in task.entries:
                     entry_elem = ET.SubElement(task_elem, 'entry')
                     entry_elem.set('name', name_map[entry.name])
                     entry_elem.set('type', 'NONE')
+                    # LINE dialect: an ItemEntry's cardinality and access
+                    # popularity, without which the entry loads as a plain Entry.
+                    _write_item_entry_elem(entry_elem, entry)
                     # Emit open-arrival-rate if entry has an arrival distribution set
                     arrival_dist = entry.getArrival()
                     if arrival_dist is not None:
@@ -2611,6 +3507,19 @@ class LayeredNetwork:
 
                         call_elem.set('dest', name_map[target_entry.name])
                         call_elem.set('calls-mean', str(mean_calls))
+
+                    # LINE dialect: a routed call group names which of the
+                    # synch-calls above one dispatcher issues, and under which
+                    # strategy. The member calls stay ordinary synch-calls, so a
+                    # reader that ignores this element still sees the same
+                    # aggregate call means -- which is what lqns and lqsim,
+                    # having no dispatcher, should see.
+                    for strategy, group_entries in getattr(act, 'call_groups', []):
+                        grp_elem = ET.SubElement(act_elem, 'call-group')
+                        grp_elem.set('strategy', _callgroup_to_lqnx(strategy))
+                        for target_entry in group_entries:
+                            dest_elem = ET.SubElement(grp_elem, 'dest')
+                            dest_elem.set('name', name_map[target_entry.name])
 
                 # Write precedences
                 for prec in task.precedences:
@@ -2668,6 +3577,11 @@ class LayeredNetwork:
                                 post_elem = ET.SubElement(prec_elem, 'post-LOOP')
                                 # Set end attribute to the last activity name
                                 post_elem.set('end', name_map[post_acts[-1].name])
+                            elif prec.prec_type == PrecedenceType.CACHE_ACCESS:
+                                # A cache access wrote a bare <post>, which every
+                                # reader takes as an unweighted split -- that is
+                                # where a spurious "exact 0.5" hit ratio came from.
+                                post_elem = ET.SubElement(prec_elem, 'post-CACHE')
                             else:
                                 post_elem = ET.SubElement(prec_elem, 'post')
 
@@ -2680,6 +3594,9 @@ class LayeredNetwork:
                                 act_ref.set('prob', str(prec.probabilities[i]))
                             elif prec.prec_type == PrecedenceType.LOOP:
                                 act_ref.set('count', str(prec.count))
+                            elif prec.prec_type == PrecedenceType.CACHE_ACCESS:
+                                # explicit, not positional: hit first, miss second
+                                act_ref.set('cache-result', 'hit' if i == 0 else 'miss')
 
                 # Write reply-entry elements (for non-reference tasks)
                 if task.sched_strategy != SchedStrategy.REF:
@@ -2734,6 +3651,12 @@ class LayeredNetwork:
                 lines.append(f"      -> {entry.name} ({call_type.value}, calls={mean_calls})")
 
         return "\n".join(lines)
+
+    def getName(self) -> str:
+        """Get the model name, as Model.getName does in MATLAB and the JAR."""
+        return self.name
+
+    get_name = getName
 
     def getNodeCount(self) -> int:
         """Get total number of nodes (processors + tasks + entries + activities)."""
@@ -2970,13 +3893,13 @@ class LayeredNetwork:
             return str(idx)
 
         def _kind(idx):
-            if lqn.hshift < idx <= lqn.hshift + lqn.nhosts:
+            if lqn.hshift <= idx < lqn.hshift + lqn.nhosts:
                 return 'host'
-            if lqn.tshift < idx <= lqn.tshift + lqn.ntasks:
+            if lqn.tshift <= idx < lqn.tshift + lqn.ntasks:
                 return 'task'
-            if lqn.eshift < idx <= lqn.eshift + lqn.nentries:
+            if lqn.eshift <= idx < lqn.eshift + lqn.nentries:
                 return 'entry'
-            if lqn.ashift < idx <= lqn.ashift + lqn.nacts:
+            if lqn.ashift <= idx < lqn.ashift + lqn.nacts:
                 return 'act'
             return 'other'
 
@@ -2984,12 +3907,12 @@ class LayeredNetwork:
         color = {'host': 'black', 'task': 'magenta', 'entry': 'red', 'act': 'tab:blue', 'other': 'gray'}
 
         G = nx.DiGraph()
-        for idx in range(1, n + 1):
+        for idx in range(n):
             k = _kind(idx)
             G.add_node(idx, layer=layer[k], kind=k)
         rows, cols = np.nonzero(T)
         for i, j in zip(rows, cols):
-            if 1 <= i <= n and 1 <= j <= n:
+            if 0 <= i < n and 0 <= j < n:
                 G.add_edge(int(i), int(j))
 
         try:
@@ -3229,6 +4152,7 @@ class LayeredNetwork:
 
         tree = ET.parse(filename)
         root = tree.getroot()
+        cls._validate_input_model(root)
 
         if verbose:
             print(f"Parsing LQN file: {filename}")
@@ -3309,7 +4233,43 @@ class LayeredNetwork:
                 else:
                     task_sched_enum = cls._parse_sched_strategy(task_sched)
 
-                task = model.add_task(task_name, task_mult, task_sched_enum, processor)
+                # LINE .lqnx dialect: the presence of <cache> is what makes the
+                # task a CacheTask, as taskType=CacheTask does on the JSON wire.
+                cache_elem = task_elem.find('./cache')
+                if cache_elem is not None:
+                    caps = [int(float(lv.get('capacity', '1')))
+                            for lv in cache_elem.findall('./level')] or [1]
+                    task = CacheTask(model, task_name,
+                                     int(float(cache_elem.get('items', '1'))),
+                                     caps if len(caps) > 1 else caps[0],
+                                     cls._parse_replacement(cache_elem.get('replacement', 'FIFO')),
+                                     task_mult)
+                    task.retrieval = cache_elem.get('retrieval', 'false').lower() == 'true'
+                    task.on(processor)
+                else:
+                    task = model.add_task(task_name, task_mult, task_sched_enum, processor)
+
+                # LINE .lqnx dialect: setup / delay-off times, rebuilt through the
+                # same setters the model API uses, so a mean plus an SCV yields the
+                # distribution family the setter would have produced.
+                setup_elem = task_elem.find('./setup')
+                if setup_elem is not None:
+                    task.setSetupTime(_dist_from_mean_scv(
+                        float(setup_elem.get('mean', '0')),
+                        float(setup_elem.get('scv', '1'))))
+                off_elem = task_elem.find('./delay-off')
+                if off_elem is not None:
+                    task.setDelayOffTime(_dist_from_mean_scv(
+                        float(off_elem.get('mean', '0')),
+                        float(off_elem.get('scv', '1'))))
+
+                # Task scheduling priority (lower is served first)
+                task_prio_str = task_elem.get('priority', '')
+                if task_prio_str:
+                    try:
+                        task.set_priority(int(float(task_prio_str)))
+                    except ValueError:
+                        pass
 
                 # Parse task replication (Java uses processor replication for task)
                 task_repl_str = task_elem.get('replication', '')
@@ -3353,7 +4313,27 @@ class LayeredNetwork:
 
                 for entry_elem in task_elem.findall('./entry'):
                     entry_name = entry_elem.get('name', '')
-                    entry = model.add_entry(entry_name, task)
+                    # LINE .lqnx dialect: the presence of <item-entry> is what
+                    # makes the entry an ItemEntry, as entryType=ItemEntry does on
+                    # the JSON wire. Without it a cache's request interface loads
+                    # as a plain Entry and the cache has nothing to serve.
+                    ie_elem = entry_elem.find('./item-entry')
+                    if ie_elem is not None:
+                        cardinality = int(float(ie_elem.get('cardinality', '1')))
+                        pop_elem = ie_elem.find('./access-popularity')
+                        if pop_elem is not None:
+                            params = [float(p.get('value', '0'))
+                                      for p in pop_elem.findall('./parameter')]
+                            popularity = _popularity_from_params(
+                                pop_elem.get('name', 'DiscreteSampler'), params, cardinality)
+                        else:
+                            # linemodel_load.m defaults an absent popularity to uniform
+                            from .distributions import DiscreteSampler as _DS
+                            popularity = _DS(np.ones(cardinality) / cardinality)
+                        entry = ItemEntry(model, entry_name, cardinality, popularity)
+                        entry.on(task)
+                    else:
+                        entry = model.add_entry(entry_name, task)
                     entry_map[entry_name] = entry
 
                     # Parse open-arrival-rate (mirrors JAR LayeredNetwork.java:357-360)
@@ -3416,6 +4396,8 @@ class LayeredNetwork:
                                     activity._pending_calls = []
                                 activity._pending_calls.append((dest, mean_calls, CallType.ASYNC))
 
+                            _parse_call_groups(act_elem, activity)
+
                         # Sort by phase and set up binding/reply
                         phase_activities.sort(key=lambda x: x[0])
                         if phase_activities:
@@ -3474,6 +4456,8 @@ class LayeredNetwork:
                                 activity._pending_calls = []
                             activity._pending_calls.append((dest, mean_calls, CallType.ASYNC))
 
+                        _parse_call_groups(act_elem, activity)
+
                     for prec_elem in ta_elem.findall('./precedence'):
                         pre_acts = []
                         post_acts = []
@@ -3499,7 +4483,12 @@ class LayeredNetwork:
                                         pre_acts.append(activity_map[act_name])
                                 break
 
-                        for post_tag in ['post', 'post-AND', 'post-OR', 'post-LOOP']:
+                        # The post side is minOccurs="0" in lqn-core.xsd: a precedence
+                        # carrying only a pre element declares a TERMINAL activity and no
+                        # successor, so it contributes no edge.
+                        post_elem = None
+                        for post_tag in ['post', 'post-AND', 'post-OR', 'post-LOOP',
+                                         'post-CACHE']:
                             post_elem = prec_elem.find(f'./{post_tag}')
                             if post_elem is not None:
                                 post_type = post_tag
@@ -3508,6 +4497,8 @@ class LayeredNetwork:
                                     if act_name in activity_map:
                                         post_acts.append(activity_map[act_name])
                                 break
+                        if post_elem is None:
+                            continue
 
                         if pre_acts and post_acts:
                             if post_type == 'post-AND':
@@ -3521,6 +4512,21 @@ class LayeredNetwork:
                                     else:
                                         probs.append(1.0 / len(post_acts))
                                 prec = ActivityPrecedence.OrFork(pre_acts[0], post_acts, probs)
+                            elif post_type == 'post-CACHE':
+                                # cache-result is explicit; a file written before
+                                # the attribute existed falls back to document
+                                # order, which is hit first and miss second.
+                                ordered = {}
+                                for i, act_ref in enumerate(post_elem.findall('./activity')):
+                                    act_name = act_ref.get('name', '')
+                                    if act_name not in activity_map:
+                                        continue
+                                    result = (act_ref.get('cache-result')
+                                              or ('hit' if i == 0 else 'miss')).lower()
+                                    ordered.setdefault(result, activity_map[act_name])
+                                outcome = [a for a in (ordered.get('hit'), ordered.get('miss'))
+                                           if a is not None] or post_acts
+                                prec = ActivityPrecedence.CacheAccess(pre_acts[0], outcome)
                             elif post_type == 'post-LOOP':
                                 # Parse LOOP: post_acts = loop body activities
                                 # end attribute = name of end activity
@@ -3564,6 +4570,12 @@ class LayeredNetwork:
                         else:
                             activity.asynch_call(entry_map[dest], mean_calls)
                 delattr(activity, '_pending_calls')
+            if hasattr(activity, '_pending_call_groups'):
+                for strategy, dests in activity._pending_call_groups:
+                    entries = [entry_map[d] for d in dests if d in entry_map]
+                    if len(entries) >= 2:
+                        activity.record_call_group(strategy, entries)
+                delattr(activity, '_pending_call_groups')
 
         # Resolve pending forwarding calls (must be after all entries created)
         for entry in model.entries:
@@ -3575,9 +4587,149 @@ class LayeredNetwork:
 
         return model
 
+    @staticmethod
+    def _validate_input_model(root) -> None:
+        """
+        Reject a structurally inconsistent LQN document.
+
+        Run on the parsed document before any object is built, so that a defective
+        input is named at its source instead of surfacing as a downstream failure.
+        The same checks, in the same order and with the same messages, are applied
+        by the MATLAB, JAR and C++ readers.
+
+        Args:
+            root: root element of the parsed LQN document
+
+        Raises:
+            RuntimeError: on the first inconsistency found
+        """
+        from .api.io.logging import line_error
+
+        def num(text, dflt):
+            if text is None or text == '':
+                return dflt
+            try:
+                return float(text)
+            except ValueError:
+                return float('nan')
+
+        tol = 1e-6
+        proc_names = []
+        task_names = []
+        entry_names = []
+        entry_owner = []  # task owning entry_names[k]
+        is_ref_entry = []
+        call_dests = []
+        reply_entries = []
+        has_ref_task = False
+        has_open_arrival = False
+
+        for proc_elem in root.iter('processor'):
+            proc_name = proc_elem.get('name', '')
+            if proc_name in proc_names:
+                line_error('parse_xml', f'Duplicate processor name "{proc_name}".')
+            proc_names.append(proc_name)
+
+            for task_elem in proc_elem.iter('task'):
+                task_name = task_elem.get('name', '')
+                if task_name in task_names:
+                    line_error('parse_xml', f'Duplicate task name "{task_name}".')
+                task_names.append(task_name)
+                is_ref = (task_elem.get('scheduling', '') or '').lower() == 'ref'
+                has_ref_task = has_ref_task or is_ref
+
+                entry_elems = list(task_elem.iter('entry'))
+                if not entry_elems:
+                    line_error('parse_xml', f'Task "{task_name}" has no entries.')
+                for entry_elem in entry_elems:
+                    entry_name = entry_elem.get('name', '')
+                    if entry_name in entry_names:
+                        line_error('parse_xml', f'Duplicate entry name "{entry_name}".')
+                    entry_names.append(entry_name)
+                    entry_owner.append(task_name)
+                    is_ref_entry.append(is_ref)
+
+                    open_arrival_rate = num(entry_elem.get('open-arrival-rate'), float('nan'))
+                    if open_arrival_rate > 0:
+                        has_open_arrival = True
+                        if is_ref:
+                            line_error('parse_xml', f'Entry "{entry_name}" belongs to reference task "{task_name}" and cannot have open arrivals.')
+
+                    fwd_elems = list(entry_elem.iter('forwarding'))
+                    if is_ref and fwd_elems:
+                        line_error('parse_xml', f'Entry "{entry_name}" belongs to reference task "{task_name}" and cannot forward requests.')
+                    fwd_total = 0.0
+                    for fwd_elem in fwd_elems:
+                        prob = num(fwd_elem.get('prob'), 1.0)
+                        if prob != prob or prob < 0.0 or prob > 1.0:
+                            line_error('parse_xml', f'Forwarding from entry "{entry_name}" to entry "{fwd_elem.get("dest", "")}" has an invalid probability of {prob:g}.')
+                        fwd_total += prob
+                    if fwd_total > 1.0 + tol:
+                        line_error('parse_xml', f'Entry "{entry_name}" has a total forwarding probability of {fwd_total:g}.')
+
+                # activity names are unique within their task; a name under a pre or post list is a reference, not a declaration
+                act_names = []
+                parent_of = {}
+                for parent in task_elem.iter():
+                    for child in parent:
+                        parent_of[child] = parent
+                for act_elem in task_elem.iter('activity'):
+                    parent = parent_of.get(act_elem)
+                    if parent is None or parent.tag not in ('task-activities', 'entry-phase-activities'):
+                        continue
+                    act_name = act_elem.get('name', '')
+                    if act_name in act_names:
+                        line_error('parse_xml', f'Duplicate activity name "{act_name}" in task "{task_name}".')
+                    act_names.append(act_name)
+
+                for call_elem in task_elem.iter('synch-call'):
+                    call_dests.append(call_elem.get('dest', ''))
+                for call_elem in task_elem.iter('asynch-call'):
+                    call_dests.append(call_elem.get('dest', ''))
+                for fwd_elem in task_elem.iter('forwarding'):
+                    call_dests.append(fwd_elem.get('dest', ''))
+
+                for or_elem in task_elem.iter('post-OR'):
+                    branch_total = 0.0
+                    for branch_elem in or_elem.iter('activity'):
+                        prob = num(branch_elem.get('prob'), 1.0)
+                        if prob != prob or prob < 0.0 or prob > 1.0:
+                            line_error('parse_xml', f'Activity "{branch_elem.get("name", "")}" in task "{task_name}" has an invalid branch probability of {prob:g}.')
+                        branch_total += prob
+                    if abs(branch_total - 1.0) > tol:
+                        line_error('parse_xml', f'Branch probabilities of an OR-fork in task "{task_name}" sum to {branch_total:g} instead of 1.')
+
+                for reply_elem in task_elem.iter('reply-entry'):
+                    reply_entries.append(reply_elem.get('name', ''))
+
+        for dest in call_dests:
+            if dest in entry_names:
+                idx = entry_names.index(dest)
+                if is_ref_entry[idx]:
+                    line_error('parse_xml', f'Entry "{entry_names[idx]}" belongs to reference task "{entry_owner[idx]}" and cannot receive requests.')
+
+        for reply_name in reply_entries:
+            if reply_name in entry_names:
+                idx = entry_names.index(reply_name)
+                if is_ref_entry[idx]:
+                    line_error('parse_xml', f'Entry "{entry_names[idx]}" belongs to reference task "{entry_owner[idx]}" and cannot be replied to.')
+
+        if not has_ref_task and not has_open_arrival:
+            line_error('parse_xml', 'The model has no reference task and no open arrivals.')
+
     parseXML = parse_xml
     readXML = parse_xml
     load = parse_xml
+
+    @staticmethod
+    def _parse_replacement(name: str) -> ReplacementStrategy:
+        """Wire spelling -> ReplacementStrategy, the same names the JSON
+        interchange uses (linemodel_save.m `repl_to_str`). An unknown spelling
+        falls back to FIFO, as `linemodel_load.m` does, rather than raising."""
+        try:
+            return getattr(ReplacementStrategy, str(name).upper())
+        except AttributeError:
+            return ReplacementStrategy.FIFO
 
     @staticmethod
     def _parse_sched_strategy(sched_str: str) -> SchedStrategy:
@@ -3593,32 +4745,53 @@ class LayeredNetwork:
             return SchedStrategy.REF
         elif sched_upper == 'HOL':
             return SchedStrategy.HOL
+        elif sched_upper in ('PRI', 'PP'):
+            # LQNS preemptive priority resume (SCHEDULE_PPR). lqns spells it
+            # 'pri' (LQIO::SCHEDULE::PPR); 'pp' is the stale lqn-core.xsd
+            # spelling, absent from the lqns 6.2.31 sources
+            return SchedStrategy.FCFSPRPRIO
         elif sched_upper in ('LCFS', 'LIFO'):
             return SchedStrategy.LCFS
         else:
             return SchedStrategy.FCFS
 
 
-class FunctionTask(Task):
+class SetupTask(Task):
     """
-    Function Task for serverless/FaaS modeling.
+    Task whose servers are switched off while idle.
 
-    FunctionTask represents a serverless function with:
-    - Cold start time (setup_time): Time to initialize a new function instance
-    - Delay-off time (delay_off_time): Time before an idle instance is torn down
+    A server resuming from the off state pays a setup (activation) time before
+    serving the request that woke it up, and stays available for a delay-off
+    (idle) period after emptying its queue before switching off again:
+    - setup_time: activation time paid on resuming from the off state
+    - delay_off_time: idle period before a server powers off
 
-    These parameters affect the effective service time when function instances
-    need to be started or are being recycled.
+    These are the setup and close-down times of a server with vacations, e.g.
+    on-demand virtual machines and containers, power-managed servers under a
+    timeout policy, warm-up delays, serverless cold start / keep-alive. Both
+    times are declared on the base Task, so this subclass is a naming
+    convenience.
     """
 
     def __init__(self, model_or_name, name_or_mult=None, mult_or_sched=None, sched=None):
-        """Initialize a FunctionTask with flexible arguments."""
+        """Initialize a SetupTask with flexible arguments."""
         super().__init__(model_or_name, name_or_mult, mult_or_sched, sched)
-        self._is_function_task = True
+        self._is_setup_task = True
 
-    def is_function_task(self) -> bool:
-        """Return True to indicate this is a FunctionTask."""
+    def has_setup_delayoff(self) -> bool:
+        """Return True to indicate this is a SetupTask."""
         return True
+
+
+class FunctionTask(SetupTask):
+    """
+    Former name of SetupTask, kept for backward compatibility.
+
+    Setup and delay-off times are not specific to serverless
+    (function-as-a-service) platforms, so the class carrying them is now named
+    after the modelling primitive rather than after that application domain.
+    """
+    pass
 
 
 # Convenience aliases for compatibility
@@ -3648,6 +4821,7 @@ __all__ = [
     'LayeredNetwork',
     'Processor',
     'Task',
+    'SetupTask',
     'FunctionTask',
     'Entry',
     'Activity',

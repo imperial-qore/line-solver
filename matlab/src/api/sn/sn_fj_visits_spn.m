@@ -110,7 +110,15 @@ function visits_r = build_and_solve_spn(sn, P_r, visited, r, refnode)
 %   - Pre-fork station: requires B tokens, produces 1 per leaf branch
 %   - Branch stations: normal 1-in-1-out service
 %   - Join: requires 1 from each branch done, produces B in post-join dest
-%   - Throughput ratios are uniform across all station Places => visits = 1
+%
+% The throughput ratios are NOT uniform across the station Places, although an
+% earlier version of this comment said so. The pre-fork transition consumes all
+% B tokens at once and the Join returns them, so a station INSIDE a fork-join
+% region fires once per B firings of the cycle: after the normalisation on the
+% reference station, a station outside the region is 1, a station inside it is
+% 1/B, and a Fork or a Join, which holds no Place, is 0. This solve is what
+% defines the function; the JAR reproduces it through SolverCTMC, and the
+% Python and C++ ports evaluate the same rule analytically.
 
 I = sn.nnodes;
 visits_r = zeros(I, 1);
@@ -173,12 +181,79 @@ for idx = 1:length(forkNodes)
         end
     end
     if is_outermost
-        leafs = resolve_fork_dests(sn, P_r, visited, fnd);
-        B = max(B, length(leafs));
+        [leafs, leafw] = resolve_fork_dests(sn, P_r, visited, fnd, r);
+        % The EXPECTED sibling count, which is the leaf count exactly when every
+        % link is certain and carries one task. Under a variable forking level it
+        % is generally FRACTIONAL, and a fractional token population is not a net
+        % anyone can enumerate: that is why the solve below is skipped exactly
+        % there and the closed form answers instead.
+        if isempty(leafs)
+            line_error(mfilename, 'A Fork reaches no station on any branch, so the auxiliary net has nothing to synchronize.');
+        end
+        B = max(B, sum(leafw));
     end
 end
 if B == 0
     B = 1;
+end
+if B <= 0
+    line_error(mfilename, 'A Fork emits no task in expectation, so its Join can never fire; at least one branch must be certain to emit at least one task.');
+end
+
+% THE NET BELOW IS THE PLAIN FORK'S NET. It puts B tokens in a closed SPN whose
+% pre-fork transition emits ONE token per branch, so it is balanced only when
+% every branch carries exactly one task: give it a fork whose links carry three
+% each, and it deadlocks and reports zero throughput everywhere. Under a
+% variable forking level B is the expected sibling count, which is generally not
+% an integer either -- and a fractional token population is not a net anyone can
+% enumerate. The rule that solve produces is available in closed form -- a
+% station outside the fork-join region carries 1, one inside it carries 1/B, a
+% Fork and a Join carry 0 -- and it is what answers whenever the fork varies.
+% The plain fork keeps taking the solve, which is what holds the two in step.
+isVariableFork = false;
+for idx = 1:length(forkNodes)
+    fnd = forkNodes(idx);
+    if ~isfield(sn.nodeparam{fnd},'fanOutLink') || isempty(sn.nodeparam{fnd}.fanOutLink)
+        continue
+    end
+    taken = sn.nodeparam{fnd}.fanOutProb > 0;
+    if any(sn.nodeparam{fnd}.fanOutProb(taken) ~= 1) || ...
+            any(sn.nodeparam{fnd}.fanOutLink(taken) ~= sn.nodeparam{fnd}.fanOut) || ...
+            ~all(cellfun(@isempty, sn.nodeparam{fnd}.fanOutDist(:)))
+        isVariableFork = true;
+    end
+end
+if isVariableFork || abs(B - round(B)) > GlobalConstants.FineTol
+    inRegion = false(1, I);
+    for idx = 1:length(forkNodes)
+        fnd = forkNodes(idx);
+        srcNodes = find(P_r(:, fnd) > 0 & visited');
+        if any(arrayfun(@(s) sn.nodetype(s) == NodeType.Join, srcNodes))
+            continue % a serial stage, inside a region already fixed
+        end
+        frontier = fnd;
+        while ~isempty(frontier)
+            nd = frontier(1); frontier(1) = [];
+            dests = find(P_r(nd, :) > 0 & visited);
+            for di = 1:length(dests)
+                j = dests(di);
+                if sn.nodetype(j) == NodeType.Join || inRegion(j)
+                    continue
+                end
+                inRegion(j) = true;
+                frontier(end+1) = j; %#ok<AGROW>
+            end
+        end
+    end
+    for idx = 1:length(stationNodes)
+        nd = stationNodes(idx);
+        if inRegion(nd)
+            visits_r(nd) = 1/B;
+        else
+            visits_r(nd) = 1;
+        end
+    end
+    return
 end
 
 % Build SPN model
@@ -460,16 +535,32 @@ catch ME
 end
 end
 
-function stDests = resolve_fork_dests(sn, P_r, visited, forkNd)
+function [stDests, stWeights] = resolve_fork_dests(sn, P_r, visited, forkNd, r, w)
 % RESOLVE_FORK_DESTS Recursively resolve Fork destinations to station nodes
+%
+% The second output is the EXPECTED number of tasks each leaf receives per
+% firing of the outermost fork: P(branch fires) times E[tasks on that link],
+% multiplied down through any nesting. A plain fork gives every link exactly 1,
+% so the weighted leaf count collapses to the leaf count it has always been.
+if nargin < 5, r = 1; end
+if nargin < 6, w = 1; end
 stDests = [];
+stWeights = [];
+hasFan = isfield(sn.nodeparam{forkNd},'fanOutLink') && ~isempty(sn.nodeparam{forkNd}.fanOutLink);
 branchDests = find(P_r(forkNd, :) > 0 & visited);
 for bdi = 1:length(branchDests)
     bd = branchDests(bdi);
+    wbd = w;
+    if hasFan
+        wbd = w * sn.nodeparam{forkNd}.fanOutProb(bd,r) * sn.nodeparam{forkNd}.fanOutLink(bd,r);
+    end
     if sn.nodetype(bd) == NodeType.Fork
-        stDests = [stDests, resolve_fork_dests(sn, P_r, visited, bd)]; %#ok<AGROW>
+        [d2, w2] = resolve_fork_dests(sn, P_r, visited, bd, r, wbd);
+        stDests = [stDests, d2]; %#ok<AGROW>
+        stWeights = [stWeights, w2]; %#ok<AGROW>
     elseif sn.isstation(bd)
         stDests = [stDests, bd]; %#ok<AGROW>
+        stWeights = [stWeights, wbd]; %#ok<AGROW>
     end
 end
 end

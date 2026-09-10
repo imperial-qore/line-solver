@@ -39,6 +39,7 @@ else
     doc = dBuilder.parse(filename);
 end
 doc.getDocumentElement().normalize();
+validateInputModel(doc);
 if verbose > 0
     line_printf(['Parsing LQN file: ',filename]);
     line_printf(['Root element :',char(doc.getDocumentElement().getNodeName())]);
@@ -118,7 +119,45 @@ for i = 0:procList.getLength()-1
         else
             thinkTime = Exp.fitMean(thinkTimeMean);
         end
-        newTask = Task(myLN, name, multiplicity, SchedStrategy.fromText(scheduling), thinkTime);
+        % LINE dialect (.lqnx cache/setup extension): a <cache> child makes the
+        % task a CacheTask, a <setup> or <delay-off> child makes it a SetupTask.
+        % Both constructors take neither a think time nor a reply, so the think
+        % time is applied after construction rather than through the Task one.
+        cacheList = child_elements(taskElement, 'cache');
+        setupList = child_elements(taskElement, 'setup');
+        delayOffList = child_elements(taskElement, 'delay-off');
+        if ~isempty(cacheList)
+            cacheElement = cacheList{1};
+            nitems = str2double(char(cacheElement.getAttribute('items')));
+            levelList = child_elements(cacheElement, 'level');
+            caps = zeros(1, numel(levelList));
+            for lv = 1:numel(levelList)
+                caps(lv) = str2double(char(levelList{lv}.getAttribute('capacity')));
+            end
+            if isempty(levelList)
+                line_error(mfilename, sprintf(['Task "%s" declares a <cache> with no <level> child: ' ...
+                    'the cache capacity is one <level capacity="..."/> per cache list.'], name));
+            end
+            replStr = char(cacheElement.getAttribute('replacement'));
+            newTask = CacheTask(myLN, name, nitems, caps, repl_from_lqnx(replStr, name), ...
+                multiplicity, SchedStrategy.fromText(scheduling));
+            retrievalStr = char(cacheElement.getAttribute('retrieval'));
+            if strcmpi(retrievalStr, 'true') || strcmp(retrievalStr, '1')
+                newTask.setRetrieval(true);
+            end
+            newTask.setThinkTime(thinkTime);
+        elseif ~isempty(setupList) || ~isempty(delayOffList)
+            newTask = SetupTask(myLN, name, multiplicity, SchedStrategy.fromText(scheduling));
+            newTask.setThinkTime(thinkTime);
+        else
+            newTask = Task(myLN, name, multiplicity, SchedStrategy.fromText(scheduling), thinkTime);
+        end
+        if ~isempty(setupList)
+            newTask.setSetupTime(time_from_element(setupList{1}));
+        end
+        if ~isempty(delayOffList)
+            newTask.setDelayOffTime(time_from_element(delayOffList{1}));
+        end
         newTask.setReplication(replication);
 
         % Parse priority attribute if present
@@ -165,10 +204,19 @@ for i = 0:procList.getLength()-1
             %Element - Entry
             entryElement = entryList.item(k);
             name = char(entryElement.getAttribute('name'));
-            newEntry = Entry(myLN, name);
+            % LINE dialect: an <item-entry> child makes the entry an ItemEntry.
+            itemList = child_elements(entryElement, 'item-entry');
+            if isempty(itemList)
+                newEntry = Entry(myLN, name);
+            else
+                itemElement = itemList{1};
+                cardinality = str2double(char(itemElement.getAttribute('cardinality')));
+                popularity = popularity_from_element(itemElement, cardinality, name);
+                newEntry = ItemEntry(myLN, name, cardinality, popularity);
+            end
             openArrivalRate = str2double(char(entryElement.getAttribute('open-arrival-rate')));
-            if ~isnan(openArrivalRate)
-                newEntry.openArrivalRate = openArrivalRate;
+            if ~isnan(openArrivalRate) && openArrivalRate > 0
+                newEntry.setArrival(Exp.fitMean(1/openArrivalRate));
             end
 
             % Parse entry type attribute
@@ -227,7 +275,7 @@ for i = 0:procList.getLength()-1
                     end
                     callOrder = char(actElement.getAttribute('call-order'));
                     newAct = Activity(myLN, name{phase}, hostDemand, boundToEntry, callOrder);
-                    newAct.phase = phase;  % Store the phase number
+                    newAct.setPhase(phase);  % validated, not assigned past the guard
 
                     % Parse activity think-time
                     actThinkTimeMean = str2double(char(actElement.getAttribute('think-time')));
@@ -254,7 +302,10 @@ for i = 0:procList.getLength()-1
                         mean = str2double(char(callElement.getAttribute('calls-mean')));
                         newAct = newAct.asynchCall(dest,mean);
                     end
-                    
+
+                    %call-group (LINE dialect)
+                    newAct = parse_call_groups(actElement, newAct);
+
                     activities{end+1,1} = newAct.name;
                     activities{end,2} = taskID;
                     activities{end,3} = procID;
@@ -343,6 +394,9 @@ for i = 0:procList.getLength()-1
                         newAct = newAct.asynchCall(dest,mean);
                     end
 
+                    %call-group (LINE dialect)
+                    newAct = parse_call_groups(actElement, newAct);
+
                     activities{end+1,1} = newAct.name;
                     activities{end,2} = taskID;
                     activities{end,3} = procID;
@@ -398,15 +452,23 @@ for i = 0:procList.getLength()-1
                 end
                 
                 %post
+                % The post side is minOccurs="0" in lqn-core.xsd: a precedence
+                % that carries only a pre element declares a TERMINAL activity
+                % and no successor, so it contributes no edge and is skipped.
                 postTypes = {ActivityPrecedenceType.POST_SEQ, ActivityPrecedenceType.POST_AND, ActivityPrecedenceType.POST_OR, ActivityPrecedenceType.POST_LOOP, ActivityPrecedenceType.POST_CACHE};
+                hasPost = false;
                 for m = 1:length(postTypes)
                     postType = postTypes{m};
                     postList = precElement.getElementsByTagName(ActivityPrecedenceType.toText(postType));
                     if postList.getLength() > 0
+                        hasPost = true;
                         break
                     end
                 end
-        
+                if ~hasPost
+                    continue
+                end
+
                 postElement = postList.item(0);
                 postActList = postElement.getElementsByTagName('activity');
                 
@@ -430,7 +492,30 @@ for i = 0:procList.getLength()-1
                         postParams(m+1) = str2double(char(postActElement.getAttribute('count')));
          
                     end
-                    postActs{end} = char(postElement.getAttribute('end'));                    
+                    postActs{end} = char(postElement.getAttribute('end'));
+                elseif postType == ActivityPrecedenceType.POST_CACHE
+                    % LINE dialect: the branch is NAMED by cache-result, so a
+                    % reordered list cannot swap hit for miss. A file written
+                    % before the attribute existed carries none, and document
+                    % order (hit first) is then the answer, which is what it
+                    % meant when it was written.
+                    postActs = cell(postActList.getLength(),1);
+                    postParams = [];
+                    results = cell(postActList.getLength(),1);
+                    for m = 0:postActList.getLength()-1
+                        postActElement = postActList.item(m);
+                        postActs{m+1} = char(postActElement.getAttribute('name'));
+                        results{m+1} = lower(char(postActElement.getAttribute('cache-result')));
+                    end
+                    named = ~cellfun(@isempty, results);
+                    if any(named)
+                        hitIdx = find(strcmp(results, 'hit'), 1);
+                        missIdx = find(strcmp(results, 'miss'), 1);
+                        if ~isempty(hitIdx) && ~isempty(missIdx)
+                            rest = setdiff(1:numel(postActs), [hitIdx, missIdx], 'stable');
+                            postActs = postActs([hitIdx, missIdx, rest]);
+                        end
+                    end
                 else
                     postActs = cell(postActList.getLength(),1);
                     postParams = [];
@@ -466,5 +551,308 @@ for i = 0:procList.getLength()-1
     
     hosts{end+1,1} = newProc.name;
     procID = procID+1;
+end
+end
+
+function validateInputModel(doc)
+% VALIDATEINPUTMODEL Reject a structurally inconsistent LQN document
+%
+% Run on the parsed document before any object is built, so that a defective
+% input is named at its source instead of surfacing as a downstream failure.
+% The same checks, in the same order and with the same messages, are applied
+% by the JAR, Python and C++ readers.
+
+tol = 1e-6;
+procNames = cell(0,1);
+taskNames = cell(0,1);
+entryNames = cell(0,1);
+entryOwner = cell(0,1); % task owning entryNames{k}
+isRefEntry = false(0,1);
+callDests = cell(0,1);
+replyEntries = cell(0,1);
+hasRefTask = false;
+hasOpenArrival = false;
+
+procList = doc.getElementsByTagName('processor');
+for i = 0:procList.getLength()-1
+    procElement = procList.item(i);
+    procName = char(procElement.getAttribute('name'));
+    if any(strcmp(procNames, procName))
+        line_error(mfilename, sprintf('Duplicate processor name "%s".', procName));
+    end
+    procNames{end+1,1} = procName; %#ok<AGROW>
+
+    taskList = procElement.getElementsByTagName('task');
+    for j = 0:taskList.getLength()-1
+        taskElement = taskList.item(j);
+        taskName = char(taskElement.getAttribute('name'));
+        if any(strcmp(taskNames, taskName))
+            line_error(mfilename, sprintf('Duplicate task name "%s".', taskName));
+        end
+        taskNames{end+1,1} = taskName; %#ok<AGROW>
+        isRef = strcmpi(char(taskElement.getAttribute('scheduling')), 'ref');
+        hasRefTask = hasRefTask || isRef;
+
+        entryList = taskElement.getElementsByTagName('entry');
+        if entryList.getLength() == 0
+            line_error(mfilename, sprintf('Task "%s" has no entries.', taskName));
+        end
+        for k = 0:entryList.getLength()-1
+            entryElement = entryList.item(k);
+            entryName = char(entryElement.getAttribute('name'));
+            if any(strcmp(entryNames, entryName))
+                line_error(mfilename, sprintf('Duplicate entry name "%s".', entryName));
+            end
+            entryNames{end+1,1} = entryName; %#ok<AGROW>
+            entryOwner{end+1,1} = taskName; %#ok<AGROW>
+            isRefEntry(end+1,1) = isRef; %#ok<AGROW>
+
+            openArrivalRate = str2double(char(entryElement.getAttribute('open-arrival-rate')));
+            if ~isnan(openArrivalRate) && openArrivalRate > 0
+                hasOpenArrival = true;
+                if isRef
+                    line_error(mfilename, sprintf('Entry "%s" belongs to reference task "%s" and cannot have open arrivals.', entryName, taskName));
+                end
+            end
+
+            fwdList = entryElement.getElementsByTagName('forwarding');
+            if isRef && fwdList.getLength() > 0
+                line_error(mfilename, sprintf('Entry "%s" belongs to reference task "%s" and cannot forward requests.', entryName, taskName));
+            end
+            fwdTotal = 0.0;
+            for fw = 0:fwdList.getLength()-1
+                fwdElement = fwdList.item(fw);
+                probStr = char(fwdElement.getAttribute('prob'));
+                if isempty(probStr)
+                    prob = 1.0;
+                else
+                    prob = str2double(probStr);
+                end
+                if isnan(prob) || prob < 0.0 || prob > 1.0
+                    line_error(mfilename, sprintf('Forwarding from entry "%s" to entry "%s" has an invalid probability of %g.', entryName, char(fwdElement.getAttribute('dest')), prob));
+                end
+                fwdTotal = fwdTotal + prob;
+            end
+            if fwdTotal > 1.0 + tol
+                line_error(mfilename, sprintf('Entry "%s" has a total forwarding probability of %g.', entryName, fwdTotal));
+            end
+        end
+
+        % activity names are unique within their task; a name under a pre or post list is a reference, not a declaration
+        actNames = cell(0,1);
+        actList = taskElement.getElementsByTagName('activity');
+        for l = 0:actList.getLength()-1
+            actElement = actList.item(l);
+            parentTag = char(actElement.getParentNode().getNodeName());
+            if ~strcmp(parentTag,'task-activities') && ~strcmp(parentTag,'entry-phase-activities')
+                continue
+            end
+            actName = char(actElement.getAttribute('name'));
+            if any(strcmp(actNames, actName))
+                line_error(mfilename, sprintf('Duplicate activity name "%s" in task "%s".', actName, taskName));
+            end
+            actNames{end+1,1} = actName; %#ok<AGROW>
+        end
+
+        callList = taskElement.getElementsByTagName('synch-call');
+        for m = 0:callList.getLength()-1
+            callDests{end+1,1} = char(callList.item(m).getAttribute('dest')); %#ok<AGROW>
+        end
+        callList = taskElement.getElementsByTagName('asynch-call');
+        for m = 0:callList.getLength()-1
+            callDests{end+1,1} = char(callList.item(m).getAttribute('dest')); %#ok<AGROW>
+        end
+        fwdList = taskElement.getElementsByTagName('forwarding');
+        for fw = 0:fwdList.getLength()-1
+            callDests{end+1,1} = char(fwdList.item(fw).getAttribute('dest')); %#ok<AGROW>
+        end
+
+        orList = taskElement.getElementsByTagName('post-OR');
+        for l = 0:orList.getLength()-1
+            branchList = orList.item(l).getElementsByTagName('activity');
+            branchTotal = 0.0;
+            for m = 0:branchList.getLength()-1
+                branchElement = branchList.item(m);
+                probStr = char(branchElement.getAttribute('prob'));
+                if isempty(probStr)
+                    prob = 1.0;
+                else
+                    prob = str2double(probStr);
+                end
+                if isnan(prob) || prob < 0.0 || prob > 1.0
+                    line_error(mfilename, sprintf('Activity "%s" in task "%s" has an invalid branch probability of %g.', char(branchElement.getAttribute('name')), taskName, prob));
+                end
+                branchTotal = branchTotal + prob;
+            end
+            if abs(branchTotal - 1.0) > tol
+                line_error(mfilename, sprintf('Branch probabilities of an OR-fork in task "%s" sum to %g instead of 1.', taskName, branchTotal));
+            end
+        end
+
+        replyList = taskElement.getElementsByTagName('reply-entry');
+        for l = 0:replyList.getLength()-1
+            replyEntries{end+1,1} = char(replyList.item(l).getAttribute('name')); %#ok<AGROW>
+        end
+    end
+end
+
+for c = 1:length(callDests)
+    idx = find(strcmp(entryNames, callDests{c}), 1);
+    if ~isempty(idx) && isRefEntry(idx)
+        line_error(mfilename, sprintf('Entry "%s" belongs to reference task "%s" and cannot receive requests.', entryNames{idx}, entryOwner{idx}));
+    end
+end
+
+for r = 1:length(replyEntries)
+    idx = find(strcmp(entryNames, replyEntries{r}), 1);
+    if ~isempty(idx) && isRefEntry(idx)
+        line_error(mfilename, sprintf('Entry "%s" belongs to reference task "%s" and cannot be replied to.', entryNames{idx}, entryOwner{idx}));
+    end
+end
+
+if ~hasRefTask && ~hasOpenArrival
+    line_error(mfilename, 'The model has no reference task and no open arrivals.');
+end
+end
+
+
+function kids = child_elements(parent, tagName)
+% KIDS = CHILD_ELEMENTS(PARENT, TAGNAME)
+% The DIRECT children of PARENT named TAGNAME, as a cell array.
+%
+% getElementsByTagName searches every DESCENDANT, which is wrong for an element
+% that may legally nest: a <cache> found under a task would otherwise be claimed
+% by an enclosing element as well. Walking the child list keeps each element with
+% the node that declares it, and an unknown child is simply not matched, so a
+% reader meeting a future element does not fail.
+kids = {};
+nodes = parent.getChildNodes();
+for i = 0:nodes.getLength()-1
+    node = nodes.item(i);
+    if node.getNodeType() == org.w3c.dom.Node.ELEMENT_NODE && ...
+            strcmp(char(node.getNodeName()), tagName)
+        kids{end+1} = node; %#ok<AGROW>
+    end
+end
+end
+
+
+function act = parse_call_groups(actElement, act)
+% ACT = PARSE_CALL_GROUPS(ACTELEMENT, ACT)
+% LINE dialect <call-group>: which of the synch-calls parsed above one
+% dispatcher issues, and under which strategy. The member calls are ordinary
+% synch-call elements and have already been read, so only the grouping is
+% recorded; issuing them again here would double the call rate.
+grps = child_elements(actElement, 'call-group');
+for g = 1:numel(grps)
+    strategy = callgroup_from_lqnx(char(grps{g}.getAttribute('strategy')), act.name);
+    destElems = child_elements(grps{g}, 'dest');
+    dests = cell(1, numel(destElems));
+    for d = 1:numel(destElems)
+        dests{d} = char(destElems{d}.getAttribute('name'));
+    end
+    act = act.recordCallGroup(strategy, dests);
+end
+end
+
+
+function strategy = callgroup_from_lqnx(name, actName)
+% STRATEGY = CALLGROUP_FROM_LQNX(NAME, ACTNAME)
+% Wire enum name -> RoutingStrategy id, the inverse of writeXML's
+% callGroupStrategyName.
+switch upper(strtrim(name))
+    case 'RROBIN', strategy = RoutingStrategy.RROBIN;
+    case 'JSQ',    strategy = RoutingStrategy.JSQ;
+    otherwise
+        line_error(mfilename, sprintf(['Activity "%s" declares a call group with an ' ...
+            'unrecognized strategy "%s"; the dialect spells them RROBIN and JSQ.'], ...
+            actName, name));
+end
+end
+
+
+function id = repl_from_lqnx(name, taskName)
+% ID = REPL_FROM_LQNX(NAME, TASKNAME)
+% Wire enum name -> ReplacementStrategy id, the inverse of writeXML's
+% repl_to_lqnx and of linemodel_save's repl_to_str.
+switch upper(strtrim(name))
+    case 'LRU',   id = ReplacementStrategy.LRU;
+    case 'FIFO',  id = ReplacementStrategy.FIFO;
+    case 'RR',    id = ReplacementStrategy.RR;
+    case 'SFIFO', id = ReplacementStrategy.SFIFO;
+    case 'HLRU',  id = ReplacementStrategy.HLRU;
+    case 'CLIMB', id = ReplacementStrategy.CLIMB;
+    case 'QLRU',  id = ReplacementStrategy.QLRU;
+    otherwise
+        line_error(mfilename, sprintf(['Task "%s" declares an unrecognized cache replacement ' ...
+            'strategy "%s"; the dialect spells them RR, FIFO, LRU, SFIFO, HLRU, CLIMB, QLRU.'], ...
+            taskName, name));
+end
+end
+
+
+function dist = time_from_element(element)
+% DIST = TIME_FROM_ELEMENT(ELEMENT)
+% A <setup>/<delay-off> mean and SCV back into a distribution, taking the same
+% family the setter itself would: an SCV of one is the Exp the numeric
+% setSetupTime builds, anything else needs a two-moment fit.
+mean = str2double(char(element.getAttribute('mean')));
+scv = str2double(char(element.getAttribute('scv')));
+if isnan(scv)
+    scv = 1.0;
+end
+if isnan(mean) || mean <= GlobalConstants.FineTol
+    dist = Immediate.getInstance();
+elseif abs(scv - 1.0) <= GlobalConstants.FineTol
+    dist = Exp.fitMean(mean);
+else
+    dist = APH.fitMeanAndSCV(mean, scv);
+end
+end
+
+
+function dist = popularity_from_element(itemElement, cardinality, entryName)
+% DIST = POPULARITY_FROM_ELEMENT(ITEMELEMENT, CARDINALITY, ENTRYNAME)
+% The inverse of writeXML's popularity_element. The parameter list is in
+% CONSTRUCTOR ORDER; a DiscreteSampler's is split on the cardinality already
+% declared on the parent <item-entry>, so n values are p over the default
+% support 1..n and 2n are p followed by x.
+popList = child_elements(itemElement, 'access-popularity');
+if isempty(popList)
+    % No popularity was written, which the dialect allows. Uniform access over
+    % the declared cardinality is the only reading that is not a guess.
+    dist = DiscreteSampler(ones(1, cardinality) / cardinality);
+    return
+end
+popElement = popList{1};
+cls = char(popElement.getAttribute('name'));
+paramList = child_elements(popElement, 'parameter');
+vals = zeros(1, numel(paramList));
+for i = 1:numel(paramList)
+    vals(i) = str2double(char(paramList{i}.getAttribute('value')));
+end
+switch cls
+    case 'DiscreteSampler'
+        n = cardinality;
+        if numel(vals) == 2 * n
+            dist = DiscreteSampler(vals(1:n), vals(n+1:end));
+        elseif numel(vals) == n
+            dist = DiscreteSampler(vals);
+        else
+            line_error(mfilename, sprintf(['Entry "%s" declares a DiscreteSampler popularity with ' ...
+                '%d parameters, which is neither the cardinality %d (p alone) nor twice it ' ...
+                '(p followed by the support x).'], entryName, numel(vals), n));
+        end
+    case 'Zipf'
+        if numel(vals) ~= 2
+            line_error(mfilename, sprintf(['Entry "%s" declares a Zipf popularity with %d ' ...
+                'parameters; Zipf(s, n) takes two.'], entryName, numel(vals)));
+        end
+        dist = Zipf(vals(1), vals(2));
+    otherwise
+        line_error(mfilename, sprintf(['Entry "%s" declares a popularity distribution of class ' ...
+            '''%s'', which this reader cannot rebuild from a flat parameter list. Extend ' ...
+            'popularity_element/popularity_from_element in writeXML.m and parseXML.m together.'], ...
+            entryName, cls));
 end
 end

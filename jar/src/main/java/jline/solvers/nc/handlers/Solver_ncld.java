@@ -7,7 +7,7 @@ import java.util.List;
 import jline.api.npfqn.Npfqn_nonexp_approx;
 import jline.api.pfqn.ld.Pfqn_fnc;
 import jline.api.pfqn.ld.Pfqn_mushift;
-import jline.api.pfqn.ld.Pfqn_mvaldmx;
+import jline.api.pfqn.ld.Pfqn_ncldmx;
 import jline.api.pfqn.ld.Pfqn_ncld;
 import jline.api.sn.SnDeaggregateChainResults;
 import jline.api.sn.SnGetDemandsChain;
@@ -260,7 +260,9 @@ public final class Solver_ncld {
             }
             Matrix Xchain;
             if (!openChains.isEmpty()) {
-                // Mixed limited load-dependent network: exact chain-level MVALDMX.
+                // Mixed limited load-dependent network: the chain-level normalizing
+                // constant of Bruell-Balbo-Afshari effective capacity (pfqn_ncldmx),
+                // which never enumerates the closed population lattice.
                 // Open chains enter via arrival rates lambda; their reference
                 // (source) stations carry only the 1/lambda bookkeeping demand and
                 // are excluded. Delay stations fold into the think-time vector; the
@@ -282,7 +284,18 @@ public final class Solver_ncld {
                     }
                 }
                 int nq = queueStations.size();
+                // pfqn_ldmx_ec reads the limited-load-dependence level b_i off the
+                // rate row itself -- the first column equal to the LAST one -- and
+                // treats every rate past it as saturated. Cutting the row at the
+                // closed population declares a c-server station saturated at
+                // min(n,c) with n<c whenever c exceeds it (and with no closed class
+                // at all it flattens the row to mu(1)), so keep every column up to
+                // the start of each row's trailing constant run.
+                int lldWidth = lldscaling.getNumCols();
                 int ncol = Math.max(1, (int) Nchainfinite.elementSum());
+                for (Integer ist : queueStations) {
+                    ncol = Math.max(ncol, lldSaturationLevel(lldscaling, ist));
+                }
                 Matrix Zvec = new Matrix(1, C);
                 Zvec.zero();
                 for (Integer di : delayStations) {
@@ -292,7 +305,7 @@ public final class Solver_ncld {
                 }
                 Matrix Dq = new Matrix(nq, C);
                 Matrix muq = Matrix.ones(nq, ncol);
-                int availCols = Math.min(ncol, lldscaling.getNumCols());
+                int availCols = Math.min(ncol, lldWidth);
                 for (int qi = 0; qi < nq; qi++) {
                     int ist = queueStations.get(qi);
                     for (int c = 0; c < C; c++) {
@@ -301,15 +314,18 @@ public final class Solver_ncld {
                     for (int k = 0; k < availCols; k++) {
                         muq.set(qi, k, lldscaling.get(ist, k));
                     }
+                    for (int k = availCols; k < ncol && lldWidth > 0; k++) {
+                        muq.set(qi, k, lldscaling.get(ist, lldWidth - 1)); // saturated tail
+                    }
                 }
-                Ret.pfqnMVALDMX mret = Pfqn_mvaldmx.pfqn_mvaldmx(lambdaChain, Dq, Nchain, Zvec, muq, Matrix.ones(nq, 1));
-                Xchain = mret.X;
+                Ret.pfqnNcldmx mret = Pfqn_ncldmx.pfqn_ncldmx(lambdaChain, Dq, Nchain, Zvec, muq, Matrix.ones(nq, 1), options);
+                Xchain = mret.XN;
                 lG = mret.lG;
                 method = "ncldmx";
                 for (int qi = 0; qi < nq; qi++) {
                     int ist = queueStations.get(qi);
                     for (int c = 0; c < C; c++) {
-                        Qchain.set(ist, c, mret.Q.get(qi, c));
+                        Qchain.set(ist, c, mret.QN.get(qi, c));
                     }
                 }
                 for (Integer di : delayStations) {
@@ -475,11 +491,15 @@ public final class Solver_ncld {
                     int c = (int) Matrix.extractColumn(sn.chains, r, null).find().value();
                     if (!openClasses.contains(r) && snDeaggragatedChains.X.get(r) > 0) {
                         U.set(i, r,
-                                X.get(r) * sn.visits.get(c).get(i, r) / sn.visits.get(c).get((int) sn.refstat.get(r), r)
+                                X.get(r) * sn.visits.get(c).get((int) sn.stationToStateful.get(i), r)
+                                        / sn.visits.get(c).get(
+                                                (int) sn.stationToStateful.get((int) sn.refstat.get(r)), r)
                                         * ST.get(i, r) / sn.nservers.get(i));
                     } else if (openClasses.contains(r) && lambda != null && lambda.get(r) > 0) {
                         U.set(i, r,
-                                lambda.get(r) * sn.visits.get(c).get(i, r) / sn.visits.get(c).get((int) sn.refstat.get(r), r)
+                                lambda.get(r) * sn.visits.get(c).get((int) sn.stationToStateful.get(i), r)
+                                        / sn.visits.get(c).get(
+                                                (int) sn.stationToStateful.get((int) sn.refstat.get(r)), r)
                                         * ST.get(i, r) / sn.nservers.get(i));
                     }
                 }
@@ -488,10 +508,14 @@ public final class Solver_ncld {
                     int c = (int) Matrix.extractColumn(sn.chains, r, null).find().get(0);
                     if (!openClasses.contains(r) && snDeaggragatedChains.X.get(r) > 0) {
                         U.set(i, r,
-                                X.get(r) * sn.visits.get(c).get(i, r) / sn.visits.get(c).get((int) sn.refstat.get(r), r) * ST.get(i, r));
+                                X.get(r) * sn.visits.get(c).get((int) sn.stationToStateful.get(i), r)
+                                        / sn.visits.get(c).get(
+                                                (int) sn.stationToStateful.get((int) sn.refstat.get(r)), r) * ST.get(i, r));
                     } else if (openClasses.contains(r) && lambda != null && lambda.get(r) > 0) {
                         U.set(i, r,
-                                lambda.get(r) * sn.visits.get(c).get(i, r) / sn.visits.get(c).get((int) sn.refstat.get(r), r) * ST.get(i, r));
+                                lambda.get(r) * sn.visits.get(c).get((int) sn.stationToStateful.get(i), r)
+                                        / sn.visits.get(c).get(
+                                                (int) sn.stationToStateful.get((int) sn.refstat.get(r)), r) * ST.get(i, r));
                     }
                 }
             } else {
@@ -566,6 +590,27 @@ public final class Solver_ncld {
         }
 
         return new SolverNC.SolverNCLDReturn(Q, U, R, snDeaggragatedChains.T, Cmat, X, lG, runtime, iter, method);
+    }
+
+    /**
+     * First column (1-based) of the trailing constant run of a limited
+     * load-dependence row, i.e. the level b with mu(n)=mu(b) for every n&gt;=b; 1 on
+     * a flat or empty row. This is the level pfqn_ldmx_ec infers, so a row cut
+     * below it is read as a different, slower station.
+     *
+     * @param lldscaling the (M x W) load-dependent rate matrix
+     * @param ist        the station whose row is measured
+     * @return the saturation level of that row
+     */
+    private static int lldSaturationLevel(Matrix lldscaling, int ist) {
+        int b = lldscaling.getNumCols();
+        if (b == 0) {
+            return 1;
+        }
+        while (b > 1 && lldscaling.get(ist, b - 2) == lldscaling.get(ist, b - 1)) {
+            b--;
+        }
+        return b;
     }
 
     /**

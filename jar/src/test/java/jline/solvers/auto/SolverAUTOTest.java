@@ -165,16 +165,36 @@ public class SolverAUTOTest {
     
     @Test
     public void testSelectionMethods() {
-        // Test different selection methods
-        String[] methods = {"default", "heur", "ai", "nn"};
-        
+        // Every SELECTION INTENT the planner takes still leaves candidates to
+        // choose between. "ai" and "nn" used to be in this list and are not
+        // selection methods: SolverAUTO.METHOD_AI has been commented out as
+        // "not yet available" for as long as the file has existed, so the loop
+        // was asserting that a classifier nobody wrote produces candidates.
+        String[] methods = {"default", "heur", "sim", "exact", "fast", "accurate"};
+
         for (String method : methods) {
             AUTOptions options = new AUTOptions(method);
             SolverAUTO solver = new SolverAUTO(closedModel, options);
-            
+
             assertNotNull(solver, "Solver should be created with method: " + method);
             assertFalse(solver.getCandidateSolverNames().isEmpty(), 
                        "Should have candidates with method: " + method);
+        }
+    }
+
+    /** An unknown selection method name is refused BY NAME, not silently ignored. */
+    @Test
+    public void testUnknownSelectionMethodIsRejected() {
+        for (final String method : new String[]{"ai", "nn", "not-a-method"}) {
+            RuntimeException e = assertThrows(RuntimeException.class,
+                    new org.junit.jupiter.api.function.Executable() {
+                        public void execute() {
+                            new SolverAUTO(closedModel, new AUTOptions(method))
+                                    .getCandidateSolverNames();
+                        }
+                    }, "unknown selection method must be rejected: " + method);
+            assertTrue(e.getMessage().contains(method),
+                    "the rejection must name the method name, got: " + e.getMessage());
         }
     }
     

@@ -11,12 +11,21 @@ function RankTable = getSensitivityRanking(self, params, reward)
 % measured in different units. The sign is retained in the table because it
 % says whether increasing a parameter helps or hurts.
 %
+% @param self The SolverCTMC instance
 % @param params Cell array of parameter structs, see SolverCTMC.getSensitivity
 % @param reward Reward rate vector or handle over the state space
 % @return RankTable Table with columns Parameter, Value, Sens, ScaledSens, sorted
 %
 % Copyright (c) 2012-2026, Imperial College London
 % All rights reserved.
+
+
+% lang='cpp' cannot serve this getter; the reason is named, not blanket.
+if isfield(self.options,'lang') && strcmp(self.options.lang,'cpp')
+    CPPLINE.cppUnsupported(self.name, 'getSensitivityRanking', ...
+        ['it ranks the sensitivities getSensitivity produces, which lang=''cpp'' ' ...
+        'does not serve']);
+end
 
 if ~iscell(params)
     line_error(mfilename, 'params must be a cell array of parameter structs');

@@ -50,7 +50,7 @@ state = model.getState;
 
 %%
 i=M;
-solver = CTMC(model,options);
+solver = CTMC(model, 'exact',options);
 Pr = solver.getProbAggr(node{i});
 fprintf(1,'Station %d is in state %s with probability %.15g\n',i,mat2str(state{i}),Pr);
 Pmarg_ctmc = Pr

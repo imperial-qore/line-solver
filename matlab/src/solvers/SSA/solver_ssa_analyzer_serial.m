@@ -1,5 +1,10 @@
-function [XN,UN,QN,RN,TN,CN,tranSysState,tranSync,sn]=solver_ssa_analyzer_serial(sn, init_state, options, isHashed)
-% [XN,UN,QN,RN,TN,CN]=SOLVER_SSA_ANALYZER_SERIAL(SN, OPTIONS)
+function [XN,UN,QN,RN,TN,CN,tranSysState,tranSync,sn,StartN,PreemptN,tranStartTag,tranPreemptTag]=solver_ssa_analyzer_serial(sn, init_state, options, isHashed)
+% [XN,UN,QN,RN,TN,CN,TRANSYSSTATE,TRANSYNC,SN,STARTN,PREEMPTN,TRANSTARTTAG,TRANPREEMPTTAG]=SOLVER_SSA_ANALYZER_SERIAL(SN, OPTIONS)
+%
+% STARTN and PREEMPTN are the (station x class) service-start and preemption
+% rates, estimated exactly as TN is: the time average of the rate the enabled
+% transitions carry. TRANSTARTTAG/TRANPREEMPTTAG are the per-step tags of the
+% sampled path, used by @SolverSSA/sample.m to emit START and PREEMPT events.
 
 M = sn.nstations;    %number of stations
 K = sn.nclasses;    %number of classes
@@ -39,19 +44,27 @@ end
 % see _kb/06-solver-catalog.md for rationale (SSA utilization estimator)
 userCap = sn.cap;
 userClasscap = sn.classcap;
-[probSysState,StateSpaceAggr,arvRates,depRates,tranSysState,tranSync] = solver_ssa(sn, init_state, options, eventCache);
+[probSysState,StateSpaceAggr,arvRates,depRates,tranSysState,tranSync,~,dlyRates,startRates,preemptRates,tranStartTag,tranPreemptTag] = solver_ssa(sn, init_state, options, eventCache);
 %%
 wset = 1:size(StateSpaceAggr,1);
+StartN = zeros(M,K);
+PreemptN = zeros(M,K);
 for k=1:K
     refsf = sn.stationToStateful(sn.refstat(k));
     XN(k) = probSysState*depRates(wset,refsf,k);
 end
 
+% Global (Whittle) rate scaling: like cd/jd it rescales the service rate, so
+% the peak it declares is what normalizes the utilization.
+hasGd = isfield(sn,'gdscaling') && ~isempty(sn.gdscaling);
 for ist=1:M
     isf = sn.stationToStateful(ist);
     for k=1:K
         TN(ist,k) = probSysState*depRates(wset,isf,k);
         QN(ist,k) = probSysState*StateSpaceAggr(wset,(ist-1)*K+k);
+        % same time average as TN, over the derived tag rates
+        StartN(ist,k) = probSysState*startRates(wset,isf,k);
+        PreemptN(ist,k) = probSysState*preemptRates(wset,isf,k);
     end
     % see _kb/06-solver-catalog.md for rationale (SSA utilization estimator)
     canDropClass = isinf(sn.njobs(:)') & (isfinite(userCap(ist)) | isfinite(userClasscap(ist,:)));
@@ -62,7 +75,7 @@ for ist=1:M
             end
         case {SchedStrategy.PS, SchedStrategy.DPS, SchedStrategy.GPS, ...
               SchedStrategy.PSPRIO, SchedStrategy.DPSPRIO, SchedStrategy.GPSPRIO, SchedStrategy.LPS}
-            if isempty(sn.lldscaling) && isempty(sn.cdscaling) && isempty(sn.jdscaling)
+            if isempty(sn.lldscaling) && isempty(sn.cdscaling) && isempty(sn.jdscaling) && ~hasGd
                 for k=1:K
                     if ~isempty(PH{ist}{k})
                         if canDropClass(k)
@@ -77,17 +90,19 @@ for ist=1:M
                 % see _kb/06-solver-catalog.md for rationale (SSA utilization estimator)
                 isCd = ~isempty(sn.cdscaling) && ist <= numel(sn.cdscaling) && ~isempty(sn.cdscaling{ist});
                 isJd = ~isempty(sn.jdscaling) && ist <= numel(sn.jdscaling) && ~isempty(sn.jdscaling{ist});
+                isGd = hasGd;
                 ceff = S(ist);
                 if ~isempty(sn.lldscaling) && ist <= size(sn.lldscaling,1)
                     ceff = max(ceff, max(sn.lldscaling(ist,:)));
                 end
                 for k=1:K
                     if ~isempty(PH{ist}{k})
-                        if isCd || isJd
+                        if isCd || isJd || isGd
                             % effective peak = product of declared cd and jd peaks
                             cdiv = 1;
                             if isCd, cdiv = cdiv * sn.cdscalingpeak(ist,k); end
                             if isJd, cdiv = cdiv * sn.jdscalingpeak(ist,k); end
+                            if isGd, cdiv = cdiv * sn.gdscalingpeak(ist,k); end
                         else
                             cdiv = ceff;
                         end
@@ -109,7 +124,7 @@ for ist=1:M
                 %                 end
             end
         otherwise
-            if isempty(sn.lldscaling) && isempty(sn.cdscaling) && isempty(sn.jdscaling)
+            if isempty(sn.lldscaling) && isempty(sn.cdscaling) && isempty(sn.jdscaling) && ~hasGd
                 for k=1:K
                     if ~isempty(PH{ist}{k})
                         if canDropClass(k)
@@ -124,17 +139,19 @@ for ist=1:M
                 % see _kb/06-solver-catalog.md for rationale (SSA utilization estimator)
                 isCd = ~isempty(sn.cdscaling) && ist <= numel(sn.cdscaling) && ~isempty(sn.cdscaling{ist});
                 isJd = ~isempty(sn.jdscaling) && ist <= numel(sn.jdscaling) && ~isempty(sn.jdscaling{ist});
+                isGd = hasGd;
                 ceff = S(ist);
                 if ~isempty(sn.lldscaling) && ist <= size(sn.lldscaling,1)
                     ceff = max(ceff, max(sn.lldscaling(ist,:)));
                 end
                 for k=1:K
                     if ~isempty(PH{ist}{k})
-                        if isCd || isJd
+                        if isCd || isJd || isGd
                             % effective peak = product of declared cd and jd peaks
                             cdiv = 1;
                             if isCd, cdiv = cdiv * sn.cdscalingpeak(ist,k); end
                             if isJd, cdiv = cdiv * sn.jdscalingpeak(ist,k); end
+                            if isGd, cdiv = cdiv * sn.gdscalingpeak(ist,k); end
                         else
                             cdiv = ceff;
                         end
@@ -173,11 +190,15 @@ end
 % now update the routing probabilities in nodes with state-dependent routing
 TNcache = zeros(sn.nstateful, K);
 XNcache = zeros(sn.nstateful, K);
+DNcache = zeros(sn.nstateful, K);
 for k=1:K
     for isf=1:sn.nstateful
         if sn.nodetype(isf) == NodeType.Cache
             TNcache(isf,k) = probSysState*depRates(:,isf,k);
             XNcache(isf,k) = probSysState*arvRates(:,isf,k);
+            if ~isempty(dlyRates)
+                DNcache(isf,k) = probSysState*dlyRates(:,isf,k);
+            end
         end
     end
 end
@@ -193,8 +214,17 @@ for k=1:K
                 h = np.hitclass(k);
                 m = np.missclass(k);
                 if h>0 && m>0
-                    sn.nodeparam{ind}.actualhitprob(k) = TNcache(isf,h)/sum(TNcache(isf,[h,m]));
-                    sn.nodeparam{ind}.actualmissprob(k) = TNcache(isf,m)/sum(TNcache(isf,[h,m]));
+                    tot = sum(TNcache(isf,[h,m]));
+                    % The hit-class departure rate already contains the released
+                    % delayed hits: a request merged onto an in-flight fetch is
+                    % released in the hit class when the fetch completes. Carve
+                    % them out rather than adding a fourth share.
+                    dly = DNcache(isf,k);
+                    sn.nodeparam{ind}.actualhitprob(k) = max(TNcache(isf,h)-dly,0)/tot;
+                    sn.nodeparam{ind}.actualmissprob(k) = TNcache(isf,m)/tot;
+                    if dly > 0
+                        sn.nodeparam{ind}.actualdelayedhitprob(k) = dly/tot;
+                    end
                 else
                     sn.nodeparam{ind}.actualhitprob(k) = NaN;
                     sn.nodeparam{ind}.actualmissprob(k) = NaN;
@@ -204,7 +234,7 @@ for k=1:K
                 expectedLatency = NaN;
                 if isfield(np, 'retrievalSystemQueueIndices') ...
                         && isKey(np.retrievalSystemQueueIndices, int32(k-1)) ...
-                        && ~isempty(np.retrievalSystemQueueIndices(int32(k-1)))
+                        && ~isempty(np.retrievalSystemQueueIndices{int32(k-1)})
                     if ~retrievalLatencyWarned
                         line_warning(mfilename, 'Retrieval-system expected latency is not currently implemented; reporting NaN.');
                         retrievalLatencyWarned = true;

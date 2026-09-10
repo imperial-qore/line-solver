@@ -12,7 +12,7 @@ import java.util.List;
 import org.apache.commons.math3.util.FastMath;
 
 import jline.GlobalConstants;
-import jline.api.pfqn.ld.Pfqn_gldsingle;
+import jline.api.pfqn.ld.Pfqn_lldsingle;
 import jline.api.pfqn.mva.Pfqn_mva;
 import jline.io.Ret;
 import jline.solvers.SolverOptions;
@@ -146,7 +146,7 @@ public final class Pfqn_rd {
         }
         if (isInf) {
             options.method = "default";
-            double lG = Pfqn_nc.pfqn_nc(lambda, L, N, Z, options).lG;
+            double lG = Pfqn_nc.pfqn_nc(lambda, L, N, Z, options, false).lG;
             options.method = method;
             return new Ret.pfqnRd(lG);
         }
@@ -165,7 +165,7 @@ public final class Pfqn_rd {
         lEN.zero();
         for (int vtot = 0; vtot < vmax; vtot++) {
             lEN.set(vtot + 1, FastMath.log(Math.abs(
-                    Pfqn_gldsingle.pfqn_gldsingle(rhoN, Matrix.singleton((double) (vtot + 1)), beta, options).G)));
+                    Pfqn_lldsingle.pfqn_lldsingle(rhoN, Matrix.singleton((double) (vtot + 1)), beta, options).G)));
         }
         double EN;
         for (int vtot = 0; vtot < lEN.getNumElements(); vtot++) {
@@ -173,7 +173,7 @@ public final class Pfqn_rd {
             Cgamma += ((N.elementSum() - Maths.max(0.0, (double) (vtot - 1))) / N.elementSum()) * EN;
         }
         options.method = "default";
-        double lGN = Pfqn_nc.pfqn_nc(lambda, y, N, Z, options).lG;
+        double lGN = Pfqn_nc.pfqn_nc(lambda, y, N, Z, options, false).lG;
         options.method = method;
         lGN += FastMath.log(Cgamma);
         return new Ret.pfqnRd(lGN, Cgamma);

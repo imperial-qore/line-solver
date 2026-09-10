@@ -1,5 +1,11 @@
-function [stateSpace,stateSpaceAggr,stateSpaceHashed,Dfilt,sn,basBlockQ] = solver_ctmc_fcr_waitq(sn, options)
-% [SS,SSA,SSH,DFILT,SN,BASBLOCKQ]=SOLVER_CTMC_FCR_WAITQ(SN,OPTIONS)
+function [stateSpace,stateSpaceAggr,stateSpaceHashed,Dfilt,sn,basBlockQ,DfiltAux] = solver_ctmc_fcr_waitq(sn, options)
+% [SS,SSA,SSH,DFILT,SN,BASBLOCKQ,DFILTAUX]=SOLVER_CTMC_FCR_WAITQ(SN,OPTIONS)
+%
+% DFILTAUX carries the derived START/PREEMPT filtrations, as in solver_ctmc.
+% Here a single transition can start several services: the FIFO release
+% cascade admits blocked jobs one after another, and each admission may take a
+% server. The tags therefore accumulate along the cascade path and are written
+% once, at the settled state, weighted by the same rate as the transition.
 % Reachability-based state space and per-action rate filters for models with
 % a finite capacity region (FCR) whose drop rule is WAITQ (waiting queue).
 %
@@ -70,7 +76,7 @@ for f = 1:F
     if isfield(sn,'regionmaxmem') && numel(sn.regionmaxmem) >= f && ~isempty(sn.regionmaxmem{f})
         memvec = sn.regionmaxmem{f}(:);
     end
-    members = find(any(Rmat ~= -1, 2) | memvec ~= -1)';
+    members = find(sn_region_members(sn, f, Rmat, memvec));
     memberMask(f, members) = true;
     for r = 1:K
         cv = Rmat(members, r); cv = cv(cv ~= -1);
@@ -154,12 +160,19 @@ capRows = 1024;
 SSH = zeros(capRows, width);
 SSH(1,:) = row0;
 nrows = 1;
-keymap = containers.Map(rowkey(row0), 1);
+keymap = dictionary(string(rowkey(row0)), 1);
 frontier = 1;
 % transition triplets per action
 capTrip = 4096;
 ta = zeros(capTrip,1); ti = zeros(capTrip,1); tj = zeros(capTrip,1); tv = zeros(capTrip,1);
 ntrip = 0;
+% derived START/PREEMPT triplets, tagged with the station and class they
+% belong to: (station, class, from, to, rate)
+capAux = 4096;
+xk = zeros(capAux,1); xs = zeros(capAux,1); xr = zeros(capAux,1);
+xi = zeros(capAux,1); xj = zeros(capAux,1); xv = zeros(capAux,1);
+naux = 0;
+M = sn.nstations;
 
 while ~isempty(frontier)
     s = frontier(1); frontier(1) = [];
@@ -180,7 +193,7 @@ while ~isempty(frontier)
         isf_a = sn.nodeToStateful(node_a);
         class_a = sync{a}.active{1}.class;
         event_a = sync{a}.active{1}.event;
-        [new_state_a, rate_a] = State.afterEventHashed(sn, node_a, h(isf_a), event_a, class_a);
+        [new_state_a, rate_a, ~, start_a, preempt_a] = State.afterEventHashed(sn, node_a, h(isf_a), event_a, class_a);
         if isequal(new_state_a, -1)
             continue
         end
@@ -188,11 +201,13 @@ while ~isempty(frontier)
             if isnan(rate_a(ia)) || rate_a(ia) <= 0 || new_state_a(ia) == -1
                 continue
             end
+            tagS_a = stationTag(node_a, start_a, ia);
+            tagP_a = stationTag(node_a, preempt_a, ia);
             node_p = sync{a}.passive{1}.node;
             if node_p == local
                 newh = h;
                 newh(isf_a) = new_state_a(ia);
-                emit(a, s, newh, bufs, rate_a(ia));
+                emit(a, s, newh, bufs, rate_a(ia), [], tagS_a, tagP_a);
             else
                 class_p = sync{a}.passive{1}.class;
                 event_p = sync{a}.passive{1}.event;
@@ -230,7 +245,7 @@ while ~isempty(frontier)
                     % only the active (departing) part of the transition applies
                     newh = h;
                     newh(isf_a) = new_state_a(ia);
-                    emit(a, s, newh, bufs, rate_a(ia) * sync{a}.passive{1}.prob);
+                    emit(a, s, newh, bufs, rate_a(ia) * sync{a}.passive{1}.prob, [], tagS_a, tagP_a);
                     continue
                 end
                 % see _kb/06-solver-catalog.md (CTMC section) for rationale
@@ -248,7 +263,7 @@ while ~isempty(frontier)
                     newh = h;
                     newh(isf_a) = new_state_a(ia);
                     emit(a, s, newh, bufs, rate_a(ia) * sync{a}.passive{1}.prob, ...
-                        [switchf, class_p, node_p, iswaitq(switchf, class_p)]);
+                        [switchf, class_p, node_p, iswaitq(switchf, class_p)], tagS_a, tagP_a);
                     continue
                 end
                 if blockedf > 0
@@ -259,12 +274,13 @@ while ~isempty(frontier)
                     newh(isf_a) = new_state_a(ia);
                     newbufs = bufs;
                     newbufs{blockedf}(end+1) = (node_p-1)*K + class_p;
-                    emit(a, s, newh, newbufs, rate_a(ia) * sync{a}.passive{1}.prob);
+                    % the refused job waits outside the region: it starts nothing
+                    emit(a, s, newh, newbufs, rate_a(ia) * sync{a}.passive{1}.prob, [], tagS_a, tagP_a);
                 else
                     if node_p == node_a % self-loop
-                        [new_state_p, ~, outprob_p] = State.afterEventHashed(sn, node_p, new_state_a(ia), event_p, class_p);
+                        [new_state_p, ~, outprob_p, start_p, preempt_p] = State.afterEventHashed(sn, node_p, new_state_a(ia), event_p, class_p);
                     else
-                        [new_state_p, ~, outprob_p] = State.afterEventHashed(sn, node_p, h(isf_p), event_p, class_p);
+                        [new_state_p, ~, outprob_p, start_p, preempt_p] = State.afterEventHashed(sn, node_p, h(isf_p), event_p, class_p);
                     end
                     if isempty(new_state_p) || isequal(new_state_p, -1)
                         % see _kb/06-solver-catalog.md (True BAS blocking) for rationale
@@ -278,7 +294,9 @@ while ~isempty(frontier)
                                 if blockedIdx > 0
                                     newh = h;
                                     newh(isf_a) = blockedIdx;
-                                    emit(0, s, newh, bufs, rate_a(ia) * sync{a}.passive{1}.prob);
+                                    % the job is held AT the server: nobody is
+                                    % promoted, so this arc carries no tag
+                                    emit(0, s, newh, bufs, rate_a(ia) * sync{a}.passive{1}.prob, [], zeros(M,K), zeros(M,K));
                                 end
                             end
                         end
@@ -298,7 +316,9 @@ while ~isempty(frontier)
                         newh = h;
                         newh(isf_a) = new_state_a(ia);
                         newh(isf_p) = new_state_p(ip);
-                        emit(a, s, newh, bufs, rate_a(ia) * prob_sync_p);
+                        emit(a, s, newh, bufs, rate_a(ia) * prob_sync_p, [], ...
+                            tagS_a + stationTag(node_p, start_p, ip), ...
+                            tagP_a + stationTag(node_p, preempt_p, ip));
                     end
                 end
             end
@@ -318,6 +338,17 @@ end
 % generator, but not a departure of any action, so kept out of Dfilt.
 selBas = (ta(1:ntrip) == 0);
 basBlockQ = sparse(ti(selBas), tj(selBas), tv(selBas), nrows, nrows);
+% derived START/PREEMPT filtrations, one matrix per (station, class)
+DfiltAux.start = cell(M,K);
+DfiltAux.preempt = cell(M,K);
+for i_ = 1:M
+    for r_ = 1:K
+        selS = (xk(1:naux) == 1) & (xs(1:naux) == i_) & (xr(1:naux) == r_);
+        DfiltAux.start{i_,r_} = sparse(xi(selS), xj(selS), xv(selS), nrows, nrows);
+        selP = (xk(1:naux) == 2) & (xs(1:naux) == i_) & (xr(1:naux) == r_);
+        DfiltAux.preempt{i_,r_} = sparse(xi(selP), xj(selP), xv(selP), nrows, nrows);
+    end
+end
 stateSpaceHashed = SSH;
 % full state matrix: concatenated per-node states plus the token buffers
 cols = 0;
@@ -344,6 +375,16 @@ for s = 1:nrows
     stateSpace(s, cols+1:end) = SSH(s, nstateful+1:end);
 end
 
+    function T = stationTag(node, tagrows, irow)
+        % T=STATIONTAG(NODE,TAGROWS,IROW) lift one successor row's tag counts
+        % to the (station x class) grid; a non-station node contributes none.
+        T = zeros(M,K);
+        if isempty(tagrows) || irow > size(tagrows,1) || node > sn.nnodes || ~sn.isstation(node)
+            return
+        end
+        T(sn.nodeToStation(node),:) = tagrows(irow,:);
+    end
+
     function tf = violates(f, x)
         % TF=VIOLATES(F,X) true if per-class population vector x breaks any
         % admission constraint of region f
@@ -365,24 +406,34 @@ end
         end
     end
 
-    function emit(a, src, newh, newbufs, w, pend)
-        % EMIT(A,SRC,NEWH,NEWBUFS,W,PEND) applies the FIFO release cascade to
-        % the tentative augmented state and records the transitions of action
-        % a. PEND = [f cls destNode] is a pending gated re-entry (a class-
-        % switching hop between members of region f): once the cascade
+    function emit(a, src, newh, newbufs, w, pend, tagS, tagP)
+        % EMIT(A,SRC,NEWH,NEWBUFS,W,PEND,TAGS,TAGP) applies the FIFO release
+        % cascade to the tentative augmented state and records the transitions
+        % of action a. PEND = [f cls destNode] is a pending gated re-entry (a
+        % class-switching hop between members of region f): once the cascade
         % settles, the job of class cls is admitted at destNode if region f
         % has capacity, else parked at the tail of the FIFO.
+        %
+        % TAGS/TAGP are the (station x class) START/PREEMPT counts the two
+        % halves of the synchronization have already produced; the cascade adds
+        % the tags of every job it releases into a station, since an admitted
+        % job may take a server there.
         if w <= 0
             return
         end
         if nargin < 6
             pend = [];
         end
-        % work items: {h, bufs, prob, pend}
-        work = {{newh, newbufs, 1.0, pend}};
+        if nargin < 8
+            tagS = zeros(M,K);
+            tagP = zeros(M,K);
+        end
+        % work items: {h, bufs, prob, pend, startTag, preemptTag}
+        work = {{newh, newbufs, 1.0, pend, tagS, tagP}};
         while ~isempty(work)
             it = work{1}; work(1) = [];
             hh = it{1}; bb = it{2}; pw = it{3}; pd = it{4};
+            ts = it{5}; tp = it{6};
             progressed = false;
             for f_ = 1:F
                 if isempty(bb{f_})
@@ -398,7 +449,7 @@ end
                     continue % head-of-line: this region's FIFO stays blocked
                 end
                 isf_d = sn.nodeToStateful(dest);
-                [hd, ~, opd] = State.afterEventHashed(sn, dest, hh(isf_d), EventType.ARV, r_);
+                [hd, ~, opd, sd, pdg] = State.afterEventHashed(sn, dest, hh(isf_d), EventType.ARV, r_);
                 if isempty(hd) || isequal(hd, -1)
                     continue
                 end
@@ -410,7 +461,8 @@ end
                     hh2(isf_d) = hd(id);
                     bb2 = bb;
                     bb2{f_}(1) = [];
-                    work{end+1} = {hh2, bb2, pw * opd(id), pd}; %#ok<AGROW>
+                    work{end+1} = {hh2, bb2, pw * opd(id), pd, ...
+                        ts + stationTag(dest, sd, id), tp + stationTag(dest, pdg, id)}; %#ok<AGROW>
                 end
                 progressed = true;
                 break
@@ -424,16 +476,16 @@ end
                 if violates(f_, xn_)
                     if numel(pd) >= 4 && ~pd(4)
                         % DROP rule: the switching job is destroyed
-                        work{end+1} = {hh, bb, pw, []}; %#ok<AGROW>
+                        work{end+1} = {hh, bb, pw, [], ts, tp}; %#ok<AGROW>
                     else
                         % no capacity: park at the tail of the region FIFO
                         bb2 = bb;
                         bb2{f_}(end+1) = (dest_-1)*K + cls_;
-                        work{end+1} = {hh, bb2, pw, []}; %#ok<AGROW>
+                        work{end+1} = {hh, bb2, pw, [], ts, tp}; %#ok<AGROW>
                     end
                 else
                     isf_d = sn.nodeToStateful(dest_);
-                    [hd, ~, opd] = State.afterEventHashed(sn, dest_, hh(isf_d), EventType.ARV, cls_);
+                    [hd, ~, opd, sd, pdg] = State.afterEventHashed(sn, dest_, hh(isf_d), EventType.ARV, cls_);
                     admitted = false;
                     if ~isempty(hd) && ~isequal(hd, -1)
                         for id = 1:length(hd)
@@ -442,7 +494,8 @@ end
                             end
                             hh2 = hh;
                             hh2(isf_d) = hd(id);
-                            work{end+1} = {hh2, bb, pw * opd(id), []}; %#ok<AGROW>
+                            work{end+1} = {hh2, bb, pw * opd(id), [], ...
+                                ts + stationTag(dest_, sd, id), tp + stationTag(dest_, pdg, id)}; %#ok<AGROW>
                             admitted = true;
                         end
                     end
@@ -451,7 +504,7 @@ end
                         % park in the FIFO instead
                         bb2 = bb;
                         bb2{f_}(end+1) = (dest_-1)*K + cls_;
-                        work{end+1} = {hh, bb2, pw, []}; %#ok<AGROW>
+                        work{end+1} = {hh, bb2, pw, [], ts, tp}; %#ok<AGROW>
                     end
                 end
                 continue
@@ -464,7 +517,7 @@ end
                     rr(bufoff(f_)+1:bufoff(f_)+numel(bb{f_})) = bb{f_};
                 end
                 kk = rowkey(rr);
-                if keymap.isKey(kk)
+                if isKey(keymap, kk)
                     dst = keymap(kk);
                 else
                     nrows = nrows + 1;
@@ -484,6 +537,17 @@ end
                     tv = [tv; zeros(numel(tv),1)]; %#ok<AGROW>
                 end
                 ta(ntrip) = a; ti(ntrip) = src; tj(ntrip) = dst; tv(ntrip) = w * pw;
+                % derived tags of this settled path, at the same rate
+                for i_ = 1:M
+                    for r_t = 1:K
+                        if ts(i_,r_t) ~= 0
+                            [xk,xs,xr,xi,xj,xv,naux] = auxpush(xk,xs,xr,xi,xj,xv,naux, 1, i_, r_t, src, dst, w*pw*ts(i_,r_t));
+                        end
+                        if tp(i_,r_t) ~= 0
+                            [xk,xs,xr,xi,xj,xv,naux] = auxpush(xk,xs,xr,xi,xj,xv,naux, 2, i_, r_t, src, dst, w*pw*tp(i_,r_t));
+                        end
+                    end
+                end
             end
         end
     end
@@ -493,4 +557,18 @@ end
 function k = rowkey(v)
 % K=ROWKEY(V) character key for an augmented state row
 k = sprintf('%d,', v);
+end
+
+function [xk,xs,xr,xi,xj,xv,n] = auxpush(xk,xs,xr,xi,xj,xv,n, kind, ist, r, src, dst, val)
+% Append one derived-filtration triplet; KIND is 1 for START, 2 for PREEMPT.
+n = n + 1;
+if n > numel(xk)
+    xk = [xk; zeros(numel(xk),1)];
+    xs = [xs; zeros(numel(xs),1)];
+    xr = [xr; zeros(numel(xr),1)];
+    xi = [xi; zeros(numel(xi),1)];
+    xj = [xj; zeros(numel(xj),1)];
+    xv = [xv; zeros(numel(xv),1)];
+end
+xk(n) = kind; xs(n) = ist; xr(n) = r; xi(n) = src; xj(n) = dst; xv(n) = val;
 end

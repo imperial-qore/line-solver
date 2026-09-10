@@ -419,10 +419,17 @@ def trace_gamma(T, limit=1000):
         return RHO0 * gamma ** k
 
     try:
-        # Nonlinear least squares fit (matches MATLAB nlinfit with 'fair' robust weights)
+        # MATLAB calls nlinfit with RobustWgtFun='fair', i.e. an IRLS fit, NOT
+        # ordinary least squares: outlying lags (the noisy tail of the ACF) are
+        # down-weighted. Plain curve_fit here moved the estimate by ~1e-5
+        # relative. This reproduces MATLAB's scheme - leverage-adjusted
+        # residuals, MAD scale, fair weights w = 1/(1+|r|) at tune 1.400 - and
+        # lands within ~3e-7 of it; the remainder is nlinfit's internal robust
+        # scale convention, which is not documented well enough to match
+        # exactly.
         popt, _ = curve_fit(geometric, lag, rho, p0=[0.99], bounds=(-1.0, 1.0),
                             maxfev=100000)
-        GAMMA = float(popt[0])
+        GAMMA = _robust_fair_refit(geometric, lag, rho, RHO0, float(popt[0]))
         RESIDUALS = rho - geometric(lag, GAMMA)
     except Exception:
         try:
@@ -435,6 +442,39 @@ def trace_gamma(T, limit=1000):
             RESIDUALS = rho - geometric(lag, GAMMA)
 
     return GAMMA, RHO0, RESIDUALS
+
+
+def _robust_fair_refit(model, lag, rho, RHO0, beta, tune=1.400,
+                       maxiter=200, tol=1e-10):
+    """Iteratively reweighted refit with the 'fair' weight function.
+
+    Mirrors what MATLAB's nlinfit does when RobustWgtFun is set: adjust the
+    residuals for leverage, estimate a robust scale from their MAD, weight by
+    w = 1/(1+|r_adj/(tune*s)|), and refit until the parameter settles. The model
+    has a single parameter (the decay rate), so the leverage of lag i is just
+    J_i^2 / sum(J^2).
+    """
+    for _ in range(maxiter):
+        r = rho - model(lag, beta)
+        J = RHO0 * lag * beta ** (lag - 1.0)
+        ssq = float(np.sum(J ** 2))
+        if not np.isfinite(ssq) or ssq <= 0:
+            return beta
+        h = J ** 2 / ssq
+        radj = r / np.sqrt(1.0 - np.minimum(0.9999, h))
+        rs = np.sort(np.abs(radj))
+        s = float(np.median(rs)) / 0.6745
+        if not np.isfinite(s) or s <= 0:
+            return beta
+        w = 1.0 / (1.0 + np.abs(radj / (tune * s)))
+        new, _ = curve_fit(model, lag, rho, p0=[beta], sigma=1.0 / np.sqrt(w),
+                           absolute_sigma=False, bounds=(-1.0, 1.0),
+                           maxfev=100000)
+        new = float(new[0])
+        if abs(new - beta) < tol * max(1e-12, abs(beta)):
+            return new
+        beta = new
+    return beta
 
 
 def trace_shuffle(S):

@@ -24,6 +24,9 @@
 %}
 function [XN,QN,UN,CN,lG]=pfqn_mvams(lambda,L,N,Z,mi,S)
 % [XN,QN,UN,CN,LOGG]=PFQN_MVAMS(LAMBDA,L,N,Z,MI,S)
+%
+% Standard arrival theorem throughout. For the interlocked-flow correction of
+% Franks (1999), Ch. 4, Eq. (4.7), call PFQN_MVAMS_ILOCK instead.
 
 % this is a general purpose script to handle mixed qns with multi-server nodes
 % S(i) number of servers in station i

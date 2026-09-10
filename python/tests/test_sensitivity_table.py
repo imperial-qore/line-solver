@@ -27,6 +27,8 @@ Copyright (c) 2012-2026, Imperial College London
 All rights reserved.
 """
 
+import os
+
 import numpy as np
 import pytest
 
@@ -440,6 +442,11 @@ def _layered_model():
     return model
 
 
+@pytest.mark.skipif(
+    os.environ.get('LINE_SOLVER_LANG') == 'java',
+    reason="asserts SolverLN concatenates its native per-layer solvers; the "
+           "java-dispatch path solves the whole LayeredNetwork in ONE jline.jar "
+           "subprocess, so no native layer solver runs")
 def test_layered_solver_delegates_to_its_layers():
     # SolverLN owns no recursion of its own to differentiate: it concatenates
     # what the layer solvers report, one row block per layer.
@@ -453,15 +460,19 @@ def test_layered_solver_delegates_to_its_layers():
     # aggregating to chains, so every layer differentiates analytically.
     assert T.attrs['method'] == 'exact'
     assert T.attrs['layer_methods'] == ['exact', 'exact', 'exact']
-    # MATLAB values for the same model, to 3 significant digits.
+    # MATLAB values for the same model, to 3 significant digits. Re-recorded
+    # 2026-08-10: T2 declares a think time and is NOT a reference task, so the
+    # P2 row moved when that think time stopped being charged as a per-request
+    # delay; LDES on the same model puts T2 at Tput 2.3, RespT 0.0496 against
+    # the layered fixed point's 2.2962 / 0.05.
     np.testing.assert_allclose(T['dTput_dRate'].values,
-                               [0.015211, 0.00026872, 0.0031701], rtol=1e-3)
+                               [0.015212, 0.013198, 0.0031711], rtol=1e-3)
     np.testing.assert_allclose(T['dRespT_dRate'].values,
-                               [-0.014406, -0.0024998, -0.003003], rtol=1e-3)
+                               [-0.014408, -0.0025, -0.0030035], rtol=1e-3)
     np.testing.assert_allclose(T['dQLen_dRate'].values,
-                               [-0.031257, -0.00080616, -0.0067251], rtol=1e-3)
+                               [-0.031260, -0.0050842, -0.0067267], rtol=1e-3)
     np.testing.assert_allclose(T['dUtil_dRate'].values,
-                               [-0.021453, -0.00080616, -0.0055844], rtol=1e-3)
+                               [-0.021455, -0.0050842, -0.0055855], rtol=1e-3)
 
 
 def test_layered_sweep_leaves_the_fixed_point_intact():

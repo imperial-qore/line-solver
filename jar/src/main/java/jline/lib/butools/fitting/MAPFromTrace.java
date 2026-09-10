@@ -13,7 +13,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Top-level functions for MAP-from-trace fitting (ported from Kotlin).
+ * Top-level functions for MAP-from-trace fitting.
  */
 public final class MAPFromTrace {
 

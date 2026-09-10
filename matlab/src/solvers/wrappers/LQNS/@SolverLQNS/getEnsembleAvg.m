@@ -14,31 +14,9 @@ QN = UN;
 UN = PN;
 RN = SN;
 
-% LQNS reports proc-utilization summed over all instances of the host
-% processor; LN reports the per-server fraction. Rescale UN to match LN.
-lqn = self.getStruct;
-for idx = 1:lqn.nidx
-    cur = idx;
-    hostMult = 1;
-    for hops = 0:lqn.nidx
-        if cur < 1 || cur > lqn.nidx
-            break
-        end
-        if lqn.type(cur) == LayeredNetworkElement.PROCESSOR
-            m = lqn.mult(cur);
-            if m > 0 && ~isinf(m)
-                hostMult = m;
-            end
-            break
-        end
-        p = lqn.parent(cur);
-        if p <= 0 || p == cur
-            break
-        end
-        cur = p;
-    end
-    if hostMult > 1 && ~isnan(UN(idx))
-        UN(idx) = UN(idx) / hostMult;
-    end
-end
+% UN is lqns' proc-utilization, verbatim for hosts, tasks and activities and
+% aggregated over the activity graph for entries, which lqns itself reports as
+% 0 in the activity-graph form. Both lqns and SolverLN report the processor
+% utilization summed over the host's servers, so no rescaling by the host
+% multiplicity applies; see _kb/06-solver-catalog.md (LQNS wrapper).
 end

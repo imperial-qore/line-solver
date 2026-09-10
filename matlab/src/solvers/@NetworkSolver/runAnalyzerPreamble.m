@@ -45,5 +45,44 @@ if strcmp(options.lang,'python')
     return
 end
 
+if strcmp(options.lang,'cpp')
+    line_debug(options, '%s: using lang=cpp, delegating to the C++ line-cli', tag);
+    Solver.resetRandomGeneratorSeed(options.seed);
+    [QN,UN,RN,TN,AN,WN,runtime] = CPPLINE.getAvg(self.name, self.model, options);
+    self.setAvgResults(QN,UN,RN,TN,AN,WN,[],[],runtime,options.method,NaN);
+    handled = true;
+    return
+end
+
 Solver.resetRandomGeneratorSeed(options.seed);
+
+% MODEL TRANSFORMATION, opt-in through options.config.transform. The strategy
+% rewrites the model into subproblems, TRANSFORMSOLVE solves each with an
+% instance of THIS solver and maps the metrics back, so a transformation
+% written once serves every solver that reaches this preamble rather than the
+% one it was first written for.
+%
+% This is the seam because it is the one opening every runAnalyzer already
+% shares, and it already carries a HANDLED early-return contract. Wiring the
+% dispatch here reaches all eight of its callers (MVA, NC, CTMC, FLD, SSA, MAM,
+% AG, BA) without editing any of them. The JMT, QNS and LDES wrappers inherit
+% transformSolve but do not call this preamble, so a transform method name is ignored
+% there rather than honoured.
+%
+% The inner solve carries transform='none', so a transformed submodel arriving
+% back here cannot re-enter the driver.
+if isfield(options,'config') && isstruct(options.config) ...
+        && isfield(options.config,'transform') && ~isempty(options.config.transform) ...
+        && ~strcmpi(options.config.transform,'none')
+    line_debug(options, '%s: model transformation ''%s''', tag, options.config.transform);
+    tr = transformSolve(self, options);
+    runtime = tr.runtime;
+    sn = getStruct(self);
+    T = getAvgTputHandles(self);
+    AN = sn_get_arvr_from_tput(sn, tr.TN, T);
+    self.setAvgResults(tr.QN, tr.UN, tr.RN, tr.TN, AN, [], tr.CN, tr.XN, ...
+        runtime, [options.method '/' tr.method], tr.iter);
+    handled = true;
+    return
+end
 end

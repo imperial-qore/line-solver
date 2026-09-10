@@ -54,8 +54,8 @@ if isStateDep
                                 rnodefuncell{(ind-1)*K+r, (jnd-1)*K+s} = @(state_before, state_after) sub_jsq(ind, jnd, r, s, linksmat, state_before, state_after);
                             case RoutingStrategy.SQ
                                 rnodefuncell{(ind-1)*K+r, (jnd-1)*K+s} = @(state_before, state_after) sub_sq(ind, jnd, r, s, linksmat, state_before, state_after);
-                            case RoutingStrategy.RL
-                                rnodefuncell{(ind-1)*K+r, (jnd-1)*K+s} = @(state_before, state_after) sub_rl(ind, jnd, r, s, linksmat, state_before, state_after);
+                            case RoutingStrategy.SDR
+                                rnodefuncell{(ind-1)*K+r, (jnd-1)*K+s} = @(state_before, state_after) sub_sdr(ind, jnd, r, s, linksmat, state_before, state_after);
                             otherwise
                                 rnodefuncell{(ind-1)*K+r, (jnd-1)*K+s} = @(~,~) rtnodes((ind-1)*K+r, (jnd-1)*K+s);
                         end
@@ -203,156 +203,39 @@ self.sn = sn;
     end
 
 
-    function p = sub_rl(ind, jnd, r, s, linksmat, state_before, state_after) %#ok<INUSD>
-        % P = SUB_RL(IND, JND, R, S, LINKSMAT, STATE_BEFORE, STATE_AFTER) %#OK<INUSD>
+    function p = sub_sdr(ind, jnd, r, s, linksmat, state_before, state_after) %#ok<INUSD>
+        % P = SUB_SDR(IND, JND, R, S, LINKSMAT, STATE_BEFORE, STATE_AFTER)
+        % Krzesinski (1987) product-form state-dependent routing, eq. (10).
+        % IND is the entry center e of Q(V,V); the probability of proceeding to
+        % the entry center of a branch is a function of the total branch and
+        % subnetwork populations, and the residual mass returns the customer to
+        % the departure center d, which is the busy form of waiting of Sec. 2.5.
 
         isf = self.sn.nodeToStateful(ind);
         if isempty(state_before{isf})
             p = min(linksmat(ind,jnd),1);
-        else
-            if r==s
-                % ----- new added contents ----- %
-                if self.nodes{ind}.output.outputStrategy{1,r}{5}==0         % state_size=0, use tabular value fn
-                    % Multi-class: each class supplies its own value function.
-                    % State.toMarginal aggregates queue lengths across classes,
-                    % so the per-class call works as long as outputStrategy{r}
-                    % is configured per class.
-                    value_function = self.nodes{ind}.output.outputStrategy{1,r}{3};
-                    nodes_need_action = self.nodes{ind}.output.outputStrategy{1,r}{4};
-                    
-                    if ~isempty(find(nodes_need_action==ind, 1))
-                        indQueue = find(self.sn.nodetype == NodeType.Queue);
-                        v = Inf*ones(1, self.sn.nnodes);                    % value fn
-                        n = Inf*ones(1, self.sn.nnodes);                    % queue length
-                        x = zeros(1, length(indQueue));                     % current state
-                        for knd_idx=1:length(indQueue)
-                            knd = indQueue(knd_idx);
-                            ksf = self.sn.nodeToStateful(knd);              %% does the state removes the job from the departure node already?
-                            x(knd_idx) = State.toMarginal(self.sn, knd, state_before{ksf});
-                        end     
-
-                        for knd = 1:self.sn.nnodes
-                            if linksmat(ind, knd)
-                                tmp = x+1;
-                                tmp(indQueue == knd) = tmp(indQueue == knd) + 1;
-                                if max(tmp) <= size(value_function, 1)
-                                    ttmp = num2cell(tmp);
-                                    v(knd) = value_function(ttmp{:});
-                                end
-                                ksf = self.sn.nodeToStateful(knd);
-                                n(knd) = State.toMarginal(self.sn, knd, state_before{ksf});
-                            end
-                        end
-
-                        if min(v) < Inf && max(x+1) < size(value_function, 1)  % in action space
-                            if v(jnd) == min(v)
-                                p = 1 / sum(v == min(v));
-                            else
-                                p = 0;
-                            end
-                        else                                                % not in action space, use JSQ
-                            if n(jnd) == min(n)
-                                p = 1 / sum(n == min(n));
-                            else
-                                p = 0;
-                            end
-                        end
-
-                    else                                                    % not in nodes_need_action: this node doesn't use RL results, use JSQ
-                        n = Inf*ones(1,self.sn.nnodes);
-                        for knd=1:self.sn.nnodes
-                            if linksmat(ind,knd)
-                                ksf = self.sn.nodeToStateful(knd);
-                                n(knd) = State.toMarginal(self.sn, knd, state_before{ksf});
-                            end
-                        end
-                        if n(jnd) == min(n)
-                            p = 1 / sum(n == min(n));
-                        else
-                            p = 0;
-                        end
-                    end
-                
-                elseif self.nodes{ind}.output.outputStrategy{1,r}{5}>0      % state_size>0, use fn approx for value fn
-                    % Multi-class: class-specific coefficient row vector.
-                    coeff = self.nodes{ind}.output.outputStrategy{1,r}{3};
-                    nodes_need_action = self.nodes{ind}.output.outputStrategy{1,r}{4};
-                    stateSize = self.nodes{ind}.output.outputStrategy{1,r}{5};
-
-                    if ~isempty(find(nodes_need_action==ind, 1))
-                        indQueue = find(self.sn.nodetype == NodeType.Queue);
-                        v = Inf*ones(1, self.sn.nnodes);                    % value fn
-                        n = Inf*ones(1, self.sn.nnodes);                    % queue length
-                        x = zeros(1, length(indQueue));                     % current state
-                        for knd_idx=1:length(indQueue)
-                            knd = indQueue(knd_idx);
-                            ksf = self.sn.nodeToStateful(knd);              %% does the state removes the job from the departure node already?
-                            x(knd_idx) = State.toMarginal(self.sn, knd, state_before{ksf});
-                        end     
-                        for knd = 1:self.sn.nnodes
-                            if linksmat(ind, knd)
-                                tmp = x;
-                                tmp(indQueue == knd) = tmp(indQueue == knd) + 1;
-                                
-                                tmp_vec = [1 tmp];
-                                for i = 1:length(tmp)
-                                    for j = i:length(tmp)
-                                        tmp_vec(end+1) = tmp(i)* tmp(j);
-                                    end
-                                end
-                                v(knd) = tmp_vec * coeff.';
-
-                                ksf = self.sn.nodeToStateful(knd);
-                                n(knd) = State.toMarginal(self.sn, knd, state_before{ksf});
-                            end
-                        end
-                        if min(v) < Inf  && max(x+1) < stateSize            % in action space
-                            if v(jnd) == min(v)
-                                p = 1 / sum(v == min(v));
-                            else
-                                p = 0;
-                            end
-                        else                                                % not in action space, use JSQ
-                            if n(jnd) == min(n)
-                                p = 1 / sum(n == min(n));
-                            else
-                                p = 0;
-                            end
-                        end
-                    else                                                    % not in nodes_need_action: this node doesn't use RL results, use JSQ
-                        n = Inf*ones(1,self.sn.nnodes);
-                        for knd=1:self.sn.nnodes
-                            if linksmat(ind,knd)
-                                ksf = self.sn.nodeToStateful(knd);
-                                n(knd) = State.toMarginal(self.sn, knd, state_before{ksf});
-                            end
-                        end
-                        if n(jnd) == min(n)
-                            p = 1 / sum(n == min(n));
-                        else
-                            p = 0;
-                        end     
-                    end
-
-                else                                                        % no value fn, use JSQ 
-                % ----- end of new added contents ----- %
-
-                    n = Inf*ones(1,self.sn.nnodes);
-                    for knd=1:self.sn.nnodes
-                        if linksmat(ind,knd)
-                            ksf = self.sn.nodeToStateful(knd);
-                            n(knd) = State.toMarginal(self.sn, knd, state_before{ksf});
-                        end
-                    end
-                    if n(jnd) == min(n)
-                        p = 1 / sum(n == min(n));
-                    else
-                        p = 0;
-                    end
-                end
-            else
-                p = 0;
+            return
+        end
+        if r ~= s
+            p = 0; return;
+        end
+        sdr = self.sn.nodeparam{ind}{r}.sdr;
+        n = zeros(1, self.sn.nnodes);
+        for knd = 1:self.sn.nnodes
+            ksf = self.sn.nodeToStateful(knd);
+            if ~isnan(ksf) && ksf >= 1 && ~isempty(state_before{ksf})
+                n(knd) = State.toMarginal(self.sn, knd, state_before{ksf});
             end
+        end
+        [Pb, Ped] = pfqn_sdrprob(sdr, n);
+        p = 0;
+        for b = 2:numel(sdr.branch)
+            if sdr.entryOf(b) == jnd
+                p = p + Pb(b);
+            end
+        end
+        if sdr.departure == jnd
+            p = p + Ped;
         end
     end
 
@@ -373,7 +256,7 @@ self.sn = sn;
         % the per-jnd probabilities are reused.
         persistent sqCache
         if isempty(sqCache)
-            sqCache = containers.Map('KeyType','char','ValueType','any');
+            sqCache = configureDictionary('string','cell');
         end
 
         isf = self.sn.nodeToStateful(ind);
@@ -408,7 +291,7 @@ self.sn = sn;
         % all jnd values for this (ind, r) pair.
         cacheKey = sprintf('d%d|nd%d|n%s', d, ndest, mat2str(n));
         if isKey(sqCache, cacheKey)
-            pVec = sqCache(cacheKey);
+            pVec = sqCache{cacheKey};
         else
             pVec = zeros(1, ndest);
             n_tuples = ndest^d;
@@ -427,10 +310,10 @@ self.sn = sn;
             end
             pVec = pVec / n_tuples;
             % Bound cache size to avoid unbounded growth in long simulations.
-            if sqCache.Count > 50000
-                remove(sqCache, sqCache.keys);
+            if numEntries(sqCache) > 50000
+                sqCache = remove(sqCache, keys(sqCache));
             end
-            sqCache(cacheKey) = pVec;
+            sqCache{cacheKey} = pVec;
         end
         p = pVec(jnd_pos);
     end

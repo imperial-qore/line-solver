@@ -131,4 +131,14 @@ public class SolverAvgHandles {
         return U;
     }
 
+    /** Mean tardiness handles, Tard(i,r) for class r at station i. */
+    public AvgHandle getAvgTardHandles() {
+        return Tard;
+    }
+
+    /** Mean system tardiness handles, SysTard(1,r) for class r. */
+    public AvgHandle getAvgSysTardHandles() {
+        return SysTard;
+    }
+
 }

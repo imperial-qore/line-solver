@@ -214,9 +214,11 @@ def qsys_gig1_approx_gelenbe(
 ) -> Tuple[float, float]:
     """
     Gelenbe's diffusion approximation for G/G/1 with instantaneous-return
-    boundary:
+    boundary::
+
         p(0) = 1-rho,  p(n) = rho*(1-rhat)*rhat^(n-1), n>=1
         rhat = exp(-2*(1-rho)/(rho*ca^2+cs^2))
+
     hence E[N] = rho/(1-rhat) and the mean response time (time in system)
     is W = E[N]/lambda = 1/(mu*(1-rhat)).
 
@@ -253,8 +255,10 @@ def qsys_gig1_approx_kimura(
     lambda_val: float, mu: float, ca: float, cs: float
 ) -> Tuple[float, float]:
     """
-    Kimura's diffusion-interpolation approximation for G/G/1:
+    Kimura's diffusion-interpolation approximation for G/G/1::
+
         Wq = rho*(ca^2+cs^2)/(mu*(1-rho)*(1+ca^2))
+
     exact for M/M/1 and M/G/1. The returned W adds the mean service time
     (response time, time in system).
 
@@ -347,9 +351,11 @@ def qsys_gig1_approx_klb(
     """
     rho = lambda_val / mu
 
-    if rho >= 1.0:
-        return np.inf, 1.0
-
+    # rho >= 1 is NOT short-circuited to Inf here: the reference (and the JAR and
+    # C++ ports) evaluate the formula unconditionally, so an overloaded queue
+    # returns the negative W the expression yields, which the caller's saturation
+    # rule then reports as Inf QLen/RespT and zero residence time. Substituting
+    # Inf makes ResidT = Inf * V instead, which is a different reported model.
     ca2 = ca ** 2
     cs2 = cs ** 2
 
@@ -369,8 +375,10 @@ def qsys_gig1_approx_myskja(
     q0: float, qa: float
 ) -> Tuple[float, float]:
     """
-    Myskja's third-moment approximation for G/G/1:
+    Myskja's third-moment approximation for G/G/1::
+
         Wq = rho/(2*mu*(1-rho))*((1+cs^2)+(q0/qa)^(1/rho-rho)*(1/rho)*(ca^2-1))
+
     exact for M/G/1 (ca=1). The returned W adds the mean service time
     (response time, time in system).
 
@@ -472,8 +480,10 @@ def qsys_gig1_ubnd_kingman(
     lambda_val: float, mu: float, ca: float, cs: float
 ) -> Tuple[float, float]:
     """
-    Kingman's upper bound on the mean waiting time of a G/G/1 queue:
+    Kingman's upper bound on the mean waiting time of a G/G/1 queue::
+
         Wq <= lambda*(sa^2+ss^2)/(2*(1-rho)),
+
     with sa^2=ca^2/lambda^2 and ss^2=cs^2/mu^2. The returned W adds the
     mean service time, so it upper-bounds the mean response time
     (time in system).
@@ -661,7 +671,7 @@ def qsys_gig1_lbnd(
             rhohat: Effective utilization
 
     References:
-        Original JAR: jar/src/main/kotlin/jline/api/qsys/Qsys_gig1_lbnd.kt
+        Original JAR: jar/src/main/java/jline/api/qsys/Qsys_gig1_lbnd.java
     """
     W = 1.0 / mu  # At least the mean service time
     rhohat = W * lambda_val / (1 + W * lambda_val)
@@ -672,9 +682,11 @@ def qsys_gigk_approx_cosmetatos(
 ) -> Tuple[float, float]:
     """
     GI/G/k approximation by interpolation of the M/M/k, M/D/k and D/M/k
-    queues (Cosmetatos 1982; Page 1982):
+    queues (Cosmetatos 1982; Page 1982)::
+
         Wq = [ca^2*cs^2 + ca^2*(1-cs^2)*phi1/2
               + (1-ca^2)*cs^2*phi3/2] * Wq(M/M/k)
+
     where phi1 and phi3 are the Cosmetatos (1975) correction factors for
     M/D/k and D/M/k, with the safeguards of Whitt (1993). The D/D/k corner
     has Wq=0. The interpolation requires ca^2<=1 and cs^2<=1; outside this
@@ -733,8 +745,10 @@ def qsys_gigk_approx_whitt(
     lambda_val: float, mu: float, ca: float, cs: float, k: int
 ) -> Tuple[float, float]:
     """
-    GI/G/k approximation of Whitt (1993), eqs. (2.16)-(2.25):
+    GI/G/k approximation of Whitt (1993), eqs. (2.16)-(2.25)::
+
         Wq = phi(rho,ca^2,cs^2,k) * ((ca^2+cs^2)/2) * Wq(M/M/k)
+
     where phi interpolates the Cosmetatos M/D/k (phi1) and D/M/k (phi3)
     correction factors. Exact for M/M/k; reduces to the Cosmetatos M/D/k
     approximation for cs=0. Implements eq. (2.25) as printed, which was

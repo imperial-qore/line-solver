@@ -77,18 +77,23 @@ n = np.array([[-1,-1,-1,-1],   # Delay state (ignored)
               [-1,-1,-1,-1],   # Queue1 state (ignored)
               [1, 0, 2, 1]])   # Queue2 state: 1 Class1, 0 Class2, 2 Class3, 1 Class4
 
-# Set state for each node
+# Set state for each node, INCLUDING the -1 rows: a -1 is the "ignore this
+# station" flag of the getProb* family, not an absent state, and the reference
+# (statepr_aggr_large.m) calls setState on every node. Skipping them left the
+# model PARTIALLY initialized, and a partial state is dropped whole rather than
+# mixed with defaults -- so the row this example is asking about disappeared and
+# getProbAggr answered 0.2028 for the default marking instead of 0.005511.
 nodes = [node1, node2, node3]
 for i in range(len(nodes)):
-    if not np.any(n[i] == -1):  # Only set state if not ignored
-        nodes[i].setState(n[i])
+    nodes[i].setState(n[i])
 # %%
 # Solve with CTMC for exact state probabilities
 options = {'verbose': 1, 'seed': 23000}
 solver_ctmc = CTMC(model, options)
 Pr_ctmc = solver_ctmc.getProbAggr(node3)
 print(f'Station 3 is in state {n[2].tolist()} with probability {Pr_ctmc}')
-print(f'Pr_ctmc = {Pr_ctmc}')
+print('Pr_ctmc =')
+print(Pr_ctmc)
 
 # %%
 # Solve with NC (Normalizing Constant) method

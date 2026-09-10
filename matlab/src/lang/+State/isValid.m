@@ -51,7 +51,8 @@ for ist=1:sn.nstations
         end
     end
     if any(n(ist,:)>sn.classcap(ist,:))
-        line_warning(mfilename,'Station %d is in a state with more jobs than its allowed capacity.\n');
+        line_warning(mfilename,sprintf('Station %d is in a state with more jobs than its allowed capacity (%s > %s).\n', ...
+            ist, mat2str(n(ist,:)), mat2str(sn.classcap(ist,:))));
         isValid = false;
         return
     end
@@ -94,9 +95,16 @@ for nc=1:sn.nchains
         statejobs_chain = sum(sum(n(:,find(sn.chains(nc,:))),2),1);
         %if ~options.force && abs(1-njobs_chain/statejobs_chain) > options.iter_tol
         if abs(1-njobs_chain/statejobs_chain) > GlobalConstants.CoarseTol
-            isValid = false;
-            line_error(mfilename,sprintf('Chain %d is initialized with an incorrect number of jobs: %f instead of %d.', nc, statejobs_chain, njobs_chain));
-            return
+            if abs(njobs_chain - round(njobs_chain)) > GlobalConstants.Zero ...
+                    && abs(statejobs_chain - njobs_chain) < 1
+                % Fractional closed population (fluid-family solvers): the
+                % discrete state can only encode a rounded job count, so accept
+                % a deviation below one job for this chain.
+            else
+                isValid = false;
+                line_error(mfilename,sprintf('Chain %d is initialized with an incorrect number of jobs: %f instead of %d.', nc, statejobs_chain, njobs_chain));
+                return
+            end
         end
         %end
     end

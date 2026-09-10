@@ -18,8 +18,10 @@ function [G, lG, Q] = pfqn_pas_is(N, mu, H, options)
 % where c_{1..k} is the length-k prefix placed at station 1 and c_{ell..k+1} the
 % reversed suffix placed at station 2. Along a fixed ordering q the balanced-
 % fairness value is the ordered product of reciprocal rank rates,
-%   Phi_m(q) = prod_{p=1}^{|q|} 1 / mu_m(supp(q_{1..p})),
-% which depends only on the support reached at each position (OI property).
+%   Phi_m(q) = prod_{p=1}^{|q|} 1 / mu_m(n(q_{1..p})),   n(.) = prefix counts,
+% evaluated at the per-class COUNT vector of each prefix (OI property P1 makes
+% mu permutation-invariant, i.e. a function of the counts -- not of the support
+% alone, which differs as soon as any class holds two or more jobs).
 %
 % Auto-normalized IS (notebook generator IS_3). Orderings c are drawn from D by
 % placing, at each step, a uniformly random placement-order-minimal present
@@ -45,7 +47,14 @@ function [G, lG, Q] = pfqn_pas_is(N, mu, H, options)
 %   options - solver options (optional). Fields used:
 %               .samples  number of IS samples (default 1e4);
 %               .seed     RNG seed for reproducibility (optional);
-%               .verbose  print progress (default false).
+%               .verbose  print progress (default false);
+%               .qlen     estimate the queue lengths too (default true). False
+%                         estimates ONLY G: the prefix-count coefficients are
+%                         neither allocated nor accumulated and Q comes back
+%                         zero. The ordering is drawn from the same stream
+%                         either way, so G is unchanged to the last bit -- this
+%                         is for the callers that want G(N - e_r) and read
+%                         nothing else from it.
 %
 % Returns:
 %   G  - IS estimate of the communicating-class normalizing constant G_C.
@@ -92,6 +101,10 @@ if isfield(options, 'seed') && ~isempty(options.seed)
     rng(options.seed);
 end
 verbose = isfield(options, 'verbose') && ~isempty(options.verbose) && options.verbose;
+wantQ = true;
+if isfield(options, 'qlen') && ~isempty(options.qlen)
+    wantQ = logical(options.qlen);
+end
 
 ell = sum(N);
 
@@ -104,7 +117,11 @@ if ell == 0
     return
 end
 
-nCoef = R + 1;                 % xi = [1, n_{1,1}, ..., n_{1,R}]
+if wantQ
+    nCoef = R + 1;             % xi = [1, n_{1,1}, ..., n_{1,R}]
+else
+    nCoef = 1;                 % xi = [1] alone; G needs no prefix counts
+end
 accum = zeros(1, nCoef);
 Nmat = N;                      % row template for feasibility masking
 
@@ -130,25 +147,29 @@ for s = 1:nsamples
     % Precompute prefix balance Phi_1 up to each cut and suffix balance Phi_2.
     % Phi1cut(k+1) = Phi_1(c_{1..k}); Phi2cut(k+1) = Phi_2(reversed c_{k+1..ell})
     Phi1 = ones(1, ell + 1);
-    cnt1 = zeros(ell + 1, R);
-    supp = zeros(1, R); phi = 1; occ = zeros(1, R);
+    if wantQ
+        cnt1 = zeros(ell + 1, R);
+    end
+    phi = 1; occ = zeros(1, R);
     for k = 1:ell
         cls = c(k);
-        supp(cls) = 1; occ(cls) = occ(cls) + 1;
-        phi = phi / mu{1}(supp);
+        occ(cls) = occ(cls) + 1;
+        phi = phi / mu{1}(occ);
         Phi1(k + 1) = phi;
-        cnt1(k + 1, :) = occ;
+        if wantQ
+            cnt1(k + 1, :) = occ;
+        end
     end
     % Station 2 receives the reversed suffix c(ell), c(ell-1), ..., c(k+1). Scan
     % positions ell..1 accumulating support; Phi2cut(k) is the balance of the
     % reversed suffix c_{ell..k} (length ell-k+1), so at cut k station 2 holds
     % c_{ell..k+1} whose balance is Phi2cut(k+1) (and 1 for the empty suffix).
     Phi2cut = ones(1, ell + 1);
-    supp = zeros(1, R); phi = 1;
+    occ2 = zeros(1, R); phi = 1;
     for k = ell:-1:1
         cls = c(k);
-        supp(cls) = 1;
-        phi = phi / mu{2}(supp);
+        occ2(cls) = occ2(cls) + 1;
+        phi = phi / mu{2}(occ2);
         Phi2cut(k) = phi;
     end
 
@@ -157,7 +178,7 @@ for s = 1:nsamples
     for k = 0:ell
         w = Phi1(k + 1) * Phi2cut_at(Phi2cut, k, ell);
         sv(1) = sv(1) + w;                     % xi = 1
-        if k > 0
+        if wantQ && k > 0
             sv(2:end) = sv(2:end) + w * cnt1(k + 1, :);   % xi = n_{1,r}
         end
     end
@@ -172,10 +193,12 @@ est = accum / nsamples;
 G = est(1);
 lG = log(G);
 Q = zeros(2, R);
-if G > 0
-    Q(1, :) = est(2:end) / G;
+if wantQ
+    if G > 0
+        Q(1, :) = est(2:end) / G;
+    end
+    Q(2, :) = N - Q(1, :);
 end
-Q(2, :) = N - Q(1, :);
 end
 
 function v = Phi2cut_at(Phi2cut, k, ell)

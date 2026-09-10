@@ -79,7 +79,15 @@ for i=statSet
                 end
             otherwise
                 if ~hasOpenClasses || i ~= self.getIndexSourceStation
-                    if isempty(station_i.server.serviceProcess{r})
+                    % LENGTH FIRST, THEN EMPTY. A station whose per-class cell was
+                    % never padded to nclasses -- REFRESHRATES is reachable without
+                    % SANITIZE, e.g. SolverLN refreshes the rates of a layer on its
+                    % own -- made this index throw MATLAB's own "Index exceeds the
+                    % number of array elements", which names neither the station nor
+                    % the class and buries the real fault (a class with no service).
+                    % SANITIZE.m spells the same test this way; keep both halves.
+                    if r > numel(station_i.server.serviceProcess) || ...
+                            isempty(station_i.server.serviceProcess{r})
                         rates(i,r) = NaN;
                         scv(i,r) = NaN;
                     else

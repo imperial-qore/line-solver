@@ -60,15 +60,19 @@ def qsys_mg1k_loss(lambda_val: float, service_pdf: Callable[[float], float],
     State: number of customers waiting in the queue immediately after a
     service start, q in {0,...,K-2} (capacity K includes the job in service;
     just after a departure at most K-1 jobs remain, one of which enters
-    service). With a_j = P(j Poisson arrivals during a service time):
+    service). With a_j = P(j Poisson arrivals during a service time)::
+
         q=0 : if no arrival occurs during the service the system empties and
               the next service starts with the next arrival (q'=0), so both
               a_0 and a_1 lead to q'=0 and j>=2 arrivals lead to q'=j-1;
         q>=1: q' = q-1+j, with arrivals beyond the free capacity lost
               (aggregated in the last column).
-    The loss probability follows from the renewal-reward argument
+
+    The loss probability follows from the renewal-reward argument::
+
         E[cycle] = E[S] + sigma_0*a_0/lambda,  lambda_eff = 1/E[cycle],
         P_loss = 1 - lambda_eff/lambda = 1 - 1/(rho + sigma_0*a_0)
+
     where sigma is the stationary distribution at service-start epochs.
 
     Args:
@@ -82,6 +86,7 @@ def qsys_mg1k_loss(lambda_val: float, service_pdf: Callable[[float], float],
         Tuple of (sigma0, rho, lossprob):
             sigma0: Stationary probability of an empty queue at service-start
                 epochs
+
             rho: Offered load
             lossprob: Probability of loss
 

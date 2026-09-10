@@ -20,8 +20,10 @@ from line_solver.api.me.me_oqn_blk import RULE_BAS, RULE_LOSS, me_oqn_blk
 TOL = 1e-10
 
 
-@pytest.mark.parametrize('rho', [0.3, 0.8, 1.0, 1.5])
-@pytest.mark.parametrize('nbuf', [1, 2, 5, 10])
+@pytest.mark.parametrize('rho', [0.3, 0.8, 1.0, 1.5],
+                         ids=['rho0.3', 'rho0.8', 'rho1.0', 'rho1.5'])
+@pytest.mark.parametrize('nbuf', [1, 2, 5, 10],
+                         ids=['nbuf1', 'nbuf2', 'nbuf5', 'nbuf10'])
 def test_censored_single_server_is_exact(rho, nbuf):
     """The censored GE/GE/1/0;N reduces to M/M/1/N on Markovian streams."""
     p, L, U, PB, _ = me_gegecn(rho, 1.0, 1.0, 1.0, 1, 0, nbuf)
@@ -35,7 +37,7 @@ def test_censored_single_server_is_exact(rho, nbuf):
     assert abs(U - (1 - pex[0])) < TOL
 
 
-@pytest.mark.parametrize('c', [2, 3, 5])
+@pytest.mark.parametrize('c', [2, 3, 5], ids=['c2', 'c3', 'c5'])
 def test_censored_multiserver_is_exact(c):
     """The censored GE/GE/c/0;N reduces to M/M/c/N on Markovian streams."""
     for nbuf in (c, c + 3, c + 8):
@@ -55,7 +57,8 @@ def test_censored_multiserver_is_exact(c):
         assert abs(PB - pex[-1]) < TOL
 
 
-@pytest.mark.parametrize('rho', [0.5, 0.9, 1.2])
+@pytest.mark.parametrize('rho', [0.5, 0.9, 1.2],
+                         ids=['rho0.5', 'rho0.9', 'rho1.2'])
 def test_single_station_with_loss(rho):
     """The network algorithm on a single M/M/1/N with loss is exact."""
     nbuf = 4
@@ -102,7 +105,8 @@ def test_transfer_blocking_against_published_table():
 
 @pytest.mark.parametrize('nbuf,qlen,tput', [(2, 0.85245902, 0.59016393),
                                             (4, 1.56306521, 0.70252261),
-                                            (6, 2.14243372, 0.74692668)])
+                                            (6, 2.14243372, 0.74692668)],
+                         ids=['nbuf2', 'nbuf4', 'nbuf6'])
 def test_solver_nc_mem_accepts_finite_capacity(nbuf, qlen, tput):
     """SolverNC method='mem' solves M/M/1/N exactly, the CTMC values being
     the reference."""

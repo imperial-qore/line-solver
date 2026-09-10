@@ -1,12 +1,19 @@
-function data = solveCli(self, options, extraFlags)
-% DATA = SOLVECLI(OPTIONS, EXTRAFLAGS)
+function [data, engine] = solveCli(self, options, extraFlags)
+% [DATA, ENGINE] = SOLVECLI(OPTIONS, EXTRAFLAGS)
+%
+% ENGINE names the runner that actually answered, 'cpp' for the native
+% common/ldes binary and 'java' for "java -jar common/ldes.jar" (and for the
+% REST server, which hosts the shaded Java engine). Which one runs is decided
+% per call by the coverage rules below, not by options.lang, so the caller has
+% no other way to report it -- and reporting 'java' unconditionally, as the
+% banner used to, named the wrong engine on nearly every solve.
 %
 % Fully JSON-mediated LDES solve. Serializes the model natively to model.json
 % (linemodel_save, no in-process Java object marshalling), runs the LDES engine
 % as a subprocess exchanging only JSON ("solve model.json -o result.json"), and
 % returns the jsondecode'd result struct. Returns [] on any failure.
 %
-% The engine is either the native GraalVM binary (common/ldes) or, failing that,
+% The engine is either the native C++ binary (common/ldes) or, failing that,
 % "java -jar common/ldes.jar" (same shaded engine). No JPype/JLINE path remains.
 %
 % EXTRAFLAGS is an optional cellstr of additional CLI tokens, e.g.
@@ -16,6 +23,9 @@ if nargin < 3 || isempty(extraFlags)
     extraFlags = {};
 end
 data = [];
+% The shaded Java engine is the safe default: it is what the REST server hosts
+% and what every fallback lands on.
+engine = 'java';
 
 tmpDir = tempname;
 if ~mkdir(tmpDir)
@@ -53,26 +63,37 @@ if isempty(restUrl)
     end
 end
 
-% see _kb/06-solver-catalog.md (Wrappers: LDES runner ordering vs stale AOT native binary)
+% see _kb/06-solver-catalog.md (Wrappers: LDES runner ordering vs engine coverage)
+%
+% common/ldes is the NATIVE C++ ENGINE as of 2026-08-01, not a GraalVM image of
+% the Java one, so the old rule ("a flag the AOT image predates is IGNORED by
+% it, so send it to the jar") no longer describes the risk. The C++ binary
+% REFUSES what it cannot honour, by name and with a non-zero exit, so a
+% misrouted run fails loudly instead of answering about a different model. What
+% remains is coverage: two result blocks and one node kind the C++ engine does
+% not fill or simulate, where the jar must run instead.
 if numel(runners) > 1
     preferJar = false;
-    % A flag the AOT native binary predates must run on the jar, which is
-    % rebuilt with the sources. --respt-samples is the current instance.
+    % Result blocks the C++ engine does not fill. It refuses these flags, so
+    % without this the run would fail rather than silently differ; the reorder
+    % is what keeps the feature working.
+    % --trajectory came off this list on 2026-08-02: the C++ engine fills the
+    % transient block and the state path now, verified against the jar.
     for fi = 1:numel(extraFlags)
         if ischar(extraFlags{fi}) && strcmp(extraFlags{fi}, '--respt-samples')
             preferJar = true;
             break;
         end
     end
-    for ni = 1:numel(self.model.nodes)
-        nd = self.model.nodes{ni};
-        if isa(nd, 'Source') && ~isempty(nd.markedClasses)
-            preferJar = true;
-            break;
-        end
-        if isa(nd, 'Station') && ~isempty(nd.lcdScaling)
-            preferJar = true;
-            break;
+    if ~preferJar
+        for ni = 1:numel(self.model.nodes)
+            nd = self.model.nodes{ni};
+            % Server breakdowns have no field in the C++ NetworkStruct, so the
+            % C++ engine cannot represent them at all.
+            if isa(nd, 'Station') && isprop(nd, 'breakdown') && ~isempty(nd.breakdown)
+                preferJar = true;
+                break;
+            end
         end
     end
     if preferJar
@@ -165,7 +186,18 @@ end
 % Independent replications and the worker pool that runs them. Emitted here for
 % every analysis, steady-state included; runTransientJson no longer adds them.
 % A caller that already supplied the flag through extraFlags wins.
+%
+% METHOD='PARALLEL' IS A REPLICATION COUNT, not a separate engine. The engine's
+% parallel analyzer is selected by --replications > 1 and by nothing else, in
+% every codebase, so the method name has to resolve to one: it takes the count
+% the caller supplied, and 8 when there is none -- the same default
+% solver_ssa_analyzer_parallel.m uses for config.nreplicas. Without this the
+% name was advertised and inert, which is what it was in the JAR.
 reps = ldesOpt(options, 'replications', 1);
+if isfield(options, 'method') && ischar(options.method) ...
+        && strcmpi(options.method, 'parallel') && ~(isnumeric(reps) && isscalar(reps) && reps > 1)
+    reps = ldesOpt(options, 'nreplicas', 8);
+end
 if isnumeric(reps) && isscalar(reps) && reps > 1 && ~hasFlag(extraFlags, '--replications')
     flags = sprintf('%s --replications %d', flags, round(reps));
     nthreads = ldesOpt(options, 'numthreads', []);
@@ -199,9 +231,19 @@ for ri = 1:numel(runners)
         delete(resultPath);
     end
     cmd = sprintf('%s solve "%s" -o "%s" %s', runners{ri}, modelPath, resultPath, flags);
+    if ~contains(runners{ri}, '-jar')
+        cmd = withoutMatlabLibs(cmd);
+    end
     [status, cmdout] = system(cmd);
     lastOut = cmdout;
     if status == 0 && exist(resultPath, 'file') == 2
+        % `-jar` is what distinguishes the JVM runner; the native binary is
+        % invoked as a bare path.
+        if contains(runners{ri}, '-jar')
+            engine = 'java';
+        else
+            engine = 'cpp';
+        end
         try
             data = jsondecode(fileread(resultPath));
         catch ME
@@ -212,7 +254,12 @@ for ri = 1:numel(runners)
         end
         return;
     end
-    line_debug('LDES runner %d/%d failed (status=%d); trying next.', ri, numel(runners), status);
+    % A fallback is not a detail: the two engines consume the routing stream
+    % differently, so answering from the next runner silently changes a seeded
+    % sample path and, with it, any golden recorded against the first one.
+    line_warning(mfilename, sprintf(['LDES runner %d/%d failed (status=%d): %s\n' ...
+        'Falling back to the next engine; a seeded run may not reproduce a ' ...
+        'golden recorded against the first.'], ri, numel(runners), status, strtrim(cmdout)));
 end
 
 line_error(mfilename, sprintf('LDES engine failed on all %d runner(s): %s', ...
@@ -272,6 +319,17 @@ data = resp.result;
 if isstruct(data) && isfield(data, 'error')
     line_error(mfilename, sprintf('LDES engine error: %s', data.error));
 end
+end
+
+function cmd = withoutMatlabLibs(cmd)
+% CMD = WITHOUTMATLABLIBS(CMD)
+% Wrap CMD so it runs with MATLAB's own runtime directories stripped out of
+% LD_LIBRARY_PATH. Only the native binary is wrapped; the jar runner is
+% MATLAB's own JRE and wants those directories. Left the native LDES binary
+% dying with "GLIBCXX_3.4.32 not found", after which the caller silently fell
+% back to the JVM jar, which samples a DIFFERENT path on a model whose routing
+% draws. Shared with the lang='cpp' bridge; see line_native_env.
+cmd = [line_native_env() cmd];
 end
 
 function rmdirQuiet(d)

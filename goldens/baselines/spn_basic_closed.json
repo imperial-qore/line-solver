@@ -1,0 +1,20 @@
+{
+  "class": {
+    "JMT": "stochastic"
+  },
+  "example": "spn_basic_closed",
+  "solvers": {
+    "JMT": [
+      {
+        "ArvR": 2.835,
+        "JobClass": "Class1",
+        "QLen": 1.0,
+        "ResidT": 0.35308,
+        "RespT": 0.35308,
+        "Station": "P1",
+        "Tput": 2.8322,
+        "Util": 0.0
+      }
+    ]
+  }
+}

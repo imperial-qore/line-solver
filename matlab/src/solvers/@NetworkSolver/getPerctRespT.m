@@ -31,6 +31,13 @@ function [PercRT, PercTable] = getPerctRespT(self, percentiles, jobclass, method
 if nargin < 4 || isempty(method)
     method = 'default';
 end
+% A no-argument call previously died at the `any(percentiles > 1)` test below
+% with the unspecific "Not enough input arguments", naming neither the missing
+% argument nor a usable default. The python twin has always defaulted to this
+% list; matching it makes getPerctRespT() answer rather than fail.
+if nargin < 2 || isempty(percentiles)
+    percentiles = [10, 25, 50, 75, 90, 95, 99];
+end
 
 % Normalize percentiles to [0, 1] range
 if any(percentiles > 1)
@@ -241,15 +248,26 @@ for r = classes(:)'
     if max(rho) < 0.5
         line_warning(mfilename, 'ForkTail is a heavy-traffic approximation; the busiest branch is at utilization %.2f, so the tail is likely under-predicted.\n', max(rho));
     end
+    % The request completes on the KREQ-th branch, not on the last one: a
+    % quorum join fires early and the stragglers are discarded. Reading the
+    % maximum there returns the AND-join tail under a quorum's name, which is
+    % the same number for every k. see fj_tail_ordstat
+    kreq = sn_join_quorum(sn, joinIdx, r, numel(branches));
     values = zeros(1, numel(percentiles));
     for pi = 1:numel(percentiles)
-        values(pi) = fj_tail_forktail(ET, VT, [], percentiles(pi));
+        values(pi) = fj_tail_ordstat(ET, VT, [], percentiles(pi), kreq);
     end
     idx = idx + 1;
     PercRT(idx).class = sn.classnames{r};
     PercRT(idx).percentiles = percentiles;
     PercRT(idx).values = values;
-    PercRT(idx).method = 'forktail';
+    PercRT(idx).quorum = kreq;
+    PercRT(idx).nbranches = numel(branches);
+    if kreq < numel(branches)
+        PercRT(idx).method = 'forktail-quorum';
+    else
+        PercRT(idx).method = 'forktail';
+    end
 end
 
 if nargout > 1

@@ -1,0 +1,50 @@
+{
+  "class": {
+    "FLD": "deterministic"
+  },
+  "example": "cdf_respt_closed_threeclasses",
+  "solvers": {
+    "FLD": [
+      {
+        "JobClass": "Class1",
+        "QLen": 1.0029,
+        "Station": "Station1_AvgRespT"
+      },
+      {
+        "JobClass": "Class1",
+        "QLen": 1.0101,
+        "Station": "Station1_SCV"
+      },
+      {
+        "JobClass": "Class2",
+        "QLen": 1.0029,
+        "Station": "Station1_AvgRespT"
+      },
+      {
+        "JobClass": "Class2",
+        "QLen": 1.0101,
+        "Station": "Station1_SCV"
+      },
+      {
+        "JobClass": "Class1",
+        "QLen": 1.0029,
+        "Station": "Station2_AvgRespT"
+      },
+      {
+        "JobClass": "Class1",
+        "QLen": 1.0101,
+        "Station": "Station2_SCV"
+      },
+      {
+        "JobClass": "Class2",
+        "QLen": 4.0034,
+        "Station": "Station2_AvgRespT"
+      },
+      {
+        "JobClass": "Class2",
+        "QLen": 0.5039,
+        "Station": "Station2_SCV"
+      }
+    ]
+  }
+}

@@ -1,4 +1,4 @@
-function [XN,UN,QN,RN,TN,CN,tranSysState,tranSync,sn] = solver_ssa_analyzer_nrm(sn, options)
+function [XN,UN,QN,RN,TN,CN,tranSysState,tranSync,sn,StartN,PreemptN] = solver_ssa_analyzer_nrm(sn, options)
 % SOLVER_SSA_ANALYZER_NRM  Performance indices from SSA/NRM simulation
 %   This variant runs the next‑reaction–method SSA on the network SN and
 %   returns mean throughput (XN), utilisation (UN), queue length (QN),
@@ -58,14 +58,16 @@ if isfield(options, 'config') && isfield(options.config, 'state_space_gen')
 end
 if useBufferedNrm
     % Compute only stead-state mean performance indices while running nrm
-    [QN, UN, RN, TN, CN, XN, ~, sn] = solver_ssa_nrm(sn, options);
+    [QN, UN, RN, TN, CN, XN, ~, sn, StartN, PreemptN] = solver_ssa_nrm(sn, options);
 else
     % Use explicit state space generation version
 
     % -------------------------------------------------------------------------------
     % 1)  Run the SSA/NRM simulator ---------------------------------------------------
     % -------------------------------------------------------------------------------
-    [pi,space,depRates,sn] = solver_ssa_nrm_space(sn, options);
+    [pi,space,depRates,sn,StartN] = solver_ssa_nrm_space(sn, options);
+    % this variant admits FCFS and LCFS only, neither of which preempts
+    PreemptN = zeros(M, K);
     pi=pi(:)';
 
     % -------------------------------------------------------------------------------

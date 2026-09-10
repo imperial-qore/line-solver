@@ -16,7 +16,19 @@ if self.options.verbose ~= VerboseLevel.SILENT && ~GlobalConstants.isLibraryAttr
     end
 end
 
-iterate(self); % run iterations
+if self.isPHEncoding()
+    % the layers of a PH encoding carry one class per caller task, so the
+    % per-element results are rebuilt analytically -- see getEnsembleAvgPH
+    [QN,UN,RN,TN,AN,WN] = getEnsembleAvgPH(self);
+    return
+end
+
+% Solver console: SolverLN is an ensemble solver and does not pass through
+% NetworkSolver.runAnalyzerChecks, so it opens its own run here. The guard
+% must live until this function returns.
+consoleGuard = LineConsole.beginRun(self, self.options); %#ok<NASGU>
+LineConsole.loop('solving the layered fixed point over %d layers', self.nlayers);
+lnRuntime = iterate(self); % run iterations
 QN  = nan(self.lqn.nidx,1);
 UN  = nan(self.lqn.nidx,1);
 RN  = nan(self.lqn.nidx,1);
@@ -29,35 +41,38 @@ WN_processed = false(self.lqn.nidx,1); % track activities already accumulated in
 E = self.nlayers;
 for e=1:E
     clientIdx = self.ensemble{e}.attribute.clientIdx;
-    serverIdx = self.ensemble{e}.attribute.serverIdx;
     sourceIdx = self.ensemble{e}.attribute.sourceIdx;
-    % determine processor metrics
-    if self.ensemble{e}.stations{serverIdx}.attribute.ishost
-        hidx = self.ensemble{e}.stations{serverIdx}.attribute.idx;
+    hostStations = self.serverStationsOf(e, true);
+    hasHostServer = ~isempty(hostStations);
+    % determine processor metrics, one processor at a time under flat layering
+    for hs = hostStations
+        hidx = self.ensemble{e}.stations{hs}.attribute.idx;
         TN(hidx) = 0;
         PN(hidx) = 0;
         for c=1:self.ensemble{e}.getNumberOfClasses
             if self.ensemble{e}.classes{c}.completes
                 t = 0;
-                u = 0;
                 if ~isnan(clientIdx)
                     t = max(t, self.results{end,e}.TN(clientIdx,c));
                 end
                 if ~isnan(sourceIdx)
                     t = max(t, self.results{end,e}.TN(sourceIdx,c));
                 end
-                TN(hidx) = TN(hidx) + max(t,self.results{end,e}.TN(serverIdx,c));
+                TN(hidx) = TN(hidx) + max(t,self.results{end,e}.TN(hs,c));
             end
             type = self.ensemble{e}.classes{c}.attribute(1);
             switch type
                 case LayeredNetworkElement.ACTIVITY
+                    if self.stationIdxOfClass(e,c) ~= hs
+                        continue % the activity does not run on this processor
+                    end
                     aidx = self.ensemble{e}.classes{c}.attribute(2);
                     tidx = self.lqn.parent(aidx);
                     if isnan(PN(aidx)), PN(aidx)=0; end
                     if isnan(PN(tidx)), PN(tidx)=0; end
-                    PN(aidx) = PN(aidx) + self.results{end,e}.UN(serverIdx,c);
-                    PN(tidx) = PN(tidx) + self.results{end,e}.UN(serverIdx,c);
-                    PN(hidx) = PN(hidx) + self.results{end,e}.UN(serverIdx,c);
+                    PN(aidx) = PN(aidx) + self.results{end,e}.UN(hs,c);
+                    PN(tidx) = PN(tidx) + self.results{end,e}.UN(hs,c);
+                    PN(hidx) = PN(hidx) + self.results{end,e}.UN(hs,c);
             end
         end
         TN(hidx) = NaN; % added for consistency with LQNS
@@ -66,10 +81,11 @@ for e=1:E
     % determine remaining metrics
     for c=1:self.ensemble{e}.getNumberOfClasses
         type = self.ensemble{e}.classes{c}.attribute(1);
+        serverIdx = self.stationIdxOfClass(e,c);
         switch type
             case LayeredNetworkElement.TASK
                 tidx = self.ensemble{e}.classes{c}.attribute(2);
-                if self.ensemble{e}.stations{serverIdx}.attribute.ishost
+                if hasHostServer
                     if isnan(TN(tidx))
                         % store the result in the processor
                         % model
@@ -88,7 +104,7 @@ for e=1:E
                 else
                     SN(eidx) = self.servt(eidx);
                 end
-                if self.ensemble{e}.stations{serverIdx}.attribute.ishost
+                if hasHostServer
                     if isnan(TN(eidx))
                         % store the result in the processor model
                         if isnan(TN(eidx)), TN(eidx)=0; end
@@ -178,6 +194,36 @@ for e=1:E
     end
 end
 
+% A replicated element is solved as ONE representative replica, so the rates and
+% the busy time read off its layer are that replica's. What the element itself
+% delivers is REPL times as much, which is the convention LDES reports and the
+% one flow balance across a call needs: on a two-replica probe the caller runs at
+% 8.30737 and calls the replicated task once per invocation, so the task's rate
+% is 8.30737 and not the 4.14871 of either copy. Response times are per request
+% and are left alone. Inert wherever nothing is replicated.
+for tidx = (self.lqn.tshift+1):(self.lqn.tshift+self.lqn.ntasks)
+    nrep = self.lqn.repl(tidx);
+    if ~(nrep > 1)
+        continue
+    end
+    scaleIdx = tidx;
+    for eidx = self.lqn.entriesof{tidx}
+        scaleIdx(end+1) = eidx; %#ok<AGROW>
+    end
+    for aidx = self.lqn.actsof{tidx}
+        scaleIdx(end+1) = aidx; %#ok<AGROW>
+    end
+    for idx = scaleIdx
+        if ~isnan(TN(idx)), TN(idx) = nrep * TN(idx); end
+        if ~isnan(PN(idx)), PN(idx) = nrep * PN(idx); end
+    end
+end
+for hidx = 1:self.lqn.nhosts
+    if self.lqn.repl(hidx) > 1 && ~isnan(PN(hidx))
+        PN(hidx) = self.lqn.repl(hidx) * PN(hidx);
+    end
+end
+
 for e=1:self.lqn.nentries
     eidx = self.lqn.eshift + e;
     tidx = self.lqn.parent(eidx);
@@ -208,18 +254,35 @@ for e=1:self.lqn.nentries
     UN(tidx) = UN(tidx) + UN(eidx);
 end
 
-for idx=find(self.ignore)
-    QN(idx)=0;
-    UN(idx)=0;
-    RN(idx)=0;
-    TN(idx)=0;
-    PN(idx)=0;
-    SN(idx)=0;
-    WN(idx)=0;
-    AN(idx)=0;
+% AN IGNORED ELEMENT IS IDLE, NOT UNDEFINED, and the two are different cells.
+% Its component holds no reference task, so nothing reaches it and every
+% measure it HAS is zero -- but the measures its kind never has stay NaN,
+% exactly as they do for a reachable element. A flat zero over all six columns
+% broke the table's NaN mask (a processor with a queue length of 0, an arrival
+% rate reported where no solver reports one), and the mask is part of the
+% answer: see _kb/06-solver-catalog.md. Reported columns are QLen=UN, Util=PN,
+% RespT=SN, ResidT=WN, ArvR=AN, Tput=TN, so the pre-swap QN and RN are
+% discarded below and are not written here.
+for idx=find(self.ignore)'
+    PN(idx) = 0;   % every kind reports a utilization
+    AN(idx) = NaN; % nothing reports an arrival rate on an LQN
+    switch self.lqn.type(idx)
+        case LayeredNetworkElement.PROCESSOR
+            UN(idx) = NaN; SN(idx) = NaN; WN(idx) = NaN; TN(idx) = NaN;
+        case LayeredNetworkElement.TASK
+            UN(idx) = 0;   SN(idx) = NaN; WN(idx) = 0;   TN(idx) = 0;
+        case LayeredNetworkElement.ENTRY
+            UN(idx) = 0;   SN(idx) = 0;   WN(idx) = NaN; TN(idx) = 0;
+        case LayeredNetworkElement.ACTIVITY
+            UN(idx) = 0;   SN(idx) = 0;   WN(idx) = 0;   TN(idx) = 0;
+    end
 end
 
 QN = UN;
 UN = PN;
 RN = SN;
+
+% Closing banner, the line every NetworkSolver prints. SolverLN is an
+% EnsembleSolver and never reaches NetworkSolver.setAvgResults, so it had none.
+self.reportCompletion(lnRuntime);
 end

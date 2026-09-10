@@ -27,8 +27,11 @@ public class MVAResult extends SolverResult {
     /** Logarithm of the aggregate normalizing constant */
     public double logNormConstAggr;
     
-    /** Number of iterations performed by the MVA algorithm (used by runAnalyzer method) */
-    public int iter;
+    // The iteration count lives on SolverResult.iter. It used to be redeclared
+    // here as well, which SHADOWED the base field: setAvgResults writes the base
+    // one through a SolverResult reference while the analyzer wrote this one, so
+    // a caller that cast the result to MVAResult -- the natural thing to do --
+    // read 0 on every method. Do not reintroduce it.
     /**
      * Whether the fixed point met its tolerance, or {@code null} when the handler
      * does not report one. This is NOT {@code iter < iter_max}: in Solver_amvald

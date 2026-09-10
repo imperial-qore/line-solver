@@ -66,10 +66,17 @@ public final class Ctmc_stochcomp {
                 if (Math.abs(negQ22.get(i, i)) < 1e-10) negQ22.set(i, i, 1.0);
             }
             Matrix Tit = Ctmc_gmres.ctmc_gmres(negQ22, Q21, 0.0, 0, 0);
+            if (Tit == null) {
+                // Short-recurrence retry before the dense factorization, as in Ctmc_solve.
+                Tit = Ctmc_bicgstab.ctmc_bicgstab(negQ22, Q21, 0.0, 0);
+            }
             if (Tit != null) {
                 Matrix Tprod = Q12.mult(Tit);
                 Matrix Sit = Q11.add(1.0, Tprod);
-                return new SolverCTMC.StochCompResult(Sit, Q11, Q12, Q21, Q22, Tprod);
+                SolverCTMC.StochCompResult itResult =
+                        new SolverCTMC.StochCompResult(Sit, Q11, Q12, Q21, Q22, Tprod);
+                itResult.entry = Tit;
+                return itResult;
             }
         }
 
@@ -98,10 +105,11 @@ public final class Ctmc_stochcomp {
             svdSolver.setA(denseNegQ22);
             svdSolver.solve(denseQ21, denseT);
         }
-        Matrix T = new Matrix((DMatrix) DConvertMatrixStruct.convert(denseT, (DMatrixSparseCSC) null, 1e-15));
-        T = Q12.mult(T);
+        Matrix entry = new Matrix((DMatrix) DConvertMatrixStruct.convert(denseT, (DMatrixSparseCSC) null, 1e-15));
+        Matrix T = Q12.mult(entry);
         Matrix S = Q11.add(1.0, T);
         SolverCTMC.StochCompResult result = new SolverCTMC.StochCompResult(S, Q11, Q12, Q21, Q22, T);
+        result.entry = entry;
         if (luOk) {
             result.denseLUSolver = luSolver;
         }

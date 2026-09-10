@@ -11,6 +11,18 @@ classdef Trace < Replayer
             self@Replayer(data);
         end
         
+        function featName = getFeatureName(self)
+            % FEATNAME = GETFEATURENAME()
+            % 'Trace', not the inherited 'Replayer'.
+            %
+            % NAME stays 'Replayer' because it selects the ProcessType and the
+            % JSON wire type, and a Trace replays samples exactly as a Replayer
+            % does. The registry name is what makes the Trace entry reachable; a
+            % solver declaring only 'Replayer' still accepts the model, through
+            % SolverFeatureSet.generalizationOf.
+            featName = 'Trace';
+        end
+
         function [m1,m2,m3,scv,skew] = getMoments(self)
             data = self.data;
             [row,col] = size(data);

@@ -26,7 +26,7 @@ node{2}.setLoadDependence(min(1:N,c)); % multi-server with c servers
 
 ldmodel.link(ldmodel.serialRouting(node));
 
-lldAvgTableCTMC=CTMC(ldmodel).getAvgTable
+lldAvgTableCTMC=CTMC(ldmodel,'exact').getAvgTable
 
 lldAvgTableNC=NC(ldmodel).getAvgTable
 lldAvgTableRD=NC(ldmodel,'method','rd').getAvgTable
@@ -49,7 +49,7 @@ node{2}.setClassDependence(@(ni) min(sum(ni),c), c); % ni is a vector where ni(r
 
 cdmodel.link(cdmodel.serialRouting(node));
 
-cdAvgTableCTMC=CTMC(cdmodel).getAvgTable
+cdAvgTableCTMC=CTMC(cdmodel,'exact').getAvgTable
 cdAvgTableCD=MVA(cdmodel,'method','qd').getAvgTable
 % JMT is not solved here: the JSIM writer has no representation for the
 % class-dependence handle, so SolverJMT rejects the model rather than

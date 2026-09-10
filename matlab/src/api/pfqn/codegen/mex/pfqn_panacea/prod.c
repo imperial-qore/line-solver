@@ -17,7 +17,7 @@
 #include "rt_nonfinite.h"
 
 /* Variable Definitions */
-static emlrtRSInfo pd_emlrtRSI = {
+static emlrtRSInfo bd_emlrtRSI = {
     11,     /* lineNo */
     "prod", /* fcnName */
     "/usr/local/MATLAB/R2025a/toolbox/eml/lib/matlab/datafun/prod.m" /* pathName
@@ -47,15 +47,15 @@ real_T prod(const emlrtStack *sp, const emxArray_real_T *x)
   e_st.prev = &d_st;
   e_st.tls = d_st.tls;
   x_data = x->data;
-  st.site = &pd_emlrtRSI;
+  st.site = &bd_emlrtRSI;
   b_st.site = &o_emlrtRSI;
   vlen = x->size[1];
   if (x->size[1] == 0) {
     y = 1.0;
   } else {
-    c_st.site = &qd_emlrtRSI;
+    c_st.site = &cd_emlrtRSI;
     y = x_data[0];
-    d_st.site = &rd_emlrtRSI;
+    d_st.site = &dd_emlrtRSI;
     if (x->size[1] > 2147483646) {
       e_st.site = &x_emlrtRSI;
       check_forloop_overflow_error(&e_st);

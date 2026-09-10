@@ -5,7 +5,10 @@
 
 package jline.solvers.nc;
 
+import java.util.HashMap;
+import java.util.Map;
 import jline.lang.FeatureSet;
+import jline.lang.JobClass;
 import jline.lang.Network;
 import jline.lang.NetworkStruct;
 import jline.GlobalConstants;
@@ -14,6 +17,11 @@ import jline.lang.nodeparam.CacheNodeParam;
 import jline.lang.NodeParam;
 import jline.lang.constant.SchedStrategy;
 import jline.api.sn.SnHasProductForm;
+import jline.api.sn.SnGetDemandsChain;
+import jline.api.sn.SnRtStations;
+import jline.api.pfqn.Pfqn_busyp;
+import jline.io.Ret;
+import jline.util.Pair;
 import jline.lang.constant.SolverType;
 import jline.lang.nodes.Cache;
 import jline.lang.nodes.Node;
@@ -36,6 +44,7 @@ import java.util.List;
 import static jline.api.sn.SnGetArvRFromTput.snGetArvRFromTput;
 import jline.solvers.fj.FJFixedPoint;
 import jline.solvers.mva.MVAResult;
+import static jline.api.sn.SnHasDPS.snHasDPS;
 import static jline.api.sn.SnHasMultiServer.snHasMultiServer;
 import static jline.io.InputOutput.*;
 import static jline.solvers.nc.analyzers.Solver_nc_analyzer.solver_nc_analyzer;
@@ -44,13 +53,19 @@ import static jline.solvers.nc.analyzers.Solver_nc_cache_qn_analyzer.solver_nc_c
 import static jline.solvers.nc.analyzers.Solver_nc_retrieval_analyzer.solver_nc_retrieval_analyzer;
 import static jline.solvers.nc.analyzers.Solver_ncld_analyzer.solver_ncld_analyzer;
 import static jline.solvers.nc.analyzers.Solver_nc_lossn_analyzer.solver_nc_lossn_analyzer;
+import jline.solvers.nc.analyzers.Solver_nc_dt_analyzer;
+import jline.solvers.nc.analyzers.Solver_nc_dps_analyzer;
+import jline.solvers.nc.analyzers.Solver_nc_sdr_analyzer;
 import static jline.api.sn.SnHasClosedClasses.snHasClosedClasses;
+import static jline.api.sn.SnHasOpenClasses.snHasOpenClasses;
 import jline.lang.constant.DropStrategy;
 import jline.solvers.nc.handlers.Solver_nc_pas_is;
 import static jline.solvers.nc.handlers.Solver_nc_marg.solver_nc_marg;
 import static jline.solvers.nc.handlers.Solver_nc_joint.solver_nc_joint;
 import static jline.solvers.nc.handlers.Solver_nc_margaggr.solver_nc_margaggr;
 import static jline.solvers.nc.handlers.Solver_nc_jointaggr.solver_nc_jointaggr;
+import jline.solvers.nc.handlers.Solver_nc_jointmarg;
+import static jline.solvers.nc.handlers.Solver_nc_jointmarg.solver_nc_jointmarg;
 import static jline.solvers.nc.handlers.Solver_nc_jointaggr_ld.solver_nc_jointaggr_ld;
 import static jline.api.sn.SnGetProductFormParams.snGetProductFormParams;
 import jline.io.Ret;
@@ -151,6 +166,10 @@ public class SolverNC extends NetworkSolver {
                 "Sink", "Source",
                 "ClassSwitch", "Delay", "DelayStation", "Queue",
                 "APH", "Coxian", "Erlang", "Det", "Exp", "HyperExp",
+                // Geometric is admitted for the discrete-time route only
+                // (options.config.slotted, Solver_nc_dt_analyzer); on the
+                // continuous-time routes it is treated by its mean and SCV
+                "Geometric",
                 "StatelessClassSwitcher", "InfiniteServer",
                 "SharedServer", "Buffer", "Dispatcher",
                 // Finite capacity regions: NC solves the OPEN single-Delay
@@ -161,17 +180,36 @@ public class SolverNC extends NetworkSolver {
                 "Region",
                 "Server", "JobSink", "RandomSource", "ServiceTunnel",
                 "SchedStrategy_INF", "SchedStrategy_PS", "SchedStrategy_SIRO",
+                // DPS is served ONLY in Morrison's closed think+DPS shape
+                // (Solver_nc_dps_analyzer.nc_is_dps_model). A boolean feature cannot
+                // express that restriction, so runAnalyzer keeps an imperative check
+                // for every other DPS model, the same pattern as "Region".
+                "SchedStrategy_DPS",
                 "SchedStrategy_LCFS", "SchedStrategy_LCFSPR", "SchedStrategy_OI",
                 "SchedStrategy_PAS",
-                "RoutingStrategy_PROB", "RoutingStrategy_RAND",
+                "RoutingStrategy_PROB", "RoutingStrategy_RAND", "RoutingStrategy_SDR",
                 "SchedStrategy_FCFS", "ClosedClass", "SelfLoopingClass",
-                "Cache", "CacheClassSwitcher", "CacheRetrieval", "OpenClass",
+                "Cache", "CacheClassSwitcher", "CacheRetrieval", "CacheItemSize", "OpenClass",
                 "ReplacementStrategy_RR", "ReplacementStrategy_FIFO",
                 "ReplacementStrategy_HLRU",
                 "LoadDependence", "ClassDependence", "JointDependence",
                 // Fork-join through the MMT/HT transformation, driven by
                 // jline.solvers.fj.FJFixedPoint (as in SolverMVA)
-                "Fork", "Forker", "Join", "Joiner"
+                "Fork", "Forker", "Join", "Joiner",
+                // quorum join: the MMT fixed point charges the k-th branch completion (fj_ordstat_exp)
+                "JoinPartial",
+                // Petri nets: the "rec" route (Solver_nc_spn_analyzer) walks the
+                // reachable set in a decision diagram, so a Place is a token
+                // container rather than a station with a service process. A
+                // queueing Place is refused by Spn_pf, which is where the
+                // product-form class is decided.
+                "Place", "Transition", "Linkage", "Enabling", "Inhibiting", "Timing",
+                "Firing", "Storage",
+                // c-server stations: every route but "divdiff" carries the count
+                // (see methodFeatureSet). FiniteCapacity is deliberately NOT here:
+                // mem, default and exact are granted it per method, the rest solve
+                // a buffer away.
+                "MultiServer"
         });
         return featSupported;
     }
@@ -552,6 +590,74 @@ public class SolverNC extends NetworkSolver {
         return probResult;
     }
 
+    /**
+     * Joint probability that station i holds nvec(i) jobs IN TOTAL, all classes
+     * summed out.
+     *
+     * <p>Compare with {@link #getProbSysAggr()}, which fixes the PER-CLASS
+     * population of every station and is a product form; each value returned
+     * here is the sum of that one over every per-class table with these row
+     * sums. Compare also with getProbMarg, which is the one-station marginal of
+     * this law. The quantity is a permanent of the demand matrix replicated once
+     * per job (Ryser 1963), so it needs no enumeration of that fibre.</p>
+     *
+     * @param nvec per-station total job counts, summing to the closed population
+     * @return the joint probability and its logarithm
+     */
+    public ProbabilityResult getProbSysMarg(Matrix nvec) {
+        return getProbSysMarg(nvec, "exact");
+    }
+
+    /**
+     * Joint probability of the per-station total queue lengths, evaluated with
+     * a chosen permanent engine.
+     *
+     * @param nvec   per-station total job counts
+     * @param engine "exact" (default), "spm", "bethe", "heur", "huberlaw" or "adapart".
+     *               Only "exact" is exact; the others are refused on a demand
+     *               matrix with a structural zero rather than having it floored,
+     *               since they need full support.
+     * @return the joint probability and its logarithm
+     */
+    public ProbabilityResult getProbSysMarg(Matrix nvec, String engine) {
+        if (GlobalConstants.DummyMode) {
+            return new ProbabilityResult(Double.NaN);
+        }
+
+        long startTimeMillis = System.nanoTime();
+        this.model.refreshStruct(true);
+        NetworkStruct sn = this.model.getStruct(true);
+        resetRandomGeneratorSeed(options.seed);
+
+        NCResult ncResult = (NCResult) this.result;
+        // Reuse the constant when a previous getter already paid for it:
+        // sweeping the whole lattice of total states otherwise recomputes G once
+        // per state.
+        Double lGin = null;
+        if (ncResult != null && ncResult.prob != null && ncResult.prob.logNormConstAggr != null
+                && !Utils.isInf(ncResult.prob.logNormConstAggr)
+                && !Double.isNaN(ncResult.prob.logNormConstAggr)) {
+            lGin = ncResult.prob.logNormConstAggr;
+        }
+
+        Solver_nc_jointmarg.Ret_jointmarg ret =
+                solver_nc_jointmarg(sn, this.options, nvec, engine, lGin);
+
+        this.lastPermEngine = (engine == null || engine.isEmpty()) ? "exact" : engine.toLowerCase();
+        ncResult.solver = this.name;
+        ncResult.prob.logNormConstAggr = ret.lG;
+        ncResult.prob.joint = ret.Pr;
+
+        long endTimeMillis = System.nanoTime();
+        ncResult.runtime = (double) (endTimeMillis - startTimeMillis) / 1000000000.0;
+
+        ProbabilityResult probResult = new ProbabilityResult(ret.Pr);
+        probResult.logNormalizingConstant = ret.lG;
+        probResult.isAggregated = true;
+        probResult.state = nvec.copy();
+        return probResult;
+    }
+
     public NetworkStruct getStruct() {
         if (this.sn == null)
             this.sn = this.model.getStruct(false);
@@ -571,6 +677,16 @@ public class SolverNC extends NetworkSolver {
         if (this.options == null)
             this.options = new NCOptions();
 
+        // MODEL TRANSFORMATION, opt-in through options.config.transform. Mirrors
+        // the branch MATLAB puts in the shared runAnalyzerPreamble, so a strategy
+        // written once serves NC as well as MVA and CTMC. Note this is NOT the
+        // 'lc' METHOD method name, which selects the pfqn_bklc kernel and stays the
+        // fast path; the two are different computations.
+        if (jline.solvers.tr.TransformSolve.isRequested(options)) {
+            runTransformAnalyzer();
+            return;
+        }
+
         // Finite station/class capacity: a product-form method has no
         // representation of a finite buffer, so it would silently return the
         // unconstrained answer (QLen=4 instead of the M/M/1/2 value 0.8525).
@@ -580,7 +696,15 @@ public class SolverNC extends NetworkSolver {
         // model that memUnsupportedReason has cleared: MEM does represent the
         // buffer, as a censored GE/GE/c/0;N queue, and handles both a lost
         // arrival (DROP) and a job held in the upstream server (BAS).
-        if (!memFiniteBufferPath(this.sn, this.options)) {
+        // The discrete-time route is the other exception: a finite buffer on a
+        // Bernoulli server is the loss system of Daduna's corollary 2.8, which
+        // Solver_nc_dt_analyzer solves exactly. The third is the single-station
+        // M/M/1/K with tail drop, answered exactly by the Qsys_mm1k_loss branch
+        // of runAnalyzerBody; the names that branch does NOT serve are refused
+        // by ncMethodRefusal instead, so nothing reaches the recursion.
+        if (!memFiniteBufferPath(this.sn, this.options)
+                && !Solver_nc_dt_analyzer.isSlotted(this.options)
+                && !jline.api.sn.SnIsMm1kLoss.snIsMm1kLoss(this.sn)) {
             String capacityReason = NetworkSolver.bindingCapacityReason(this.model, this.sn, "SolverNC");
             if (capacityReason != null) {
                 throw new RuntimeException(capacityReason);
@@ -624,7 +748,7 @@ public class SolverNC extends NetworkSolver {
         // where enableChecks=false bypasses runAnalyzerChecks) an unknown method name
         // silently falls through to the default normalizing-constant analyzer instead
         // of raising an error, which masks typos such as 'adaptive'.
-        boolean knownMethod = "comomld".equals(origMethod); // comomld is auto-selected internally from 'default'
+        boolean knownMethod = false;
         for (String vm : listValidMethods()) {
             if (vm.equals(origMethod)) {
                 knownMethod = true;
@@ -652,7 +776,10 @@ public class SolverNC extends NetworkSolver {
             // Method-aware feature gate: method='mem' is gated by its structural
             // applicability (memUnsupportedReason); all other methods use the
             // coarse product-form feature set. Mirrors Solver.supportsModelMethod.
-            String reason = this.supportsModelMethod(options.method);
+            // forReport=false: this gate sits on the RUN path, and the run asks what
+            // the reference DOES rather than what the report should offer. The two
+            // differ for "mmint2"/"gleint", which the reference performs by name.
+            String reason = this.supportsModelMethod(options.method, false);
             if (!reason.isEmpty()) {
                 line_error(mfilename(new Object() {
                 }), "This model contains features not supported by the solver. " + reason);
@@ -661,6 +788,78 @@ public class SolverNC extends NetworkSolver {
         }
         line_debug(options.verbose, String.format("NC solver starting: method=%s, nstations=%d, nclasses=%d", 
             options.method, sn.nstations, sn.nclasses));
+
+        // THE STRUCTURAL METHOD GATE, asked once and in one place.
+        //
+        // ncMethodRefusal holds every rule of the form "this method has no route
+        // on this model": the DPS shape, state-dependent routing, the Petri net,
+        // the order-independent rank rate, the cache and loss-network tokens,
+        // PANACEA's normal usage. supportsModelMethod asks the SAME method, which
+        // is what keeps Network.findSolver from offering a pair that would raise
+        // here. It runs unconditionally, so it also holds for the
+        // enableChecks=false SolverLN layer backend.
+        // forReport=false: this is the RUN, and it asks what the reference DOES rather
+        // than what the report should offer. The two answers differ for
+        // "mmint2"/"gleint", which Pfqn_nc answers with an empty constant and a zero
+        // table; see ncMethodRefusal.
+        String ncRefusal = ncMethodRefusal(this.sn, options.method, this.options, false);
+        if (!ncRefusal.isEmpty()) {
+            throw new RuntimeException(ncRefusal);
+        }
+
+        // Closed think+DPS network -> Solver_nc_dps_analyzer (Morrison's heavy-usage
+        // generating-function expansion), the DEFAULT for that shape. Intercepted
+        // FIRST, ahead of every other route: "SchedStrategy_DPS" is declared in
+        // featSupported, which opens all of them to a DPS model, and each would
+        // silently drop the weights and answer with the egalitarian-PS network. Not a
+        // product-form route: lG is NaN. See _kb/06-solver-catalog.md (NC section).
+        if (Solver_nc_dps_analyzer.nc_is_dps_model(this.sn)) {
+            if ("default".equalsIgnoreCase(options.method) || "morrison".equalsIgnoreCase(options.method)) {
+                line_debug(options.verbose, "NC: closed think+DPS network, routing to Solver_nc_dps_analyzer (Morrison)");
+                NCResult dpsRet = Solver_nc_dps_analyzer.solver_nc_dps_analyzer(this.sn, this.options);
+                AvgHandle Tdps = getAvgTputHandles();
+                Matrix ANdps = snGetArvRFromTput(this.sn, dpsRet.TN, Tdps);
+                this.setAvgResults(dpsRet.QN, dpsRet.UN, dpsRet.RN, dpsRet.TN, ANdps, new Matrix(0, 0),
+                        dpsRet.CN, dpsRet.XN, dpsRet.runtime, dpsRet.method, dpsRet.it);
+                ((NCResult) this.result).prob.logNormConstAggr = dpsRet.lG;
+                return;
+            }
+            // The three refusal arms that used to follow -- another method on a DPS
+            // model, a DPS station outside Morrison's shape, and "morrison" on a model
+            // with no DPS station at all -- moved into ncMethodRefusal above, with
+            // their wording unchanged.
+        }
+
+        // Krzesinski state-dependent routing: the model has its own product form
+        // (eq. 16), so it is intercepted before the standard convolution and MVA
+        // analyzers, which assume state-independent routing; see
+        // _kb/16-state-dependent-routing.md
+        if (this.sn.sdr != null) {
+            line_debug(options.verbose, "NC: state-dependent routing, routing to Solver_nc_sdr_analyzer");
+            NCResult sdrRet = Solver_nc_sdr_analyzer.solver_nc_sdr_analyzer(this.sn, this.options);
+            AvgHandle Tsdr = getAvgTputHandles();
+            Matrix ANsdr = snGetArvRFromTput(this.sn, sdrRet.TN, Tsdr);
+            this.setAvgResults(sdrRet.QN, sdrRet.UN, sdrRet.RN, sdrRet.TN, ANsdr, new Matrix(0, 0),
+                    sdrRet.CN, sdrRet.XN, sdrRet.runtime, sdrRet.method, sdrRet.it);
+            ((NCResult) this.result).prob.logNormConstAggr = sdrRet.lG;
+            return;
+        }
+        // The arm that used to follow -- "sdr"/"sdr.mva" on a model declaring no
+        // state-dependent routing -- moved into ncMethodRefusal, wording unchanged.
+
+        // Discrete-time (slotted) route: explicit request only, and an error
+        // rather than a fallback when the model is outside the discrete-time
+        // product form; see _kb/06-solver-catalog.md (NC section)
+        if (Solver_nc_dt_analyzer.isSlotted(options)) {
+            line_debug(options.verbose, "NC: slotted model, routing to Solver_nc_dt_analyzer");
+            NCResult dtRet = Solver_nc_dt_analyzer.solver_nc_dt_analyzer(this.sn, this.options);
+            AvgHandle Tdt = getAvgTputHandles();
+            Matrix ANdt = snGetArvRFromTput(this.sn, dtRet.TN, Tdt);
+            this.setAvgResults(dtRet.QN, dtRet.UN, dtRet.RN, dtRet.TN, ANdt, new Matrix(0, 0),
+                    dtRet.CN, dtRet.XN, dtRet.runtime, dtRet.method, dtRet.it);
+            ((NCResult) this.result).prob.logNormConstAggr = dtRet.lG;
+            return;
+        }
 
         // Fork-join: the MMT/HT transformation rewrites the model as a plain
         // network (forks -> routers, joins -> zero-service delays, parallelism
@@ -681,7 +880,7 @@ public class SolverNC extends NetworkSolver {
             FJFixedPoint.FJOutcome fjOut = FJFixedPoint.run(this.model, this.sn, this.options, fjState,
                     new FJFixedPoint.InnerSolve() {
                         @Override
-                        public MVAResult solve(NetworkStruct snIn, SolverOptions opts) {
+                        public MVAResult solve(jline.lang.Network net, NetworkStruct snIn, SolverOptions opts) {
                             return SolverNC.this.ncDispatch(snIn, opts);
                         }
                     }, (long) start);
@@ -701,6 +900,22 @@ public class SolverNC extends NetworkSolver {
         NCResult ret = null;
         String actualMethod = options.method;
         int iter = 0;
+
+        // A stochastic Petri net takes the MDD-rec route: the reachable set lives
+        // in a decision diagram and the product form supplies the rates, so none
+        // of the queueing-network branches below apply to it.
+        if (sn.nodetype.contains(NodeType.Place)) {
+            line_debug(options.verbose, "NC: detected stochastic Petri net, calling "
+                    + "solver_nc_spn_analyzer (MDD-rec)");
+            ret = jline.solvers.nc.analyzers.Solver_nc_spn_analyzer.solver_nc_spn_analyzer(
+                    this.model, this.sn, this.options.copy());
+            this.result = ret;
+            this.result.solver = this.getName();
+            setAvgResults(ret.QN, ret.UN, ret.RN, ret.TN,
+                    snGetArvRFromTput(sn, ret.TN, getAvgTputHandles()), null,
+                    ret.CN, ret.XN, ret.runtime, ret.method, 1);
+            return;
+        }
 
         // Maximum Entropy Method (Kouvatsos 1994): explicit request only. The
         // method='default' path routes to the native normalizing-constant
@@ -727,6 +942,12 @@ public class SolverNC extends NetworkSolver {
             return;
         }
 
+        // How this model's finite multiserver stations are represented: Seidmann's
+        // approximation or the exact mu(n)=min(n,c) lattice. The shipped "default"
+        // reproduces the historical dispatch exactly, so no result moves unless
+        // config.multiserver is set. See _kb/06-solver-catalog.md (NC section)
+        final String ncMultiserverPolicy = ncMultiserverPolicy(options);
+
         // Method Selection and Preprocessing
         switch (options.method) {
             case "default":
@@ -750,7 +971,41 @@ public class SolverNC extends NetworkSolver {
                     // with heterogeneous per-class FCFS rates) have no exact
                     // CoMoM-LD solution and fall back to Seidmann's approximation
                     // (comom).
-                    if (this.model.hasProductFormSolution() && (sn.lldscaling == null || sn.lldscaling.isEmpty())) {
+                    // Exact LD CoMoM enumerates the per-chain population lattice,
+                    // so its cost is unbounded in N while the branch condition
+                    // tests only the topology. The budget is the same one
+                    // SolverCTMC uses for exact enumeration (6000 states),
+                    // applied to prod(1+Nchain); above it Seidmann's comom is the
+                    // only affordable option.
+                    final double exactLatticeMax = 6000;
+                    double latticeSize = 1;
+                    if (sn.chains != null && sn.chains.getNumRows() > 0) {
+                        for (int c = 0; c < sn.chains.getNumRows(); c++) {
+                            double popc = 0;
+                            for (int r = 0; r < sn.nclasses && r < sn.chains.getNumCols(); r++) {
+                                if (sn.chains.get(c, r) > 0) {
+                                    double v = sn.njobs.get(r);
+                                    if (!Utils.isInf(v) && !Double.isNaN(v)) {
+                                        popc += v;
+                                    }
+                                }
+                            }
+                            latticeSize *= (1 + popc);
+                        }
+                    } else {
+                        for (int r = 0; r < sn.nclasses; r++) {
+                            double v = sn.njobs.get(r);
+                            if (!Utils.isInf(v) && !Double.isNaN(v)) {
+                                latticeSize *= (1 + v);
+                            }
+                        }
+                    }
+                    if (latticeSize > exactLatticeMax) {
+                        options.method = "comom";
+                        line_debug(options.verbose, String.format(
+                                "NC: default method, population lattice %g exceeds %g, switching to comom",
+                                latticeSize, exactLatticeMax));
+                    } else if (this.model.hasProductFormSolution() && (sn.lldscaling == null || sn.lldscaling.isEmpty())) {
                         double Nt = sn.njobs.elementSum();
                         if (!Utils.isInf(Nt) && !Double.isNaN(Nt)) {
                             sn.lldscaling = Matrix.ones(sn.nstations, (int) Nt);
@@ -774,6 +1029,19 @@ public class SolverNC extends NetworkSolver {
                         options.method = "comom";
                         line_debug(options.verbose, "NC: default method for 2-station multiserver Delay non-product-form network, switching to comom");
                     }
+                } else if (ncMultiserverPolicy.equals("lld") && this.model.hasProductFormSolution()) {
+                    // config.multiserver="lld" generalizes the exact load-dependent
+                    // lattice of the branch above to any closed product-form model,
+                    // under the same 6000-state enumeration budget. Off unless asked
+                    // for: with the shipped "default" policy this branch never runs
+                    // and the model keeps Seidmann's approximation, as it always has
+                    Matrix lldFromServers = ncLldFromNservers(sn, 6000.0);
+                    if (lldFromServers != null) {
+                        sn.lldscaling = lldFromServers;
+                        line_debug(options.verbose, "NC: default method, config.multiserver=lld, converted multiserver stations to load-dependent");
+                    } else {
+                        line_debug(options.verbose, "NC: default method, config.multiserver=lld not applicable (no finite multiserver, non-closed model, or lattice over budget), keeping Seidmann");
+                    }
                 }
                 break;
             case "is":
@@ -789,16 +1057,25 @@ public class SolverNC extends NetworkSolver {
                 // and a P&S tandem has only per-communicating-class product form
                 // (so hasProductFormSolution() is false). Leave them untouched for
                 // Solver_nc to route to Pfqn_pas_is / Pfqn_oi_is.
-                if (Solver_nc_pas_is.nc_is_pas_model(sn)) {
-                    break;   // handled by Solver_nc (Pfqn_pas_is)
+                // nc_is_oi_model too, not only nc_is_pas_model: the latter demands that
+                // BOTH stations be OI/PAS, so a Delay + OI cycle -- the canonical
+                // topology Pfqn_oi_is exists to sample -- fell to the guard below.
+                if (Solver_nc_pas_is.nc_is_pas_model(sn)
+                        || jline.solvers.nc.handlers.Solver_nc_oi.nc_is_oi_model(sn)) {
+                    break;   // handled by Solver_nc (Pfqn_pas_is / Pfqn_oi_is)
                 }
                 // fall through to the "exact" preprocessing
-            case "panaceald":
-                // 'panaceald' is a load-dependent normalizing-constant expansion
+            case "panald":
+                // 'panald' is a load-dependent normalizing-constant expansion
                 // and needs the same multiserver conversion as "exact"
             case "exact":
                 if (!this.model.hasProductFormSolution()) {
                     line_error(mfilename(new Object(){}), "The " + options.method + " method requires the model to have a product-form solution. This model does not have one. You can use Network.hasProductFormSolution() to check before running the solver.");
+                } else if (ncMultiserverPolicy.equals("seidmann") && ncHasFiniteMultiserver(sn)) {
+                    // config.multiserver="seidmann" asks for Seidmann's approximation
+                    // on this arm too, so the conversion below is skipped and the
+                    // model goes to the plain nc analyzer. Off by default
+                    line_debug(options.verbose, "NC: exact method, config.multiserver=seidmann, keeping Seidmann approximation for multiserver stations");
                 } else if ((sn.lldscaling == null || sn.lldscaling.isEmpty()) && ncHasFiniteMultiserver(sn)) {
                     // Only convert to load-dependent when a genuine multiserver
                     // station is present. Setting lldscaling=ones on an
@@ -930,11 +1207,69 @@ public class SolverNC extends NetworkSolver {
                         }
                         cacheNode.setResultHitProb(hitProb);
                         cacheNode.setResultMissProb(missProb);
+                        if (ret.cacheItemProb != null && ret.cacheItemProb.containsKey(ind)) {
+                            cacheNode.setResultItemProb(ret.cacheItemProb.get(ind));
+                        }
                     }
                 }
                 this.model.refreshChains(true);
+            } else if (jline.api.sn.SnIsMm1kLoss.snIsMm1kLoss(this.sn)
+                    && ("default".equalsIgnoreCase(options.method)
+                        || "exact".equalsIgnoreCase(options.method))) {
+                // Single-station M/M/1/K with tail drop: exact probability-based
+                // loss analysis off the M/M/1/K stationary distribution; see
+                // Qsys_mm1k_loss. "mem" asked by name goes past it to the
+                // censored GE/GE/1/N block of Solver_nc_mem (mem.blocking).
+                // Every other name is refused upstream by ncMethodRefusal, since
+                // the closed form reads none.
+                line_debug(options.verbose, "NC: single-station M/M/1/K with tail drop, using the qsys_mm1k_loss closed form");
+                int queueIst = -1;
+                int sourceIst = -1;
+                for (int ind = 0; ind < sn.nodetype.size(); ind++) {
+                    if (sn.nodetype.get(ind) == NodeType.Queue) {
+                        queueIst = (int) sn.nodeToStation.get(ind);
+                    } else if (sn.nodetype.get(ind) == NodeType.Source) {
+                        sourceIst = (int) sn.nodeToStation.get(ind);
+                    }
+                }
+                int qStateful = (int) sn.stationToStateful.get(queueIst);
+                double Vq = sn.visits.get(0).get(qStateful);
+                double Kcap = sn.cap.get(queueIst);
+                double lambda = sn.rates.get(sourceIst) * Vq;
+                double mu = sn.rates.get(queueIst);
+                double rho = lambda / mu;
+                double Ploss = (Double) jline.api.qsys.Qsys_mm1k_loss
+                        .qsys_mm1k_loss(lambda, mu, (int) Math.round(Kcap)).get("lossprob");
+                double Tq = lambda * (1.0 - Ploss);   // carried throughput
+                double Lsys;
+                if (Math.abs(rho - 1.0) < 1e-10) {
+                    Lsys = Kcap / 2.0;                // L'Hopital limit at rho=1
+                } else {
+                    double rKp1 = FastMath.pow(rho, Kcap + 1.0);
+                    Lsys = rho / (1.0 - rho) - (Kcap + 1.0) * rKp1 / (1.0 - rKp1);
+                }
+                ret = new NCResult();
+                ret.QN = new Matrix(sn.nstations, sn.nclasses);
+                ret.UN = new Matrix(sn.nstations, sn.nclasses);
+                ret.RN = new Matrix(sn.nstations, sn.nclasses);
+                ret.TN = new Matrix(sn.nstations, sn.nclasses);
+                ret.XN = new Matrix(1, sn.nclasses);
+                ret.CN = new Matrix(1, sn.nclasses);
+                double Rq = Lsys / Tq;                // per-visit response time, by Little
+                ret.RN.set(queueIst, 0, Rq);
+                ret.QN.set(queueIst, 0, Lsys);
+                ret.UN.set(queueIst, 0, Tq / mu);     // single-server utilization
+                ret.TN.set(queueIst, 0, Tq);          // carried (effective) rate
+                ret.TN.set(sourceIst, 0, lambda);     // offered arrival rate
+                ret.XN.set(0, 0, Tq);                 // system throughput = carried rate
+                ret.CN.set(0, 0, Rq * Vq);
+                ret.lG = 0;
+                ret.it = 1;
+                iter = 1;
+                actualMethod = "mm1k.loss";
+                ret.method = actualMethod;
             } else {
-                // Ordinary queueing network
+                // Ordinary queueing network.
                 // Check for open model with single FCR containing single Delay (loss network)
                 if (!snHasClosedClasses(sn) && sn.nregions == 1) {
                     Matrix regionMatrix = sn.region.get(0);
@@ -960,8 +1295,19 @@ public class SolverNC extends NetworkSolver {
                         }
                     }
                     if (stationCount == 1 && Utils.isInf(sn.nservers.get(stationInFCR))) {
-                        // Single delay node in FCR - check drop rule
-                        if (sn.regionrule.get(0) == DropStrategy.Drop.getID()) {
+                        // Single delay node in FCR - check drop rule. EVERY class
+                        // must be dropped, as the reference tests: a region that
+                        // discards one class and holds another back is a mixed
+                        // system whose blocked class occupies the region while it
+                        // waits, so the per-class loss probabilities the loss
+                        // network implies are not the ones the model implies.
+                        boolean allDrop = true;
+                        for (int r = 0; r < sn.nclasses; r++) {
+                            if (sn.regionrule.get(0, r) != DropStrategy.Drop.getID()) {
+                                allDrop = false;
+                            }
+                        }
+                        if (allDrop) {
                             // Use loss network solver
                             line_debug(options.verbose, "NC: detected loss network (single Delay in FCR with Drop), calling solver_nc_lossn_analyzer");
                             ret = solver_nc_lossn_analyzer(this.sn, this.options.copy());
@@ -973,15 +1319,17 @@ public class SolverNC extends NetworkSolver {
                         }
                     }
                 }
-                // Residual FCR (not the single-Delay loss-network case dispatched
-                // above): NC does not enforce the aggregate region limit and would
-                // silently return the unconstrained answer. Reject.
-                if (ret == null && sn.nregions > 0) {
-                    throw new RuntimeException("This model uses a Finite Capacity Region (addRegion) "
-                            + "on queueing stations, which is not supported by SolverNC (only the "
-                            + "single-Delay loss-network case is). Use SolverJMT, or setCapacity "
-                            + "for a single-station limit.");
-                }
+                // The token gates that used to stand here -- "ms"/"erlangfp" and
+                // "rec" off a loss network, "rayint"/"spm" with no Cache node, and
+                // the residual Finite Capacity Region on queueing stations -- moved
+                // into ncMethodRefusal, which decides them from the same struct
+                // before the dispatch begins and which the support gate asks too;
+                // their wording is unchanged. The six load-dependent evaluators on
+                // an OPEN chain are now refused by the feature set instead
+                // (methodFeatureSet drops OpenClass from them): "closed population
+                // only" is a rule the registry CAN name, and naming it there is what
+                // makes Network.findSolver drop the row rather than report it
+                // runnable.
                 if (ret == null && ((sn.lldscaling != null && !sn.lldscaling.isEmpty()) || (sn.cdscaling != null && !sn.cdscaling.isEmpty()) || (sn.jdscaling != null && !sn.jdscaling.isEmpty()))) {
                     line_debug(options.verbose, "NC: detected load-/class-/joint-dependent scaling, calling solver_ncld_analyzer");
                     ret = solver_ncld_analyzer(this.sn, this.options.copy());
@@ -1008,8 +1356,9 @@ public class SolverNC extends NetworkSolver {
                         case "rd":
                         case "nrp":
                         case "nrl":
+                        case "nre":
                         case "comomld":
-                        case "panaceald":
+                        case "panald":
                             line_debug(options.verbose, String.format("NC: load-dependent method=%s, calling solver_ncld_analyzer", options.method));
                             ret = solver_ncld_analyzer(this.sn, this.options.copy());
                             actualMethod = ret.method;
@@ -1102,10 +1451,42 @@ public class SolverNC extends NetworkSolver {
      * @return array of valid method names
      */
     public String[] listValidMethods() {
+        // "ms" names the Manjunath-Sikdar transform of the loss-network analyzer,
+        // which is the only place it is admissible; it is listed because
+        // solver_nc_lossn_analyzer branches on the token and would otherwise be
+        // unreachable.
         return new String[]{
-            "default", "exact", "erlangfp", "mci", "imci", "ls", "le", "mmint2", "gleint",
-            "panacea", "panaceald", "ca", "clw", "kt", "sampling", "is", "propfair", "comom", "cub",
-            "rd", "nrp", "nrl", "gm", "mem"
+            // "rayint" and "spm" both name the SPM saddle point on a cache, which
+            // serves Cache_spm_size once the items carry storage costs. On a retrieval
+            // model "rayint" is instead the ray/WKB delayed-hit expansion, admissible
+            // only with an infinite-server fetch system; Solver_nc_retrieval_analyzer
+            // branches on the token and warns and falls back to "exact" anywhere else.
+            // "divdiff" is the divided-difference closed form of Casale (SIGMETRICS
+            // 2017); it needs no think time, since a delay would ask for the integral
+            // form of Cor. 3.4, and Pfqn_nc refuses one by name. Load-dependent rates
+            // ARE served: Pfqn_ncld substitutes the limited load-dependent kernel of
+            // Casale-Harrison-Ong (Perform. Eval. 2021), Thm. 1, and reports itself as
+            // "divdiff.ld/...".
+            "default", "exact", "divdiff", "rayint", "spm", "ms", "erlangfp", "mci", "imci", "ls", "le", "ble", "aghq", "mmint2", "gleint",
+            "pana", "panald", "ca", "clw", "kt", "bkt", "lekt", "bk", "bkue", "lc", "lc.ue", "sampling", "is",
+            // Chen-O'Cinneide regularization; a Markov chain Monte Carlo estimator of
+            // the throughput RATIOS G(N-e_r)/G(N), which supplies no constant of its own
+            "mcmc",
+            "propfair", "comom", "comomld", "cub",
+            // "rgf" (recursion by generating functions, single-class) was the one
+            // name in the reference's list with neither a dispatch arm nor an
+            // entry here, although Pfqn_rgf sat at the API layer unreached.
+            "rgf", "rd", "nrp", "nrl", "nre", "gm", "mem", "ger", "sdr", "sdr.mva",
+            // "morrison" is the heavy-usage asymptotic expansion of the generating
+            // function for a closed think+DPS network (Npfqn_dps_morrison,
+            // Solver_nc_dps_analyzer). It is the DEFAULT on that shape and inadmissible
+            // anywhere else, where runAnalyzer refuses it: nothing else in NC can see
+            // the DPS weights. Non-product-form, so it returns no lG.
+            "morrison",
+            // "rec" is the MDD-rec route: on a loss network it is the exact
+            // normalizing constant without the residue transform's integrality
+            // demand, and on a Petri net it is the only admissible method.
+            "rec"
         };
     }
 
@@ -1139,6 +1520,105 @@ public class SolverNC extends NetworkSolver {
             }
         }
         return false;
+    }
+
+    /**
+     * Resolves options.config.multiserver into the multiserver handling SolverNC
+     * implements: "default" (the historical dispatch), "seidmann" (Seidmann's
+     * approximation everywhere, including on "exact") or "lld" (the exact
+     * mu(n)=min(n,c) lattice everywhere it is admissible, including on "default").
+     *
+     * config.multiserver belongs to the general SolverOptions, shared with
+     * SolverMVA, which implements approximations SolverNC has no counterpart for
+     * ("softmin", "conway", "krzesinski", "suri", "erlang"). Those warn and fall
+     * back to "default" rather than erroring, because one options object is
+     * commonly reused across solvers.
+     */
+    private static String ncMultiserverPolicy(SolverOptions options) {
+        if (options == null || options.config == null || options.config.multiserver == null) {
+            return "default";
+        }
+        String requested = options.config.multiserver.toLowerCase();
+        switch (requested) {
+            case "":
+            case "default":
+                return "default";
+            case "seidmann":
+                return "seidmann";
+            case "lld":
+            case "exact":
+            case "loaddep":
+            case "load-dependent":
+                return "lld";
+            default:
+                line_warning(mfilename(new Object(){}), String.format(
+                        "SolverNC does not implement config.multiserver='%s' (it is a SolverMVA "
+                        + "approximation); using 'default'. SolverNC accepts 'default', 'seidmann' "
+                        + "and 'lld'.", requested));
+                return "default";
+        }
+    }
+
+    /**
+     * Exact mu(n)=min(n,c) lattice for a closed model's multiserver stations, the
+     * form Solver_ncld consumes. Returns null when the conversion does not apply --
+     * no finite multiserver station, an open or mixed model, an lldscaling already
+     * installed, or a per-chain population lattice above latticeMax -- in which
+     * case the caller keeps Seidmann's approximation.
+     */
+    private static Matrix ncLldFromNservers(NetworkStruct sn, Double latticeMax) {
+        if (sn.lldscaling != null && !sn.lldscaling.isEmpty()) {
+            return null;
+        }
+        if (!ncHasFiniteMultiserver(sn)) {
+            return null;
+        }
+        for (int r = 0; r < sn.nclasses; r++) {
+            double v = sn.njobs.get(r);
+            if (Utils.isInf(v) || Double.isNaN(v)) {
+                return null;
+            }
+        }
+        double Nt = sn.njobs.elementSum();
+        if (Utils.isInf(Nt) || Double.isNaN(Nt) || Nt < 1) {
+            return null;
+        }
+        if (latticeMax != null) {
+            double latticeSize = 1;
+            if (sn.chains != null && sn.chains.getNumRows() > 0) {
+                for (int c = 0; c < sn.chains.getNumRows(); c++) {
+                    double popc = 0;
+                    for (int r = 0; r < sn.nclasses && r < sn.chains.getNumCols(); r++) {
+                        if (sn.chains.get(c, r) > 0) {
+                            double v = sn.njobs.get(r);
+                            if (!Utils.isInf(v) && !Double.isNaN(v)) {
+                                popc += v;
+                            }
+                        }
+                    }
+                    latticeSize *= (1 + popc);
+                }
+            } else {
+                for (int r = 0; r < sn.nclasses; r++) {
+                    double v = sn.njobs.get(r);
+                    if (!Utils.isInf(v) && !Double.isNaN(v)) {
+                        latticeSize *= (1 + v);
+                    }
+                }
+            }
+            if (latticeSize > latticeMax) {
+                return null;
+            }
+        }
+        Matrix lldscaling = Matrix.ones(sn.nstations, (int) Nt);
+        for (int i = 0; i < sn.nstations; i++) {
+            if (sn.nservers.get(i) > 1 && !Utils.isInf(sn.nservers.get(i))) {
+                for (int j = 0; j < Nt; j++) {
+                    lldscaling.set(i, j, FastMath.min(j + 1, sn.nservers.get(i)));
+                }
+            }
+        }
+        return lldscaling;
     }
 
     private static boolean snHasNonUnitScv(NetworkStruct sn, boolean productForm) {
@@ -2026,9 +2506,12 @@ public class SolverNC extends NetworkSolver {
         }
         // Registry inclusion cannot see finite capacity (there is no feature
         // name for it), so apply the structural gate as well, unless the
-        // finite-buffer MEM path covers the model.
+        // finite-buffer MEM path, the slotted route or the single-station
+        // M/M/1/K closed form covers the model.
         NetworkStruct s = model.getStruct(false);
-        if (!memFiniteBufferPath(s, this.options)) {
+        if (!memFiniteBufferPath(s, this.options)
+                && !Solver_nc_dt_analyzer.isSlotted(this.options)
+                && !jline.api.sn.SnIsMm1kLoss.snIsMm1kLoss(s)) {
             String reason = NetworkSolver.bindingCapacityReason(model, s, "SolverNC");
             if (reason != null) {
                 line_warning(mfilename(new Object() {}), reason);
@@ -2079,6 +2562,603 @@ public class SolverNC extends NetworkSolver {
     }
 
     /**
+     * Per-method feature deltas applied to the base NC envelope.
+     *
+     * ONLY THE RESTRICTIONS A FEATURE NAME CAN CARRY LIVE HERE. A feature set
+     * declares what the method ACCEPTS, so it can refuse a model for HAVING a
+     * construct and never for lacking one: "closed population only" and "no
+     * think time" are expressible by dropping OpenClass and SchedStrategy_INF,
+     * while "requires a cache" or "requires a loss network" are not and belong
+     * to {@link #ncMethodRefusal}, which supportsModelMethod consults next.
+     * Mirrors the MATLAB/python SolverNC.getMethodFeatureSet and the C++
+     * nc_feature_set.
+     *
+     * @param method the concrete method name
+     * @return the per-method FeatureSet
+     */
+    public static FeatureSet methodFeatureSet(String method) {
+        FeatureSet featSupported = SolverNC.getFeatureSet();
+        if (method == null) {
+            return featSupported;
+        }
+        String m = method.toLowerCase();
+        if ("divdiff".equals(m)) {
+            // The divided-difference closed form of Casale (SIGMETRICS 2017),
+            // Eqs. (15)-(16), covers load-independent queues; a think time would
+            // ask for the integral form of Cor. 3.4, which is not implemented, so
+            // Pfqn_nc and Pfqn_ncld both refuse one by name. An infinite server is
+            // where a think time comes from, so the envelope drops it.
+            featSupported.setFalse(new String[]{"SchedStrategy_INF"});
+        } else if ("rd".equals(m) || "nrp".equals(m) || "nrl".equals(m) || "nre".equals(m)
+                || "comomld".equals(m) || "panald".equals(m)) {
+            // The load-dependent normalizing-constant evaluators are reached by
+            // Solver_ncld only on its CLOSED branch, where Pfqn_ncld reads the
+            // method name. An open chain sends the model to the mixed route
+            // (Pfqn_mvaldmx), which never reads it, so every one of these names
+            // silently became "ncldmx".
+            featSupported.setFalse(new String[]{"OpenClass"});
+        } else if ("is".equals(m)) {
+            // The sample-an-ordering estimator of Pfqn_is integrates over a closed
+            // population simplex; there is no open-class form of it, and Solver_nc
+            // refuses one by name. Use "sampling" (Pfqn_mci/Pfqn_ls) for an open
+            // or mixed model.
+            featSupported.setFalse(new String[]{"OpenClass"});
+        }
+        // MULTISERVER (registry name since 2026-09-05): the divided-difference
+        // closed form of "divdiff" covers load-independent single-server
+        // queues, and ncMethodRefusal keeps wording why (a c-server station
+        // enters the constant as Seidmann's surrogate delay); every other route
+        // folds the count into its own kernel.
+        if ("divdiff".equals(m)) {
+            featSupported.setFalse(new String[]{"MultiServer"});
+        }
+        // FINITECAPACITY (registry name since 2026-09-05) is NOT in the base
+        // envelope: the product-form routes solve a buffer away, which is what
+        // the binding-capacity gate in supportsModelMethod refuses. Two arms
+        // honour one: "mem" represents it as a GE/GE/c/0;N queue
+        // (memFiniteBufferPath), and the single-station M/M/1/K with tail drop
+        // is solved in closed form (Qsys_mm1k_loss, the branch runAnalyzerBody
+        // takes on that shape) under "default" and "exact". The shape half of
+        // each rule stays structural.
+        if ("mem".equals(m) || "default".equals(m) || "exact".equals(m)) {
+            featSupported.setTrue(new String[]{"FiniteCapacity"});
+        }
+        return featSupported;
+    }
+
+    @Override
+    public FeatureSet getMethodFeatureSet(String method) {
+        if (!(this.model instanceof Network)) {
+            return null;
+        }
+        return SolverNC.methodFeatureSet(method);
+    }
+
+    /**
+     * May METHOD run on this model? Empty string when it may, otherwise the
+     * reason it may not, in the words the analyzer refuses with.
+     *
+     * ONE PREDICATE, TWO CALLERS. runAnalyzer asks it once, ahead of the
+     * dispatch, and turns a non-empty answer into an error;
+     * {@link #supportsModelMethod} asks it so that Network.findSolver never
+     * offers a (solver, method) pair that would raise, and so that SolverAUTO
+     * never delegates to one. Two copies of these rules is precisely how the
+     * report and the run drift apart, which is the failure this method exists to
+     * prevent, so a new rule goes here and not at a call site.
+     *
+     * Only what the feature registry cannot name lives here; see
+     * {@link #methodFeatureSet} for the rules that do have a feature name.
+     *
+     * @param sn      the network struct
+     * @param method  the concrete method name
+     * @param options the solver options, read for the discrete-time route only
+     * @return empty string if the method may run, else the offending reason
+     */
+    public static String ncMethodRefusal(NetworkStruct sn, String method, SolverOptions options) {
+        return ncMethodRefusal(sn, method, options, true);
+    }
+
+    /**
+     * The same predicate, told WHICH QUESTION IS BEING ASKED. For two method names
+     * the two questions have different answers:
+     *
+     * <ul>
+     *   <li>{@code forReport = true} -- "should model.help() offer this pair?" A pair
+     *       that comes back as a table of zeros must not be offered, so the answer is
+     *       no.</li>
+     *   <li>{@code forReport = false} -- "what does the reference DO when asked for it
+     *       by name?" For "mmint2" and "gleint" outside their shape the reference
+     *       deliberately WARNS AND RETURNS A ZERO TABLE (pfqn_nc.m, case
+     *       {'mmint2','gleint'}: lG = [] and return, unconditionally), and a caller who
+     *       names the method keeps that answer.</li>
+     * </ul>
+     *
+     * <p>THE ASYMMETRY IS A RULING, NOT AN OVERSIGHT (2026-07-25, reaffirmed when this
+     * gate was added): the report answers "should this be offered" and the run answers
+     * "what does the reference do". "comomld" is NOT in that bucket --
+     * Pfqn_comomrm_ld raises "The solver accepts at most a single queueing station."
+     * natively -- so it is refused on both paths.</p>
+     *
+     * @param sn        the network struct
+     * @param method    the concrete method name
+     * @param options   the solver options, read for the discrete-time route only
+     * @param forReport true when the caller is the report, false when it is the run
+     * @return empty string if the method may run, else the offending reason
+     */
+    public static String ncMethodRefusal(NetworkStruct sn, String method, SolverOptions options,
+                                         boolean forReport) {
+        if (sn == null) {
+            return "";
+        }
+        String m = (method == null || method.isEmpty()) ? "default" : method.toLowerCase();
+
+        // The discrete-time route answers for itself: ncIsDtModel decides
+        // admissibility on the slot lattice, and every gate below is written
+        // about a continuous-time queueing network.
+        if (options != null && Solver_nc_dt_analyzer.isSlotted(options)) {
+            return "";
+        }
+
+        // -- discriminatory processor sharing ------------------------------
+        // Morrison's heavy-usage expansion is the ONLY NC route that can see the
+        // DPS weights; every other method builds a product-form normalizing
+        // constant that silently drops them and answers with the egalitarian-PS
+        // network, which is a wrong number rather than a coarse one.
+        if (Solver_nc_dps_analyzer.nc_is_dps_model(sn)) {
+            if (!"default".equals(m) && !"morrison".equals(m)) {
+                return String.format("Method '%s' cannot represent the DPS weights of a "
+                        + "discriminatory processor-sharing station; it would return the "
+                        + "egalitarian-PS network. Use method 'default' or 'morrison' "
+                        + "(Npfqn_dps_morrison), SolverMVA, SolverFLD or SolverCTMC.", method);
+            }
+            return "";
+        }
+        if (snHasDPS(sn)) {
+            // A DPS station outside Morrison's shape. SchedStrategy_DPS is
+            // declared in the feature set because a boolean feature cannot
+            // express "this shape only"; this is that imperative half.
+            return "SolverNC analyzes a discriminatory processor-sharing station only in "
+                    + "the shape Morrison's expansion is derived for: a CLOSED network of exactly "
+                    + "two stations, one infinite-server (think) station and one single-server DPS "
+                    + "station, exponential service, each class visiting the two equally often. Use "
+                    + "SolverMVA, SolverFLD or SolverCTMC for any other DPS model.";
+        }
+        if ("morrison".equals(m)) {
+            // The method named on a model that is not the shape at all -- not
+            // even a DPS station in it. Left ungated it reaches no route of its
+            // own and falls through to the ordinary normalizing-constant path,
+            // which would answer the product-form model UNDER THE CALLER'S LABEL.
+            return "Method 'morrison' is the heavy-usage expansion of a CLOSED network of "
+                    + "exactly two stations, one infinite-server (think) station and one "
+                    + "single-server DPS station with exponential service, which this model is not. "
+                    + "Remove the method option to let SolverNC choose, or use SolverMVA, SolverFLD "
+                    + "or SolverCTMC.";
+        }
+
+        // -- Krzesinski state-dependent routing -----------------------------
+        // An SDR model is intercepted by Solver_nc_sdr_analyzer whatever the
+        // method says, so reaching the second test means the model declares none.
+        if (sn.sdr != null) {
+            return "";
+        }
+        if ("sdr".equals(m) || "sdr.mva".equals(m)) {
+            return "Method " + method + " requires state-dependent routing, which this model "
+                    + "does not declare.";
+        }
+
+        // -- stochastic Petri net -------------------------------------------
+        // A net is served only by the MDD-rec route, and none of the gates below
+        // -- written about stations, capacities and the queueing-network product
+        // form -- says anything about a net. Spn_pf decides its product-form
+        // class, by name.
+        if (sn.nodetype != null && sn.nodetype.contains(NodeType.Place)) {
+            if (!"default".equals(m) && !"rec".equals(m)) {
+                return String.format("a stochastic Petri net is solved by the MDD-rec route; "
+                        + "method '%s' is a normalizing-constant algorithm for queueing networks. "
+                        + "Use 'rec' or 'default'", method);
+            }
+            return "";
+        }
+
+        // -- order-independent stations --------------------------------------
+        // Every method other than the four listed reads sn.rates, which holds
+        // only the single-job rate mu([r]) of an OI station: the rank rate mu(n)
+        // is silently dropped and the answer is that of an ordinary queue.
+        if (jline.solvers.nc.handlers.Solver_nc_oi.nc_is_oi_model(sn)) {
+            if (!"default".equals(m) && !"exact".equals(m) && !"is".equals(m)
+                    && !"sampling".equals(m)) {
+                return String.format("Method '%s' cannot represent the rank rate mu(n) of an "
+                        + "order-independent station; use method 'default' or 'exact' (Pfqn_ncoi), "
+                        + "'is', SolverMVA, or SolverCTMC.", method);
+            }
+            return "";
+        }
+
+        // -- caches -----------------------------------------------------------
+        // "rayint" and "spm" both name the SPM saddle point of a cache (and, on a
+        // retrieval model, the ray/WKB delayed-hit expansion), so they are
+        // admissible here and nowhere else.
+        if (sn.nodetype != null && sn.nodetype.contains(NodeType.Cache)) {
+            if ("exact".equals(m) && ncIsNoreentrantCache(sn)) {
+                CacheNodeParam cp = ncFirstCacheParam(sn);
+                // Cache_prob_erec is exact for the exchangeable (RR/FIFO) family
+                // only; anything else has to take the approximate route.
+                if (cp != null && cp.replacestrat != null
+                        && cp.replacestrat != jline.lang.constant.ReplacementStrategy.RR
+                        && cp.replacestrat != jline.lang.constant.ReplacementStrategy.FIFO) {
+                    return "NC does not support exact solution of the specified cache replacement "
+                            + "policy; use the default (approximate) method or SolverCTMC.";
+                }
+            }
+            return "";
+        }
+        if ("rayint".equals(m) || "spm".equals(m)) {
+            return "SolverNC: method " + method + " names the SPM saddle point of a cache and, on "
+                    + "a retrieval model, the ray/WKB delayed-hit expansion; this model declares no "
+                    + "Cache node.";
+        }
+
+        // -- single-station M/M/1/K with tail drop ----------------------------
+        // Answered exactly by the probability-based Qsys_mm1k_loss branch under
+        // "default" and "exact", and by the censored GE/GE/1/N block of the
+        // maximum entropy route under "mem" (runAnalyzerBody lets that name past
+        // the closed form). No other name has a route: the closed form reads
+        // none, and letting one through would report the UNCONSTRAINED
+        // product-form answer under the caller's name.
+        if (jline.api.sn.SnIsMm1kLoss.snIsMm1kLoss(sn)) {
+            if (!"default".equals(m) && !"exact".equals(m) && !"mem".equals(m)) {
+                return String.format("Method '%s' has no route on a single-station M/M/1/K with "
+                        + "tail drop, which is answered by the closed form of Qsys_mm1k_loss "
+                        + "under 'default' and 'exact' and by the censored GE/GE/1/N block "
+                        + "under 'mem'.", method);
+            }
+            return "";
+        }
+
+        // -- loss networks and finite capacity regions -------------------------
+        int lossn = ncLossnKind(sn);
+        if (lossn == 2) {
+            return "";  // "ms", "erlangfp", "rec" and "default" all have a route here
+        }
+        if (lossn == 1) {
+            return "SolverNC does not support finite capacity regions with WAITQ (blocking) "
+                    + "policy. Use DROP policy instead.";
+        }
+        if ("ms".equals(m) || "erlangfp".equals(m)) {
+            return "Method " + method + " is admissible only on a loss network (open model, one "
+                    + "DROP region holding a single Delay).";
+        }
+        if ("rec".equals(m)) {
+            return "SolverNC: method rec is the MDD-rec route, admissible on a stochastic Petri "
+                    + "net or on a loss network (open model, one DROP region holding a single "
+                    + "Delay); this model is neither.";
+        }
+        if (sn.nregions > 0) {
+            // NC does not enforce an aggregate region limit on queueing stations;
+            // refuse rather than silently return the unconstrained answer.
+            return "This model uses a Finite Capacity Region (addRegion) on queueing stations, "
+                    + "which is not supported by SolverNC (only the single-Delay loss-network case "
+                    + "is). Use SolverJMT, or setCapacity for a single-station limit.";
+        }
+
+        // -- PANACEA's domain ---------------------------------------------------
+        // Normal usage is a property of the demands rather than of a declared
+        // construct, so it has no feature name; an open chain is refused earlier
+        // by the closed-population feature set of the load-dependent evaluators.
+        //
+        // BOTH TOKENS ARE GATED, because Pfqn_ncld evaluates "pana" and
+        // "panald" with the SAME Pfqn_panaceald -- its case label is
+        // {"pana", "panald"} -- so on a model carrying a rate lattice the
+        // load-INDEPENDENT name reaches the load-dependent expansion and throws
+        // with it. Off that lattice "pana" takes its own Pfqn_nc arm, which
+        // warns and returns an empty constant rather than throwing, so it is left
+        // alone there. Class- or joint-dependent scaling diverts the whole model
+        // to Solver_nc_conv, which never reads the method at all.
+        if (("pana".equals(m) || "panald".equals(m)) && !snHasOpenClasses(sn)) {
+            boolean divertedToConv = (sn.cdscaling != null && !sn.cdscaling.isEmpty())
+                    || (sn.jdscaling != null && !sn.jdscaling.isEmpty());
+            boolean reachesLdKernel = "panald".equals(m)
+                    || (sn.lldscaling != null && !sn.lldscaling.isEmpty());
+            if (!divertedToConv && reachesLdKernel && !ncIsNormalUsage(sn)) {
+                String why = "The model is not in normal usage, so the 'panald' asymptotic "
+                        + "expansion does not apply. Use 'exact', 'clw' or an approximate "
+                        + "load-dependent method instead.";
+                if ("pana".equals(m)) {
+                    why = "Method 'pana' reaches the load-dependent kernel on this model, where "
+                            + "Pfqn_ncld evaluates it as 'panald'. " + why;
+                }
+                return why;
+            }
+        }
+
+        // -- the single-queueing-station recursions ------------------------------
+        // Two families are stated for a model with a delay and ONE queueing
+        // station, and neither can say so with a feature name: it is a COUNT, and
+        // a feature set has no arithmetic. Pfqn_nc states it for "mmint2"/"gleint"
+        // in those words and Pfqn_comomrm_ld raises "The solver accepts at most a
+        // single queueing station."
+        //
+        // The count is taken over the CLOSED chains only, and the rule is inactive
+        // without a closed population, because Pfqn_nc answers an open network
+        // with the exact open formulas BEFORE its method switch -- the method name is
+        // never read there, so a purely open model with three queues runs these
+        // names correctly today and must go on doing so.
+        // "mmint2" and "gleint" are gated for the REPORT ONLY: Pfqn_nc answers them
+        // with an empty constant and the caller renders a table of zeros, which is a
+        // pair the report must not offer and a run the reference nonetheless
+        // performs. See the forReport parameter above.
+        if ("comomld".equals(m) || (forReport && ("mmint2".equals(m) || "gleint".equals(m)))) {
+            int nq = ncClosedQueueingStations(sn);
+            if (nq > 1) {
+                if ("comomld".equals(m)) {
+                    return "Method 'comomld' is the load-dependent CoMoM recursion, and "
+                            + "Pfqn_comomrm_ld accepts at most a single queueing station; this "
+                            + "model has " + nq + ".";
+                }
+                return "The '" + method + "' method requires a model with a delay and a single "
+                        + "queueing station; this model has " + nq + ".";
+            }
+        }
+
+        // -- "exact" outside its domain -----------------------------------------
+        if ("exact".equals(m)) {
+            boolean multiserver = ncHasFiniteMultiserver(sn);
+            boolean hasOpen = snHasOpenClasses(sn);
+            if (multiserver && hasOpen) {
+                return "NC solver cannot provide exact solutions for open or mixed queueing "
+                        + "networks. Remove the 'exact' option.";
+            }
+            boolean scaling = (sn.lldscaling != null && !sn.lldscaling.isEmpty())
+                    || (sn.cdscaling != null && !sn.cdscaling.isEmpty())
+                    || (sn.jdscaling != null && !sn.jdscaling.isEmpty());
+            boolean fractional = false;
+            for (int r = 0; r < sn.njobs.getNumElements(); r++) {
+                double v = sn.njobs.get(r);
+                if (!Utils.isInf(v) && FastMath.abs(v - FastMath.floor(v)) > GlobalConstants.FineTol) {
+                    fractional = true;
+                }
+            }
+            if ((scaling || multiserver) && fractional) {
+                // The load-dependent analyzer interpolates a fractional population
+                // between the two integer neighbours, which is an approximation, so
+                // it refuses the exactness the caller asked for by name.
+                return "NC load-dependent solver cannot provide exact solutions for fractional "
+                        + "populations.";
+            }
+        }
+        return "";
+    }
+
+    /**
+     * How many queueing (non-infinite-server) stations carry demand from a CLOSED
+     * chain, which is the row count L reaches Pfqn_nc and Pfqn_comomrm_ld with
+     * once the delay rows have been folded into Z and the zero-demand rows
+     * dropped. Zero when the model has no closed population at all.
+     *
+     * @param sn the network struct
+     * @return the number of closed-demand queueing stations
+     */
+    private static int ncClosedQueueingStations(NetworkStruct sn) {
+        Ret.snGetDemands dem = snGetDemandsChain(sn);
+        Matrix Lchain = dem.Dchain;
+        Matrix Nchain = dem.Nchain;
+        if (Lchain == null || Nchain == null) {
+            return 0;
+        }
+        int C = Nchain.getNumElements();
+        boolean[] closed = new boolean[C];
+        boolean anyClosed = false;
+        for (int c = 0; c < C; c++) {
+            double v = Nchain.get(c);
+            closed[c] = !Utils.isInf(v) && !Double.isNaN(v) && v > 0;
+            if (closed[c]) {
+                anyClosed = true;
+            }
+        }
+        if (!anyClosed) {
+            return 0;
+        }
+        int nq = 0;
+        for (int i = 0; i < sn.nstations; i++) {
+            if (Utils.isInf(sn.nservers.get(i))) {
+                continue;
+            }
+            for (int c = 0; c < C; c++) {
+                if (closed[c] && FastMath.abs(Lchain.get(i, c)) > GlobalConstants.FineTol) {
+                    nq++;
+                    break;
+                }
+            }
+        }
+        return nq;
+    }
+
+    /** The Source-Cache-Sink model Solver_nc_cache_analyzer serves. */
+    private static boolean ncIsNoreentrantCache(NetworkStruct sn) {
+        if (sn.nclosedjobs != 0 || sn.nodetype == null || sn.nodetype.size() != 3) {
+            return false;
+        }
+        return sn.nodetype.contains(NodeType.Source) && sn.nodetype.contains(NodeType.Cache)
+                && sn.nodetype.contains(NodeType.Sink);
+    }
+
+    /** The parameters of the first Cache node, or null when the model has none. */
+    private static CacheNodeParam ncFirstCacheParam(NetworkStruct sn) {
+        if (sn.nodeparam == null || sn.nodes == null) {
+            return null;
+        }
+        for (int ind = 0; ind < sn.nodetype.size(); ind++) {
+            if (sn.nodetype.get(ind) == NodeType.Cache && ind < sn.nodes.size()) {
+                NodeParam np = sn.nodeparam.get(sn.nodes.get(ind));
+                if (np instanceof CacheNodeParam) {
+                    return (CacheNodeParam) np;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The loss-network verdict: 0 for neither, 1 for the shape without the DROP
+     * rule, 2 for the loss network Solver_nc_lossn_analyzer solves.
+     *
+     * The shape is an OPEN model with a single finite capacity region whose only
+     * member is an infinite server. It is a LOSS network when the admission rule
+     * DROPS every class: a region of that shape under WAITQ (or any blocking
+     * rule) holds the arrival back instead of discarding it, which keeps the job
+     * in the region while it waits and is a queueing phenomenon the Erlang loss
+     * model has no state for. The two verdicts are separate because they have
+     * different remedies -- switching the rule to DROP makes the first solvable
+     * here, while a region on queueing stations needs a solver that carries the
+     * region as state.
+     *
+     * @param sn the network struct
+     * @return 0, 1 or 2 as above
+     */
+    public static int ncLossnKind(NetworkStruct sn) {
+        if (sn.nregions != 1 || snHasClosedClasses(sn) || sn.region == null) {
+            return 0;
+        }
+        Matrix regionMatrix = sn.region.get(0);
+        if (regionMatrix == null) {
+            return 0;
+        }
+        int stationInFCR = -1;
+        int stationCount = 0;
+        for (int i = 0; i < sn.nstations; i++) {
+            boolean hasConstraint = false;
+            for (int r = 0; r < sn.nclasses; r++) {
+                if (regionMatrix.get(i, r) >= 0) {
+                    hasConstraint = true;
+                    break;
+                }
+            }
+            if (regionMatrix.getNumCols() > sn.nclasses && regionMatrix.get(i, sn.nclasses) >= 0) {
+                hasConstraint = true;
+            }
+            if (hasConstraint) {
+                stationInFCR = i;
+                stationCount++;
+            }
+        }
+        if (stationCount != 1 || !Utils.isInf(sn.nservers.get(stationInFCR))) {
+            return 0;
+        }
+        if (sn.regionrule == null) {
+            return 1;
+        }
+        // ALL classes, not merely one: a region that discards one class and holds
+        // another back is a mixed system whose blocked class occupies the region
+        // while it waits, so the per-class loss probabilities the Erlang fixed
+        // point returns would not be the ones the model implies.
+        for (int r = 0; r < sn.nclasses; r++) {
+            if (sn.regionrule.get(0, r) != DropStrategy.Drop.getID()) {
+                return 1;
+            }
+        }
+        return 2;
+    }
+
+    /**
+     * Is the closed model in NORMAL USAGE, the domain of the Mitra-McKenna
+     * PANACEA asymptotic expansion (J. ACM 33(3), 1986)?
+     *
+     * Normal usage asks that every queueing centre absorb the load the think
+     * stations offer it: with rho_j0 = Ztot(j) the aggregate think demand of
+     * chain j, r_ij = L_ij / rho_j0 and mu_i(Ntot) the saturation rate,
+     * alpha_i = 1 - (sum_j N_j r_ij) / mu_i(Ntot) &gt; 0 at every centre i.
+     * Outside it the {phi(n)} series DIVERGES, which is why Pfqn_panaceald
+     * returns NaN there and Pfqn_ncld turns that NaN into a refusal. It is a
+     * property of the demands and not of a declared construct, so it has no
+     * feature-registry name.
+     *
+     * The rates are the ones Solver_ncld would build: 1 for an ordinary single
+     * server, min(n,c) for a finite multiserver (the conversion runAnalyzer
+     * performs on the "panald" arm), and the declared lldscaling row when the
+     * model sets one. An infinite server is a think station and feeds Ztot.
+     *
+     * @param sn the network struct
+     * @return true when the expansion applies
+     */
+    public static boolean ncIsNormalUsage(NetworkStruct sn) {
+        if (snHasOpenClasses(sn)) {
+            return true;
+        }
+        Ret.snGetDemands dem = snGetDemandsChain(sn);
+        Matrix Lchain = dem.Dchain;
+        Matrix Nchain = dem.Nchain;
+        if (Lchain == null || Nchain == null) {
+            return true;
+        }
+        int C = Nchain.getNumElements();
+        double NtD = 0;
+        for (int c = 0; c < C; c++) {
+            double v = Nchain.get(c);
+            if (!Utils.isInf(v) && !Double.isNaN(v)) {
+                NtD += v;
+            }
+        }
+        int Nt = (int) FastMath.round(NtD);
+        if (Nt < 1) {
+            return true;  // the empty network: G = 1, nothing to expand
+        }
+        int M = sn.nstations;
+
+        double[][] mu = new double[M][Nt];
+        boolean haveLld = sn.lldscaling != null && !sn.lldscaling.isEmpty();
+        for (int i = 0; i < M; i++) {
+            for (int n = 0; n < Nt; n++) {
+                if (haveLld) {
+                    int col = FastMath.min(n, sn.lldscaling.getNumCols() - 1);
+                    mu[i][n] = sn.lldscaling.get(i, col);
+                } else if (!Utils.isInf(sn.nservers.get(i)) && sn.nservers.get(i) > 1) {
+                    mu[i][n] = FastMath.min(n + 1, sn.nservers.get(i));
+                } else {
+                    mu[i][n] = 1.0;
+                }
+            }
+        }
+
+        double[] Ztot = new double[C];
+        for (int i = 0; i < M; i++) {
+            if (Utils.isInf(sn.nservers.get(i))) {
+                for (int c = 0; c < C; c++) {
+                    Ztot[c] += Lchain.get(i, c);
+                }
+            }
+        }
+        for (int c = 0; c < C; c++) {
+            if (Nchain.get(c) > 0 && Ztot[c] <= 0) {
+                // no think station on the route of a populated chain: the
+                // expansion parameter rho_j0 is undefined
+                return false;
+            }
+        }
+
+        for (int i = 0; i < M; i++) {
+            if (Utils.isInf(sn.nservers.get(i))) {
+                continue;
+            }
+            double muK = mu[i][Nt - 1];
+            if (!(muK > 0) || Double.isNaN(muK) || Utils.isInf(muK)) {
+                return false;
+            }
+            double lambda = 0;
+            for (int c = 0; c < C; c++) {
+                if (Ztot[c] > 0) {
+                    lambda += Lchain.get(i, c) / Ztot[c] * Nchain.get(c);
+                }
+            }
+            if (1.0 - lambda / muK <= 0) {
+                return false;
+            }
+        }
+        // Every centre cleared the test; a model with no queueing centre at all
+        // reaches here too, and there the delay-only constant is exact.
+        return true;
+    }
+
+    /**
      * Method-aware gate. MEM (Kouvatsos maximum entropy) has structural
      * applicability rules beyond a flat feature set (open-only, Source/Queue/
      * Delay/Sink, non-priority scheduling); delegate to memUnsupportedReason,
@@ -2087,6 +3167,38 @@ public class SolverNC extends NetworkSolver {
      */
     @Override
     public String supportsModelMethod(String method) {
+        return supportsModelMethod(method, true);
+    }
+
+    /**
+     * The same gate, told WHICH QUESTION IS BEING ASKED. The report asks "should this
+     * pair be offered" and the run asks "what does the reference do"; they differ only
+     * for "mmint2"/"gleint", which the reference performs by name and answers with a
+     * zero table. See {@link #ncMethodRefusal(NetworkStruct, String, SolverOptions,
+     * boolean)}.
+     *
+     * <p>The distinction has to be plumbed because the shared runAnalyzerChecks gate
+     * lives on the RUN path yet reaches this method through the same one-argument call
+     * findSolver makes, so there is no other way to tell the two callers apart.</p>
+     *
+     * @param method    the concrete method name
+     * @param forReport true when the caller is the report, false when it is the run
+     * @return empty string if supported, else the offending reason
+     */
+    public String supportsModelMethod(String method, boolean forReport) {
+        // Discrete-time (slotted) route: a finite buffer on a Bernoulli server
+        // is the loss system of Daduna's corollary 2.8, which
+        // Solver_nc_dt_analyzer solves exactly, so the coarse feature gate must
+        // not fire. ncIsDtModel performs the real admissibility check and
+        // reports a precise reason.
+        if (Solver_nc_dt_analyzer.isSlotted(this.options)) {
+            NetworkStruct sdt = this.sn != null ? this.sn : this.model.getStruct(false);
+            Solver_nc_dt_analyzer.DtModel dt = Solver_nc_dt_analyzer.ncIsDtModel(sdt);
+            if (!"none".equals(dt.kind)) {
+                return "";
+            }
+            return "options.config.slotted is set but " + dt.reason;
+        }
         if ("mem".equals(method)) {
             NetworkStruct s = this.sn != null ? this.sn : this.model.getStruct(false);
             // MEM now supports both open (Section 3.2) and closed (Section 3.3)
@@ -2094,7 +3206,83 @@ public class SolverNC extends NetworkSolver {
             String r = memUnsupportedReason(s, model.hasOpenClasses(), model.hasClosedClasses());
             return r == null ? "" : r;
         }
-        return supports((Network) this.model) ? "" : "Some features are not supported by the chosen solver.";
+        // The per-method envelope, not the flat one: "divdiff" drops
+        // SchedStrategy_INF and the closed-population evaluators drop OpenClass,
+        // which is how "no think time" and "closed only" are said in the registry.
+        String featReason = FeatureSet.supportsReason(SolverNC.methodFeatureSet(method),
+                ((Network) this.model).getUsedLangFeatures());
+        if (!featReason.isEmpty()) {
+            return featReason;
+        }
+        // A BINDING BUFFER IS A PER-MODEL RULE THE REGISTRY CANNOT NAME, and it
+        // belongs here as well as in supports(Network). Only the latter carried
+        // it, so Solver.supports refused the model as a whole while every nc
+        // method name stayed in listValidMethods and findSolver -- 'nc.bk' among them
+        // -- offering methods that cannot represent a buffer. Exempt for the
+        // same three paths supports() exempts: MEM carries finite buffers
+        // explicitly, the slotted route is Daduna's loss system, and the
+        // single-station M/M/1/K with tail drop has the Qsys_mm1k_loss closed
+        // form (the names it does not serve are refused by ncMethodRefusal).
+        NetworkStruct scap0 = this.sn != null ? this.sn : ((Network) this.model).getStruct(false);
+        if (!memFiniteBufferPath(scap0, this.options)
+                && !Solver_nc_dt_analyzer.isSlotted(this.options)
+                && !jline.api.sn.SnIsMm1kLoss.snIsMm1kLoss(scap0)) {
+            NetworkStruct scap = this.sn != null ? this.sn : ((Network) this.model).getStruct(false);
+            String capReason = NetworkSolver.bindingCapacityReason((Network) this.model, scap,
+                                                                   "SolverNC");
+            if (capReason != null) {
+                return capReason;
+            }
+        }
+        String exactReason = exactnessReason((Network) this.model, method);
+        if (!exactReason.isEmpty()) {
+            return exactReason;
+        }
+        // The structural per-method rules the feature registry cannot name: which
+        // route a method has on THIS model, and whether it exists at all.
+        // ncMethodRefusal is the single copy of them, asked here and by
+        // runAnalyzer, so the report and the run cannot disagree.
+        NetworkStruct sfull = this.sn != null ? this.sn : this.model.getStruct(false);
+        return ncMethodRefusal(sfull, method, this.options, forReport);
+    }
+
+    /**
+     * Product-form precondition of the normalizing-constant methods, the same
+     * rule runAnalyzer enforces at solve time. Only "exact", "is" and
+     * "panald" require it -- the other methods fall back to Seidmann's
+     * comom on a non-product-form model -- and "is" on a pass-and-swap model
+     * is exempt (Pfqn_pas_is). Product form has no registry feature name, so
+     * the check cannot live in getMethodFeatureSet.
+     *
+     * @param model  the network model
+     * @param method the concrete method name
+     * @return empty string if the method may run, else the offending reason
+     */
+    public static String exactnessReason(Network model, String method) {
+        if (method == null) {
+            return "";
+        }
+        boolean needsProductForm = "exact".equalsIgnoreCase(method)
+                || "is".equalsIgnoreCase(method) || "panald".equalsIgnoreCase(method);
+        if (!needsProductForm || model.hasProductFormSolution()) {
+            return "";
+        }
+        // A LOSS NETWORK (open, one DROP region holding a single Delay) IS product
+        // form -- the truncated Poisson law the residue transform of
+        // solver_nc_lossn_analyzer evaluates exactly under "exact" -- but
+        // snHasBlocking reads any region as blocking, so hasProductFormSolution
+        // says no. The shape is exempted here and at the "exact" arm of
+        // runAnalyzer alike, through the one predicate both ask.
+        if (ncLossnKind(model.getStruct(false)) == 2) {
+            return "";
+        }
+        if ("is".equalsIgnoreCase(method)
+                && (Solver_nc_pas_is.nc_is_pas_model(model.getStruct(false))
+                    || jline.solvers.nc.handlers.Solver_nc_oi.nc_is_oi_model(model.getStruct(false)))) {
+            return "";
+        }
+        return "method '" + method + "' requires a product-form solution; use "
+                + "method 'comom' or SolverCTMC instead";
     }
 
     /**
@@ -2114,7 +3302,8 @@ public class SolverNC extends NetworkSolver {
         }
         String[] tokens = method.toLowerCase().split("[./]");
         for (String tok : tokens) {
-            if (tok.equals("mci") || tok.equals("imci") || tok.equals("ls") || tok.equals("sampling") || tok.equals("is")) {
+            if (tok.equals("mci") || tok.equals("imci") || tok.equals("ls") || tok.equals("sampling")
+                    || tok.equals("is") || tok.equals("mcmc")) {
                 return true;
             }
         }
@@ -2135,14 +3324,48 @@ public class SolverNC extends NetworkSolver {
     }
 
     /**
-     * Get cumulative distribution function of response times at FCFS and delay nodes
-     * 
-     * @param R Optional response time handles (currently unused in this implementation)
-     * @return Response time distribution matrix for each node and class
+     * First-probe-time summary of the response time CDF, one scalar per station
+     * and class.
+     *
+     * NOT A DISTRIBUTION. This was called getCdfRespT(AvgHandle...) and was
+     * renamed because that name made it an OVERLOAD of the base
+     * {@link NetworkSolver#getCdfRespT(AvgHandle)} rather than an override --
+     * varargs erases to AvgHandle[], so one handle reached the base
+     * implementation and zero handles reached this class, two implementations
+     * behind one name selected by argument count. For the CDF itself, one
+     * (T x 2) matrix of [F(t) t] per station and class as MATLAB's cell array
+     * carries, call {@link #getCdfRespT()} and read its {@code cdfData}.
+     *
+     * @return first-probe-time CDF summary, indexed by station and class
      */
-    public Matrix getCdfRespT(AvgHandle... R) {
+    public Matrix getCdfRespTFirstProbe() {
+        NetworkStruct sn0 = getStruct();
+        List<List<Matrix>> full = computeCdfRespT();
+        if (full == null) return new Matrix(0, 0);
+        Matrix summary = new Matrix((int) sn0.nstations, (int) sn0.nclasses);
+        for (int i = 0; i < sn0.nstations; i++) {
+            for (int j = 0; j < sn0.nclasses; j++) {
+                Matrix cdf = full.get(i).get(j);
+                if (cdf != null && cdf.getNumRows() > 0 && cdf.getNumCols() > 0) {
+                    summary.set(i, j, Math.abs(cdf.get(0, 0)));
+                }
+            }
+        }
+        return summary;
+    }
+
+    /**
+     * The response time CDF at every probe time, indexed [station][class], each
+     * entry a (T x 2) matrix of [F(t) t] as MATLAB's cell array holds it, or
+     * null where the station-class pair has no distribution.
+     *
+     * Shared by both getCdfRespT overloads so the work is done once and neither
+     * can drift from the other; returns null when the model has no FCFS station,
+     * which is the case the reference warns about.
+     */
+    private List<List<Matrix>> computeCdfRespT() {
         if (GlobalConstants.DummyMode) {
-            return new Matrix(0, 0);
+            return null;
         }
 
         long startTimeMillis = System.nanoTime();
@@ -2151,8 +3374,12 @@ public class SolverNC extends NetworkSolver {
         // Get algorithm configuration
         String algorithm = options.method != null ? options.method : "exact";
         
-        Matrix RD = new Matrix(0, 0);
-        
+        // [station][class], each entry a (T x 2) [F(t) t] matrix or null.
+        // STATION-indexed, matching NetworkSolver:6629 and SolverJMT:635; this
+        // method used to index the outer dimension by NODE, which every
+        // cdfData consumer reads as a station.
+        List<List<Matrix>> RD = null;
+
         try {
             // Get product form parameters
             Ret.snGetProductFormParams params = snGetProductFormParams(sn);
@@ -2161,29 +3388,59 @@ public class SolverNC extends NetworkSolver {
             Matrix Z = params.Z;  // Think times
             Matrix S = params.S;  // Number of servers
             
-            // Find FCFS and delay nodes
-            List<Integer> fcfsNodesList = new ArrayList<>();
-            List<Integer> fcfsNodeIdsList = new ArrayList<>(); 
-            List<Integer> delayNodeIdsList = new ArrayList<>();
-            
-            for (int i = 0; i < sn.sched.size(); i++) {
-                if (sn.sched.get(i) == SchedStrategy.FCFS) {
-                    fcfsNodesList.add(i);
-                    fcfsNodeIdsList.add(i);
-                } else if (sn.sched.get(i) == SchedStrategy.INF) {
-                    delayNodeIdsList.add(i);
+            // THREE INDEX SPACES MEET HERE, and using one index for all three is
+            // how this method came to be dead code. Named explicitly:
+            //   STATION space  sn.stations / sn.sched / sn.rates, 0..nstations-1
+            //   QUEUE space    the ROWS of D and S, one per Queue-type NODE in
+            //                  node order (snGetProductFormParams builds them
+            //                  from sn.nodetype == Queue)
+            //   NODE space     the rows of the returned RD, 0..nnodes-1
+            // pfqn_stdf applies ONE index to L, S and rates, so whatever is
+            // passed as fcfsNodes must be in QUEUE space and rates must be too.
+
+            // node -> QUEUE-space row, in the order snGetProductFormParams uses
+            Map<Integer, Integer> queueRowOfNode = new HashMap<Integer, Integer>();
+            int queueRows = 0;
+            for (int nd = 0; nd < sn.nodetype.size(); nd++) {
+                if (sn.nodetype.get(nd) == NodeType.Queue) {
+                    queueRowOfNode.put(nd, queueRows++);
                 }
             }
-            
-            if (!fcfsNodesList.isEmpty()) {
+
+            List<Integer> fcfsQueueRows = new ArrayList<>();   // QUEUE space
+            List<Integer> fcfsStationsList = new ArrayList<>(); // STATION space
+            List<Integer> delayStationsList = new ArrayList<>();// STATION space
+
+            for (int ist = 0; ist < sn.nstations; ist++) {
+                // sn.sched is Map<Station,SchedStrategy>; get(int) on it silently
+                // returns null, which left this list empty on EVERY model and made
+                // the whole method return an empty matrix. Use the keyed lookup the
+                // rest of the JAR uses (e.g. SnHasHomogeneousScheduling).
+                SchedStrategy sched = sn.sched.get(sn.stations.get(ist));
+                if (sched == SchedStrategy.FCFS) {
+                    Integer qrow = queueRowOfNode.get((int) sn.stationToNode.get(ist));
+                    if (qrow != null) {
+                        fcfsQueueRows.add(qrow);
+                        fcfsStationsList.add(ist);
+                    }
+                } else if (sched == SchedStrategy.INF) {
+                    delayStationsList.add(ist);
+                }
+            }
+
+            if (!fcfsQueueRows.isEmpty()) {
                 // Calculate time horizon
                 double totalPop = N.elementSum();
-                
-                // Extract rates for FCFS nodes
-                Matrix fcfsRates = new Matrix(fcfsNodesList.size(), sn.nclasses);
-                for (int i = 0; i < fcfsNodesList.size(); i++) {
+
+                // Rates in QUEUE space: one row per queueing station, NOT compacted
+                // to the FCFS ones, so that the single pfqn_stdf index addresses
+                // rates, L and S alike.
+                Matrix fcfsRates = new Matrix(queueRows, sn.nclasses);
+                for (int ist = 0; ist < sn.nstations; ist++) {
+                    Integer qrow = queueRowOfNode.get((int) sn.stationToNode.get(ist));
+                    if (qrow == null) continue;
                     for (int j = 0; j < sn.nclasses; j++) {
-                        fcfsRates.set(i, j, sn.rates.get(fcfsNodesList.get(i), j));
+                        fcfsRates.set(qrow, j, sn.rates.get(ist, j));
                     }
                 }
                 
@@ -2211,10 +3468,10 @@ public class SolverNC extends NetworkSolver {
                     tset.set(i, Math.pow(10, logVal));
                 }
                 
-                // Convert lists to matrices for function calls
-                Matrix fcfsNodes = new Matrix(fcfsNodesList.size(), 1);
-                for (int i = 0; i < fcfsNodesList.size(); i++) {
-                    fcfsNodes.set(i, fcfsNodesList.get(i).doubleValue());
+                // fcfsNodes in QUEUE space, matching D, S and fcfsRates
+                Matrix fcfsNodes = new Matrix(fcfsQueueRows.size(), 1);
+                for (int i = 0; i < fcfsQueueRows.size(); i++) {
+                    fcfsNodes.set(i, fcfsQueueRows.get(i).doubleValue());
                 }
                 
                 // Call appropriate PFQN algorithm
@@ -2231,39 +3488,64 @@ public class SolverNC extends NetworkSolver {
                         break;
                 }
                 
-                // Initialize result matrix
-                RD = new Matrix(sn.nnodes, sn.nclasses);
+                // Initialize result structure, STATION x CLASS
+                RD = new ArrayList<List<Matrix>>();
+                for (int i = 0; i < sn.nstations; i++) {
+                    List<Matrix> row = new ArrayList<Matrix>();
+                    for (int j = 0; j < sn.nclasses; j++) row.add(null);
+                    RD.add(row);
+                }
                 
-                // Process FCFS node results - remove complex number round-offs
+                // Process FCFS results. RDout is indexed in QUEUE space (pfqn_stdf
+                // allocates Matrix[M][R] and writes RD[kIdx][r]), so it is read at
+                // the queue row and STORED at the station row. The WHOLE (T x 2)
+                // curve is kept, as MATLAB's RD{k,r} does.
                 if (RDout != null && RDout.length > 0) {
-                    for (int i = 0; i < fcfsNodeIdsList.size(); i++) {
+                    for (int i = 0; i < fcfsQueueRows.size(); i++) {
+                        int qrow = fcfsQueueRows.get(i);
+                        int ist = fcfsStationsList.get(i);
                         for (int j = 0; j < sn.nclasses; j++) {
-                            // RDout contains distribution data - for now just store a representative value
-                            // In MATLAB this would be a cell array with full distribution data
-                            if (i < RDout.length && j < RDout[i].length && RDout[i][j] != null) {
-                                // Use the first element of the distribution matrix as representative value
-                                if (RDout[i][j].getNumRows() > 0 && RDout[i][j].getNumCols() > 0) {
-                                    RD.set(fcfsNodeIdsList.get(i), j, Math.abs(RDout[i][j].get(0, 0)));
+                            if (qrow < RDout.length && j < RDout[qrow].length && RDout[qrow][j] != null) {
+                                Matrix cdf = RDout[qrow][j];
+                                if (cdf.getNumRows() > 0 && cdf.getNumCols() > 0) {
+                                    // real() in MATLAB: strip complex round-off
+                                    Matrix cdfAbs = new Matrix(cdf.getNumRows(), cdf.getNumCols());
+                                    for (int t = 0; t < cdf.getNumRows(); t++) {
+                                        cdfAbs.set(t, 0, Math.abs(cdf.get(t, 0)));
+                                        if (cdf.getNumCols() > 1) cdfAbs.set(t, 1, cdf.get(t, 1));
+                                    }
+                                    RD.get(ist).set(j, cdfAbs);
                                 }
                             }
                         }
                     }
                 }
-                
-                // Process delay node results
-                for (int i = 0; i < delayNodeIdsList.size(); i++) {
-                    int nodeId = delayNodeIdsList.get(i);
+
+                // Process delay results. sn.proc is Map<Station,Map<JobClass,..>>,
+                // so it is keyed by the objects and NOT by an int -- the same defect
+                // the sched scan had, and it would have thrown a NullPointerException
+                // here the moment that one was fixed.
+                for (int i = 0; i < delayStationsList.size(); i++) {
+                    int ist = delayStationsList.get(i);
+                    int nodeId = (int) sn.stationToNode.get(ist);
+                    Map<JobClass, MatrixCell> stProc = sn.proc.get(sn.stations.get(ist));
+                    if (stProc == null) continue;
                     for (int j = 0; j < sn.nclasses; j++) {
-                        // For delay nodes, compute CDF from the process distribution
-                        if (nodeId < sn.proc.size() && j < sn.proc.get(nodeId).size()) {
-                            MatrixCell procCell = (MatrixCell) sn.proc.get(nodeId).get(j);
-                            if (procCell != null && !procCell.isEmpty()) {
-                                // Compute map_cdf for this process at time points
-                                Matrix cdfResult = map_cdf(procCell, tset.transpose());
-                                // Store representative value (first CDF value)
-                                if (cdfResult.getNumRows() > 0) {
-                                    RD.set(nodeId, j, cdfResult.get(0, 0));
+                        MatrixCell procCell = stProc.get(sn.jobclasses.get(j));
+                        if (procCell != null && !procCell.isEmpty()) {
+                            Matrix cdfResult = map_cdf(procCell, tset.transpose());
+                            // map_cdf returns a 1 x T ROW (Map_cdf.java:31), not
+                            // a column: reading it by rows keeps one point.
+                            int nt = cdfResult.length();
+                            if (nt > 0) {
+                                // whole curve as [F(t) t], the layout MATLAB's
+                                // getCdfRespT.m:37 builds for a delay station
+                                Matrix cdf = new Matrix(nt, 2);
+                                for (int t = 0; t < nt; t++) {
+                                    cdf.set(t, 0, cdfResult.get(t));
+                                    cdf.set(t, 1, tset.get(t));
                                 }
+                                RD.get(ist).set(j, cdf);
                             }
                         }
                     }
@@ -2271,10 +3553,18 @@ public class SolverNC extends NetworkSolver {
                 
                 long endTimeMillis = System.nanoTime();
                 double runtime = (endTimeMillis - startTimeMillis) / 1000000000.0;
-                
-                // Store results using inherited method
-                setDistribResults(RD, runtime);
-                
+
+                // setDistribResults takes the (M x K) summary; the full curves
+                // travel back through the return value.
+                Matrix summary = new Matrix((int) sn.nstations, (int) sn.nclasses);
+                for (int i = 0; i < sn.nstations; i++) {
+                    for (int j = 0; j < sn.nclasses; j++) {
+                        Matrix cdf = RD.get(i).get(j);
+                        if (cdf != null && cdf.getNumRows() > 0) summary.set(i, j, cdf.get(0, 0));
+                    }
+                }
+                setDistribResults(summary, runtime);
+
             } else {
                 line_warning(mfilename(new Object(){}), "getCdfRespT applies only to FCFS nodes.");
             }
@@ -2287,16 +3577,44 @@ public class SolverNC extends NetworkSolver {
     }
 
     /**
-     * Get cumulative distribution function of response times with default parameters
-     * 
-     * @return Response time distribution matrix for each node and class
+     * Get the response time CDF at FCFS and delay stations.
+     *
+     * {@code cdfData} is indexed [station][class], each entry a (T x 2) matrix
+     * of [F(t) t], matching MATLAB's RD cell array and the layout SolverJMT
+     * fills. Entries are null where the pair has no distribution. This used to
+     * compute the curves and DISCARD them, returning the empty structure
+     * initializeCdfData allocates.
+     *
+     * @return the response time distributions, station by class
      */
     public DistributionResult getCdfRespT() {
-        Matrix result = getCdfRespT((AvgHandle[]) null);
         NetworkStruct sn = getStruct();
-        DistributionResult distResult = new DistributionResult((int) sn.nnodes, (int) sn.nclasses, "response_time");
-        // Store the matrix result in the distribution result structure
+        DistributionResult distResult =
+            new DistributionResult((int) sn.nstations, (int) sn.nclasses, "response_time");
+        List<List<Matrix>> full = computeCdfRespT();
+        if (full == null) return distResult;
+        distResult.cdfData = full;
         return distResult;
+    }
+
+    /**
+     * Response time CDF, ignoring the handle argument as the reference does.
+     *
+     * THIS GENUINELY OVERRIDES {@link NetworkSolver#getCdfRespT(AvgHandle)}.
+     * Before it existed, SolverNC declared only a varargs method, which erases
+     * to AvgHandle[] and therefore did NOT override the base: a caller passing
+     * one handle silently received the base class's EXPONENTIAL FIT of the mean
+     * response time, while a caller passing none received this class's exact
+     * law. Both returned plausible numbers, so nothing looked wrong. The two now
+     * agree because both delegate to {@link #computeCdfRespT()}.
+     *
+     * @param R response time handles, unused -- the CDF is computed at every
+     *          station and class, as MATLAB's getCdfRespT.m does
+     * @return the response time distributions, station by class
+     */
+    @Override
+    public DistributionResult getCdfRespT(AvgHandle R) {
+        return getCdfRespT();
     }
 
     public static class SolverNCMargReturn {
@@ -2428,4 +3746,205 @@ public class SolverNC extends NetworkSolver {
         return out;
     }
 
+    /**
+     * Mean duration of the busy period of order n for the subnetwork made of
+     * the given stations, that is the time from the instant a job entering the
+     * subnetwork finds n-1 jobs in it up to the next instant when fewer than n
+     * remain.
+     *
+     * <p>H. Daduna, "Busy Periods for Subnetworks in Stochastic Networks: Mean
+     * Value Analysis", J. ACM 35(3), 1988. The result is exact on the
+     * single-chain product-form class and, by the insensitivity of Section 5 of
+     * that paper, depends on the service processes only through their mean
+     * rates.
+     *
+     * <p>The Java twin of MATLAB's {@code @SolverNC/getAvgBusyPeriod.m} and of
+     * {@code solver_nc_busyp} in the C++ port, which this follows step for
+     * step. It had no Java spelling until now, so {@code -a busyperiod} on the
+     * CLI and every {@code lang="java"} caller had to fall back to SolverLDES,
+     * i.e. to a simulation of a quantity there is a transform for.
+     *
+     * @param stations zero-based STATION indexes forming the subnetwork; a
+     *                 non-empty proper subset of the stations
+     * @param orders   busy period orders, 1 &lt;= n &lt;= population for a closed model
+     * @return one mean duration per requested order
+     */
+    public double[] getAvgBusyPeriod(int[] stations, int[] orders) {
+        if (GlobalConstants.DummyMode) {
+            double[] dummy = new double[orders.length];
+            Arrays.fill(dummy, Double.NaN);
+            return dummy;
+        }
+        NetworkStruct snb = this.model.getStruct(false);
+        if (snb.nchains > 1) {
+            line_error(mfilename(new Object(){}),
+                "The busy period of a subnetwork is defined for single-chain models only. "
+                + "Section 5 of Daduna (1988) sketches the multichain extension, which is "
+                + "not implemented.");
+        }
+        final int M = snb.nstations;
+        final int K = snb.nclasses;
+        Ret.snGetDemands dem = SnGetDemandsChain.snGetDemandsChain(snb);
+        Pair<Matrix, Matrix> rtv = SnRtStations.snRtStations(snb);
+        final Matrix rtst = rtv.getLeft();
+        final Matrix Vst = rtv.getRight();
+
+        // station-to-station routing of the chain: the class-level probabilities
+        // weighted by the class visits, which is exact because it is a flow balance
+        Matrix Pst = new Matrix(M, M);
+        for (int i = 0; i < M; i++) {
+            double vtot = 0.0;
+            for (int r = 0; r < K; r++) {
+                vtot += Vst.get(i, r);
+            }
+            for (int j = 0; j < M; j++) {
+                double flow = 0.0;
+                for (int r = 0; r < K; r++) {
+                    for (int t = 0; t < K; t++) {
+                        flow += Vst.get(i, r) * rtst.get(i * K + r, j * K + t);
+                    }
+                }
+                Pst.set(i, j, vtot > 0 ? flow / vtot : 0.0);
+            }
+        }
+
+        final Matrix STchain = dem.STchain;
+        final Matrix Vchain = dem.Vchain;
+        final Matrix lld = snb.lldscaling;
+        final Matrix nservers = snb.nservers;
+        // mu(j,k): the load-dependent rate of station j holding k jobs, in the
+        // solver_ncld precedence -- the infinite server first, then the declared
+        // scaling table, then the multiserver staircase. A table shorter than k
+        // keeps its last entry.
+        final Pfqn_busyp.RateFunction rateOf = new Pfqn_busyp.RateFunction() {
+            @Override
+            public double rate(int j, int k) {
+                double scaling;
+                double servers = nservers.get(j, 0);
+                if (Double.isInfinite(servers)) {
+                    scaling = k;
+                } else if (lld != null && !lld.isEmpty() && lld.getNumCols() > 0) {
+                    scaling = lld.get(j, Math.min(k, lld.getNumCols()) - 1);
+                } else {
+                    scaling = Math.min((double) k, servers);
+                }
+                return scaling / STchain.get(j, 0);
+            }
+        };
+
+        double N = (Vchain == null || dem.Nchain == null || dem.Nchain.isEmpty())
+                ? Double.POSITIVE_INFINITY : dem.Nchain.get(0);
+        if (!Double.isFinite(N)) {
+            // the Source is not a node of the Jackson network of the paper: its
+            // outflow is the external stream gamma
+            int source = -1;
+            for (int i = 0; i < M; i++) {
+                if (snb.nodetype.get((int) snb.stationToNode.get(i)) == NodeType.Source) {
+                    source = i;
+                    break;
+                }
+            }
+            if (source < 0) {
+                line_error(mfilename(new Object(){}), "An open model must own a Source station.");
+            }
+            for (int t = 0; t < stations.length; t++) {
+                if (stations[t] == source) {
+                    line_error(mfilename(new Object(){}),
+                        "The Source cannot belong to the subnetwork.");
+                }
+            }
+            double lambda = 0.0;
+            for (int r = 0; r < K; r++) {
+                double rate = snb.rates.get(source, r);
+                if (!Double.isNaN(rate) && Double.isFinite(rate)) {
+                    lambda += rate;
+                }
+            }
+            final int[] keep = new int[M - 1];
+            int[] remap = new int[M];
+            int at = 0;
+            for (int i = 0; i < M; i++) {
+                if (i != source) {
+                    remap[i] = at;
+                    keep[at++] = i;
+                }
+            }
+            Matrix alpha = new Matrix(1, keep.length);
+            Matrix gamma = new Matrix(1, keep.length);
+            Matrix P = new Matrix(keep.length, keep.length);
+            for (int i = 0; i < keep.length; i++) {
+                alpha.set(0, i, lambda * Vchain.get(keep[i], 0) / Vchain.get(source, 0));
+                gamma.set(0, i, lambda * Pst.get(source, keep[i]));
+                for (int j = 0; j < keep.length; j++) {
+                    P.set(i, j, Pst.get(keep[i], keep[j]));
+                }
+            }
+            int[] mapped = new int[stations.length];
+            for (int t = 0; t < stations.length; t++) {
+                mapped[t] = remap[stations[t]];
+            }
+            Pfqn_busyp.RateFunction keptRate = new Pfqn_busyp.RateFunction() {
+                @Override
+                public double rate(int j, int k) {
+                    return rateOf.rate(keep[j], k);
+                }
+            };
+            return Pfqn_busyp.pfqn_busyp(alpha, keptRate, P, Double.POSITIVE_INFINITY,
+                    mapped, orders, gamma);
+        }
+
+        Matrix alpha = new Matrix(1, M);
+        for (int i = 0; i < M; i++) {
+            alpha.set(0, i, Vchain.get(i, 0));
+        }
+        return Pfqn_busyp.pfqn_busyp(alpha, rateOf, Pst, N, stations, orders, null,
+                Pfqn_busyp.DEFAULT_TOL);
+    }
+
+    /** Single-order form of {@link #getAvgBusyPeriod(int[], int[])}. */
+    public double getAvgBusyPeriod(int[] stations, int order) {
+        return getAvgBusyPeriod(stations, new int[]{order})[0];
+    }
+
+
+    /**
+     * Solves through a model transformation, with NC as its own inner solve.
+     *
+     * <p>The inner options carry {@code transform='none'} and a raised depth, so
+     * a transformed submodel cannot re-enter the driver. An inner NC picking an
+     * estimator is a KERNEL selection, not a second transformation, and is
+     * correctly not cut.
+     */
+    private void runTransformAnalyzer() {
+        long T0 = System.nanoTime();
+        String token = jline.solvers.tr.TransformSolve.requested(options);
+        SolverOptions sub = options.copy();
+        sub.config.put("transform", token);
+        jline.solvers.tr.TransformSolve.Result tr = jline.solvers.tr.TransformSolve.run(
+                this.model, this.sn, sub, new jline.solvers.tr.TransformSolve.InnerSolve() {
+                    @Override
+                    public jline.solvers.tr.TransformSolve.Inner solve(jline.lang.Network submodel,
+                                                                       SolverOptions opts) {
+                        SolverNC inner = new SolverNC(submodel, opts);
+                        try {
+                            inner.runAnalyzer();
+                        } catch (Exception e) {
+                            throw new RuntimeException(e);
+                        }
+                        double lG = (inner.result instanceof NCResult)
+                                ? ((NCResult) inner.result).logNormConstAggr() : Double.NaN;
+                        return new jline.solvers.tr.TransformSolve.Inner(
+                                inner.getAvgQLen(), inner.getAvgUtil(), inner.getAvgRespT(),
+                                inner.getAvgTput(), inner.getAvgSysTput(), lG,
+                                inner.result == null ? "" : inner.result.method);
+                    }
+                });
+
+        double runtime = (System.nanoTime() - T0) / 1000000000.0;
+        String reported = options.method + "/" + tr.method;
+        jline.solvers.AvgHandle TH = getAvgTputHandles();
+        Matrix AN = jline.api.sn.SnGetArvRFromTput.snGetArvRFromTput(sn, tr.T, TH);
+        this.setAvgResults(tr.Q, tr.U, tr.R, tr.T, AN, new Matrix(0, 0),
+                tr.C, tr.X, runtime, reported, tr.iter);
+    }
 }

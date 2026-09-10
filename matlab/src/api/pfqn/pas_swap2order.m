@@ -60,7 +60,7 @@ for r = 1:R, initState = [initState, repmat(r, 1, N0(r))]; end %#ok<AGROW>
 init = {initState, []};
 
 % breadth-first enumeration of the reachable (communicating) class
-key = containers.Map('KeyType', 'char', 'ValueType', 'logical');
+key = configureDictionary('string', 'logical');
 classStates = {}; frontier = {init}; key(pas_enc(init)) = true;
 while ~isempty(frontier)
     st = frontier{end}; frontier(end) = [];
@@ -87,7 +87,7 @@ while ~isempty(frontier)
 end
 
 % full orderings D: every reachable state (l1;l2) exposes c = [l1, reverse(l2)]
-Dmap = containers.Map('KeyType', 'char', 'ValueType', 'logical');
+Dmap = configureDictionary('string', 'logical');
 D = {};
 for s = 1:numel(classStates)
     c = [classStates{s}{1}, fliplr(classStates{s}{2})];

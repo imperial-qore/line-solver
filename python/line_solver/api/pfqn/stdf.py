@@ -36,7 +36,11 @@ def pfqn_stdf(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
         N: Population vector (R,) - number of jobs per class
         Z: Think time vector (R,) or matrix (1 x R)
         S: Number of servers at each station (M,)
-        fcfs_nodes: Array of FCFS station indices (1-indexed as in MATLAB)
+        fcfs_nodes: Array of FCFS station indices, 0-INDEXED. The reference
+            passes 1-based indices into its own 1-based arrays, so a porter
+            reading pfqn_stdf.m must NOT convert twice: the index space is the
+            language's own, and here that is 0-based (the body indexes
+            rates[k,:], S[k] and L[k,r] directly).
         rates: Service rates matrix (M x R)
         tset: Time points at which to evaluate the distribution
 
@@ -44,6 +48,7 @@ def pfqn_stdf(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
         Dictionary with (station, class) tuples as keys and
         response time distribution arrays as values.
         Each array has shape (len(tset), 2) with:
+
             - column 0: CDF values
             - column 1: time points
 
@@ -137,27 +142,41 @@ def pfqn_stdf(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
                 # Use recursive form for load-dependent models (faster)
                 Hkrt = np.zeros(T)
 
-                # Compute lGk for network without station k
-                other_stations = np.array([i for i in range(M) if i != k])
-                if len(other_stations) > 0:
-                    if len(other_stations) == 1:
-                        _, lGk = _pfqn_comomrm_ld_wrapper(
-                            L[other_stations, :], Nr, Z, mu[other_stations, :]
-                        )
-                    else:
-                        _, _, _, _, lGk, _, _ = pfqn_mvald(
-                            L[other_stations, :], Nr, Z, mu[other_stations, :]
-                        )
-                    lGk = lGk[-1] if hasattr(lGk, '__len__') else lGk
+                # Compute lGk for the network WITHOUT station k. With a single
+                # queueing station that set is EMPTY and the constant is the
+                # think-only network's, not 0: log(prod_r Z_r^n_r / n_r!). The
+                # reference relies on exactly that (pfqn_stdf.m:73-77 calls
+                # pfqn_comomrm_ld on L(setdiff(1:M,k),:)), and
+                # pfqn_comomrm_ld handles the empty slice.
+                other_stations = np.array([i for i in range(M) if i != k], dtype=int)
+                if len(other_stations) > 1:
+                    _, _, _, _, lGk, _, _ = pfqn_mvald(
+                        L[other_stations, :], Nr, Z, mu[other_stations, :]
+                    )
                 else:
-                    lGk = 0.0
+                    _, lGk = _pfqn_comomrm_ld_wrapper(
+                        L[other_stations, :], Nr, Z, mu[other_stations, :]
+                    )
+                lGk = lGk[-1] if hasattr(lGk, '__len__') else lGk
 
                 for t_idx in range(T):
                     gammat = mu.copy()
 
                     # Adjust gamma for time-dependent service
-                    for m in range(1, int(np.sum(Nr))):
-                        if hkc[t_idx, m] > FINE_TOL:
+                    # Upper limit is sum(Nr) INCLUSIVE, matching the reference's
+                    # `for m=1:sum(Nr)` (pfqn_stdf.m:84). range(1, sum(Nr)) left
+                    # the LAST gamma entry unscaled at mu, which biased the CDF
+                    # upward and the mean downward at every N >= 2.
+                    # The guard is > 0 and NOT > FINE_TOL: the reference divides
+                    # unconditionally, and hkc is a CDF value that is legitimately
+                    # far below FINE_TOL at small t, so the wider guard discarded
+                    # real terms and left gamma at mu -- the same failure as the
+                    # loop bound. Measured on the exact oracle, small-t error was
+                    # 7.8e-06 with > FINE_TOL and 1.4e-12 with > 0. Zero is still
+                    # excluded because hkc underflows to exactly 0 at extreme t
+                    # and the ratio is undefined there, not merely small.
+                    for m in range(1, int(np.sum(Nr)) + 1):
+                        if hkc[t_idx, m] > 0.0:
                             gammat[k, m - 1] = mu[k, m - 1] * hkc[t_idx, m - 1] / hkc[t_idx, m]
 
                     gammak = _mushift(gammat, k)
@@ -237,17 +256,20 @@ def _pfqn_comomrm_ld_wrapper(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
 
     Returns:
         Tuple of (result, log_normalizing_constant)
+
+    Raises:
+        whatever pfqn_comomrm_ld raises. This used to swallow every exception
+        and return lG = 0.0, which is not a neutral fallback: exp(0) = 1, so a
+        failed solve silently became "the normalizing constant is 1" and the
+        caller divided by it, producing a plausible-looking but wrong CDF. That
+        is exactly the shape of the empty-station-set defect this function was
+        implicated in, and it would hide the next one. A solve that fails must
+        fail loudly.
     """
-    try:
-        result = pfqn_comomrm_ld(L, N, Z, mu)
-        if hasattr(result, 'lG'):
-            return result.G, result.lG
-        else:
-            # Handle tuple return
-            return result[0], result[1]
-    except Exception:
-        # Fallback for numerical issues
-        return np.zeros(len(N)), 0.0
+    result = pfqn_comomrm_ld(L, N, Z, mu)
+    if hasattr(result, 'lG'):
+        return result.G, result.lG
+    return result[0], result[1]
 
 
 def pfqn_stdf_heur(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
@@ -276,6 +298,7 @@ def pfqn_stdf_heur(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
         Dictionary with (station, class) tuples as keys and
         response time distribution arrays as values.
         Each array has shape (len(tset), 2) with:
+
             - column 0: CDF values
             - column 1: time points
 
@@ -369,20 +392,22 @@ def pfqn_stdf_heur(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
                 RD[(k, r)] = np.zeros((T, 2))
                 RD[(k, r)][:, 1] = tset
 
-                # Compute lGk for network without station k
-                other_stations = np.array([i for i in range(M) if i != k])
-                if len(other_stations) > 0:
-                    if len(other_stations) == 1:
-                        _, lGk = _pfqn_comomrm_ld_wrapper(
-                            L[other_stations, :], Nr, Z, mu[other_stations, :]
-                        )
-                    else:
-                        _, _, _, _, lGk, _, _ = pfqn_mvald(
-                            L[other_stations, :], Nr, Z, mu[other_stations, :]
-                        )
-                    lGk = lGk[-1] if hasattr(lGk, '__len__') else lGk
+                # Compute lGk for the network WITHOUT station k. With a single
+                # queueing station that set is EMPTY and the constant is the
+                # think-only network's, not 0: log(prod_r Z_r^n_r / n_r!). The
+                # reference relies on exactly that (pfqn_stdf.m:73-77 calls
+                # pfqn_comomrm_ld on L(setdiff(1:M,k),:)), and
+                # pfqn_comomrm_ld handles the empty slice.
+                other_stations = np.array([i for i in range(M) if i != k], dtype=int)
+                if len(other_stations) > 1:
+                    _, _, _, _, lGk, _, _ = pfqn_mvald(
+                        L[other_stations, :], Nr, Z, mu[other_stations, :]
+                    )
                 else:
-                    lGk = 0.0
+                    _, lGk = _pfqn_comomrm_ld_wrapper(
+                        L[other_stations, :], Nr, Z, mu[other_stations, :]
+                    )
+                lGk = lGk[-1] if hasattr(lGk, '__len__') else lGk
 
                 # Use recursive form for load-dependent models
                 Hkrt = np.zeros(T)
@@ -391,8 +416,13 @@ def pfqn_stdf_heur(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
                     gammat = mu.copy()
 
                     # Adjust gamma for time-dependent service
+                    # > 0 and NOT > FINE_TOL: pfqn_stdf_heur.m:109-111 divides
+                    # UNCONDITIONALLY, so the wider guard is a python invention
+                    # that discards legitimately small hkc values at small t and
+                    # leaves gamma at mu. Zero stays excluded because hkc
+                    # underflows to exactly 0 at extreme t.
                     for m in range(1, int(np.sum(Nr)) + 1):
-                        if hkc[t_idx, m] > FINE_TOL:
+                        if hkc[t_idx, m] > 0.0:
                             gammat[k, m - 1] = mu[k, m - 1] * hkc[t_idx, m - 1] / hkc[t_idx, m]
 
                     gammak = _mushift(gammat, k)

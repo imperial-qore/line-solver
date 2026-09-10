@@ -52,6 +52,12 @@ function sampleAggr = sampleAggr(self, node, numEvents)
 % plot(times, job_counts(:,2), 'r-');  % Class 1 job count over time
 % @endcode
 
+
+if isfield(self.options,'lang') && strcmp(self.options.lang,'cpp')
+    sampleAggr = CPPLINE.nodeSamplePath(self.name, self.model, self.options, node, numEvents, true);
+    return
+end
+
 self.assertPhaseTypeStates('sampleAggr');
 
 options = self.getOptions;
@@ -62,6 +68,10 @@ end
 [infGen, eventFilt] = getGenerator(self);
 stateSpace = getStateSpace(self);
 
+% sn is used from here on; it was assigned SIXTEEN LINES BELOW its first use,
+% so every call threw "Unrecognized function or variable 'sn'" and this
+% accessor had never run for anyone.
+sn = self.getStruct;
 initState = sn.state;
 nst = cumsum([1,cellfun(@length,initState)']);
 s0 = cell2mat(initState(:)');
@@ -78,7 +88,6 @@ MMAP = mmap_normalize([{D0},{D1},eventFilt(:)']);
 % now sampel the MMAP
 [sjt,event,~,~,sts] = mmap_sample(MMAP,numEvents, pi0);
 
-sn = self.getStruct;
 sampleAggr = struct();
 sampleAggr.handle = node;
 sampleAggr.t = cumsum([0,sjt(1:end-1)']');

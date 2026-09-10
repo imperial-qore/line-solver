@@ -27,7 +27,7 @@ import jline.util.matrix.Matrix;
  * rate.
  *
  * <p>The SOURCE throughput is a fluid open-model artifact and is not asserted
- * on; observe the QUEUE. Mirrors line-test.git/test_solver_fld_nhpp.m and
+ * on; observe the QUEUE. Mirrors line-test.git/test/testsFLD/test_solver_fld_nhpp.m and
  * python/line_solver/tests/test_solver_fld_nhpp.py.
  */
 public class SolverFluidNHPPTest {
@@ -125,7 +125,12 @@ public class SolverFluidNHPPTest {
         solver.options.verbose = VerboseLevel.SILENT;
         solver.getAvg();
         assertEquals(lamAvg, solver.result.TN.get(1, 0), 1e-6);
-        assertEquals(lamAvg / 50.0, solver.result.QN.get(1, 0), 1e-6);
+        // The default method is now the second-order closure "minnormal", so the
+        // queue length is its answer rather than the first-order rho = lambda/50
+        // (0.0733333). MATLAB reference for this model: 0.0733548838, which the
+        // first-order "closing" method still returns as exactly rho. Throughput is
+        // unaffected: flow balance makes it exact under either closure.
+        assertEquals(0.0733548838, solver.result.QN.get(1, 0), 1e-6);
     }
 
     @Test

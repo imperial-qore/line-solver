@@ -7,6 +7,7 @@ package jline.solvers.mam.handlers;
 import java.util.ArrayList;
 import java.util.List;
 
+import jline.api.mam.LdqbdMphc;
 import jline.api.mam.Map_mean;
 import jline.api.mam.Map_pie;
 import jline.api.sn.SnHasLoadDependence;
@@ -14,24 +15,27 @@ import jline.io.InputOutput;
 import jline.lang.JobClass;
 import jline.lang.NetworkStruct;
 import jline.lang.constant.SchedStrategy;
+import jline.lang.nodes.Queue;
 import jline.lang.nodes.Station;
 import jline.solvers.SolverOptions;
 import jline.util.matrix.Matrix;
 import jline.util.matrix.MatrixCell;
 
 /**
- * LD-QBD block exposure, flattening and metric mapping for the SolverENV
- * state-vector analyzer's MAM backend.
+ * LD-QBD block construction, flattening and metric mapping.
  *
  * <p>Mirrors matlab/src/solvers/MAM/solver_mam_ldqbd.m (block construction and
  * the {@code ld} struct), solver_mam_ldqbd_flatten.m and solver_mam_ldqbd_avg.m.
  * Handles single-class Delay+Queue (closed) or Source+Queue (open) models, with
- * exact M/M/c boundary, PH service, and load-dependent scaling. The open regime
- * truncates the level space (options.cutoff or a negligible-tail bound).
+ * exact M/M/c boundary, PH service at any number of servers (the busy-server
+ * phase multiset of {@link LdqbdMphc}), and load-dependent scaling. The open
+ * regime truncates the level space (options.cutoff or a negligible-tail bound).
  *
- * <p>The existing steady-state {@link Solver_mam_ldqbd} closed-path solver is
- * left untouched; this class provides only the block/flatten/avg pieces the
- * state-vector analyzer needs.
+ * <p>This is the CANONICAL builder for both consumers: the steady-state
+ * {@link Solver_mam_ldqbd} solver and the SolverENV state-vector analyzer's MAM
+ * backend. Keeping one construction is what stops the two from drifting -- the
+ * steady-state path carried its own copy until 2026-08-18 and silently ignored
+ * sn.lldscaling and the open regime as a result.
  */
 public final class Solver_mam_ldqbd_statevec {
     private Solver_mam_ldqbd_statevec() {}
@@ -53,9 +57,33 @@ public final class Solver_mam_ldqbd_statevec {
         public int nServers;
         public double mean_service;
         public boolean hasLLD;
+        /** Per-level service factor sf(n), sf[n-1] holding level n. */
+        public double[] sf;
+        /**
+         * The capacity that normalizes the utilization: max(c, max(alpha)), the
+         * LARGEST factor the load-dependence table declares rather than the
+         * saturated one, since a non-monotone alpha peaks in the middle. Same
+         * rule as CTMC's ceff, which is what makes the two report the same
+         * number.
+         */
+        public double utilPeak;
         public double lambda_eff;
         public double delayRate;  // NaN for open
         public double N;          // Inf for open
+        /**
+         * The station alternates OFF -&gt; setup -&gt; busy -&gt; delay-off around the
+         * service, so the chain carries phases the block builder has no place
+         * for. When this is set the blocks above describe a server that is
+         * ALWAYS warm and must not be used: the closed regime hands the whole
+         * chain to {@code Qbd_setupdelayoff_closed} instead.
+         */
+        public boolean hasSetup;
+        public double alpharate;
+        public double alphascv;
+        public double betarate;
+        public double betascv;
+        /** Exponential service rate; NaN under phase-type service. */
+        public double mu;
     }
 
     /** Flattened generator together with the queue level of each flat state. */
@@ -136,13 +164,17 @@ public final class Solver_mam_ldqbd_statevec {
         double[] lld = null;
         int lldlimit = 0;
         double sfMax;
+        double utilPeak;
         if (hasLLD) {
             lldlimit = sn.lldscaling.getNumCols();
             lld = new double[lldlimit];
             for (int j = 0; j < lldlimit; j++) lld[j] = sn.lldscaling.get(queueIdx, j);
             sfMax = lld[lldlimit - 1];
+            utilPeak = nServers;
+            for (int j = 0; j < lldlimit; j++) utilPeak = Math.max(utilPeak, lld[j]);
         } else {
             sfMax = nServers;
+            utilPeak = nServers;
         }
 
         Matrix rt = sn.rt;
@@ -201,19 +233,13 @@ public final class Solver_mam_ldqbd_statevec {
                 Matrix b = new Matrix(1, 1); b.set(0, 0, sf[n - 1] * mu); Q2.add(b);
             }
         } else {
-            Q0.add(alpha.scale(arrRate[0]));                              // level 0 -> 1
-            for (int n = 1; n < Nlev; n++) {
-                Q0.add(Matrix.eye(nPhases).scale(arrRate[n]));           // level n -> n+1
-            }
-            Matrix Q1_0 = new Matrix(1, 1); Q1_0.set(0, 0, -arrRate[0]); // level 0
-            Q1.add(Q1_0);
-            for (int n = 1; n <= Nlev; n++) {
-                Q1.add(D0.scale(sf[n - 1]).sub(Matrix.eye(nPhases).scale(arrRate[n])));
-            }
-            Q2.add(D1.scale(sf[0]).mult(Matrix.ones(nPhases, 1)));        // level 1 -> 0
-            for (int n = 2; n <= Nlev; n++) {
-                Q2.add(D1.scale(sf[n - 1]));                              // level n -> n-1
-            }
+            // PH service: the level carries the MULTISET of the phases the min(n,c)
+            // busy servers sit in, which is exact at any number of servers. At c == 1
+            // the multiset is just the phase, so this reproduces the single-server
+            // blocks (sf(n)*D0 - arr*I, sf(n)*D1) entry for entry.
+            LdqbdMphc.Blocks blk =
+                    LdqbdMphc.ldqbd_mphc(D0, D1, alpha, nServers, arrRate, sf);
+            Q0 = blk.Q0; Q1 = blk.Q1; Q2 = blk.Q2;
         }
 
         Ld ld = new Ld();
@@ -221,6 +247,53 @@ public final class Solver_mam_ldqbd_statevec {
         ld.Nlev = Nlev; ld.nPhases = nPhases; ld.isPH = isPH; ld.isOpen = isOpen;
         ld.queueIdx = queueIdx; ld.M = M; ld.nServers = nServers;
         ld.mean_service = mean_service; ld.hasLLD = hasLLD; ld.lambda_eff = lambda_eff;
+        ld.sf = sf; ld.utilPeak = utilPeak; ld.mu = mu;
+        // SETUP AND DELAY-OFF. Refused BY NAME outside the closed, single-server,
+        // exponential, load-independent case rather than answered as if the
+        // server were always warm, which is what this solver did until 2026-09
+        // and is BUG-78.
+        ld.hasSetup = sn.hassetup != null && sn.hassetup.getNumRows() > queueIdx
+                && sn.hassetup.get(queueIdx, 0) == 1.0;
+        ld.alpharate = Double.NaN; ld.alphascv = Double.NaN;
+        ld.betarate = Double.NaN; ld.betascv = Double.NaN;
+        if (ld.hasSetup) {
+            if (isOpen) {
+                throw new RuntimeException("Open LDQBD does not model a setup/delay-off server; "
+                        + "use method='dec.source', whose qbd_setupdelayoff covers the open case.");
+            }
+            if (isPH || nServers > 1) {
+                throw new RuntimeException("Closed LDQBD models a setup/delay-off server with "
+                        + "exponential service at a single server only; this station has "
+                        + "phase-type service or several servers.");
+            }
+            if (hasLLD) {
+                throw new RuntimeException("Closed LDQBD models a setup/delay-off server at its "
+                        + "nominal rate only; this station also declares a load-dependent scaling.");
+            }
+            Station setupStation = sn.stations.get(queueIdx);
+            boolean got = false;
+            if (setupStation instanceof Queue) {
+                Queue setupQueue = (Queue) setupStation;
+                for (int k = 0; k < K && !got; k++) {
+                    Object setupDist = setupQueue.getSetupTime(sn.jobclasses.get(k));
+                    Object delayOffDist = setupQueue.getDelayOffTime(sn.jobclasses.get(k));
+                    if (setupDist != null && delayOffDist != null) {
+                        try {
+                            java.lang.reflect.Method getMean = setupDist.getClass().getMethod("getMean");
+                            java.lang.reflect.Method getSCV = setupDist.getClass().getMethod("getSCV");
+                            ld.alpharate = 1.0 / ((Number) getMean.invoke(setupDist)).doubleValue();
+                            ld.alphascv = ((Number) getSCV.invoke(setupDist)).doubleValue();
+                            ld.betarate = 1.0 / ((Number) getMean.invoke(delayOffDist)).doubleValue();
+                            ld.betascv = ((Number) getSCV.invoke(delayOffDist)).doubleValue();
+                            got = true;
+                        } catch (Exception ex) {
+                            got = false;
+                        }
+                    }
+                }
+            }
+            ld.hasSetup = got;
+        }
         if (isOpen) {
             ld.refIdx = srcIdx; ld.delayRate = Double.NaN; ld.N = Double.POSITIVE_INFINITY;
         } else {
@@ -274,7 +347,6 @@ public final class Solver_mam_ldqbd_statevec {
         int M = ld.M;
         int qi = ld.queueIdx;
         int ri = ld.refIdx;
-        int c = ld.nServers;
 
         double[] pf = piflat.toArray1D();
         double psum = 0.0;
@@ -287,13 +359,14 @@ public final class Solver_mam_ldqbd_statevec {
         double mean_queue = 0.0;
         for (int n = 0; n <= Nlev; n++) mean_queue += n * pLevel[n];
 
-        double util;
-        if (ld.hasLLD || c == 1) {
-            util = 1 - pLevel[0];
-        } else {
-            util = 0;
-            for (int n = 1; n <= Nlev; n++) util += (Math.min(n, c) / (double) c) * pLevel[n];
-        }
+        // Utilization is the fraction of the station's PEAK capacity in use,
+        // sum_n p(n)*sf(n)/utilPeak, the work-based convention CTMC, MVA, NC and
+        // serial SSA all report. Without load dependence sf(n) = min(n,c) and
+        // utilPeak = c, so this is the average fraction of c servers in use; at
+        // c = 1 that is sf(n) = 1 for every n >= 1 and the sum collapses to
+        // 1 - p(0).
+        double util = 0;
+        for (int n = 1; n <= Nlev; n++) util += (ld.sf[n - 1] / ld.utilPeak) * pLevel[n];
 
         Matrix QN = new Matrix(M, 1); QN.zero();
         Matrix UN = new Matrix(M, 1); UN.zero();
@@ -311,7 +384,8 @@ public final class Solver_mam_ldqbd_statevec {
             double R_queue = (X > 0) ? mean_queue / X : 0.0;
             double R_delay = 1.0 / ld.delayRate;
             QN.set(ri, 0, mean_delay); UN.set(ri, 0, mean_delay); RN.set(ri, 0, R_delay); TN.set(ri, 0, X);
-            QN.set(qi, 0, mean_queue); UN.set(qi, 0, util / c); RN.set(qi, 0, R_queue); TN.set(qi, 0, X);
+            // util is already per-server: the /utilPeak is inside the sum above
+            QN.set(qi, 0, mean_queue); UN.set(qi, 0, util); RN.set(qi, 0, R_queue); TN.set(qi, 0, X);
         }
         Avg avg = new Avg();
         avg.QN = QN; avg.UN = UN; avg.RN = RN; avg.TN = TN;

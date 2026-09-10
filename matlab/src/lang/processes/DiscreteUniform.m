@@ -89,7 +89,10 @@ classdef DiscreteUniform < DiscreteDistribution
             end
             minVal = self.getParam(1).paramValue;
             maxVal = self.getParam(2).paramValue;
-            X = round(minVal + (maxVal-minVal)*rand(n,1));
+            % floor over the full width, not round over the interior: rounding
+            % gives the two endpoints half the mass of the interior points, so
+            % the sampler had the right mean and a variance below the law's
+            X = minVal + floor((maxVal-minVal+1)*rand(n,1));
         end
         
         function proc = getProcess(self)

@@ -3,17 +3,20 @@ package jline.examples.java.advanced;
 import jline.lang.Network;
 import jline.solvers.NetworkSolver;
 import jline.solvers.SolverOptions;
-import jline.solvers.mam.MAM;
+import jline.solvers.ag.AG;
 import jline.solvers.ctmc.CTMC;
 import jline.solvers.mva.MVA;
 import java.util.Scanner;
 
 /**
- * Examples demonstrating MAM with RCAT/INAP method for agent-based analysis.
+ * Examples demonstrating SolverAG, LINE's agent-based solver, and its INAP methods.
  *
- * The RCAT (Reversed Compound Agent Theorem) algorithm decomposes queueing
+ * SolverAG decomposes queueing
  * networks into interacting stochastic processes. INAP (Iterative Numerical
  * Approximation Procedure) efficiently solves the resulting fixed-point equations.
+ *
+ * These methods used to be reached as SolverMAM('inap'); they are SolverAG's
+ * since those methods moved there, and SolverMAM no longer lists them.
  *
  * References:
  * - Marin and Rota-Bulo', "A Mean-Field Analysis of a Class of Interactive
@@ -41,7 +44,7 @@ public class AgentModelExamples {
     /**
      * Open tandem queue (M/M/1 -> M/M/1) example.
      *
-     * Demonstrates MAM with INAP method on a simple open network with two queues in series.
+     * Demonstrates SolverAG with the INAP method on a simple open network with two queues in series.
      * Compares results against analytical M/M/1 formulas and MVA.
      *
      * @throws Exception if the solver encounters an error
@@ -64,14 +67,14 @@ public class AgentModelExamples {
         System.out.printf("  Queue1: U=%.4f, Q=%.4f%n", U1_exact, Q1_exact);
         System.out.printf("  Queue2: U=%.4f, Q=%.4f%n%n", U2_exact, Q2_exact);
 
-        // MAM with INAP method
-        System.out.println("MAM (method=inap):");
-        NetworkSolver solverInap = new MAM(model, "inap");
+        // AG with INAP method
+        System.out.println("AG (method=inap):");
+        NetworkSolver solverInap = new AG(model, "inap");
         solverInap.getAvgTable().print();
 
-        // MAM with exact method
-        System.out.println("\nMAM (method=exact):");
-        NetworkSolver solverExact = new MAM(model, "exact");
+        // AG with exact method
+        System.out.println("\nAG (method=exact):");
+        NetworkSolver solverExact = new AG(model, "exact");
         solverExact.getAvgTable().print();
 
         // MVA for comparison
@@ -83,9 +86,46 @@ public class AgentModelExamples {
     }
 
     /**
+     * Open tandem queue with PHASE-TYPE service.
+     *
+     * Queue1 sees the Poisson source directly, so it is an isolated M/PH/1 and
+     * its mean queue length must be the Pollaczek-Khinchine value whatever the
+     * reversed-rate iteration does. Both stations carry the same mean service
+     * time and differ only in variability, which the earlier scalar
+     * birth-death construction could not see: it returned the M/M/1 answer for
+     * either.
+     *
+     * @throws Exception if the solver encounters an error
+     */
+    public static void ag_tandem_phasetype() throws Exception {
+        System.out.println("=== Open Tandem with Phase-Type Service ===\n");
+
+        Network model = AgentModel.tandemPhaseType();
+
+        double lambda = 0.5, meanS = 1.0, scv1 = 0.5;
+        double rho = lambda * meanS;
+        double pk1 = rho + rho * rho * (1 + scv1) / (2 * (1 - rho));
+        System.out.println("Queue1 is an isolated M/Er2/1, so its exact mean queue length is the");
+        System.out.printf("Pollaczek-Khinchine value %.6f. The M/M/1 reading would be %.6f.%n%n",
+                pk1, rho / (1 - rho));
+
+        System.out.println("AG (method=inap):");
+        new AG(model, "inap").getAvgTable().print();
+
+        // 'inapinf' additionally drops the maxStates truncation, solving each
+        // open component on its infinite state space through Neuts' rate
+        // matrix R. That matters most at Queue2, whose service law has the
+        // heavier tail.
+        System.out.println("\nAG (method=inapinf):");
+        new AG(model, "inapinf").getAvgTable().print();
+
+        pauseForUser();
+    }
+
+    /**
      * Closed network with two PS queues.
      *
-     * Demonstrates MAM with INAP method on a closed queueing network with processor-sharing
+     * Demonstrates SolverAG with the INAP method on a closed queueing network with processor-sharing
      * discipline. Compares results against MVA and CTMC.
      *
      * @throws Exception if the solver encounters an error
@@ -95,14 +135,14 @@ public class AgentModelExamples {
 
         Network model = AgentModel.closedNetwork();
 
-        // MAM with INAP method
-        System.out.println("MAM (method=inap):");
-        NetworkSolver solverInap = new MAM(model, "inap");
+        // AG with INAP method
+        System.out.println("AG (method=inap):");
+        NetworkSolver solverInap = new AG(model, "inap");
         solverInap.getAvgTable().print();
 
-        // MAM with exact method
-        System.out.println("\nMAM (method=exact):");
-        NetworkSolver solverExact = new MAM(model, "exact");
+        // AG with exact method
+        System.out.println("\nAG (method=exact):");
+        NetworkSolver solverExact = new AG(model, "exact");
         solverExact.getAvgTable().print();
 
         // MVA for comparison
@@ -121,7 +161,7 @@ public class AgentModelExamples {
     /**
      * Multiclass closed network.
      *
-     * Demonstrates MAM with INAP method on a multiclass closed network. RCAT creates
+     * Demonstrates SolverAG with the INAP method on a multiclass closed network. The solver creates
      * separate processes for each (station, class) pair.
      *
      * @throws Exception if the solver encounters an error
@@ -132,14 +172,14 @@ public class AgentModelExamples {
 
         Network model = AgentModel.multiclassClosed();
 
-        // MAM with INAP method
-        System.out.println("MAM (method=inap):");
-        NetworkSolver solverInap = new MAM(model, "inap");
+        // AG with INAP method
+        System.out.println("AG (method=inap):");
+        NetworkSolver solverInap = new AG(model, "inap");
         solverInap.getAvgTable().print();
 
-        // MAM with exact method
-        System.out.println("\nMAM (method=exact):");
-        NetworkSolver solverExact = new MAM(model, "exact");
+        // AG with exact method
+        System.out.println("\nAG (method=exact):");
+        NetworkSolver solverExact = new AG(model, "exact");
         solverExact.getAvgTable().print();
 
         // MVA for comparison
@@ -153,8 +193,8 @@ public class AgentModelExamples {
     /**
      * Jackson network with probabilistic routing.
      *
-     * Demonstrates MAM with INAP method on an open Jackson network with feedback routing.
-     * RCAT models job transfers as synchronization actions between processes.
+     * Demonstrates SolverAG with the INAP method on an open Jackson network with feedback routing.
+     * The solver models job transfers as synchronization actions between processes.
      *
      * @throws Exception if the solver encounters an error
      */
@@ -163,14 +203,14 @@ public class AgentModelExamples {
 
         Network model = AgentModel.jacksonNetwork();
 
-        // MAM with INAP method
-        System.out.println("MAM (method=inap):");
-        NetworkSolver solverInap = new MAM(model, "inap");
+        // AG with INAP method
+        System.out.println("AG (method=inap):");
+        NetworkSolver solverInap = new AG(model, "inap");
         solverInap.getAvgTable().print();
 
-        // MAM with exact method
-        System.out.println("\nMAM (method=exact):");
-        NetworkSolver solverExact = new MAM(model, "exact");
+        // AG with exact method
+        System.out.println("\nAG (method=exact):");
+        NetworkSolver solverExact = new AG(model, "exact");
         solverExact.getAvgTable().print();
 
         // MVA for comparison
@@ -184,7 +224,7 @@ public class AgentModelExamples {
     /**
      * G-network (Gelenbe network) with negative customers.
      *
-     * Demonstrates MAM with INAP method on a G-network where negative customers (signals)
+     * Demonstrates SolverAG with the INAP method on a G-network where negative customers (signals)
      * remove jobs from queues. This models scenarios like job cancellations
      * or service interrupts.
      *
@@ -201,9 +241,9 @@ public class AgentModelExamples {
 
         Network model = AgentModel.gNetwork();
 
-        // MAM with INAP method
-        System.out.println("MAM (method=inap):");
-        NetworkSolver solverInap = new MAM(model, "inap");
+        // AG with INAP method
+        System.out.println("AG (method=inap):");
+        NetworkSolver solverInap = new AG(model, "inap");
         solverInap.getAvgTable().print();
 
         // Theoretical insight
@@ -223,10 +263,11 @@ public class AgentModelExamples {
      */
     public static void main(String[] args) throws Exception {
         System.out.println("========================================");
-        System.out.println("   MAM (RCAT/INAP) Examples");
+        System.out.println("   AG (agent-based) Examples");
         System.out.println("========================================\n");
 
         ag_tandem_open();
+        ag_tandem_phasetype();
         ag_closed_network();
         ag_multiclass_closed();
         ag_jackson_network();

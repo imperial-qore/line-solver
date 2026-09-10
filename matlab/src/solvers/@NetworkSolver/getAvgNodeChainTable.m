@@ -1,5 +1,18 @@
-function [AvgChain,QTc,UTc,RTc,WTc,ATc,TTc] = getAvgNodeChainTable(self,Q,U,R,T)
+function varargout = getAvgNodeChainTable(self,varargin)
 % [AVGCHAIN,QTC,UTC,RTC,WTC,ATC,TTC] = GETAVGCHAINNODETABLE(SELF,Q,U,R,T)
+% The result recorder captures the returned table together with the solver
+% that produced it, so cross-codebase parity is asserted against the values a
+% solver RETURNED rather than the text it printed. Off unless a run asked for
+% it (LineResultRecorder.enable), and then it costs one appdata lookup here.
+% The wrapper exists so that recording happens on EVERY exit path, including
+% the early returns inside the implementation below.
+[scope, scopeGuard] = LineResultRecorder.enter(); %#ok<ASGLU>
+[varargout{1:max(nargout,1)}] = getAvgNodeChainTable_impl(self,varargin{:});
+LineResultRecorder.capture(scope, self, 'nodechain', varargout{1});
+end
+
+function [AvgChain,QTc,UTc,RTc,WTc,ATc,TTc] = getAvgNodeChainTable_impl(self,Q,U,R,T)
+% GETAVGNODECHAINTABLE_IMPL Implementation of GETAVGNODECHAINTABLE; see the wrapper above.
 
 % Copyright (c) 2012-2026, Imperial College London
 % All rights reserved.

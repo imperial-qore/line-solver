@@ -53,7 +53,14 @@ function [AoI, PAoI, aoiTable] = getAvgAoI(self)
 % All rights reserved.
 
 % Ensure solver has been run
-if isempty(self.result)
+
+% lang='cpp' fills aoiResults from line-cli (-s fluid -a aoi, the same
+% solve_mfq_aoi analysis) and then falls THROUGH to the body below, so the
+% summary table is built in one place rather than twice.
+if isfield(self.options,'lang') && strcmp(self.options.lang,'cpp')
+    self.result.solverSpecific.aoiResults = ...
+        CPPLINE.aoiResults(self.name, self.model, self.options);
+elseif isempty(self.result)
     self.getAvg();
 end
 

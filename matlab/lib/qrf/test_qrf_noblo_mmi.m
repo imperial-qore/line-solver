@@ -31,9 +31,9 @@ for i=1:M
     for h=1:size(MAPs{i}{1},1)
         for k=1:size(MAPs{i}{1},1)
             if h==k
-                v(i,k,h)=0; 
+                v(i,h,k)=0; 
             else
-                v(i,k,h)=MAPs{i}{1}(h,k);
+                v(i,h,k)=MAPs{i}{1}(h,k); % (from,to), as mu is: v(i,k,h) reverses an Erlang
             end
         end
     end
@@ -71,8 +71,10 @@ end
 % UNap=UNqrf
 % QNex=QNctmc(:)'
 % QNap=QNqrf/sum(QNqrf)*N
-[UNqrf,QNqrf] = qrf_bas_mmi_simple(1,M,MR,BB,K,F,N,mu,v,r);
-UNex=sum(UNctmc,2)'
-UNap=UNqrf
-QNex=sum(QNctmc,2)'
-QNap=QNqrf/sum(QNqrf)*N
+% qrf_bas_mmi_simple was removed on 2026-08-01; the full model needs the
+% blocking tables this probe does not build. Left as the disabled probe above.
+% [UNqrf,QNqrf] = qrf_bas_mmi(1,M,MR,MM,MM1,ZZ,ZM,BB,K,F,N,mu,v,r);
+% UNex=sum(UNctmc,2)'
+% UNap=UNqrf
+% QNex=sum(QNctmc,2)'
+% QNap=QNqrf/sum(QNqrf)*N

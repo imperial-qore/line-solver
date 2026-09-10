@@ -20,7 +20,7 @@ P{1,1} = jdmodel.serialRouting(node);
 P{2,2} = jdmodel.serialRouting(node);
 jdmodel.link(P);
 
-jdAvgTableCTMC=CTMC(jdmodel).getAvgTable
+jdAvgTableCTMC=CTMC(jdmodel,'exact').getAvgTable
 jdAvgTableJD=MVA(jdmodel,'method','qd').getAvgTable
 % JMT is not solved here: the JSIM writer has no representation for the
 % joint-dependence handle, so SolverJMT rejects the model rather than

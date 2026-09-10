@@ -77,7 +77,7 @@ fprintf('Parameters:\n');
 fprintf('  Station 1: lambda=0.6, mu=1.0, rho=0.6\n');
 fprintf('  Station 2: lambda=0.6, mu=1.2, rho=0.5\n\n');
 
-solver = CTMC(model);
+solver = CTMC(model,'exact');
 avg_table = solver.getAvgTable();
 
 fprintf('CTMC Results for Tandem M/M/1:\n');

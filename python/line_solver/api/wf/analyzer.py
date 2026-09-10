@@ -8,7 +8,7 @@ Integrates various detection algorithms for complete workflow characterization.
 Based on Wf_analyzer.kt from the MDN toolbox.
 
 References:
-    Original Kotlin: jar/src/main/kotlin/jline/api/wf/Wf_analyzer.kt
+    Original JAR: jar/src/main/java/jline/api/wf/Wf_analyzer.java
 """
 
 import numpy as np

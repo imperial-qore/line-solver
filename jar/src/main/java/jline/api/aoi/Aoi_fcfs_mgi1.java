@@ -58,13 +58,31 @@ public final class Aoi_fcfs_mgi1 {
         // Mean Peak AoI
         double peakAoI = E_T + E_Y;
 
-        // LST of AoI (Theorem 2)
+        // LST of AoI (Inoue et al. 2019, Theorem 2), via the general age formula
+        //   A*(s) = (lambda/s) * ( T*(s) - Apeak*(s) )
+        // the cycle average of exp(-s*age) over a departure interval: the age
+        // starts each cycle at the system time T of the packet just delivered
+        // and grows to the peak T + (next interarrival) at the next delivery.
+        // For M/GI/1 FCFS Lindley gives W' = max(0, T - Y), so W' + Y is
+        // max(Y, T), and with Y ~ Exp(lambda) independent of T,
+        //   E[exp(-s*max(Y,T))] = T*(s) - (s/(s+lambda)) * T*(s+lambda).
+        //
+        // THE PREVIOUS FORM WAS NOT AN LST: (lambda*H*(s))/(s+lambda-lambda*H*(s))
+        // diverges as s -> 0, so A*(0) was +Inf instead of 1 and the value
+        // exceeded 1 for small s. Checked against simulation on M/E2/1: at
+        // s = 0.3 the old form gave 1.3062, the form below 0.56935, and the
+        // sample path 0.56948.
         LstFunction lstAoI = new LstFunction() {
             @Override
             public double evaluate(double s) {
+                if (Math.abs(s) < 1e-12) {
+                    return 1.0; // A*(0) = 1 for any proper LST
+                }
                 double H_s = H_lst.evaluate(s);
-                double W_s = (1.0 - rho) * s / (s - lambda + lambda * H_s);
-                return (lambda * H_s) / (s + lambda - lambda * H_s) * W_s;
+                double T_s = tstarMGI1(s, lambda, rho, H_lst);
+                double T_sl = tstarMGI1(s + lambda, lambda, rho, H_lst);
+                double peak_s = H_s * (T_s - (s / (s + lambda)) * T_sl);
+                return (lambda / s) * (T_s - peak_s);
             }
         };
 
@@ -73,6 +91,9 @@ public final class Aoi_fcfs_mgi1 {
 
     /** System-time LST T*(s) = H*(s)*W*(s) with W* the P-K waiting LST. */
     private static double tstarMGI1(double s, double lambda, double rho, LstFunction H_lst) {
+        if (Math.abs(s) < 1e-12) {
+            return 1.0; // removable 0/0 at the origin
+        }
         double H_s = H_lst.evaluate(s);
         return H_s * (1.0 - rho) * s / (s - lambda + lambda * H_s);
     }

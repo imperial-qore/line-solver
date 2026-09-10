@@ -7,7 +7,7 @@ import jline.lang.Network;
 import jline.solvers.NetworkAvgTable;
 import jline.solvers.ctmc.SolverCTMC;
 import jline.solvers.ldes.SolverLDES;
-import jline.solvers.fluid.SolverFluid;
+import jline.solvers.fluid.SolverFLD;
 import jline.solvers.wrappers.jmt.SolverJMT;
 import jline.solvers.mam.SolverMAM;
 import jline.solvers.mva.SolverMVA;
@@ -280,12 +280,12 @@ public class OpenExamplesTest {
         
         final NetworkAvgTable[] avgTableHolder = new NetworkAvgTable[1];
         withSuppressedOutput(() -> {
-            SolverFluid solver = new SolverFluid(model);
+            SolverFLD solver = new SolverFLD(model);
             avgTableHolder[0] = solver.getAvgTable();
             // Verify the executed method
             assertNotNull(solver.result, "Solver result should not be null");
-            assertEquals("default/matrix", solver.result.method,
-                "Fluid solver should use default/matrix method");
+            assertEquals("default/minnormal", solver.result.method,
+                "Fluid solver should use default/minnormal method");
         });
         NetworkAvgTable avgTable = avgTableHolder[0];
         
@@ -293,12 +293,12 @@ public class OpenExamplesTest {
         
         // Expected values from MATLAB output (Fluid solver)
         // Order: Delay(Class1), Queue1(Class1), Source(Class1)
-        double[] expectedQLen = {0.0216666666666667, 0.1, 0.0};
-        double[] expectedUtil = {0.0216666666666667, 0.1, 0.0};
-        double[] expectedRespT = {0.216666666666667, 1.0, 0.0};
-        double[] expectedResidT = {0.216666666666667, 1.0, 0.0};
-        double[] expectedArvR = {0.1, 0.1, 0.0};
-        double[] expectedTput = {0.1, 0.1, 0.1};
+        double[] expectedQLen = {0.021666666666665384, 0.10020646879158356, 0.0};
+        double[] expectedUtil = {0.021666666666665384, 0.09999999998595972, 0.0};
+        double[] expectedRespT = {0.21666666666666218, 1.0020646880565283, 0.0};
+        double[] expectedResidT = {0.21666666666666218, 1.0020646880565283, 0.0};
+        double[] expectedArvR = {0.1, 0.09999999999999615, 0.0};
+        double[] expectedTput = {0.09999999999999615, 0.09999999998595971, 0.1};
         
         assertEquals(3, avgTable.getQLen().size(), "Expected 3 entries matching MATLAB output");
         
@@ -444,7 +444,7 @@ public class OpenExamplesTest {
         
         final NetworkAvgTable[] avgTableHolder = new NetworkAvgTable[1];
         withSuppressedOutput(() -> {
-            SolverFluid solver = new SolverFluid(model, "keep", true, "verbose", 1, "method", "closing");
+            SolverFLD solver = new SolverFLD(model, "keep", true, "verbose", 1, "method", "closing");
             avgTableHolder[0] = solver.getAvgTable();
             // Verify the executed method
             assertNotNull(solver.result, "Solver result should not be null");
@@ -455,15 +455,15 @@ public class OpenExamplesTest {
 
         assertNotNull(avgTable);
 
-        // Previous MAPE: 0.0043%, Max APE: 0.0434%
         // Expected values from MATLAB output (Fluid solver, closing method)
         // Order: Source 1(ClassA,ClassB), Queue 1(ClassA,ClassB), Queue 2(ClassC)
-        double[] expectedQLen = {0.0, 0.0, 0.4, 0.3, 0.45019534820775153};
-        double[] expectedUtil = {0.0, 0.0, 0.4, 0.3, 0.4501953482077515};
+        // Queue 2 carries the exact fluid fixed point rho = lambda*S = 3*0.15
+        double[] expectedQLen = {0.0, 0.0, 0.4, 0.3, 0.45};
+        double[] expectedUtil = {0.0, 0.0, 0.4, 0.3, 0.45};
         double[] expectedRespT = {0.0, 0.0, 0.19999999999999996, 0.29999999999999993, 0.15};
         double[] expectedResidT = {0.0, 0.0, 0.13333333333333333, 0.09999999999999994, 0.15000000000000005};
         double[] expectedArvR = {0.0, 0.0, 2.0, 1.0, 3.000000000000001};
-        double[] expectedTput = {2.0, 1.0, 2.0000000000000004, 1.0000000000000002, 3.0013023213850105};
+        double[] expectedTput = {2.0, 1.0, 2.0000000000000004, 1.0000000000000002, 3.0};
         
         assertEquals(5, avgTable.getQLen().size(), "Expected 5 entries matching MATLAB output");
         
@@ -680,25 +680,29 @@ public class OpenExamplesTest {
         
         final NetworkAvgTable[] avgTableHolder = new NetworkAvgTable[1];
         withSuppressedOutput(() -> {
-            SolverFluid solver = new SolverFluid(model);
+            SolverFLD solver = new SolverFLD(model);
             avgTableHolder[0] = solver.getAvgTable();
             // Verify the executed method
             assertNotNull(solver.result, "Solver result should not be null");
-            assertEquals("default/matrix", solver.result.method,
-                "Fluid solver should use default/matrix method");
+            assertEquals("default/minnormal", solver.result.method,
+                "Fluid solver should use default/minnormal method");
         });
         NetworkAvgTable avgTable = avgTableHolder[0];
         
         assertNotNull(avgTable);
         
-        // Expected values from MATLAB output (Fluid solver)
+        // Re-recorded 2026-09-01. d81681dff tightened the min-normal closure
+        // from CoarseTol (1e-3) to mom_tol = 1e-6, which MOVES the converged
+        // answer, so the row it replaces was stale rather than wrong -- see
+        // _kb/11-conventions-and-gotchas.md. Confirmed by two other codebases:
+        // native python to 5.7e-11 and MATLAB R2026a to 3.5e-8.
         // Order: Source(Class1,Class2), Station1(Class1,Class2), Station2(Class1,Class2), Station3(Class1,Class2)
-        double[] expectedQLen = {0.0, 0.0, 1.82, 3.68, 0.2, 0.2, 0.1, 0.36};
-        double[] expectedUtil = {0.0, 0.0, 1.82, 3.68, 0.2, 0.2, 0.1, 0.36};
-        double[] expectedRespT = {0.0, 0.0, 91.0, 92.0, 10.0, 5.0, 5.0, 9.0};
-        double[] expectedResidT = {0.0, 0.0, 91.0, 92.0, 10.0, 5.0, 5.0, 9.0};
-        double[] expectedArvR = {0.0, 0.0, 0.02, 0.04, 0.02, 0.04, 0.02, 0.04};
-        double[] expectedTput = {0.02, 0.04, 0.02, 0.04, 0.02, 0.04, 0.02, 0.04};
+        double[] expectedQLen = {0.0, 0.0, 1.8199999999615633, 3.6799999998997404, 0.2548327978016679, 0.254832797800452, 0.13982871098247115, 0.5033833595339336};
+        double[] expectedUtil = {0.0, 0.0, 1.8199999999615633, 3.6799999998997404, 0.19999999999500304, 0.19999999999414644, 0.09999999999724844, 0.35999999998770466};
+        double[] expectedRespT = {0.0, 0.0, 91.0, 92.0, 12.741639890401741, 6.37081994519776, 6.991435549315931, 12.584583988778151};
+        double[] expectedResidT = {0.0, 0.0, 91.0, 92.0, 12.741639890401741, 6.37081994519776, 6.991435549315932, 12.584583988778155};
+        double[] expectedArvR = {0.0, 0.0, 0.02, 0.04, 0.01999999999957762, 0.03999999999891022, 0.019999999999500306, 0.039999999998829285};
+        double[] expectedTput = {0.02, 0.04, 0.01999999999957762, 0.03999999999891022, 0.019999999999500306, 0.039999999998829285, 0.01999999999944969, 0.03999999999863385};
         
         assertEquals(8, avgTable.getQLen().size(), "Expected 8 entries matching MATLAB output");
         

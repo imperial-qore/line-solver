@@ -124,7 +124,21 @@ public final class Solver_ssa_analyzer_parallel {
                                 Object phEntry = phStation == null ? null : phStation.get(sn.jobclasses.get(k));
                                 if (phEntry != null && !((jline.util.matrix.MatrixCell) phEntry).isEmpty()) {
                                     jline.util.matrix.MatrixCell ph = (jline.util.matrix.MatrixCell) phEntry;
-                                    double map_mean = Map_mean.map_mean(ph.get(0), ph.get(1)) / S.get(i);
+                                    // A LOAD-DEPENDENT STATION IS NORMALIZED BY ITS PEAK CAPACITY,
+                                    // max(c, max(alpha)), not by the server count: the scaling
+                                    // multiplies the nominal rate, so dividing by c alone reports the
+                                    // work delivered against a capacity the station has already
+                                    // exceeded, and gives a utilization ABOVE ONE (measured 1.6529 on
+                                    // a closed Delay+Queue, N=4, alpha = [1 1.5 2 2.5], where the
+                                    // answer is 0.6612). Same ceff as the serial analyzer and CTMC.
+                                    double ceff = S.get(i);
+                                    if (sn.lldscaling != null && !sn.lldscaling.isEmpty()
+                                            && i < sn.lldscaling.getNumRows()) {
+                                        for (int j = 0; j < sn.lldscaling.getNumCols(); j++) {
+                                            ceff = Math.max(ceff, sn.lldscaling.get(i, j));
+                                        }
+                                    }
+                                    double map_mean = Map_mean.map_mean(ph.get(0), ph.get(1)) / ceff;
                                     // see _kb/06-solver-catalog.md for rationale
                                     boolean stationCapFinite = !Double.isInfinite(userCap.get(i)) && userCap.get(i) < Integer.MAX_VALUE;
                                     boolean classCapFinite = !Double.isInfinite(userClasscap.get(i, k)) && userClasscap.get(i, k) < Integer.MAX_VALUE;

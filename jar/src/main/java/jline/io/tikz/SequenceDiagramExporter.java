@@ -12,6 +12,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import jline.GlobalConstants;
+import jline.VerboseLevel;
 
 /**
  * Exports a LayeredNetwork model as a UML sequence diagram using TikZ/pgf-umlsd.
@@ -440,7 +442,9 @@ public class SequenceDiagramExporter {
             throw new RuntimeException("pdftoppm was interrupted", e);
         }
 
-        System.out.println("PNG exported to: " + filePath);
+        if (GlobalConstants.Verbose != VerboseLevel.SILENT) {
+            System.out.println("PNG exported to: " + filePath);
+        }
     }
 
     /**

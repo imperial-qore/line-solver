@@ -9,6 +9,7 @@ package jline.api.fj;
 import java.util.ArrayList;
 import java.util.List;
 
+import jline.api.sn.SnJoinQuorum;
 import jline.util.Pair;
 
 import jline.lang.JobClass;
@@ -67,6 +68,24 @@ public final class FJValidation {
 
             if (sourceIdx < 0 || sinkIdx < 0 || forkIdx < 0 || joinIdx < 0) {
                 return new Pair<Boolean, FJInfo>(Boolean.FALSE, null);
+            }
+
+            // FJ_codes computes the response-time tail of an AND-join: mainFJ
+            // synchronises on the LAST branch and has no parameter for a quorum, so a
+            // k-of-n model routed here would come back with the all-join tail under a
+            // quorum's name, the same number for every k. Refuse it instead;
+            // FJ_tail_ordstat covers the quorum.
+            int nsibHere = 0;
+            for (int a = 0; a < sn.connmatrix.getNumCols(); a++) {
+                if (sn.connmatrix.get(forkIdx, a) > 0) {
+                    nsibHere++;
+                }
+            }
+            for (int r0 = 0; r0 < sn.nclasses; r0++) {
+                if (SnJoinQuorum.snJoinQuorum(sn, sn.nodes.get(joinIdx),
+                        sn.jobclasses.get(r0), nsibHere) < nsibHere) {
+                    return new Pair<Boolean, FJInfo>(Boolean.FALSE, null);
+                }
             }
 
             List<Integer> queueIndices = new ArrayList<Integer>();

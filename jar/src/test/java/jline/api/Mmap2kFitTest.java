@@ -26,7 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * A random canonical MMAP(2,K) is built, its characteristics are measured, and
  * the fit must return the same process: three moments, decay rate, class
  * probabilities, forward and backward moments. The marking inverse is linear
- * and independent of K (derived in sage/proofs/mmap2k_marking_inverse.py), so
+ * and independent of K (derived in io/sage/proofs/mmap2k_marking_inverse.py), so
  * recovery is exact rather than approximate, at every K.
  */
 public class Mmap2kFitTest {

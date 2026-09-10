@@ -30,7 +30,7 @@ P{hitClass, jobClass}(cacheNode, delay) =  1.0;
 P{missClass, jobClass}(cacheNode, delay) =  1.0;
 model.link(P);
 
-solver{1} = CTMC(model,'keep',false);
+solver{1} = CTMC(model, 'exact','keep',false);
 AvgTable{1} = solver{1}.getAvgNodeTable; AvgTable{1}
 
 model.reset;

@@ -69,48 +69,37 @@ public final class Pfqn_ca {
 
         // see _kb/03-api-layer.md for rationale
         double Nt = N.elementSum();
-        double lGest = Double.NEGATIVE_INFINITY;
         Matrix Zsum = Zlocal.sumCols();
-        for (int i = 0; i < M; i++) {
-            double t = 0.0;
-            boolean ok = true;
-            for (int r = 0; r < R; r++) {
-                if (N.get(r) > 0) {
-                    if (L.get(i, r) > 0) {
-                        t += N.get(r) * FastMath.log(L.get(i, r));
-                    } else {
-                        ok = false;
-                        break;
-                    }
+        // Each class independently takes whichever station -- or the delay -- gives it
+        // its largest factor. The mixed state so named has term at least the product of
+        // those factors, because a station holding several classes carries a multinomial
+        // coefficient of at least one, so this is still a LOWER bound on log G. It
+        // dominates the per-configuration maximum it replaces, which asked ONE station
+        // (or the delay) to hold every class at once and so dropped the delay entirely
+        // as soon as a single class had no think time. That collapse is what made the
+        // scaling scale UP: on L=[1e-9,1], N=[99,1], Z=[1,0] the old estimate was the
+        // all-at-the-queue -2051.6 against a true log G of -359.1, giving kscale=-30,
+        // and Z/2^-30 = 1.07e9 overflowed the delay column Z^n/n! at n=[40,0].
+        double lGest = 0.0;
+        for (int r = 0; r < R; r++) {
+            if (N.get(r) <= 0) {
+                continue;
+            }
+            double best = Double.NEGATIVE_INFINITY;
+            for (int i = 0; i < M; i++) {
+                if (L.get(i, r) > 0) {
+                    best = Maths.max(best, N.get(r) * FastMath.log(L.get(i, r)));
                 }
             }
-            if (ok) {
-                lGest = Maths.max(lGest, t);
-            }
-        }
-        boolean anyZ = false;
-        for (int r = 0; r < R; r++) {
             if (Zsum.get(r) > 0) {
-                anyZ = true;
+                best = Maths.max(best, N.get(r) * FastMath.log(Zsum.get(r)) - Maths.factln(N.get(r)));
+            }
+            if (Double.isInfinite(best) || Double.isNaN(best)) {
+                // no station and no delay can hold class r, so G(N) is exactly zero
+                lGest = Double.NEGATIVE_INFINITY;
                 break;
             }
-        }
-        if (anyZ) {                       // all jobs at the delay
-            double t = 0.0;
-            boolean ok = true;
-            for (int r = 0; r < R; r++) {
-                if (N.get(r) > 0) {
-                    if (Zsum.get(r) > 0) {
-                        t += N.get(r) * FastMath.log(Zsum.get(r)) - Maths.factln(N.get(r));
-                    } else {
-                        ok = false;
-                        break;
-                    }
-                }
-            }
-            if (ok) {
-                lGest = Maths.max(lGest, t);
-            }
+            lGest += best;
         }
         int kscale;
         if (Double.isInfinite(lGest) || Double.isNaN(lGest)) {

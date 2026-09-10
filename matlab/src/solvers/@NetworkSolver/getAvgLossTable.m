@@ -1,4 +1,4 @@
-function LossTable = getAvgLossTable(self)
+function varargout = getAvgLossTable(self,varargin)
 % LOSSTABLE = GETAVGLOSSTABLE()
 %
 % Table of loss (drop) metrics for every station-class pair that receives
@@ -12,22 +12,51 @@ function LossTable = getAvgLossTable(self)
 % and it excludes the Source, whose offered arrival rate is zero. A lossless
 % station has ArvR = Tput and therefore LossRate = LossRatio = 0.
 %
+% A Join is the exception, and its row is computed differently: see
+% sn_join_droprate. A standard join reports LossRate = 0 there; a quorum join
+% reports the rate at which stragglers are discarded.
+%
 % See also NetworkSolver.getAvgTable, NetworkSolver.getAvg
 %
 % Copyright (c) 2012-2026, Imperial College London
 % All rights reserved.
+% The result recorder captures the returned table together with the solver
+% that produced it, so cross-codebase parity is asserted against the values a
+% solver RETURNED rather than the text it printed. Off unless a run asked for
+% it (LineResultRecorder.enable), and then it costs one appdata lookup here.
+% The wrapper exists so that recording happens on EVERY exit path, including
+% the early returns inside the implementation below.
+[scope, scopeGuard] = LineResultRecorder.enter(); %#ok<ASGLU>
+[varargout{1:max(nargout,1)}] = getAvgLossTable_impl(self,varargin{:});
+LineResultRecorder.capture(scope, self, 'loss', varargout{1});
+end
+
+function LossTable = getAvgLossTable_impl(self)
+% GETAVGLOSSTABLE_IMPL Implementation of GETAVGLOSSTABLE; see the wrapper above.
 
 [~,~,~,TN,AN] = self.getAvg();
 sn = self.model.getStruct();
 
-% Fork-Join quorum sibling-drop rate (LDES only), station-indexed. At a
-% synchronizing Join the identity LossRate = ArvR - Tput does not hold (Tput is
-% in parent units, discarded siblings in sibling units), so on Join rows the
-% explicit drop rate replaces ArvR - Tput. ArvR is already the offered sibling
-% rate (flow balance over all forked siblings), so LossRatio = drop / ArvR.
+% Fork-Join sibling-drop rate, station-indexed. At a synchronizing Join the
+% identity LossRate = ArvR - Tput does not hold, because the two rates are in
+% different units: ArvR counts the SIBLINGS offered (N per parent job) and Tput
+% the PARENT jobs released. Reading ArvR - Tput there charges (N-1)/N of the
+% offered traffic as lost at EVERY join, standard joins included. On a Join row
+% the drop rate therefore replaces ArvR - Tput unconditionally: the solver's own
+% measurement when it supplies one (SolverLDES counts the discards on its sample
+% path), otherwise sn_join_droprate's ArvR - K*Tput, which is exact given the
+% two rates. LossRatio stays drop / ArvR.
 DropRateJoin = [];
 if isprop(self, 'result') && isstruct(self.result) && isfield(self.result, 'DropRateJoin')
     DropRateJoin = self.result.DropRateJoin;
+end
+isJoinRow = false(size(AN,1),1);
+for ist0 = 1:size(AN,1)
+    ind0 = sn.stationToNode(ist0);
+    isJoinRow(ist0) = ind0 >= 1 && sn.nodetype(ind0) == NodeType.Join;
+end
+if any(isJoinRow) && (isempty(DropRateJoin) || ~isequal(size(DropRateJoin), size(AN)))
+    DropRateJoin = sn_join_droprate(sn, TN, AN);
 end
 
 Station = {};
@@ -47,9 +76,9 @@ for ist = 1:size(AN,1)
         if ~isempty(DropRateJoin) && ist <= size(DropRateJoin,1) && r <= size(DropRateJoin,2)
             d = DropRateJoin(ist,r);
         end
-        if isfinite(d) && d > 0
-            lr = d;
-            lc = d / a;
+        if isJoinRow(ist)
+            lr = max(0, d);
+            lc = lr / a;
         else
             lr = a - t;
             lc = (a - t) / a;

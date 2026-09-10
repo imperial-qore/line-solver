@@ -1,4 +1,4 @@
-function LossTable = getAvgRegionLossTable(self)
+function varargout = getAvgRegionLossTable(self,varargin)
 % LOSSTABLE = GETAVGREGIONLOSSTABLE()
 %
 % Table of loss (drop) metrics per finite-capacity region and class, for
@@ -14,6 +14,19 @@ function LossTable = getAvgRegionLossTable(self)
 %
 % Copyright (c) 2012-2026, Imperial College London
 % All rights reserved.
+% The result recorder captures the returned table together with the solver
+% that produced it, so cross-codebase parity is asserted against the values a
+% solver RETURNED rather than the text it printed. Off unless a run asked for
+% it (LineResultRecorder.enable), and then it costs one appdata lookup here.
+% The wrapper exists so that recording happens on EVERY exit path, including
+% the early returns inside the implementation below.
+[scope, scopeGuard] = LineResultRecorder.enter(); %#ok<ASGLU>
+[varargout{1:max(nargout,1)}] = getAvgRegionLossTable_impl(self,varargin{:});
+LineResultRecorder.capture(scope, self, 'regionloss', varargout{1});
+end
+
+function LossTable = getAvgRegionLossTable_impl(self)
+% GETAVGREGIONLOSSTABLE_IMPL Implementation of GETAVGREGIONLOSSTABLE; see the wrapper above.
 
 self.getAvgTable();
 

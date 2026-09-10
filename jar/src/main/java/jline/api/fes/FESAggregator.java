@@ -581,4 +581,72 @@ public final class FESAggregator {
         }
         return size;
     }
+
+    /** Per-population queue lengths and utilizations of the isolated subnetwork. */
+    public static final class ConditionalMetrics {
+        /** Indexed by the linearized population state; each (M_sub x K). */
+        public final List<Matrix> QN;
+        /** Indexed by the linearized population state; each (M_sub x K). */
+        public final List<Matrix> UN;
+
+        ConditionalMetrics(List<Matrix> QN, List<Matrix> UN) {
+            this.QN = QN;
+            this.UN = UN;
+        }
+    }
+
+    /**
+     * Per-station metrics of the ISOLATED subnetwork at every population state.
+     *
+     * <p>The companion of {@code computeThroughputs}. That returns the aggregate
+     * throughput X(n) that becomes the flow-equivalent server's rate, which is
+     * all the REDUCED model needs; it is not enough to report the COLLAPSED
+     * stations' own metrics. Those are recovered by conditioning on the FES
+     * population, E[Q_i] = sum_n P(N_fes = n) * Q_i(n) -- the Chandy-Herzog-Woo
+     * hierarchical decomposition, exact when the subnetwork is product-form.
+     * This supplies the Q_i(n) and U_i(n) that sum is taken over, indexed by
+     * {@code Ljd.ljd_linearize} exactly as the throughput table is.</p>
+     *
+     * @param isolatedModel the isolated subnetwork built by the transform
+     * @param cutoffs per-class population cutoffs
+     * @return the per-population tables
+     */
+    public static ConditionalMetrics computeConditionalMetrics(Network isolatedModel,
+                                                               Matrix cutoffs) {
+        int K = isolatedModel.getClasses().size();
+        int M = isolatedModel.getStations().size();
+        int tableSize = computeTableSize(cutoffs);
+        ArrayList<Matrix> QN = new ArrayList<Matrix>();
+        ArrayList<Matrix> UN = new ArrayList<Matrix>();
+        for (int idx = 0; idx < tableSize; idx++) {
+            QN.add(new Matrix(M, K));
+            UN.add(new Matrix(M, K));
+        }
+        for (int idx = 0; idx < tableSize; idx++) {
+            Matrix nvec = jline.api.pfqn.ld.Ljd.ljd_delinearize(idx, cutoffs);
+            double total = 0;
+            for (int k = 0; k < K; k++) total += nvec.get(0, k);
+            if (total == 0) {
+                continue; // an empty subnetwork holds nothing and serves nothing
+            }
+            try {
+                for (int k = 0; k < K; k++) {
+                    ((ClosedClass) isolatedModel.getClasses().get(k))
+                            .setPopulation(nvec.get(0, k));
+                }
+                isolatedModel.resetStruct();
+                SolverMVA solver = new SolverMVA(isolatedModel);
+                solver.runAnalyzer();
+                Object result = solver.result;
+                Matrix Q = (Matrix) result.getClass().getField("QN").get(result);
+                Matrix U = (Matrix) result.getClass().getField("UN").get(result);
+                if (Q != null) QN.set(idx, Q.copy());
+                if (U != null) UN.set(idx, U.copy());
+            } catch (Exception e) {
+                // A population the isolated subnetwork cannot hold contributes
+                // nothing; the reduced chain gives it probability zero anyway.
+            }
+        }
+        return new ConditionalMetrics(QN, UN);
+    }
 }

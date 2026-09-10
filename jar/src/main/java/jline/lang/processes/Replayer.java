@@ -18,6 +18,7 @@ import org.apache.commons.math3.stat.descriptive.moment.Variance;
 
 import java.io.File;
 import java.io.FileNotFoundException;
+import java.util.Map;
 import java.util.Random;
 import java.util.Scanner;
 import java.util.Vector;
@@ -162,6 +163,41 @@ public class Replayer extends Distribution {
      */
     public double[] getData() {
         return data;
+    }
+
+    /**
+     * Test whether the trace is a sample path of a NON-HOMOGENEOUS POISSON
+     * process, by the conditional-uniform KS test with the Lewis refinement
+     * ({@link jline.api.infer.InferNhppKs#infer_nhpp_ks}).
+     *
+     * <p>WHY THE QUESTION IS WORTH ASKING. A Replayer is used wherever a
+     * measured stream is fed to a solver, and every analytical method that
+     * consumes it as an arrival process assumes SOMETHING about its dependence
+     * structure. This test says whether the Poisson assumption -- independent
+     * increments, whatever the rate does with time -- survives contact with the
+     * data, which is the assumption a time-varying analysis (SolverFluid's
+     * 'mtginf', 'mol', 'tvms') rests on. A small p-value says the stream is not
+     * Poisson at any rate function, so those methods are answering a different
+     * process.
+     *
+     * <p>The trace holds INTER-ARRIVAL times, so the arrival epochs are their
+     * cumulative sum and the horizon is the last of them.
+     *
+     * @return the map of infer_nhpp_ks: statistic, pvalue and n
+     */
+    public Map<String, Double> isNHPP() {
+        double[] ia = getData();
+        if (ia == null || ia.length < 2) {
+            throw new RuntimeException("Replayer.isNHPP: the trace needs at least two "
+                    + "inter-arrival times to test");
+        }
+        double[] epochs = new double[ia.length];
+        double acc = 0.0;
+        for (int i = 0; i < ia.length; i++) {
+            acc += ia[i];
+            epochs[i] = acc;
+        }
+        return jline.api.infer.InferNhppKs.infer_nhpp_ks(epochs, epochs[epochs.length - 1]);
     }
 
     @Override

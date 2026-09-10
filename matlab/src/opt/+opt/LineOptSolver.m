@@ -12,14 +12,14 @@ classdef LineOptSolver < handle
         freeVariables     % cell of opt.DecisionVariable (post-freeze)
         evaluators        % cell of opt.LineEvaluator
         scenarioWeights
-        caches            % cell of containers.Map
+        caches            % cell of dictionary
         iterations = 0;
         bestValue = inf;
         bestX = [];
         convergenceHistory = [];
         startTime
         deadline = inf;
-        lqnSensCache      % Map valuesKey -> sensitivity Map (or [])
+        lqnSensCache      % dict valuesKey -> sensitivity dict (or [])
         gradCalls = 0;
     end
 
@@ -27,10 +27,10 @@ classdef LineOptSolver < handle
         function obj = LineOptSolver(problem, options)
             obj.problem = problem;
             obj.opt = options;
-            obj.fixedValueMap = containers.Map('KeyType', 'char', 'ValueType', 'any');
+            obj.fixedValueMap = configureDictionary('string', 'cell');
             fixed = problem.getFixedVariables();
             for k = 1:numel(fixed)
-                obj.fixedValueMap(fixed{k}{1}.getName()) = fixed{k}{2};
+                obj.fixedValueMap{fixed{k}{1}.getName()} = fixed{k}{2};
             end
 
             % Explicit layer freezing: variables whose layer is in frozenLayers
@@ -49,7 +49,7 @@ classdef LineOptSolver < handle
                 w(i+1) = scen{i}{2};
             end
             obj.scenarioWeights = w;
-            obj.lqnSensCache = containers.Map('KeyType', 'char', 'ValueType', 'any');
+            obj.lqnSensCache = configureDictionary('string', 'cell');
         end
 
         function [freeVars, fixed] = freezeLayers(obj, freeVars, fixed)
@@ -78,7 +78,7 @@ classdef LineOptSolver < handle
                     value = var.currentValue(model);
                     if ~isempty(value)
                         fixed{end+1} = {var, value}; %#ok<AGROW>
-                        obj.fixedValueMap(var.getName()) = value;
+                        obj.fixedValueMap{var.getName()} = value;
                     end
                     % else: drop; the model keeps its built-in value
                 else
@@ -96,9 +96,9 @@ classdef LineOptSolver < handle
             obj.convergenceHistory = [];
             obj.caches = cell(1, numel(obj.evaluators));
             for i = 1:numel(obj.evaluators)
-                obj.caches{i} = containers.Map('KeyType', 'char', 'ValueType', 'any');
+                obj.caches{i} = configureDictionary('string', 'cell');
             end
-            obj.lqnSensCache = containers.Map('KeyType', 'char', 'ValueType', 'any');
+            obj.lqnSensCache = configureDictionary('string', 'cell');
             obj.gradCalls = 0;
             obj.deadline = obj.opt.timeLimit;
 
@@ -173,7 +173,7 @@ classdef LineOptSolver < handle
             cons = obj.problem.getConstraints();
             scenarioValues = zeros(1, numel(obj.evaluators));
             for i = 1:numel(obj.evaluators)
-                res = obj.evaluators{i}.evaluateValuesWithCache(values, obj.caches{i});
+                [res, obj.caches{i}] = obj.evaluators{i}.evaluateValuesWithCache(values, obj.caches{i});
                 if ~res.feasible
                     total = inf; return;
                 end
@@ -192,11 +192,11 @@ classdef LineOptSolver < handle
 
         function av = mergeValues(obj, values)
             % merge: start from fixed, overlay values
-            av = containers.Map('KeyType', 'char', 'ValueType', 'any');
+            av = configureDictionary('string', 'cell');
             fk = keys(obj.fixedValueMap);
-            for i = 1:numel(fk), av(fk{i}) = obj.fixedValueMap(fk{i}); end
+            for i = 1:numel(fk), av{fk(i)} = obj.fixedValueMap{fk(i)}; end
             vk = keys(values);
-            for i = 1:numel(vk), av(vk{i}) = values(vk{i}); end
+            for i = 1:numel(vk), av{vk(i)} = values{vk(i)}; end
         end
 
         function total = aggregateScenarios(obj, values)
@@ -309,7 +309,13 @@ classdef LineOptSolver < handle
             % each perturbed evaluation re-solves the whole ensemble, giving
             % the correct total derivative). One-sided differences near an
             % infeasible/unstable boundary where a two-sided value is non-finite.
-            h = obj.opt.fdStep;
+            % A layered evaluation re-solves an iterative fixed point, so the
+            % step must clear its noise floor (see fdStepLayered).
+            if obj.evaluators{1}.isLayered
+                h = obj.opt.fdStepLayered;
+            else
+                h = obj.opt.fdStep;
+            end
             dim = numel(x);
             g = zeros(1, dim);
             f0 = [];
@@ -357,15 +363,15 @@ classdef LineOptSolver < handle
 
             values = obj.evaluators{1}.decodeVariables(x);
             allValues = obj.mergeValues(values);
-            res = obj.evaluators{1}.evaluateValuesWithCache(values, obj.caches{1});
+            [res, obj.caches{1}] = obj.evaluators{1}.evaluateValuesWithCache(values, obj.caches{1});
             if ~res.feasible, return; end
 
             skey = opt.LineEvaluator.valuesKey(values);
             if isKey(obj.lqnSensCache, skey)
-                sens = obj.lqnSensCache(skey);
+                sens = obj.lqnSensCache{skey};
             else
                 sens = obj.evaluators{1}.evaluateLayeredSensitivities(values);
-                obj.lqnSensCache(skey) = sens;
+                obj.lqnSensCache{skey} = sens;
             end
             if isempty(sens), return; end
 
@@ -385,7 +391,7 @@ classdef LineOptSolver < handle
                     % progress; the FD modes cover it fully).
                     continue;
                 end
-                row = sens(kv);
+                row = sens{kv};
                 targets = var.sensMetricTargets(model);
                 dS_drate = 0.0;
                 for kk = 1:numel(kinds)
@@ -397,7 +403,7 @@ classdef LineOptSolver < handle
                         kind, mkey, objective, cons, pw, h);
                     dS_drate = dS_drate + dS_dmetric * dmetric_drate;
                 end
-                demand = allValues(var.getName());
+                demand = allValues{var.getName()};
                 if isnumeric(demand)
                     rateJac = var.rateJacobian(demand);
                 else
@@ -414,14 +420,14 @@ classdef LineOptSolver < handle
             % metric space (pure arithmetic, no solving).
             d = 0.0;
             if isempty(mkey), return; end
-            m = obj.metricMapFor(res, kind);
-            if isempty(m) || ~isKey(m, mkey), return; end
-            base = m(mkey);
-            m(mkey) = base + h;
+            fld = obj.metricFieldFor(kind);
+            if isempty(fld) || ~isKey(res.(fld), mkey), return; end
+            base = res.(fld)(mkey);
+            res.(fld)(mkey) = base + h;
             fp = obj.scalarObjective(res, allValues, objective, cons, pw);
-            m(mkey) = base - h;
+            res.(fld)(mkey) = base - h;
             fm = obj.scalarObjective(res, allValues, objective, cons, pw);
-            m(mkey) = base;
+            res.(fld)(mkey) = base;
             d = (fp - fm) / (2.0 * h);
         end
 
@@ -432,13 +438,15 @@ classdef LineOptSolver < handle
             end
         end
 
-        function m = metricMapFor(~, res, kind)
+        function fld = metricFieldFor(~, kind)
+            % property name, not the dictionary itself: a dictionary is a value
+            % type, so the perturbation must be written back through res
             switch kind
-                case 'RespT', m = res.responseTimes;
-                case 'QLen',  m = res.queueLengths;
-                case 'Tput',  m = res.throughputs;
-                case 'Util',  m = res.utilizations;
-                otherwise,    m = [];
+                case 'RespT', fld = 'responseTimes';
+                case 'QLen',  fld = 'queueLengths';
+                case 'Tput',  fld = 'throughputs';
+                case 'Util',  fld = 'utilizations';
+                otherwise,    fld = '';
             end
         end
 
@@ -447,7 +455,7 @@ classdef LineOptSolver < handle
             result.objectiveValue = objectiveValue;
             vals = obj.evaluators{1}.decodeVariables(x);
             vk = keys(vals);
-            for i = 1:numel(vk), result.variableValues(vk{i}) = vals(vk{i}); end
+            for i = 1:numel(vk), result.variableValues{vk(i)} = vals{vk(i)}; end
             result.iterations = obj.iterations;
             result.solveTime = solveTime;
             evals = 0;
@@ -460,7 +468,7 @@ classdef LineOptSolver < handle
             allCons = [objective.getConstraints(), obj.problem.getConstraints()];
             result.feasible = true;
             for i = 1:numel(obj.evaluators)
-                er = obj.evaluators{i}.evaluateValuesWithCache(result.variableValues, obj.caches{i});
+                [er, obj.caches{i}] = obj.evaluators{i}.evaluateValuesWithCache(result.variableValues, obj.caches{i});
                 if ~er.feasible, result.feasible = false; continue; end
                 for c = 1:numel(allCons)
                     viol = allCons{c}.evaluate(er, allValues);

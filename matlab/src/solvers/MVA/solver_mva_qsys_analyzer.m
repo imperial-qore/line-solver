@@ -21,8 +21,19 @@ k = sn.nservers(queue_ist);
 mu = sn.rates(queue_ist);
 ca = sqrt(sn.scv(source_ist));
 cs = sqrt(sn.scv(queue_ist));
+hpat = sn_patience_handles(sn, queue_ist, 1);  % [] unless the queue reneges
 
 line_debug('MVA qsys analyzer starting: method=%s, lambda=%g, mu=%g, k=%d', method, lambda, mu, k);
+
+% One predicate for the gate and the run: SolverMVA.supportsQueueingSystem asks
+% the same by-name questions (server count, Poisson source for the M/G/1 names,
+% exponential server for the G/M/1 names, a patience law for the abandonment
+% names, a closed form for 'exact') before the report offers the name, so a
+% closed form no longer answers the other system under the caller's label.
+[qsysOk, qsysReason] = SolverMVA.supportsQueueingSystem(sn, method);
+if ~qsysOk
+    line_error(mfilename, qsysReason);
+end
 
 % Finite-capacity loss branch (M/M/1/K with tail drop). Uses the moment-based
 % (MacGregor Smith) qsys_mg1k_loss_mgs, exact only at scv=1; queue-length
@@ -120,7 +131,18 @@ end
 
 switch method
     case 'default'
-        if ca == 1 && cs == 1 && k == 1
+        if ~isempty(hpat)
+            % A station customers walk away from is a different model, not a
+            % correction to one: nothing in the G/G/k family below carries an
+            % abandonment rate, so the choice is made here and not by ca/cs.
+            if hpat.isExponential
+                method = 'erlanga';
+                line_debug('Default method: reneging queue, using Erlang A exact solution\n');
+            else
+                method = 'mgisrgi';
+                line_debug('Default method: reneging queue, using the M/GI/s/r+GI engineering solution\n');
+            end
+        elseif ca == 1 && cs == 1 && k == 1
             method = 'mm1';
             line_debug('Default method: using M/M/1 exact solution\n');
         elseif ca == 1 && cs == 1 && k > 1
@@ -141,6 +163,61 @@ switch method
         end
 end
 
+% Whitt family, full metric set. These methods answer a station whose CARRIED
+% throughput is below the offered rate -- customers abandon, or are blocked --
+% so Little's law on lambda would silently overstate the queue and the common
+% tail below cannot be used.
+switch method
+    case {'erlanga', 'mgisrgi', 'gigk.diffusion'}
+        Kcap = sn.cap(queue_ist);
+        if isfinite(Kcap)
+            room = max(0, Kcap - k);   % waiting spaces, servers excluded
+        else
+            room = Inf;
+        end
+        switch method
+            case 'gigk.diffusion'
+                line_debug('Using the G/GI/n/m diffusion approximation (n=%d)', k);
+                res = qsys_ggnm_diffusion(lambda, mu, k, room, ca, cs);
+                Lsys = res.meanNumber;
+                Tq = res.throughput;
+                Uq = res.utilization;
+            otherwise
+                if isempty(hpat)
+                    line_error(mfilename, sprintf('method ''%s'' needs a reneging patience law on the queue.', method));
+                end
+                if strcmp(method, 'erlanga') || hpat.isExponential
+                    % Exponential patience makes the state-dependent
+                    % approximation exact, so take the exact chain either way.
+                    line_debug('Using the Erlang A exact solution (s=%d)', k);
+                    res = qsys_erlanga(lambda, mu, hpat.rate, k, room);
+                else
+                    line_debug('Using the M/GI/s/r+GI engineering solution (s=%d)', k);
+                    res = qsys_mgisrgi_whitt(lambda, mu, k, room, hpat.hazard);
+                end
+                Lsys = res.meanNumber;
+                Tq = res.throughput;
+                Uq = res.utilization;
+        end
+        Vq = sn.visits{1}(sn.stationToStateful(queue_ist));
+        if Tq > 0
+            % Little's law on the CARRIED rate, as in the M/M/1/K loss branch
+            % above and as SolverCTMC reports it.
+            R(queue_ist,1) = Lsys/Tq;
+        else
+            R(queue_ist,1) = 0;
+        end
+        Q(queue_ist,1) = Lsys;
+        U(queue_ist,1) = Uq;
+        T(queue_ist,1) = Tq;              % carried rate
+        T(source_ist,1) = lambda;         % offered arrival rate
+        X(queue_ist,1) = Tq;
+        C(1,1) = R(queue_ist,1)*Vq;
+        actualmethod = method;
+        lG = 0; totiter = 1; runtime = toc(T0);
+        return
+end
+
 switch method
     case 'mm1'
         line_debug('Using M/M/1 exact solution');
@@ -155,6 +232,12 @@ switch method
         IaFun1 = @(x) map_count_idc(arvMAP, x);
         [~, W1] = qsys_gig1_rq(rho1, mu, cs^2, IaFun1);
         R = W1 + 1/mu;
+    case {'rqt'}
+        line_debug('Using RQT (robust queueing theory) single-queue solution');
+        rho1 = lambda/(k*mu);
+        Gamma_a = ca/lambda;
+        Gamma_s = qsys_gigk_rqt_gamma(rho1, mu, Gamma_a, cs/mu, k);
+        R = qsys_gigk_rqt(lambda, mu, Gamma_a, Gamma_s, k);
     case {'mg1', 'mgi1'}  % verified
         line_debug('Using M/G/1 exact solution');
         R = qsys_mg1(lambda,mu,cs);
@@ -170,6 +253,12 @@ switch method
     case 'gig1.heyman'
         line_debug('Using G/G/1 Heyman approximation');
         R = qsys_gig1_approx_heyman(lambda,mu,ca,cs);
+    case 'gig1.gelenbe'
+        line_debug('Using G/G/1 Gelenbe diffusion approximation');
+        R = qsys_gig1_approx_gelenbe(lambda,mu,ca,cs);
+    case 'gig1.kimura'
+        line_debug('Using G/G/1 Kimura diffusion-interpolation approximation');
+        R = qsys_gig1_approx_kimura(lambda,mu,ca,cs);
     case {'gig1', 'gig1.allen'}
         line_debug('Using G/G/1 Allen-Cunneen approximation');
         R = qsys_gig1_approx_allencunneen(lambda,mu,ca,cs);
@@ -182,6 +271,18 @@ switch method
     case 'gig1.marchal' % verified
         line_debug('Using G/G/1 Marchal approximation');
         R = qsys_gig1_approx_marchal(lambda,mu,ca,cs);
+    case 'gigk.whitt'
+        line_debug('Using the Whitt G/G/k refinement (k=%d)', k);
+        R = qsys_gigk_approx_whitt(lambda,mu,ca,cs,k);
+    case 'qed'
+        line_debug('Using the Halfin-Whitt QED approximation (k=%d)', k);
+        resqed = qsys_mmk_qed(lambda,mu,k);
+        R = resqed.meanWait + 1/mu;
+    case 'gig1.extremal'
+        line_debug('Using the extremal two-moment G/G/1 bound');
+        % The upper end, gig1.kingman already reporting a bound.
+        resx = qsys_gig1_bnds_extremal(lambda,mu,ca,cs);
+        R = resx.upperBound + 1/mu;
     case {'gm1', 'gim1'}
         line_debug('Using G/M/1 exact solution');
         mu = sn.rates(queue_ist);

@@ -54,6 +54,9 @@ public class Cache extends StatefulNode implements Serializable {
     private final Map<Integer, List<Integer>> retrievalSystemQueueIndices;
     private final ReplacementStrategy replcStrategy;
     private double admissionProb = 1.0; // q-LRU admission probability on a miss
+    private Matrix itemSize;            // per-item storage cost (size); null when unset
+    private Matrix costCap;             // per-list storage cost cap; null when unset
+    private boolean costCapGlobal;      // true when costCap came from a single cache-wide cap
     private final Map<PopularityKey, Distribution> popularity;
     private final Matrix[] graph;
     private final CacheClassSwitcher cacheServer;
@@ -64,6 +67,10 @@ public class Cache extends StatefulNode implements Serializable {
     // here and injected into P by Network.link before P.setRouting is applied. Later
     // entries override earlier ones for the same (from,to,src,dst).
     private final List<RetrievalRoutingEntry> retrievalRoutingEntries;
+    /** Per-item classes of a cache network, keyed by the chain's first read class. */
+    private final Map<Integer, int[]> itemClasses;
+    /** Item each per-item class reads (1-based), keyed by 0-based class index. */
+    private final Map<Integer, Integer> itemOfClass;
     public Matrix[][] accessProb;
     protected SchedStrategyType schedPolicy;
     protected SchedStrategy schedStrategy;
@@ -147,6 +154,8 @@ public class Cache extends StatefulNode implements Serializable {
         this.cacheServer = new CacheClassSwitcher(classes, nitems, itemLevelCap);
         this.retrievalClassIndices = new HashSet<>();
         this.retrievalRoutingEntries = new ArrayList<>();
+        this.itemClasses = new HashMap<Integer, int[]>();
+        this.itemOfClass = new HashMap<Integer, Integer>();
         this.server = this.cacheServer;
         this.popularity = new HashMap<>();
         this.popularityRows = 0;
@@ -333,6 +342,124 @@ public class Cache extends StatefulNode implements Serializable {
      */
     public ReplacementStrategy getReplacementStrategy() {
         return replcStrategy;
+    }
+
+    /**
+     * Sets the storage cost (size) of each item, a positive integer vector with
+     * one entry per item. Used together with setCostCaps to bound the storage
+     * held by each cache list.
+     *
+     * @param sizes the per-item storage costs, or a single value for every item
+     */
+    public void setItemSizes(Matrix sizes) {
+        int nitems = this.items.getNumberOfItems();
+        Matrix sz;
+        if (sizes.length() == 1) {
+            sz = new Matrix(1, nitems);
+            for (int i = 0; i < nitems; i++) {
+                sz.set(0, i, sizes.get(0));
+            }
+        } else {
+            sz = new Matrix(1, sizes.length());
+            for (int i = 0; i < sizes.length(); i++) {
+                sz.set(0, i, sizes.get(i));
+            }
+        }
+        if (sz.length() != nitems) {
+            throw new IllegalArgumentException("The item size vector of " + this.getName()
+                    + " must have one entry per item (" + nitems + ").");
+        }
+        for (int i = 0; i < nitems; i++) {
+            double v = sz.get(i);
+            if (v <= 0 || v != Math.rint(v)) {
+                throw new IllegalArgumentException("Item sizes must be positive integers.");
+            }
+        }
+        this.itemSize = sz;
+    }
+
+    /**
+     * Gets the per-item storage costs (sizes).
+     *
+     * @return the per-item storage costs, null when unset
+     */
+    public Matrix getItemSizes() {
+        return this.itemSize;
+    }
+
+    /**
+     * Sets the per-list cap on the total storage cost of the resident items. A
+     * single value declares one cap for the whole cache, modelled as the same
+     * cap on every list.
+     *
+     * @param caps the per-list storage cost caps
+     */
+    public void setCostCaps(Matrix caps) {
+        int h = this.itemLevelCap.length();
+        Matrix cp;
+        if (caps.length() == 1) {
+            this.costCapGlobal = true;
+            cp = new Matrix(1, h);
+            for (int j = 0; j < h; j++) {
+                cp.set(0, j, caps.get(0));
+            }
+        } else {
+            this.costCapGlobal = false;
+            cp = new Matrix(1, caps.length());
+            for (int j = 0; j < caps.length(); j++) {
+                cp.set(0, j, caps.get(j));
+            }
+        }
+        if (cp.length() != h) {
+            throw new IllegalArgumentException("The cost cap vector of " + this.getName()
+                    + " must have one entry per cache list (" + h + ").");
+        }
+        for (int j = 0; j < h; j++) {
+            double v = cp.get(j);
+            if (v < 0 || v != Math.rint(v)) {
+                throw new IllegalArgumentException("Storage cost caps must be non-negative integers.");
+            }
+        }
+        if (this.replcStrategy == ReplacementStrategy.CLIMB) {
+            throw new IllegalArgumentException("Storage cost caps are not supported with the CLIMB replacement strategy.");
+        }
+        this.costCap = cp;
+    }
+
+    /**
+     * Gets the per-list storage cost caps.
+     *
+     * @return the per-list storage cost caps, null when unset
+     */
+    public Matrix getCostCaps() {
+        return this.costCap;
+    }
+
+    /**
+     * Reports whether the cost caps were declared as a single cache-wide cap.
+     *
+     * @return true when a single cap was declared
+     */
+    public boolean isCostCapGlobal() {
+        return this.costCapGlobal;
+    }
+
+    /**
+     * Sets the mean storage cost held by each list, as computed by a solver.
+     *
+     * @param listCost the mean per-list storage cost
+     */
+    public void setResultListCost(Matrix listCost) {
+        this.cacheServer.actualListCost = listCost;
+    }
+
+    /**
+     * Gets the mean storage cost held by each list.
+     *
+     * @return the mean per-list storage cost, null when not computed
+     */
+    public Matrix getListCost() {
+        return this.cacheServer.actualListCost;
     }
 
     /**
@@ -785,6 +912,145 @@ public class Cache extends StatefulNode implements Serializable {
      * @param missClass The job class for retrieval misses.
      * @param queues Array of queues in the retrieval system.
      */
+    /**
+     * Normalise a hit/miss class argument: one class shared by every item, or one per item.
+     */
+    private JobClass[] perItemClasses(JobClass[] spec, int nItems, String what) {
+        if (spec.length == nItems) {
+            return spec;
+        }
+        if (spec.length == 1) {
+            JobClass[] out = new JobClass[nItems];
+            for (int i = 0; i < nItems; i++) {
+                out[i] = spec[0];
+            }
+            return out;
+        }
+        throw new RuntimeException(spec.length + " " + what + " classes were given for " + nItems
+                + " items; pass one class per item or a single class shared by all.");
+    }
+
+    /**
+     * Record that a class reads a given item (1-based), as read back from JSON.
+     */
+    public void setItemOfClass(JobClass jobClass, int item) {
+        this.itemOfClass.put(jobClass.getIndex() - 1, item);
+    }
+
+    /**
+     * Item each per-item class reads (1-based), 0 where the class is not one.
+     */
+    public int getItemOfClass(int classIdx0) {
+        Integer v = this.itemOfClass.get(classIdx0);
+        return v == null ? 0 : v.intValue();
+    }
+
+    /**
+     * Declare that readClasses[i] is the request stream for item i at this cache. Use at
+     * the cache the exogenous requests enter, where the per-item classes are the user's
+     * own; popularity is then carried by the per-class request rates. Keeps a cache
+     * network free of arc-level class switching, so no class acquires a default route
+     * into the cache the model never intended.
+     */
+    public void setItemReadClasses(JobClass[] readClasses, JobClass[] hitClasses) {
+        int nItems = this.items.getNumberOfItems();
+        if (readClasses.length != nItems) {
+            throw new RuntimeException(this.name + " holds " + nItems + " items but "
+                    + readClasses.length + " read classes were given; pass exactly one class per item.");
+        }
+        JobClass[] hitArr = perItemClasses(hitClasses, nItems, "hit");
+        int[] idx = new int[nItems];
+        for (int i = 0; i < nItems; i++) {
+            JobClass cls = readClasses[i];
+            double[] pop = new double[nItems];
+            pop[i] = 1.0;
+            this.popularitySet(this.items.getIndex(), cls.getIndex() - 1,
+                    new DiscreteSampler(new Matrix(pop)));
+            setHitClass(cls, hitArr[i]);
+            idx[i] = cls.getIndex();
+            this.itemOfClass.put(cls.getIndex() - 1, i + 1);
+        }
+        this.itemClasses.put(readClasses[0].getIndex(), idx);
+    }
+
+    /**
+     * Mint one class per item at a cache FED BY ANOTHER CACHE, so item identity survives
+     * the miss hop. Idempotent.
+     */
+    public int[] setItemClasses(JobClass jobinClass, JobClass[] hitClasses) {
+        int[] existing = this.itemClasses.get(jobinClass.getIndex());
+        if (existing != null) {
+            return existing;
+        }
+        int nItems = this.items.getNumberOfItems();
+        JobClass[] hitArr = perItemClasses(hitClasses, nItems, "hit");
+        int[] idx = new int[nItems];
+        for (int i = 0; i < nItems; i++) {
+            JobClass cls;
+            if (jobinClass instanceof ClosedClass) {
+                cls = new ClosedClass(this.model, this.name + "_item" + (i + 1), 0,
+                        jobinClass.getReferenceStation(), 0);
+            } else {
+                cls = new OpenClass(this.model, this.name + "_item" + (i + 1));
+            }
+            double[] pop = new double[nItems];
+            pop[i] = 1.0;
+            this.popularitySet(this.items.getIndex(), cls.getIndex() - 1,
+                    new DiscreteSampler(new Matrix(pop)));
+            setHitClass(cls, hitArr[i]);
+            idx[i] = cls.getIndex();
+            this.itemOfClass.put(cls.getIndex() - 1, i + 1);
+        }
+        this.itemClasses.put(jobinClass.getIndex(), idx);
+        return idx;
+    }
+
+    /**
+     * Send this cache's misses to nextCache preserving item identity: the miss class of
+     * this cache for item i IS the read class of nextCache for item i.
+     */
+    public JobClass[] setMissCache(JobClass jobinClass, Cache nextCache, JobClass[] hitClassAtNext) {
+        if (nextCache.getItems().getNumberOfItems() != this.items.getNumberOfItems()) {
+            throw new RuntimeException("Cache " + this.name + " holds "
+                    + this.items.getNumberOfItems() + " items but " + nextCache.getName() + " holds "
+                    + nextCache.getItems().getNumberOfItems()
+                    + "; a cache network requires one common item set.");
+        }
+        int[] selfIdx = this.itemClasses.get(jobinClass.getIndex());
+        if (selfIdx == null) {
+            throw new RuntimeException("No per-item classes at " + this.name + " for class "
+                    + jobinClass.getName() + "; call setItemReadClasses before setMissCache.");
+        }
+        int[] nextIdx = nextCache.setItemClasses(jobinClass, hitClassAtNext);
+        List<JobClass> all = this.model.getClasses();
+        JobClass[] nextClasses = new JobClass[selfIdx.length];
+        for (int i = 0; i < selfIdx.length; i++) {
+            JobClass selfCls = all.get(selfIdx[i] - 1);
+            JobClass nextCls = all.get(nextIdx[i] - 1);
+            setMissClass(selfCls, nextCls);
+            addRetrievalRoutingEntry(nextCls, nextCls, this, nextCache, 1.0, false);
+            nextClasses[i] = nextCls;
+        }
+        return nextClasses;
+    }
+
+    /**
+     * Terminate a cache network: every per-item class of this cache reports a miss as the
+     * matching entry of missClasses, which the user routes onward.
+     */
+    public void setItemMissClass(JobClass jobinClass, JobClass[] missClasses) {
+        int[] selfIdx = this.itemClasses.get(jobinClass.getIndex());
+        if (selfIdx == null) {
+            throw new RuntimeException("No per-item classes at " + this.name + " for class "
+                    + jobinClass.getName() + "; call setItemClasses before setItemMissClass.");
+        }
+        JobClass[] missArr = perItemClasses(missClasses, selfIdx.length, "miss");
+        List<JobClass> all = this.model.getClasses();
+        for (int i = 0; i < selfIdx.length; i++) {
+            setMissClass(all.get(selfIdx[i] - 1), missArr[i]);
+        }
+    }
+
     public void setRetrievalSystem(JobClass jobinClass, JobClass missClass, Queue[] queues) {
         int nQueues = queues.length;
         int nItems = this.items.getNumberOfItems();
@@ -834,7 +1100,7 @@ public class Cache extends StatefulNode implements Serializable {
             // On arrival of the retrieval, it will always trigger a read of item i
             double[] itemPopularity = new double[this.getNumberOfItems()];
             itemPopularity[i] = 1.0;
-            this.popularitySet(retrievalClass.getIndex() - 1, new DiscreteSampler(new Matrix(itemPopularity)));
+            this.popularitySet(this.items.getIndex(), retrievalClass.getIndex() - 1, new DiscreteSampler(new Matrix(itemPopularity)));
 
             // After the arrival of the retrieval, the job will switch to a miss
             setMissClass(retrievalClass, missClass);
@@ -851,6 +1117,37 @@ public class Cache extends StatefulNode implements Serializable {
      *
      * @param actualHitProb Matrix containing the observed hit probabilities
      */
+    /**
+     * Sets the per-item delayed-hit queue length: the mean number of secondary
+     * requests waiting on the in-flight fetch of each item (d1), and the same count
+     * including the request that triggered the fetch (dfull).
+     *
+     * @param d1 mean merged secondary requests per item
+     * @param dfull d1 plus the triggering request
+     */
+    public void setResultDelayedHitQLen(Matrix d1, Matrix dfull) {
+        this.cacheServer.actualDelayedHitQLen = d1;
+        this.cacheServer.actualDelayedHitQLenFull = dfull;
+    }
+
+    /**
+     * Per-item delayed-hit queue length, empty when the solver does not compute it.
+     *
+     * @return mean merged secondary requests per item
+     */
+    public Matrix getDelayedHitQLen() {
+        return this.cacheServer.actualDelayedHitQLen;
+    }
+
+    /**
+     * Per-item delayed-hit queue length including the triggering request.
+     *
+     * @return d1 plus the triggering request, per item
+     */
+    public Matrix getDelayedHitQLenFull() {
+        return this.cacheServer.actualDelayedHitQLenFull;
+    }
+
     public void setResultHitProb(Matrix actualHitProb) {
         this.cacheServer.actualHitProb = actualHitProb;
     }

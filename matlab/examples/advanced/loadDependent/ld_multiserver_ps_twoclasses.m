@@ -37,7 +37,7 @@ P{1,1} = ldmodel.serialRouting(node);
 P{2,2} = ldmodel.serialRouting(node);
 ldmodel.link(P);
 
-lldAvgTableCTMC=CTMC(ldmodel).getAvgTable %exact
+lldAvgTableCTMC=CTMC(ldmodel,'exact').getAvgTable %exact
 
 lldAvgTableNC=NC(ldmodel).getAvgTable %exact
 lldAvgTableRD=NC(ldmodel,'method','rd').getAvgTable

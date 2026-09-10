@@ -14,9 +14,10 @@ per-level arrival rate and the top level. Service is min(n,c)*mu (exact M/M/c
 boundary) or its PH generalisation.
 
 Exactness: exact for exponential service at any number of servers, and for PH
-service at a single server. For PH service with c > 1 servers it is an
-approximation: the c parallel PH servers are collapsed into one PH process
-scaled by min(n,c), which ignores the phase of each individual busy server.
+service at any number of servers. The multiserver PH chain is built by
+ldqbd_mphc, whose level coordinate is the MULTISET of the phases the min(n,c)
+busy servers sit in; the collapsed single-phase approximation this solver used
+until 2026-08-18 is gone.
 
 References:
     Original MATLAB: matlab/src/solvers/MAM/solver_mam_ldqbd.m
@@ -28,7 +29,8 @@ from typing import Optional, Tuple
 import numpy as np
 
 from . import MAMAlgorithm, MAMResult
-from ....api.mam import ldqbd, LdqbdOptions
+from ....api.mam import ldqbd, LdqbdOptions, ldqbd_mphc
+from ....api.mam.qbd import qbd_setupdelayoff_closed
 from ....api.mam.map_analysis import map_mean, map_pie
 from ....api.qsys.retrial import _proc_to_d0d1
 from ....api.sn.predicates import sn_has_load_dependence
@@ -86,8 +88,49 @@ def ldqbd_is_closed_delay_queue(sn) -> bool:
         return False
     if not np.all(np.isfinite(np.asarray(sn.njobs, dtype=float))):
         return False
-    return (len(_count_sched(sn, SchedStrategy.INF)) == 1
-            and len(_count_sched(sn, SchedStrategy.FCFS)) == 1)
+    fcfs = _count_sched(sn, SchedStrategy.FCFS)
+    if len(_count_sched(sn, SchedStrategy.INF)) != 1 or len(fcfs) != 1:
+        return False
+
+    # A SETUP/DELAY-OFF QUEUE is exact here only at a single server with
+    # exponential service and no load dependence, which is what
+    # qbd_setupdelayoff_closed models. Outside that, LDQBD refuses BY NAME
+    # (solve() raises), so the gate has to send those models to the
+    # decomposition instead of letting the default reach the refusal;
+    # dec.source carries the same analysis approximately. Without this the
+    # other three codebases answer a closed multiserver setup station and
+    # python alone raises.
+    queue_idx = fcfs[0]
+    if _is_setup_station_ldqbd(sn, queue_idx):
+        if int(np.asarray(sn.nservers, dtype=float).ravel()[queue_idx]) > 1:
+            return False
+        if sn_has_load_dependence(sn):
+            return False
+        D0, _ = _proc_of(sn, queue_idx)
+        if D0.shape[0] != 1:
+            return False   # exponential service only
+    return True
+
+
+
+def _is_setup_station_ldqbd(sn, station_idx: int) -> bool:
+    """True when this station carries a setup/delay-off server (``sn.hassetup``)."""
+    hassetup = getattr(sn, 'hassetup', None)
+    if hassetup is None:
+        return False
+    arr = np.asarray(hassetup).ravel()
+    return station_idx < arr.size and bool(arr[station_idx])
+
+
+def _setup_params_ldqbd(sn, station_idx: int):
+    """(alpharate, alphascv, betarate, betascv) of the station's setup/delay-off.
+
+    Shares the reader of the decomposition handler rather than re-deriving it:
+    the two must agree on which class's setup time a multiclass station takes, or
+    LDQBD and dec.source would model different servers.
+    """
+    from ....api.solvers.mam.handler import _get_function_params
+    return _get_function_params(sn, station_idx)
 
 
 class LDQBDAlgorithm(MAMAlgorithm):
@@ -151,6 +194,29 @@ class LDQBDAlgorithm(MAMAlgorithm):
             alpha = None
             mean_service = 1.0 / mu
 
+        # ---- Setup and delay-off at the queue ----
+        # The station alternates OFF -> setup -> busy -> delay-off around the
+        # service, so the chain carries phases the block builder below has no
+        # place for. The closed regime hands the whole chain to
+        # qbd_setupdelayoff_closed; every other combination is refused BY NAME
+        # rather than answered as if the server were always warm, which is what
+        # this solver did until 2026-09 and is BUG-78.
+        has_setup = _is_setup_station_ldqbd(sn, queue_idx)
+        alpharate = alphascv = betarate = betascv = None
+        if has_setup:
+            if is_open:
+                raise ValueError(
+                    'Open LDQBD does not model a setup/delay-off server; use '
+                    "method='dec.source', whose qbd_setupdelayoff covers the open case.")
+            if is_ph or n_servers > 1:
+                raise ValueError(
+                    'Closed LDQBD models a setup/delay-off server with exponential '
+                    'service at a single server only; this station has phase-type '
+                    'service or several servers.')
+            alpharate, alphascv, betarate, betascv = _setup_params_ldqbd(sn, queue_idx)
+            if alpharate is None or betarate is None:
+                has_setup = False
+
         # ---- Per-level service factor: LD scaling if set, else min(n,c) ----
         lld = None
         lldlimit = 0
@@ -163,6 +229,16 @@ class LDQBDAlgorithm(MAMAlgorithm):
                 lld = lldarr[queue_idx, :]
                 lldlimit = lld.size
         sf_max = lld[lldlimit - 1] if has_lld else float(n_servers)
+        # Peak capacity normalizes the utilization, and it is the LARGEST factor
+        # the table declares, not the saturated one: a non-monotone alpha peaks
+        # in the middle. Same rule as CTMC's
+        # ceff = max(nservers, max(lldscaling[ist, :])), which is what makes the
+        # two report the same number.
+        util_peak = max(float(n_servers), float(np.max(lld))) if has_lld else float(n_servers)
+        if has_setup and has_lld:
+            raise ValueError(
+                'Closed LDQBD models a setup/delay-off server at its nominal rate '
+                'only; this station also declares a load-dependent scaling.')
 
         # ---- Arrival rate per level and number of levels ----
         # K == 1 here, so the station-class index of station i is just i.
@@ -218,42 +294,59 @@ class LDQBDAlgorithm(MAMAlgorithm):
             for n in range(1, nlev + 1):
                 Q2.append(np.array([[sf[n - 1] * mu]]))
         else:
-            eye_p = np.eye(n_phases)
-            # level 0 -> 1: start service in a phase
-            Q0.append(arr_rate[0] * alpha)
-            for n in range(1, nlev):
-                # level n -> n+1: preserve phase
-                Q0.append(arr_rate[n] * eye_p)
-            # level 0: only arrivals
-            Q1.append(np.array([[-arr_rate[0]]]))
-            for n in range(1, nlev + 1):
-                Q1.append(sf[n - 1] * D0 - arr_rate[n] * eye_p)
-            # level 1 -> 0: empty the queue
-            Q2.append(sf[0] * D1 @ np.ones((n_phases, 1)))
-            for n in range(2, nlev + 1):
-                # level n -> n-1: complete and restart
-                Q2.append(sf[n - 1] * D1)
+            # PH service: the level carries the MULTISET of the phases the
+            # min(n,c) busy servers sit in, which is exact at any number of
+            # servers. At c == 1 the multiset is just the phase, so this
+            # reproduces the single-server blocks entry for entry.
+            Q0, Q1, Q2 = ldqbd_mphc(D0, D1, alpha, n_servers, arr_rate, sf)
 
         # ---- Solve LD-QBD ----
         tol = getattr(options, 'tol', 1e-10) if options is not None else 1e-10
         max_iter = getattr(options, 'iter_max', None) if options is not None else None
         if max_iter is None and options is not None:
             max_iter = getattr(options, 'max_iter', 1000)
-        ldqbd_options = LdqbdOptions(epsilon=tol, max_iter=max_iter or 1000)
-        result = ldqbd(Q0, Q1, Q2, ldqbd_options)
-        pi_ldqbd = np.asarray(result.pi, dtype=float).ravel()
-
-        # ---- Performance metrics ----
-        mean_queue = float(np.arange(nlev + 1) @ pi_ldqbd)
-
-        # see _kb/06-solver-catalog.md (MAM: "LDQBD") -- both forms below are
-        # already per-server; do not rescale by n_servers again
-        if has_lld or n_servers == 1:
-            util_ps = 1.0 - pi_ldqbd[0]
+        if has_setup:
+            # SETUP AND DELAY-OFF, the closed vacation queue. The level-dependent
+            # chain this needs is the one above with two extra phase families --
+            # the setup above level 0 and the delay-off at level 0 -- and
+            # qbd_setupdelayoff_closed builds and solves exactly that, so it is
+            # called rather than duplicated. Without it the blocks above describe
+            # a server that is ALWAYS warm and the answer is byte-identical
+            # across any setup mean (BUG-78).
+            mean_queue, x_setup = qbd_setupdelayoff_closed(
+                N, 1.0 / lambda_eff, mu, alpharate, alphascv, betarate, betascv)
+            pi_ldqbd = None
         else:
-            util_ps = 0.0
+            ldqbd_options = LdqbdOptions(epsilon=tol, max_iter=max_iter or 1000)
+            result = ldqbd(Q0, Q1, Q2, ldqbd_options)
+            pi_ldqbd = np.asarray(result.pi, dtype=float).ravel()
+
+            # ---- Performance metrics ----
+            mean_queue = float(np.arange(nlev + 1) @ pi_ldqbd)
+
+        # see _kb/06-solver-catalog.md (MAM: "LDQBD") -- utilization is the
+        # fraction of the station's PEAK capacity in use,
+        # sum_n pi(n)*sf(n)/util_peak, the work-based convention CTMC, MVA, NC
+        # and serial SSA all report. Already per-server: do not rescale again.
+        #
+        # This subsumes the two special cases it replaces rather than
+        # approximating them: without load dependence sf(n) = min(n,c) and
+        # util_peak = c, giving the average fraction of c servers in use, and at
+        # c = 1 that is sf(n) = 1 for every n >= 1, so the sum collapses to
+        # 1 - pi(0). It used to report 1 - pi(0) under load dependence, i.e.
+        # P(busy), which reads a station running alpha(n) times faster as no
+        # busier than one at its nominal rate.
+        util_ps = 0.0
+        if has_setup:
+            # With a setup the server is DELIVERING work only in the busy phase,
+            # so the level occupancy over-counts it: a level is occupied during
+            # the setup too. The utilization law gives the same work-based number
+            # without needing the per-phase vector, X*E[S]/peak, which is what
+            # the level sum reduces to without a setup.
+            util_ps = x_setup * mean_service / util_peak
+        else:
             for n in range(1, nlev + 1):
-                util_ps += (min(n, n_servers) / n_servers) * pi_ldqbd[n]
+                util_ps += (sf[n - 1] / util_peak) * pi_ldqbd[n]
 
         QN = np.zeros((M, K))
         UN = np.zeros((M, K))

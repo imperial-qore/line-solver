@@ -43,6 +43,15 @@ public class CacheNodeParam extends NodeParam {
     /** Job class routing matrix for cache misses [items x classes] */
     public Matrix missclass;
 
+    /** Per-item storage cost (size) [1 x items]; null when unset */
+    public Matrix itemsize;
+
+    /** Per-list cap on the total storage cost of the resident items [1 x lists]; null when unset */
+    public Matrix costcap;
+
+    /** True when costcap was declared as a single cache-wide cap */
+    public boolean costcapglobal;
+
     /** Matrix containing the retrieval class for each item [items x classes] */
     public Matrix retrievalClasses;
 
@@ -65,6 +74,12 @@ public class CacheNodeParam extends NodeParam {
 
     /** Read access probabilities for each item by server [server -> list of probabilities by item] */
     public Map<Integer, List<Double>> pread;
+    /**
+     * Item read by each per-item class of a cache network (Cache.setItemReadClasses),
+     * 1-based, 0 where the class is not one. Stored rather than inferred from a one-hot
+     * pread, which a genuine single-item popularity also has.
+     */
+    public Map<Integer, Integer> classitem;
     
     /** Replacement strategy used when cache is full (LRU, FIFO, etc.) */
     public ReplacementStrategy replacestrat;
@@ -87,6 +102,9 @@ public class CacheNodeParam extends NodeParam {
     /** Actual expected latency computed during analysis [items x classes] */
     public Matrix actualresidt;
 
+    /** Mean storage cost held by each list computed during analysis [1 x lists] */
+    public Matrix actuallistcost;
+
     /**
      * Checks if this cache parameter container is empty (no parameters are set).
      *
@@ -98,6 +116,8 @@ public class CacheNodeParam extends NodeParam {
                 hitclass == null &&
                 itemcap == null &&
                 missclass == null &&
+                itemsize == null &&
+                costcap == null &&
                 retrievalClasses == null &&
                 (retrievalClassIndices == null || retrievalClassIndices.isEmpty()) &&
                 nitems == 0 &&
@@ -109,6 +129,7 @@ public class CacheNodeParam extends NodeParam {
                 actualmissprob == null &&
                 actualdelayedhitprob == null &&
                 actualhitproblist == null &&
-                actualresidt == null;
+                actualresidt == null &&
+                actuallistcost == null;
     }
 }

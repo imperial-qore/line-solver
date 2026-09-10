@@ -58,8 +58,14 @@ public final class Solver_ssa_analyzer_serial {
         SSAValues result = Solver_ssa.solver_ssa(sn, solverSSA.eventCache, init_state, options, solverSSA);
         Matrix probSysState = result.pi;
         Matrix StateSpaceAggr = result.SSq;
+        // derived START/PREEMPT rates, estimated exactly as TN is
+        Matrix StartN = new Matrix(M, K);
+        Matrix PreemptN = new Matrix(M, K);
+        StartN.zero();
+        PreemptN.zero();
         Map<Integer, Matrix> arvRates = result.arvRates;
         Map<Integer, Matrix> depRates = result.depRates;
+        Map<Integer, Matrix> dlyRates = result.dlyRates;
         tranSysState = result.tranSysState;
         tranSync = result.tranSync;
 
@@ -83,6 +89,19 @@ public final class Solver_ssa_analyzer_serial {
                     dep_wset_isf.set(j, 0, departure.get(j, isf));
                 }
                 TN.set(i, k, probSysState.mult(dep_wset_isf).toDouble());
+                // same time average as TN, over the derived tag rates
+                if (result.startRates != null) {
+                    Matrix startM = result.startRates.get(k);
+                    Matrix preemptM = result.preemptRates.get(k);
+                    Matrix start_wset = new Matrix(StateSpaceAggr.getNumRows(), 1);
+                    Matrix preempt_wset = new Matrix(StateSpaceAggr.getNumRows(), 1);
+                    for (int j = 0; j < StateSpaceAggr.getNumRows(); j++) {
+                        start_wset.set(j, 0, startM.get(j, isf));
+                        preempt_wset.set(j, 0, preemptM.get(j, isf));
+                    }
+                    StartN.set(i, k, probSysState.mult(start_wset).toDouble());
+                    PreemptN.set(i, k, probSysState.mult(preempt_wset).toDouble());
+                }
 
                 Matrix ssaggr_wset_isf =
                         Matrix.extract(StateSpaceAggr, 0, StateSpaceAggr.getNumRows(), i * K + k, i * K + k + 1);
@@ -106,7 +125,8 @@ public final class Solver_ssa_analyzer_serial {
                     || sched == SchedStrategy.PSPRIO || sched == SchedStrategy.DPSPRIO || sched == SchedStrategy.GPSPRIO) {
                 if ((sn.lldscaling == null || sn.lldscaling.isEmpty())
                         && (sn.cdscaling == null || sn.cdscaling.isEmpty())
-                        && (sn.jdscaling == null || sn.jdscaling.isEmpty())) {
+                        && (sn.jdscaling == null || sn.jdscaling.isEmpty())
+                        && sn.gdscaling == null) {
                     int k = 0;
                     while (k < K) {
                         // FJ tag-augmented structs: skip zero-visit classes (see
@@ -149,6 +169,10 @@ public final class Solver_ssa_analyzer_serial {
                             && sn.cdscalingpeak != null) ? sn.cdscalingpeak.get(sn.stations.get(i)) : null;
                     Matrix jdPeakVec = (sn.jdscaling != null && sn.jdscaling.get(sn.stations.get(i)) != null
                             && sn.jdscalingpeak != null) ? sn.jdscalingpeak.get(sn.stations.get(i)) : null;
+                    // A global (Whittle) dependence rescales the service rate the
+                    // same way, so the peak it declares normalizes Util too.
+                    Matrix gdPeakVec = (sn.gdscaling != null && sn.gdscalingpeak != null)
+                            ? sn.gdscalingpeak.getRow(i) : null;
                     int col = 0;
                     while (col < K) {
                         if (!PH.get(sn.stations.get(i)).get(sn.jobclasses.get(col)).isEmpty()) {
@@ -158,10 +182,11 @@ public final class Solver_ssa_analyzer_serial {
                             // effective peak = product of the declared class- and
                             // joint-dependence peaks; fall back to ceffLd only when neither is set.
                             double cdiv;
-                            if (cdPeakVec != null || jdPeakVec != null) {
+                            if (cdPeakVec != null || jdPeakVec != null || gdPeakVec != null) {
                                 cdiv = 1.0;
                                 if (cdPeakVec != null) cdiv *= cdPeakVec.get(0, col);
                                 if (jdPeakVec != null) cdiv *= jdPeakVec.get(0, col);
+                                if (gdPeakVec != null) cdiv *= gdPeakVec.get(0, col);
                             } else {
                                 cdiv = ceffLd;
                             }
@@ -177,7 +202,8 @@ public final class Solver_ssa_analyzer_serial {
             } else {
                 if ((sn.lldscaling == null || sn.lldscaling.isEmpty())
                         && (sn.cdscaling == null || sn.cdscaling.isEmpty())
-                        && (sn.jdscaling == null || sn.jdscaling.isEmpty())) {
+                        && (sn.jdscaling == null || sn.jdscaling.isEmpty())
+                        && sn.gdscaling == null) {
                     int k = 0;
                     while (k < K) {
                         // see _kb/06-solver-catalog.md for rationale
@@ -221,6 +247,10 @@ public final class Solver_ssa_analyzer_serial {
                             && sn.cdscalingpeak != null) ? sn.cdscalingpeak.get(sn.stations.get(i)) : null;
                     Matrix jdPeakVec = (sn.jdscaling != null && sn.jdscaling.get(sn.stations.get(i)) != null
                             && sn.jdscalingpeak != null) ? sn.jdscalingpeak.get(sn.stations.get(i)) : null;
+                    // A global (Whittle) dependence rescales the service rate the
+                    // same way, so the peak it declares normalizes Util too.
+                    Matrix gdPeakVec = (sn.gdscaling != null && sn.gdscalingpeak != null)
+                            ? sn.gdscalingpeak.getRow(i) : null;
                     int col = 0;
                     while (col < K) {
                         if (!PH.get(sn.stations.get(i)).get(sn.jobclasses.get(col)).isEmpty()) {
@@ -230,10 +260,11 @@ public final class Solver_ssa_analyzer_serial {
                             // effective peak = product of the declared class- and
                             // joint-dependence peaks; fall back to ceffLd only when neither is set.
                             double cdiv;
-                            if (cdPeakVec != null || jdPeakVec != null) {
+                            if (cdPeakVec != null || jdPeakVec != null || gdPeakVec != null) {
                                 cdiv = 1.0;
                                 if (cdPeakVec != null) cdiv *= cdPeakVec.get(0, col);
                                 if (jdPeakVec != null) cdiv *= jdPeakVec.get(0, col);
+                                if (gdPeakVec != null) cdiv *= gdPeakVec.get(0, col);
                             } else {
                                 cdiv = ceffLd;
                             }
@@ -263,6 +294,7 @@ public final class Solver_ssa_analyzer_serial {
         // update routing probabilities in nodes with state-dependent routing
         Matrix TNcache = new Matrix(sn.nstateful, K);
         Matrix XNcache = new Matrix(sn.nstateful, K);
+        Matrix DNcache = new Matrix(sn.nstateful, K);
         for (int k = 0; k < K; k++) {
             for (int isf = 0; isf < sn.nstateful; isf++) {
                 if (sn.nodetype.get(isf) == NodeType.Cache) {
@@ -270,6 +302,9 @@ public final class Solver_ssa_analyzer_serial {
                     double XNcacheValue = probSysState.mult(arvRates.get(k).getColumn(isf)).get(0);
                     TNcache.set(isf, k, TNcacheValue);
                     XNcache.set(isf, k, XNcacheValue);
+                    if (dlyRates != null && dlyRates.get(k) != null) {
+                        DNcache.set(isf, k, probSysState.mult(dlyRates.get(k).getColumn(isf)).get(0));
+                    }
                 }
             }
         }
@@ -297,9 +332,23 @@ public final class Solver_ssa_analyzer_serial {
 
                         double actualmissprobValue = Double.NaN;
                         double actualhitprobValue = Double.NaN;
+                        double dly = DNcache.get(isf, k);
                         if (h != -1 && m != -1) {
-                            actualhitprobValue = TNcache.get(isf, h) / (TNcache.get(isf, h) + TNcache.get(isf, m));
-                            actualmissprobValue = TNcache.get(isf, m) / (TNcache.get(isf, h) + TNcache.get(isf, m));
+                            double tot = TNcache.get(isf, h) + TNcache.get(isf, m);
+                            // The hit-class departure rate already contains the
+                            // released delayed hits: a request merged onto an
+                            // in-flight fetch is released in the hit class when that
+                            // fetch completes. Carve them out rather than adding a
+                            // fourth share.
+                            actualhitprobValue = Math.max(TNcache.get(isf, h) - dly, 0.0) / tot;
+                            actualmissprobValue = TNcache.get(isf, m) / tot;
+                            if (dly > 0) {
+                                if (cacheNp.actualdelayedhitprob == null) {
+                                    cacheNp.actualdelayedhitprob = new Matrix(1, K);
+                                    cacheNp.actualdelayedhitprob.fill(0.0);
+                                }
+                                cacheNp.actualdelayedhitprob.set(k, dly / tot);
+                            }
                         }
                         cacheNp.actualhitprob.set(k, actualhitprobValue);
                         cacheNp.actualmissprob.set(k, actualmissprobValue);
@@ -336,6 +385,9 @@ public final class Solver_ssa_analyzer_serial {
         XN.apply(Double.NaN, 0.0, "equal");
         TN.apply(Double.NaN, 0.0, "equal");
 
-        return new SSAResult(QN, UN, RN, TN, CN, XN, tranSysState, tranSync, sn);
+        SSAResult ssaResult = new SSAResult(QN, UN, RN, TN, CN, XN, tranSysState, tranSync, sn);
+        ssaResult.startRate = StartN;
+        ssaResult.preemptRate = PreemptN;
+        return ssaResult;
     }
 }

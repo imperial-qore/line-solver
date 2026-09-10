@@ -8,7 +8,7 @@ based on new observations and evolving process characteristics.
 Based on AUTO_Pattern_Update.m from the MDN toolbox.
 
 References:
-    Original Kotlin: jar/src/main/kotlin/jline/api/wf/Wf_pattern_updater.kt
+    Original JAR: jar/src/main/java/jline/api/wf/Wf_pattern_updater.java
 """
 
 import numpy as np

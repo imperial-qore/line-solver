@@ -1,4 +1,4 @@
-function [QN, UN, RN, TN, CN, XN, lG, sn] = solver_ssa_nrm(sn, options)
+function [QN, UN, RN, TN, CN, XN, lG, sn, StartN, PreemptN] = solver_ssa_nrm(sn, options)
 % SOLVER_SSA_NRM   Steady‑state analysis via the Next‑Reaction Method (SSA)
 %
 %   [QN, UN, RN, TN, CN, XN, LG, SN] = SOLVER_SSA_NRM(SN, OPTIONS)
@@ -17,6 +17,8 @@ function [QN, UN, RN, TN, CN, XN, lG, sn] = solver_ssa_nrm(sn, options)
 %     XN        – 1×K vector of system throughputs
 %     LG        – Logarithm of normalizing constant (not computed)
 %     SN        – (Possibly updated) network structure.
+%     STARTN    – M×K rate at which a class-r service starts at station i
+%     PREEMPTN  – M×K rate at which a class-r job in service is displaced
 %
 %   See also SOLVER_SSA_NRM_SPACE, NEXT_REACTION_METHOD_DIRECT.
 
@@ -172,6 +174,11 @@ end
 if any(sn.nodetype == NodeType.Transition)
     [QN, UN, RN, TN, CN, XN] = solver_ssa_nrm_spn(sn, options, phOff, nph, NS, smap);
     lG = 0;
+    % A Petri net holds tokens in places and fires transitions: there is no
+    % service facility to seize or be displaced from, so both derived rates
+    % are structurally zero rather than unmeasured.
+    StartN = zeros(sn.nstations, sn.nclasses);
+    PreemptN = zeros(sn.nstations, sn.nclasses);
     return
 end
 
@@ -534,12 +541,14 @@ for ind=1:I
         else
             tcc = sum(np.itemcap);
         end
-        % With a retrieval system the contents are followed by a per-item
-        % occupancy bitmap (State.spaceCache): column tcc+i is 1 iff item i is
-        % currently being retrieved. Start with an empty bitmap.
+        % With a retrieval system the contents are followed by block A, a per-item
+        % occupancy bitmap (column tcc+i is 1 iff item i is currently being
+        % retrieved), and by block B, the per-retrieval-class count of requests
+        % merged onto an in-flight fetch (State.spaceCache). Both start empty.
         if isfield(np,'retrievalSystemCapacity') && ~isempty(np.retrievalSystemCapacity) ...
                 && any(np.retrievalSystemCapacity > 0)
-            buffers0{ind} = [1:tcc, zeros(1, np.nitems)];
+            rcListInit = State.cacheRetrievalClassMap(sn, ind);
+            buffers0{ind} = [1:tcc, zeros(1, np.nitems + numel(rcListInit))];
         else
             buffers0{ind} = 1:tcc;
         end
@@ -1087,15 +1096,15 @@ lG = 0; % Not computed in SSA
 % ---------------------------------------------------------------------
 % Run SSA/NRM with direct metric computation
 % ---------------------------------------------------------------------
-[QN, UN, RN, TN, CN, XN, cacheProd] = next_reaction_method_direct(S, D, a, nvec0, buffers0, samples, options, sn, fromIdx, fromIR, mi, fcr, balk, isRenegeRx, sig, rr, isRetryRx, phOff, nph, nDepRx, isPhaseRx, smap, poll, isPollSwRx, pollSwNode, svcph0, isBufSvcRx, bufPHClass, bufPHNode, depPhase, phaseFrom, phaseTo, isCacheRx, cacheHitSlot, cacheMissSlot, isCacheNode, cacheRetrDest);
+[QN, UN, RN, TN, CN, XN, cacheProd, StartN, PreemptN] = next_reaction_method_direct(S, D, a, nvec0, buffers0, samples, options, sn, fromIdx, fromIR, mi, fcr, balk, isRenegeRx, sig, rr, isRetryRx, phOff, nph, nDepRx, isPhaseRx, smap, poll, isPollSwRx, pollSwNode, svcph0, isBufSvcRx, bufPHClass, bufPHNode, depPhase, phaseFrom, phaseTo, isCacheRx, cacheHitSlot, cacheMissSlot, isCacheNode, cacheRetrDest);
 % Write the measured hit/miss probabilities back into sn so the analyzer can set
 % them on each Cache node (State.afterEventCache convention: actualhitprob(r) =
 % hit throughput / (hit+miss) throughput at the cache, per read class r).
 % The cache hit/miss probability of a read class is the throughput of its hit
 % class over hit+miss at the cache -- exactly what cacheProd counts per produced
 % class. A retrieval completion produces the miss class, so retrieval misses are
-% counted here too; a delayed hit produces nothing and is excluded from the
-% ratio (matching the serial engine, which folds delayed hits away). Retrieval
+% counted here too, and it releases the requests merged onto that fetch, each
+% counted in its own hit class (matching the serial engine). Retrieval
 % classes (hitclass == 0) are internal and get no hit/miss probability of their
 % own.
 for ind = 1:I
@@ -1128,7 +1137,7 @@ end  % solver_ssa_nrm
 % ======================================================================
 % Next-Reaction Method with direct metric computation
 % ======================================================================
-function [QN, UN, RN, TN, CN, XN, cacheProd] = next_reaction_method_direct(S, D, a, nvec0, buffers0, samples, options, sn, fromIdx, fromIR, mi, fcr, balk, isRenegeRx, sig, rr, isRetryRx, phOff, nph, nDepRx, isPhaseRx, smap, poll, isPollSwRx, pollSwNode, svcph0, isBufSvcRx, bufPHClass, bufPHNode, depPhase, phaseFrom, phaseTo, isCacheRx, cacheHitSlot, cacheMissSlot, isCacheNode, cacheRetrDest)
+function [QN, UN, RN, TN, CN, XN, cacheProd, StartN, PreemptN] = next_reaction_method_direct(S, D, a, nvec0, buffers0, samples, options, sn, fromIdx, fromIR, mi, fcr, balk, isRenegeRx, sig, rr, isRetryRx, phOff, nph, nDepRx, isPhaseRx, smap, poll, isPollSwRx, pollSwNode, svcph0, isBufSvcRx, bufPHClass, bufPHNode, depPhase, phaseFrom, phaseTo, isCacheRx, cacheHitSlot, cacheMissSlot, isCacheNode, cacheRetrDest)
 
 numReactions = size(S,2);
 R = sn.nclasses;
@@ -1230,6 +1239,20 @@ tau = (Pk - Tk) ./ Ak;
 
 % Performance tracking variables
 totalTime = 0;
+% Derived START/PREEMPT tallies. The NRM fires one reaction at a time and
+% knows exactly which job takes a server and which is displaced, so these are
+% COUNTS of events; dividing by the simulated time at the end gives the same
+% rate the serial engine estimates from the enabled-transition rates.
+startCount = zeros(sn.nnodes, R);
+preemptCount = zeros(sn.nnodes, R);
+% Departures that were BLOCKED, per (node, class). TN integrates the PROPENSITY,
+% which counts a departure the station never makes once its successor is full
+% (0.744 against the exact 0.652 on the BUG-81 tandem), so the blocked firings
+% are subtracted from that integral before it is normalized. In expectation the
+% count IS the integral of the blocked share of the rate, so the difference is
+% unbiased -- and unlike recomputing that share it needs no second evaluation of
+% a state-dependent dispatcher, whose draw would otherwise have to be replayed.
+blockCount = zeros(sn.nnodes, R);
 NK = sn.njobs'; % Jobs per class
 servers = sn.nservers;
 PH = sn.proc; % service-process MAPs/PHs
@@ -1244,6 +1267,10 @@ for ist = 1:M
         wnorm(ist, :) = sn.schedparam(ist, 1:R) / sum(sn.schedparam(ist, 1:R));
     end
 end
+
+% Closed-class destination blocking; inert (blk.on false) unless some station
+% carries a cap a closed class can actually reach. See capacityBlock.
+blk = blockPrecompute(sn, R);
 
 n = 1;
 while n <= samples
@@ -1280,7 +1307,9 @@ while n <= samples
             % family the class-k utilization is the share of service capacity
             % it receives divided by the server count, so the same sharing
             % factors that define the propensities are reused here (without the
-            % lld/cd rate scalings, which rescale work but not occupancy).
+            % lld/cd rate scalings, which rescale work but not occupancy; the
+            % lld and cd stations are overridden with the work-based T*S/peak
+            % after the loop, where the two conventions part company).
             switch sn.sched(ist)
                 case {SchedStrategy.INF, SchedStrategy.EXT}
                     UN(ist, k) = UN(ist, k) + currentPop * dt;
@@ -1341,6 +1370,10 @@ while n <= samples
     % update aggregate state
     destPos = [];
     cacheChanged = false;
+    % A firing has THREE outcomes, not two: it moves the job, it loses it (the
+    % source departs either way), or it is BLOCKED -- cancelled outright, with
+    % the source keeping the job and no slot, buffer or controller changing.
+    firingBlocked = false;
     if isCacheRx(kfire)
         % Cache access. The read-class job at the cache reads an item drawn from
         % pread, and the cache contents (carried in buffers{cacheNode}) decide a
@@ -1349,7 +1382,7 @@ while n <= samples
         % the hit or miss class at the SAME cache node, and the existing
         % immediate forwarding routes it downstream from there.
         cn = fromIR(kfire,1); rdc = fromIR(kfire,2);
-        [outClass, newContents, cacheCat] = cacheAccess(sn, cn, rdc, buffers{cn});
+        [outClass, newContents, cacheCat, cacheReleased] = cacheAccess(sn, cn, rdc, buffers{cn});
         buffers{cn} = newContents;
         nvec(fromIdx(kfire)) = nvec(fromIdx(kfire)) - 1;   % consume the read-class job
         if outClass > 0
@@ -1370,8 +1403,16 @@ while n <= samples
             end
             nvec(destPos) = nvec(destPos) + 1;
         end
-        % OUTCLASS == 0 is a delayed hit: the request is absorbed (produces
-        % nothing), coalescing onto the in-flight retrieval.
+        % OUTCLASS == 0 is a request merged onto a pending fetch: it produces
+        % nothing now and waits in block B. A completing fetch releases the
+        % requests merged onto it, each as a delayed hit in its own hit class.
+        for rel = 1:size(cacheReleased,1)
+            hc = cacheReleased(rel,1);
+            cnt = cacheReleased(rel,2);
+            relPos = phOff(cn, hc) + 1;
+            nvec(relPos) = nvec(relPos) + cnt;
+            cacheProd(cn, hc) = cacheProd(cn, hc) + cnt;
+        end
         cacheChanged = true;
     elseif nnzP(kfire)>1
         cand = toIdxCell{kfire};
@@ -1474,14 +1515,18 @@ while n <= samples
         % Balking is decided on the pre-arrival population, so it is drawn
         % before the state is updated. A balked job is lost: the source still
         % releases it, the destination never receives it.
+        % A closed job that finds no room BLOCKS: the firing is cancelled
+        % before any gate that would consume it, because a job that cannot
+        % leave its station never gets the chance to balk or to be dropped.
+        firingBlocked = blk.on && capacityBlock(blk, nvec, toIdxCell{kfire}(r), fromIdx(kfire), R, smap);
         balked = false;
-        if balk.on
+        if ~firingBlocked && balk.on
             balked = balkDraw(balk, nvec, toIdxCell{kfire}(r), R, smap);
         end
         % An open arrival at a full physically-capped destination is lost,
         % exactly as a balked one is: the source releases it, the destination
         % never receives it. Mirrors State.afterEventStation.
-        if ~balked && capacityLoss(sn, nvec, toIdxCell{kfire}(r), R, smap)
+        if ~firingBlocked && ~balked && capacityLoss(sn, nvec, toIdxCell{kfire}(r), R, smap)
             balked = true;
         end
         % A region refuses the drawn destination on the same pre-arrival
@@ -1490,7 +1535,7 @@ while n <= samples
         % admitted later, head-of-line. Either way it does not enter the
         % destination now, so the source still departs and destPos is cleared.
         parkF = 0; parkTok = 0;
-        if ~balked && fcr.on
+        if ~firingBlocked && ~balked && fcr.on
             dstN = smap.node(toIdxCell{kfire}(r));
             dstC = smap.class(toIdxCell{kfire}(r));
             fref = fcrRefusingRegion(fcr, nvec, fromIR(kfire,1), fromIR(kfire,2), dstN, dstC, R, smap);
@@ -1501,27 +1546,51 @@ while n <= samples
                 end
             end
         end
-        nvec(fromIdxCell{kfire}) = nvec(fromIdxCell{kfire}) - 1;
-        if balked
+        % The source decrement belongs to each outcome separately: a blocked
+        % firing is the one case where the job does NOT leave its slot.
+        if firingBlocked
+            destPos = [];
+        elseif balked
+            nvec(fromIdxCell{kfire}) = nvec(fromIdxCell{kfire}) - 1;
             destPos = [];
             if parkF > 0
                 fcrBuf{parkF}(end+1) = parkTok;
             end
         elseif sig.on && sigIsSignalArrival(sig, toIdxCell{kfire}(r), R, smap)
             % the signal is annihilated on arrival: it never joins the station
+            nvec(fromIdxCell{kfire}) = nvec(fromIdxCell{kfire}) - 1;
             [nvec, buffers] = sigApply(sig, nvec, buffers, toIdxCell{kfire}(r), R, mi, smap);
             destPos = [];
         else
+            nvec(fromIdxCell{kfire}) = nvec(fromIdxCell{kfire}) - 1;
             nvec(toIdxCell{kfire}(r)) = nvec(toIdxCell{kfire}(r)) + 1;
             destPos = toIdxCell{kfire}(r);
         end
     else
         dpos = find(S(:,kfire) > 0); % deterministic destination (single move)
+        % A PHASE change is not an arrival: its destination is another phase slot
+        % of the SAME job at the SAME station, so none of the arrival-side gates
+        % below may see it. Balking and the capacity gate both LOSE the job when
+        % they do; the region gate is inert on a phase change (fcrRefusingRegion
+        % discounts the source in the same region, so src==dst cancels and it
+        % can never refuse -- measured at 0 refusals in 49998 consultations),
+        % and is excluded here to state that invariant rather than to fix a
+        % defect. What makes the other two bite HERE and not in the
+        % multi-destination branch is the ORDER: there the gates run BEFORE the
+        % source decrement and see a true pre-arrival population, while here
+        % they run before the update below, so the firing job is still counted
+        % at its own station and a phase change at exactly cap reads cap >= cap.
+        isPhaseFire = kfire <= numel(isPhaseRx) && isPhaseRx(kfire);
+        % Same closed-class block as above; a phase change is not an arrival.
+        firingBlocked = blk.on && ~isempty(dpos) && ~isPhaseFire ...
+            && ~(kfire <= numel(isRenegeRx) && isRenegeRx(kfire)) ...
+            && ~(kfire <= numel(isRetryRx) && isRetryRx(kfire)) ...
+            && capacityBlock(blk, nvec, dpos(1), fromIdx(kfire), R, smap);
         balked = false;
-        if balk.on && ~isempty(dpos)
+        if ~firingBlocked && balk.on && ~isempty(dpos) && ~isPhaseFire
             balked = balkDraw(balk, nvec, dpos(1), R, smap);
         end
-        if ~balked && ~isempty(dpos) ...
+        if ~firingBlocked && ~balked && ~isempty(dpos) && ~isPhaseFire ...
                 && ~(kfire <= numel(isRenegeRx) && isRenegeRx(kfire)) ...
                 && ~(kfire <= numel(isRetryRx) && isRetryRx(kfire)) ...
                 && capacityLoss(sn, nvec, dpos(1), R, smap)
@@ -1531,7 +1600,7 @@ while n <= samples
         % region gate applies here exactly as it does to a drawn destination.
         % Renege and retry columns carry no destination and are never gated.
         parkF = 0; parkTok = 0;
-        if ~balked && fcr.on && ~isempty(dpos) ...
+        if ~firingBlocked && ~balked && fcr.on && ~isempty(dpos) && ~isPhaseFire ...
                 && ~(kfire <= numel(isRenegeRx) && isRenegeRx(kfire)) ...
                 && ~(kfire <= numel(isRetryRx) && isRetryRx(kfire))
             dstN = smap.node(dpos(1));
@@ -1544,7 +1613,11 @@ while n <= samples
                 end
             end
         end
-        if balked
+        if firingBlocked
+            % the departure does not occur at all: nothing moves
+            destPos = [];
+            dpos = [];
+        elseif balked
             % lost or parked on arrival: apply the source departure only
             nvec(fromIdx(kfire)) = nvec(fromIdx(kfire)) - 1;
             destPos = [];
@@ -1575,7 +1648,10 @@ while n <= samples
 
     % maintain the buffers given the source/destination of this firing
     svcChanged = false;
-    if kfire <= numel(isRetryRx) && isRetryRx(kfire)
+    if firingBlocked
+        % nothing moved, so no buffer, controller or service phase may change
+        blockCount(fromIR(kfire,1), fromIR(kfire,2)) = blockCount(fromIR(kfire,1), fromIR(kfire,2)) + 1;
+    elseif kfire <= numel(isRetryRx) && isRetryRx(kfire)
         % A successful retry moves one orbiting job into the free server. The
         % population is unchanged (it was already counted at the station), so
         % only the orbit shrinks; in-service is read back as population minus
@@ -1584,6 +1660,9 @@ while n <= samples
         slot = find(buffers{ind} == fromIR(kfire,2), 1, 'first');
         if ~isempty(slot)
             buffers{ind}(slot) = [];
+            % the retrying job seizes the free server: this is where service
+            % starts at a retrial station, since its departures never promote
+            startCount(ind, fromIR(kfire,2)) = startCount(ind, fromIR(kfire,2)) + 1;
         end
     elseif kfire <= numel(isRenegeRx) && isRenegeRx(kfire)
         % Reneging removes a job that was WAITING, so no server is freed and no
@@ -1611,7 +1690,7 @@ while n <= samples
         % and moved the job to the hit/miss class in the firing block above; there
         % is no job buffer to maintain at a cache node.
     else
-        [buffers, svcph, svcChanged] = updateBuffers(kfire, nvec, buffers, fromIR, destPos, mi, R, sn, smap, svcph, bufPHNode, isBufSvcRx, depPhase);
+        [buffers, svcph, svcChanged, startCount, preemptCount] = updateBuffers(kfire, nvec, buffers, fromIR, destPos, mi, R, sn, smap, svcph, bufPHNode, isBufSvcRx, depPhase, startCount, preemptCount);
     end
 
     % Polling controller advance. The controller of each polling node lives in
@@ -1628,7 +1707,7 @@ while n <= samples
     % Any of these changes a service gate or the switchover rate, so a change is
     % flagged to force a full propensity refresh below (like a WAITQ release).
     pollChanged = false;
-    if poll.on
+    if poll.on && ~firingBlocked
         srcNode = fromIR(kfire,1);
         if kfire <= numel(isPollSwRx) && isPollSwRx(kfire)
             pind = pollSwNode(kfire);
@@ -1697,9 +1776,9 @@ while n <= samples
     % anything is admitted every reaction is refreshed rather than only the
     % dependency set of the fired reaction.
     nReleased = 0;
-    if fcr.on && fcr.anyWaitq
-        [nvec, buffers, fcrBuf, nReleased, svcph, relChanged] = ...
-            fcrReleaseCascade(fcr, nvec, buffers, fcrBuf, mi, R, sn, smap, svcph, bufPHNode);
+    if fcr.on && fcr.anyWaitq && ~firingBlocked
+        [nvec, buffers, fcrBuf, nReleased, svcph, relChanged, startCount, preemptCount] = ...
+            fcrReleaseCascade(fcr, nvec, buffers, fcrBuf, mi, R, sn, smap, svcph, bufPHNode, startCount, preemptCount);
         svcChanged = svcChanged || relChanged;
     end
 
@@ -1727,20 +1806,27 @@ while n <= samples
 
     % do not count immediate events
     n = n + 1;
-    print_progress(options, n);
+    print_progress(options, n, t);
 end % while
-% Print newline after progress counter
-if isfield(options,'verbose') && options.verbose
-    line_printf('\n');
-end
+% The counter row is closed here rather than newline-terminated:
+% line_printf already ends an open row, so an explicit newline was a
+% SECOND one and showed as a blank row before the completion banner.
+LineStatus.close();
 
 % Normalize metrics by total time
+StartN = zeros(M, K);
+PreemptN = zeros(M, K);
 if totalTime > 0
     for ist = 1:M
+        ind = sn.stationToNode(ist);
         for k = 1:K
             QN(ist, k) = QN(ist, k) / totalTime;
             UN(ist, k) = UN(ist, k) / totalTime;
-            TN(ist, k) = TN(ist, k) / totalTime;
+            % net the blocked firings out of the departure-rate integral
+            TN(ist, k) = (TN(ist, k) - blockCount(ind, k)) / totalTime;
+            % counts of events over the simulated time: a rate, like TN
+            StartN(ist, k) = startCount(ind, k) / totalTime;
+            PreemptN(ist, k) = preemptCount(ind, k) / totalTime;
         end
     end
 end
@@ -1765,6 +1851,37 @@ if ~isempty(sn.cdscaling) || ~isempty(sn.jdscaling)
                 else
                     UN(ist, k) = 0;
                 end
+            end
+        end
+    end
+end
+
+% Load-dependent stations report the same work-based utilization, T*S/peak
+% against peak = max(c, max(alpha)). The accumulator above integrates BUSY TIME,
+% which is a different quantity once alpha(n) ~= 1: a server running alpha(n)
+% times faster does the same work in less time, so busy time reads it as no
+% busier than one at its nominal rate. That put NRM at 0.9587 on a 4-job closed
+% model with alpha = [1 1.5 2 2.5] where CTMC, MVA, NC and serial SSA all report
+% 0.6612, and left the two SSA engines disagreeing with each other. INF keeps
+% U = Q, as everywhere else.
+if ~isempty(sn.lldscaling)
+    for ist = 1:M
+        if ist > size(sn.lldscaling, 1) || size(sn.lldscaling, 2) == 0
+            continue
+        end
+        lldrow = sn.lldscaling(ist, :);
+        if all(lldrow == 1)
+            continue
+        end
+        if any(sn.sched(ist) == [SchedStrategy.INF, SchedStrategy.EXT])
+            continue
+        end
+        peak = max(servers(ist), max(lldrow));
+        for k = 1:K
+            if isfinite(sn.rates(ist, k)) && sn.rates(ist, k) > 0 && peak > 0
+                UN(ist, k) = TN(ist, k) / sn.rates(ist, k) / peak;
+            else
+                UN(ist, k) = 0;
             end
         end
     end
@@ -1798,18 +1915,27 @@ XN(isnan(XN)) = 0;
 TN(isnan(TN)) = 0;
 CN(isnan(CN)) = 0;
 
-    function print_progress(opt, samples_collected)
-        if ~isfield(opt,'verbose') || ~opt.verbose || batchStartupOptionUsed, return; end
-        if samples_collected == 1e3
-            line_printf('\nSSA samples: %8d', samples_collected);
-        elseif opt.verbose == 2
-            if samples_collected == 0
-                line_printf('\nSSA samples: %9d', samples_collected);
-            else
-                line_printf('\b\b\b\b\b\b\b\b\b%9d', samples_collected);
+    function print_progress(opt, samples_collected, tnow)
+        if LineConsole.isActive() % the console owns the line; see solver_ssa
+            every = max(1,round(opt.samples/20));
+            if mod(samples_collected, every) == 0
+                LineConsole.iter(samples_collected/every, ...
+                    'simulated %d of %g samples (%.0f%%), simulated time %.4g', ...
+                    samples_collected, opt.samples, ...
+                    100*samples_collected/opt.samples, tnow);
             end
-        elseif mod(samples_collected,1e3)==0 || opt.verbose == 2
-            line_printf('\b\b\b\b\b\b\b\b\b%9d', samples_collected);
+            return
+        end
+        if ~isfield(opt,'verbose') || ~opt.verbose || batchStartupOptionUsed, return; end
+        % ONE REWRITTEN FIELD, not a fixed-width one. LineStatus rewinds by
+        % the width it actually wrote, so a counter that only grows needs no
+        % padding at all and leaves no trailing blanks -- a fixed %-9d field
+        % showed its pad as "SSA samples: 100000   ". It also cannot desync
+        % the way a hardcoded run of backspaces does once the count outgrows
+        % the field. line_printf closes the row, so the completion banner
+        % terminates it without help.
+        if opt.verbose == 2 || (samples_collected > 0 && mod(samples_collected,1e3) == 0)
+            LineStatus.set('SSA samples: %d', samples_collected);
         end
     end
 end  % next_reaction_method_direct
@@ -1817,7 +1943,7 @@ end  % next_reaction_method_direct
 % ======================================================================
 % Buffer maintenance for FCFS/LCFS nodes
 % ======================================================================
-function [buffers, svcph, svcChanged] = updateBuffers(kfire, nvec, buffers, fromIR, destPos, mi, R, sn, smap, svcph, bufPHNode, isBufSvcRx, depPhase)
+function [buffers, svcph, svcChanged, startCount, preemptCount] = updateBuffers(kfire, nvec, buffers, fromIR, destPos, mi, R, sn, smap, svcph, bufPHNode, isBufSvcRx, depPhase, startCount, preemptCount)
 % Maintain the ordered per-node buffers when reaction KFIRE fires. A departure
 % frees a server, so the buffered job selected by the station's discipline is
 % promoted into service and leaves the buffer; an arrival at a buffered
@@ -1843,7 +1969,13 @@ end
 % redrawn here in proportion to the Delta_mu of the positions that eject this
 % class, which is the same split afterEventStationPAS enumerates.
 if isListSched(ind, sn) && ~isempty(buffers{ind})
+    oldList = buffers{ind};
     buffers{ind} = oiDepart(sn, ind, buffers{ind}, fromIR(kfire,2));
+    % An order-independent station serves every position whose rate increment
+    % Delta_mu is positive, so a departure starts whichever positions cross
+    % from a zero increment to a positive one -- the same rule
+    % State.afterEventStationPAS tags. See its sub_startedHere.
+    startCount(ind,:) = startCount(ind,:) + oiStarted(sn, ind, oldList, buffers{ind}, R);
     return
 end
 
@@ -1856,6 +1988,7 @@ if isBuffered(ind, sn) && ~isempty(buffers{ind}) && ~isRetrialStation(ind, sn) .
     pos = pickFromBuffer(buffers{ind}, sn, sn.nodeToStation(ind));
     promoted = buffers{ind}(pos);
     buffers{ind}(pos) = [];
+    startCount(ind, promoted) = startCount(ind, promoted) + 1; % takes the freed server
     if bufPHNode(ind)
         % The promoted waiting job starts service now, entering a phase drawn
         % from its entry distribution pie (the same allocation the init uses).
@@ -1867,13 +2000,46 @@ end
 
 % Handle arrival at a buffered destination node
 if ~isempty(destPos) && destPos > 0
-    [buffers, svcph, arrChanged] = applyArrivalBuffer(smap.node(destPos), smap.class(destPos), ...
-        nvec, buffers, mi, R, sn, smap, svcph, bufPHNode);
+    [buffers, svcph, arrChanged, startCount, preemptCount] = applyArrivalBuffer(smap.node(destPos), smap.class(destPos), ...
+        nvec, buffers, mi, R, sn, smap, svcph, bufPHNode, startCount, preemptCount);
     svcChanged = svcChanged || arrChanged;
 end
 end
 
-function [buffers, svcph, svcChanged] = applyArrivalBuffer(jnd, s, nvec, buffers, mi, R, sn, smap, svcph, bufPHNode)
+function st = oiStarted(sn, ind, cold, cnew, R)
+% ST=OISTARTED(SN,IND,COLD,CNEW,R) per-class count of the positions of CNEW
+% that are served (Delta_mu > 0) and were not served in COLD. Mirrors
+% State.afterEventStationPAS, which tags a PAS start by exactly this rule.
+st = zeros(1,R);
+muFun = sn.nodeparam{ind}.svcRateFun;
+if isempty(muFun)
+    return
+end
+incNew = oiIncrements(muFun, cnew);
+incOld = oiIncrements(muFun, cold);
+for p = 1:numel(incNew)
+    if incNew(p) <= 0
+        continue
+    end
+    if p <= numel(incOld) && incOld(p) > 0
+        continue
+    end
+    st(cnew(p)) = st(cnew(p)) + 1;
+end
+end
+
+function inc = oiIncrements(muFun, c)
+% Per-position increments Delta_mu(c1..cp) = mu(c1..cp) - mu(c1..c_{p-1}).
+inc = zeros(1, numel(c));
+muPrev = 0;
+for p = 1:numel(c)
+    muCur = muFun(c(1:p));
+    inc(p) = muCur - muPrev;
+    muPrev = muCur;
+end
+end
+
+function [buffers, svcph, svcChanged, startCount, preemptCount] = applyArrivalBuffer(jnd, s, nvec, buffers, mi, R, sn, smap, svcph, bufPHNode, startCount, preemptCount)
 % Join a just-arrived class-S job to the ordered buffer of destination node
 % JND, if that node is buffered. NVEC already includes the arrival. Shared by
 % updateBuffers (routed arrivals) and fcrReleaseCascade (WAITQ releases), so
@@ -1886,7 +2052,9 @@ function [buffers, svcph, svcChanged] = applyArrivalBuffer(jnd, s, nvec, buffers
         % is no server/buffer split, so no capacity test against mi. Capacity
         % is the station's own cap, and an arrival past it is lost.
         if numel(buffers{jnd}) < sn.cap(sn.nodeToStation(jnd))
+            oldList = buffers{jnd};
             buffers{jnd}(end+1) = s; % append at the back (newest last)
+            startCount(jnd,:) = startCount(jnd,:) + oiStarted(sn, jnd, oldList, buffers{jnd}, R);
         end
     elseif isBuffered(jnd, sn)
         totalAtDest = sum(classCounts(nvec, smap.phOff, smap.nph, jnd, R));
@@ -1915,6 +2083,7 @@ function [buffers, svcph, svcChanged] = applyArrivalBuffer(jnd, s, nvec, buffers
                 c = pickPreempted(nvec, buffers{jnd}, jnd, s, R);
                 if c > 0
                     buffers{jnd} = [c, buffers{jnd}]; % addFirst
+                    preemptCount(jnd, c) = preemptCount(jnd, c) + 1; % displaced incumbent
                 end
                 enteredService = true;
             else
@@ -1924,6 +2093,9 @@ function [buffers, svcph, svcChanged] = applyArrivalBuffer(jnd, s, nvec, buffers
         else
             % A server is free: the job goes straight into service.
             enteredService = true;
+        end
+        if enteredService
+            startCount(jnd, s) = startCount(jnd, s) + 1; % the arrival took a server
         end
         if enteredService && bufPHNode(jnd)
             ke = drawEntryPhase(sn, jnd, s, smap.nph(jnd, s));
@@ -2510,6 +2682,123 @@ end
 end
 
 % ======================================================================
+% Destination-side BLOCKING: a refused arrival that may not be dropped
+% ======================================================================
+
+function blk = blockPrecompute(sn, R)
+% Stations and classes at which a refused arrival must BLOCK rather than be
+% lost. CAPACITYLOSS above answers the OPEN half of the same question, and
+% returns false for a closed class precisely because a closed network's
+% population is an invariant; nothing then stopped the reaction, so the NRM
+% fired into the full station anyway and reported the UNCONSTRAINED answer
+% (BUG-81). On a closed 3-queue tandem, N=6, Q2 capped at 2 it gave QLen
+% [1.96 2.07 1.97] against the exact [3.609 0.971 1.420] -- a mean of 2.07 at a
+% station that holds 2 -- while SOLVER_SSA, whose producer already implements
+% the contract, gave the exact answer.
+%
+% Blocking is the THIRD outcome of a firing. The departure does not occur, the
+% source is not decremented, no buffer moves; only the reaction's own clock is
+% redrawn, which is exact by memorylessness (the residual of an exponential, or
+% of the current PH phase, is that same exponential). It is what SOLVER_CTMC
+% does when MATCHROW cannot find the over-capacity target and drops the arc,
+% which is why the two now agree.
+%
+% The gate is deliberately NARROWER than State.afterEventStation's: it fires
+% only for a CLOSED class, so every open-class drop path -- M/M/1/K included --
+% keeps the sample path it had. A cap that cannot bind (the usual cap = N
+% default) never enters BLK.CAN, so BLK.ON stays false and the mechanism costs
+% nothing on models that do not need it.
+M = sn.nstations;
+blk.can = false(M, R);
+blk.cap = inf(M, 1);
+blk.ccap = inf(M, R);
+blk.node2st = sn.nodeToStation(:);
+if ~isempty(sn.cap)
+    capv = sn.cap(:);
+    blk.cap(1:min(M,numel(capv))) = capv(1:min(M,numel(capv)));
+end
+if ~isempty(sn.classcap)
+    cc = sn.classcap;
+    rows = min(M, size(cc,1));
+    cols = min(R, size(cc,2));
+    % a non-positive class cap is "unset", not "holds nothing"
+    sub = cc(1:rows, 1:cols);
+    sub(sub <= 0) = inf;
+    blk.ccap(1:rows, 1:cols) = sub;
+end
+njobs = sn.njobs(:);
+% A cap that CANNOT BIND is not a blocking site. Every closed model carries
+% cap(ist) = N by default, and a station that can hold the whole population never
+% refuses one: the arriving job is itself one of the N, so the pre-arrival count
+% is at most N-1. Excluding those is what keeps BLK.ON false -- and the
+% per-firing test unpaid -- on ordinary models. An open class present anywhere
+% makes a finite station cap binding again, since its jobs are not counted in N.
+closedTotal = sum(njobs(isfinite(njobs)));
+anyOpen = any(isinf(njobs));
+for ist = 1:M
+    for r = 1:R
+        if r > numel(njobs) || isinf(njobs(r))
+            continue % open class: refusal LOSES, handled by capacityLoss
+        end
+        bindsSt = isfinite(blk.cap(ist)) && (anyOpen || blk.cap(ist) < closedTotal);
+        bindsCl = isfinite(blk.ccap(ist, r)) && blk.ccap(ist, r) < njobs(r);
+        if bindsSt || bindsCl
+            blk.can(ist, r) = true;
+        end
+    end
+end
+blk.on = any(blk.can(:));
+end
+
+function tf = capacityBlock(blk, nvec, destPos, srcPos, R, smap)
+% True when a class-r job routed to state slot DESTPOS cannot be admitted and
+% the firing must be cancelled.
+%
+% The population read is the PRE-arrival one, minus the departing job when it
+% currently sits at the destination node: a self-loop or a feedback arc at a
+% station already at cap would otherwise block itself forever, while the
+% reference producer sees the state AFTER the departure half. FCRREFUSINGREGION
+% discounts its source in the same region for the same reason.
+tf = false;
+if ~blk.on
+    return
+end
+jnd = smap.node(destPos);
+if jnd > numel(blk.node2st)
+    return
+end
+ist = blk.node2st(jnd);
+if ist < 1
+    return
+end
+r = smap.class(destPos);
+if ist > size(blk.can,1) || r > size(blk.can,2) || ~blk.can(ist, r)
+    return
+end
+sameNode = srcPos >= 1 && srcPos <= numel(smap.node) && smap.node(srcPos) == jnd;
+cc = classCounts(nvec, smap.phOff, smap.nph, jnd, R);
+if isfinite(blk.cap(ist))
+    total = sum(cc);
+    if sameNode
+        total = total - 1;
+    end
+    if total >= blk.cap(ist)
+        tf = true;
+        return
+    end
+end
+if isfinite(blk.ccap(ist, r))
+    pop = cc(r);
+    if sameNode && smap.class(srcPos) == r
+        pop = pop - 1;
+    end
+    if pop >= blk.ccap(ist, r)
+        tf = true;
+    end
+end
+end
+
+% ======================================================================
 % Finite capacity regions (DROP rule)
 % ======================================================================
 
@@ -2551,7 +2840,7 @@ for f = 1:F
     if isfield(sn,'regionmaxmem') && numel(sn.regionmaxmem) >= f && ~isempty(sn.regionmaxmem{f})
         memvec = sn.regionmaxmem{f}(:);
     end
-    mask = (any(Rmat ~= -1, 2) | memvec ~= -1)';
+    mask = sn_region_members(sn, f, Rmat, memvec);
     fcr.memberMask(f, 1:numel(mask)) = mask;
     members = find(mask);
     ccap = inf(1,K);
@@ -2637,7 +2926,7 @@ for ff = 1:size(fcr.memberNode,1)
 end
 end
 
-function [nvec, buffers, fcrBuf, released, svcph, svcChanged] = fcrReleaseCascade(fcr, nvec, buffers, fcrBuf, mi, R, sn, smap, svcph, bufPHNode)
+function [nvec, buffers, fcrBuf, released, svcph, svcChanged, startCount, preemptCount] = fcrReleaseCascade(fcr, nvec, buffers, fcrBuf, mi, R, sn, smap, svcph, bufPHNode, startCount, preemptCount)
 % Strict-FIFO head-of-line release of parked WAITQ tokens: admit each region's
 % FIFO head while the admission constraints permit, applying the arrival to
 % the destination station (entry-phase slot plus buffer join). Mirrors
@@ -2667,14 +2956,14 @@ while progress
             % applyArrivalBuffer against the server occupancy, exactly as a routed
             % arrival is.
             nvec(smap.phOff(dstNode,dstClass) + 1) = nvec(smap.phOff(dstNode,dstClass) + 1) + 1;
-            [buffers, svcph, arrCh] = applyArrivalBuffer(dstNode, dstClass, nvec, buffers, mi, R, sn, smap, svcph, bufPHNode);
+            [buffers, svcph, arrCh, startCount, preemptCount] = applyArrivalBuffer(dstNode, dstClass, nvec, buffers, mi, R, sn, smap, svcph, bufPHNode, startCount, preemptCount);
             svcChanged = svcChanged || arrCh;
         else
             pentry = entryProbs(sn, dstNode, dstClass, smap.nph(dstNode,dstClass));
             ke = drawFromDist(pentry);
             dslot = smap.phOff(dstNode,dstClass) + ke;
             nvec(dslot) = nvec(dslot) + 1;
-            [buffers, svcph, arrCh] = applyArrivalBuffer(dstNode, dstClass, nvec, buffers, mi, R, sn, smap, svcph, bufPHNode);
+            [buffers, svcph, arrCh, startCount, preemptCount] = applyArrivalBuffer(dstNode, dstClass, nvec, buffers, mi, R, sn, smap, svcph, bufPHNode, startCount, preemptCount);
             svcChanged = svcChanged || arrCh;
         end
         fcrBuf{f}(1) = [];
@@ -2698,23 +2987,27 @@ if isempty(ke)
 end
 end
 
-function [outClass, var, category] = cacheAccess(sn, ind, class, var)
+function [outClass, var, category, released] = cacheAccess(sn, ind, class, var)
 % Simulate one cache READ at cache node IND by a class-CLASS job over the cache
 % state VAR (totalCacheCapacity content slots followed, when a retrieval system
-% is present, by a per-item retrieval-occupancy bitmap). Returns the class the
-% job leaves in -- OUTCLASS = 0 means the request was absorbed as a delayed hit
-% and produces nothing -- the rewritten VAR, and a CATEGORY (1 hit, 2 miss/
-% retrieval-complete, 3 delayed-hit, 4 begin-retrieval). A faithful port of
-% State.afterEventCache (READ, isSimulation): non-retrieval hit/miss with all
-% replacement policies, plus the retrieval (delayed-hit) system where a miss for
-% an item not yet being fetched begins a retrieval (switch to the item's
-% retrieval class, mark the bitmap), a concurrent request for an item already
-% being fetched is absorbed, and a returning retrieval-class read completes the
-% miss (clear the bitmap, admit the item).
+% is present, by block A, a per-item retrieval-occupancy bitmap, and by block B,
+% the per-retrieval-class count of requests merged onto an in-flight fetch).
+% Returns the class the job leaves in -- OUTCLASS = 0 means the request merged
+% onto a pending fetch and produces nothing yet -- the rewritten VAR, a CATEGORY
+% (1 hit, 2 miss/retrieval-complete, 3 delayed-hit, 4 begin-retrieval), and
+% RELEASED, the (hitClass, count) rows freed by a completing fetch. A faithful
+% port of State.afterEventCache (READ, isSimulation): non-retrieval hit/miss with
+% all replacement policies, plus the retrieval system where a miss for an item
+% not yet being fetched begins a retrieval (switch to the item's retrieval class,
+% mark block A), a concurrent request for an item already being fetched is held
+% in block B as a delayed hit, and a returning retrieval-class read completes the
+% miss (clear block A, admit the item, release the merged requests).
 np = sn.nodeparam{ind};
 m = np.itemcap;
 ac = np.accost;
 h = length(m);
+released = zeros(0,2);
+[rcList, rcItems, rcOrigClass] = State.cacheRetrievalClassMap(sn, ind);
 replacement_id = np.replacestrat;
 if isfield(np,'totalCacheCapacity') && ~isempty(np.totalCacheCapacity)
     totalCacheCapacity = np.totalCacheCapacity;
@@ -2806,8 +3099,13 @@ if hasRetrieval && ~isFromRetrieval
     if rClass ~= -1
         inRetrieval = (totalCacheCapacity + k <= numel(var)) && var(totalCacheCapacity + k) ~= 0;
         if inRetrieval
-            % DELAYED HIT: this request is served by the in-flight retrieval and
-            % absorbed (no class produced), coalescing onto the pending fetch.
+            % DELAYED HIT: merges onto the in-flight fetch and is held in block B
+            % until it completes, then released in its own hit class.
+            bslot = find(rcList == rClass, 1);
+            bcol = totalCacheCapacity + np.nitems + bslot;
+            if ~isempty(bslot) && bcol <= numel(var)
+                var(bcol) = var(bcol) + 1;
+            end
             outClass = 0;
             category = 3;
             return
@@ -2827,6 +3125,21 @@ end
 % class. Clear the retrieval bit (if any) and admit item k per the policy.
 if isFromRetrieval && (totalCacheCapacity + k <= numel(var))
     var(totalCacheCapacity + k) = 0;
+    % Every request merged onto this fetch is released now as a delayed hit, in
+    % the hit class of the job class that issued it.
+    for bslot = 1:numel(rcList)
+        if rcItems(bslot) ~= k
+            continue
+        end
+        bcol = totalCacheCapacity + np.nitems + bslot;
+        if bcol <= numel(var) && var(bcol) > 0
+            hc = hitclassArr(rcOrigClass(bslot));
+            if hc > 0
+                released(end+1,:) = [hc, var(bcol)]; %#ok<AGROW>
+            end
+            var(bcol) = 0;
+        end
+    end
 end
 outClass = missclassArr(class);
 category = 2;
@@ -3055,7 +3368,7 @@ end
 % then fires at its exponential rate, an infinite/k-server mode at that rate
 % times its enabling degree. Each firing applies the mode's stoichiometry once
 % (consume the input weights, produce the output weights), which is the atomic
-% GSPN firing shared by the exact CTMC (single server), JMT and GreatSPN.
+% GSPN firing shared by the exact CTMC (single server), JMT and standard GSPN tools.
 %
 % IMMEDIATE transitions fire in zero time and cannot be an exponential reaction.
 % They are resolved by vanishing-marking elimination: after every timed firing
@@ -3095,10 +3408,13 @@ for ind = 1:I
     np = sn.nodeparam{ind};
     for m = 1:np.nmodes
         % Marking-dependent firing rates change the propensity with the marking;
-        % SolverSSA does not yet apply the g(marking) multiplier (unlike CTMC and
-        % LDES), so reject rather than silently simulate the nominal rate.
-        if isfield(np, 'firingdep') && numel(np.firingdep) >= m && ~isempty(np.firingdep{m})
-            line_error(mfilename, sprintf('Transition %s mode %d uses a marking-dependent firing rate (setFiringRateDependence), which SolverSSA does not support; use SolverCTMC or SolverLDES.', sn.nodenames{ind}, m));
+        % SolverSSA does not apply the g(marking) multiplier (unlike CTMC and
+        % LDES), so reject rather than silently simulate the nominal rate. The
+        % sentence is SSA_FIRINGDEP_REFUSAL's, which the gate and the analyzer
+        % ask first; this is the enableChecks=false path.
+        [fdOk, fdWhy] = ssa_firingdep_refusal(sn);
+        if ~fdOk
+            line_error(mfilename, fdWhy);
         end
         rec = spnBuildMode(sn, ind, m, phOff, NS);
         if np.timing(m) == TimingStrategy.IMMEDIATE
@@ -3316,12 +3632,10 @@ while n <= samples
 
     n = n + 1;
     if isfield(options, 'verbose') && options.verbose && mod(n, 1e3) == 0 && ~batchStartupOptionUsed
-        line_printf('\b\b\b\b\b\b\b\b\b%9d', n);
+        LineStatus.set('SSA samples: %d', n);
     end
 end
-if isfield(options, 'verbose') && options.verbose
-    line_printf('\n');
-end
+LineStatus.close(); % ends the sample-counter row
 
 if totalTime > 0
     QN = QN / totalTime;

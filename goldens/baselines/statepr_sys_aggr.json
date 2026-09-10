@@ -1,0 +1,15 @@
+{
+  "class": {
+    "OPT": "deterministic"
+  },
+  "example": "statepr_sys_aggr",
+  "solvers": {
+    "OPT": [
+      {
+        "JobClass": "Value",
+        "QLen": 0.000262604443394837,
+        "Station": "OptResult"
+      }
+    ]
+  }
+}

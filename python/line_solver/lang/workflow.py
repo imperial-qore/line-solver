@@ -11,15 +11,24 @@ Key Classes:
 
 The Workflow class supports:
 - Serial, parallel, loop, and branching structures
-- Conversion to phase-type (APH) distributions via toPH()
+- Conversion to phase-type distributions via toPH()
 - Loading from WfCommons JSON format
 
+A workflow whose precedence graph is series-parallel is reduced exactly, by
+recursive composition of the series-parallel tree, which handles arbitrary
+nesting (a fork inside a loop, a branch that is itself a fork-join). Graphs
+that are not series-parallel fall back to the block-based composition, which is
+a heuristic. A loop repeats its body a geometric number of times of mean COUNT,
+the semantics of the POST_LOOP precedence of an activity graph.
+
 References:
-    Original Java: jar/src/main/kotlin/jline/lang/workflow/Workflow.java
+    Original Java: jar/src/main/java/jline/lang/workflow/Workflow.java
 """
 
 import numpy as np
 from typing import List, Dict, Any, Optional, Tuple, Union
+
+from ..constants import GlobalConstants
 from dataclasses import dataclass, field
 from enum import Enum
 import json
@@ -112,14 +121,13 @@ class ActivityPrecedence:
         """Create an AND-join: all pre_acts -> post_act (synchronization)."""
         pre_names = [a if isinstance(a, str) else a.name for a in pre_acts]
         post_name = post_act if isinstance(post_act, str) else post_act.name
-        if quorum is None:
-            quorum = np.ones(len(pre_acts))
+        # An absent quorum means a full join, as in layered.ActivityPrecedence
         return ActivityPrecedence(
             pre_acts=pre_names,
             post_acts=[post_name],
             pre_type=ActivityPrecedenceType.PRE_AND,
             post_type=ActivityPrecedenceType.POST_SEQ,
-            pre_params=quorum
+            pre_params=None if quorum is None else np.atleast_1d(np.asarray(quorum, dtype=float))
         )
 
     @staticmethod
@@ -153,9 +161,20 @@ class ActivityPrecedence:
     @staticmethod
     def Loop(pre_act: Union[str, 'WorkflowActivity'],
              loop_acts: List[Union[str, 'WorkflowActivity']],
-             end_act: Optional[Union[str, 'WorkflowActivity']] = None,
+             end_act: Optional[Union[str, 'WorkflowActivity', float]] = None,
              count: float = 1.0) -> 'ActivityPrecedence':
-        """Create a loop: pre_act -> loop_acts (repeated count times) -> end_act."""
+        """
+        Create a loop: pre_act -> loop_acts (repeated count times) -> end_act.
+
+        The body repeats a geometric number of times of mean COUNT, the
+        POST_LOOP semantics of an activity graph. Both call conventions are
+        accepted: Loop(pre, [body, end], count), as in MATLAB and the JAR and
+        in layered.ActivityPrecedence, and Loop(pre, [body], end, count).
+        """
+        if isinstance(end_act, (int, float)) and not isinstance(end_act, bool):
+            # Loop(pre, [body..., end], count): the third positional is COUNT
+            count = float(end_act)
+            end_act = None
         pre_name = pre_act if isinstance(pre_act, str) else pre_act.name
         post_names = [a if isinstance(a, str) else a.name for a in loop_acts]
         if end_act is not None:
@@ -170,12 +189,36 @@ class ActivityPrecedence:
         )
 
 
+
+def _scale_distribution_rate(distrib, factor: float):
+    """
+    Time-scale a distribution by FACTOR, or None when it cannot be scaled.
+
+    The import is deferred because line_solver.distributions imports this
+    module's package, so a module-level import would close a cycle.
+    """
+    try:
+        from ..distributions import dist_scale_rate
+    except ImportError:
+        return None
+    try:
+        return dist_scale_rate(distrib, factor)
+    except (ValueError, TypeError, NotImplementedError):
+        return None
+
+
 class WorkflowActivity:
     """
     A computational activity in a Workflow.
 
     Represents a single activity with a host demand (service time distribution).
     Activities can be composed into workflows using precedence relationships.
+
+    Unlike Activity in LayeredNetwork it carries no call list: an external call
+    is represented as an activity whose host demand is the law of the call
+    response time, so that a synchronous call and a local computation compose in
+    the same way. An asynchronous call blocks the caller for no time and is
+    simply left out of the workflow.
 
     Args:
         workflow: Parent Workflow object
@@ -194,17 +237,10 @@ class WorkflowActivity:
         self._name = name
         self._index = -1
         self._metadata: Dict[str, Any] = {}
-
-        # Set host demand
-        if isinstance(host_demand, (int, float)):
-            self._host_demand_mean = float(host_demand)
-            self._host_demand_scv = 1.0  # Exponential
-            self._distribution = None
-        else:
-            # Assume it's a Distribution object
-            self._distribution = host_demand
-            self._host_demand_mean = host_demand.getMean() if hasattr(host_demand, 'getMean') else 1.0
-            self._host_demand_scv = host_demand.getSCV() if hasattr(host_demand, 'getSCV') else 1.0
+        self._distribution = None
+        self._host_demand_mean = 1.0
+        self._host_demand_scv = 1.0
+        self.setHostDemand(host_demand)
 
     @property
     def name(self) -> str:
@@ -237,13 +273,54 @@ class WorkflowActivity:
     def setHostDemand(self, value: Union[float, Any]) -> None:
         """Set the host demand (service time)."""
         if isinstance(value, (int, float)):
-            self._host_demand_mean = float(value)
-            self._host_demand_scv = 1.0
-            self._distribution = None
+            if float(value) <= GlobalConstants.FineTol:
+                # Zero-time activity, as in the MATLAB and JAR twins
+                self._host_demand_mean = GlobalConstants.FineTol
+                self._host_demand_scv = GlobalConstants.FineTol
+                self._distribution = None
+            else:
+                self._host_demand_mean = float(value)
+                self._host_demand_scv = 1.0
+                self._distribution = None
         else:
             self._distribution = value
             self._host_demand_mean = value.getMean() if hasattr(value, 'getMean') else 1.0
             self._host_demand_scv = value.getSCV() if hasattr(value, 'getSCV') else 1.0
+        self._invalidateParent()
+
+    def setHostDemandMean(self, mean_value: float) -> None:
+        """
+        Change the mean, preserving the shape.
+
+        Scales the current law in time rather than refitting it, so the SCV,
+        the skewness and the order are preserved and the cached series-parallel
+        tree keeps its shape.
+        """
+        if not (mean_value > 0) or np.isinf(mean_value):
+            raise ValueError("The activity mean must be a positive finite scalar.")
+
+        old_mean = self._host_demand_mean
+        if self._distribution is None or not (old_mean > 0) or np.isinf(old_mean) \
+                or old_mean <= GlobalConstants.FineTol:
+            self.setHostDemand(float(mean_value))
+            return
+
+        factor = old_mean / mean_value
+        scaled = _scale_distribution_rate(self._distribution, factor)
+        if scaled is None:
+            self.setHostDemand(float(mean_value))
+            return
+        self._distribution = scaled
+        self._host_demand_mean = float(mean_value)
+        # The SCV is invariant under a time scaling
+        if self._workflow is not None and self._index >= 0:
+            self._workflow.rescaleActivityLeaf(self._index, factor)
+
+    def _invalidateParent(self) -> None:
+        # The parent caches the composed law, so the leaf must be marked dirty
+        # here as well as on a topology change
+        if self._workflow is not None and self._index >= 0:
+            self._workflow.invalidateActivity(self._index)
 
     def getPHRepresentation(self) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -254,11 +331,10 @@ class WorkflowActivity:
                 alpha: Initial probability vector (1 x n)
                 T: Sub-generator matrix (n x n)
         """
-        FINE_TOL = 1e-14
-
-        # Handle immediate (zero service time)
-        if self._host_demand_mean <= FINE_TOL:
-            return np.array([[1.0]]), np.array([[-1e10]])
+        # Handle immediate (zero service time), on the same threshold as the
+        # MATLAB and JAR twins
+        if self._host_demand_mean <= GlobalConstants.FineTol:
+            return np.array([[1.0]]), np.array([[-GlobalConstants.Immediate]])
 
         # Handle Markovian distribution
         if self._distribution is not None and hasattr(self._distribution, 'getInitProb'):
@@ -312,7 +388,12 @@ class Workflow:
     - Serial composition (sequence of activities)
     - Parallel composition (AND-fork/join)
     - Probabilistic branching (OR-fork/join)
-    - Loops with fixed iteration counts
+    - Loops whose body repeats a geometric number of times
+
+    A precedence graph that is series-parallel is reduced exactly, by recursive
+    composition of the series-parallel tree, which handles arbitrary nesting.
+    Graphs that are not series-parallel fall back to the block composition,
+    which is a heuristic.
 
     Example:
         >>> wf = Workflow("ServiceWorkflow")
@@ -324,7 +405,7 @@ class Workflow:
         >>> alpha, T = wf.toPH()
 
     References:
-        Original Java: jar/src/main/kotlin/jline/lang/workflow/Workflow.java
+        Original Java: jar/src/main/java/jline/lang/workflow/Workflow.java
     """
 
     # Class-level aliases for precedence constructors
@@ -342,6 +423,8 @@ class Workflow:
         self._activity_map: Dict[str, int] = {}
         self._precedences: List[ActivityPrecedence] = []
         self._cached_ph: Optional[Tuple[np.ndarray, np.ndarray]] = None
+        self._sp_tree: Optional[Dict[str, Any]] = None
+        self._sp_failed: bool = False
 
     @property
     def name(self) -> str:
@@ -363,7 +446,7 @@ class Workflow:
         self._activities.append(act)
         act.index = len(self._activities) - 1
         self._activity_map[name] = act.index
-        self._cached_ph = None
+        self.invalidateTopology()
         return act
 
     # Snake_case alias
@@ -381,7 +464,7 @@ class Workflow:
                 self._precedences.append(p)
         else:
             self._precedences.append(prec)
-        self._cached_ph = None
+        self.invalidateTopology()
 
     # Snake_case alias
     add_precedence = addPrecedence
@@ -392,6 +475,11 @@ class Workflow:
         if idx is None:
             return None
         return self._activities[idx]
+
+    def getActivityIndex(self, name: str) -> int:
+        """Get the zero-based index of an activity, or -1 if absent."""
+        idx = self._activity_map.get(name)
+        return -1 if idx is None else idx
 
     def getActivities(self) -> List[WorkflowActivity]:
         """Get all activities."""
@@ -421,20 +509,48 @@ class Workflow:
                     return False, f"Activity '{act_name}' referenced in precedence not found."
 
         # Check OR-fork probabilities
-        FINE_TOL = 1e-14
         for prec in self._precedences:
             if prec.post_type == ActivityPrecedenceType.POST_OR:
                 if prec.post_params is None:
                     return False, "OR-fork must have probabilities."
                 prob_sum = np.sum(prec.post_params)
-                if abs(prob_sum - 1.0) > FINE_TOL:
-                    return False, "OR-fork probabilities must sum to 1."
+                if abs(prob_sum - 1.0) > GlobalConstants.FineTol:
+                    return False, ("OR-fork probabilities must sum to 1 "
+                                   "(got %.4f)." % prob_sum)
+
+        # Check loop counts are a single positive number
+        for prec in self._precedences:
+            if prec.post_type == ActivityPrecedenceType.POST_LOOP:
+                if prec.post_params is None or np.size(prec.post_params) != 1:
+                    return False, "Loop count must be a single positive number."
+                if float(np.ravel(prec.post_params)[0]) <= 0:
+                    return False, "Loop count must be a positive number."
+
+        # Partial (quorum) AND-joins are refused rather than silently served as
+        # full joins, which would be a different law
+        for prec in self._precedences:
+            if prec.pre_type == ActivityPrecedenceType.PRE_AND and prec.pre_params is not None:
+                params = np.ravel(np.asarray(prec.pre_params, dtype=float))
+                if params.size == 0:
+                    continue
+                quorum = params[0]
+                if 0 < quorum < len(prec.pre_acts):
+                    return False, (
+                        "AND-join with quorum %d of %d is not supported by Workflow: "
+                        "a partial join is not the maximum of the branches. Use a full "
+                        "join, or SolverLN with method='default', which routes the join "
+                        "explicitly." % (int(quorum), len(prec.pre_acts)))
 
         return True, ""
 
     def toPH(self) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Convert workflow to phase-type (APH) representation.
+        Convert workflow to a phase-type representation.
+
+        A series-parallel precedence graph is reduced exactly; any other graph
+        falls back to the block composition. The generator is acyclic (an APH)
+        unless a geometric loop closes a cycle over a multi-phase body, which
+        isAcyclicGenerator reports.
 
         Returns:
             Tuple of (alpha, T) where:
@@ -451,9 +567,491 @@ class Workflow:
         if not is_valid:
             raise ValueError(error)
 
-        alpha, T = self._buildCTMC()
-        self._cached_ph = (alpha, T)
+        result = self._composeSeriesParallel()
+        if result is None:
+            # Not series-parallel: fall back to the block composition
+            result = self._buildCTMC()
+
+        self._cached_ph = result
+        return result
+
+    def refreshPH(self) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Recompose the workflow law after a demand change.
+
+        Recomposes only the series-parallel nodes on the path from a dirty leaf
+        to the root; nodes whose subtree is unchanged keep their cached
+        (alpha, T). The topology is not rebuilt. When the workflow is not
+        series-parallel this degrades to a full recomposition through the block
+        path.
+        """
+        return self.toPH()
+
+    def setActivityDemand(self, name: str, host_demand: Union[float, Any]) -> 'Workflow':
+        """
+        Change the host demand of one activity.
+
+        Marks only that leaf dirty, so that the next toPH/refreshPH recomposes
+        the path from the leaf to the root and reuses every other cached block.
+        This is the entry point used by iterative solvers that update
+        call-response laws at each iteration.
+        """
+        act = self.getActivity(name)
+        if act is None:
+            raise ValueError("Activity '%s' not found in workflow." % name)
+        act.setHostDemand(host_demand)
+        return self
+
+    def setActivityDemandMean(self, name: str, mean_value: float) -> 'Workflow':
+        """
+        Change only the mean of one activity.
+
+        Rescales the activity law in time, so its SCV and its whole shape are
+        preserved. The leaf keeps its order and its initial probability vector,
+        and the cached series-parallel tree keeps its shape.
+        """
+        act = self.getActivity(name)
+        if act is None:
+            raise ValueError("Activity '%s' not found in workflow." % name)
+        act.setHostDemandMean(mean_value)
+        return self
+
+    def invalidateTopology(self) -> None:
+        """
+        Discard the cached law and decomposition.
+
+        Called when an activity or a precedence is added, which can change the
+        shape of the series-parallel tree.
+        """
+        self._cached_ph = None
+        self._sp_tree = None
+        self._sp_failed = False
+
+    def invalidateActivity(self, act_idx: int) -> None:
+        """
+        Mark one activity law as dirty.
+
+        Invalidates the leaf of ACT_IDX and its ancestors in the cached
+        series-parallel tree, keeping every other cached block. The topology is
+        untouched.
+        """
+        self._cached_ph = None
+        if self._sp_tree is None:
+            return
+        leaf_of = self._sp_tree['leaf_of']
+        if act_idx < 0 or act_idx >= len(leaf_of) or leaf_of[act_idx] < 0:
+            # Activity outside the decomposition: rebuild it entirely
+            self._sp_tree = None
+            self._sp_failed = False
+            return
+        Workflow._invalidateBranch(self._sp_tree, leaf_of[act_idx])
+
+    def rescaleActivityLeaf(self, act_idx: int, factor: float) -> None:
+        """
+        Time-scale a cached leaf in place.
+
+        The leaf law is scaled as T -> T*FACTOR with ALPHA fixed, which divides
+        its mean by FACTOR and leaves its SCV and its order untouched.
+        Ancestors still recompose, because they mix phases of several leaves,
+        but the tree keeps its shape and no APH is refitted.
+        """
+        self._cached_ph = None
+        if self._sp_tree is None:
+            return
+        leaf_of = self._sp_tree['leaf_of']
+        if act_idx < 0 or act_idx >= len(leaf_of) or leaf_of[act_idx] < 0:
+            self._sp_tree = None
+            self._sp_failed = False
+            return
+        k = leaf_of[act_idx]
+        Workflow._invalidateBranch(self._sp_tree, k)
+        if self._sp_tree['T'][k] is not None:
+            self._sp_tree['T'][k] = self._sp_tree['T'][k] * factor
+            self._sp_tree['valid'][k] = True
+
+    def getSPTree(self) -> Optional[Dict[str, Any]]:
+        """
+        Return the cached series-parallel decomposition.
+
+        Returns the flat series-parallel tree, or None if the precedence graph
+        is not series-parallel. Key 'execs' carries the expected number of
+        executions of each node per workflow execution, which is what an LQN
+        metric reconstruction splits the layer results by.
+        """
+        if self._sp_tree is None and not self._sp_failed:
+            self._buildSPTree()
+        return self._sp_tree
+
+    # ------------------------------------------------------------------
+    # Series-parallel decomposition
+    # ------------------------------------------------------------------
+
+    def _composeSeriesParallel(self) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+        """
+        Exact reduction of a series-parallel graph.
+
+        Decomposes the precedence graph into a series-parallel tree and
+        composes it bottom-up, reusing every cached node whose subtree is
+        unchanged. Returns None when the graph is not series-parallel, which is
+        the signal to fall back to the block composition.
+        """
+        if self._sp_tree is None:
+            if self._sp_failed:
+                return None
+            self._buildSPTree()
+            if self._sp_tree is None:
+                return None
+        return self._composeNode(self._sp_tree['root'])
+
+    def _buildSPTree(self) -> bool:
+        """
+        Decompose the precedence graph into a series-parallel tree.
+
+        On success self._sp_tree holds a flat tree whose nodes are 'leaf',
+        'serial', 'par', 'or' or 'loop'. On failure self._sp_tree stays None
+        and self._sp_failed is set, so the decomposition is attempted once per
+        topology.
+        """
+        self._sp_tree = None
+        self._sp_failed = True
+
+        n = len(self._activities)
+        if n == 0:
+            return False
+
+        S = {
+            'out_p': [-1] * n,
+            'in_p': [-1] * n,
+            'consumed': [False] * n,
+            'type': [], 'act': [], 'kids': [], 'parent': [],
+            'probs': [], 'count': [], 'alpha': [], 'T': [], 'valid': [],
+        }
+
+        # An activity may head at most one precedence and be reached by at most
+        # one precedence; otherwise the graph is not series-parallel
+        for p, prec in enumerate(self._precedences):
+            for name in prec.pre_acts:
+                i = self.getActivityIndex(name)
+                if i < 0 or S['out_p'][i] >= 0:
+                    return False
+                S['out_p'][i] = p
+            for name in prec.post_acts:
+                j = self.getActivityIndex(name)
+                if j < 0 or S['in_p'][j] >= 0:
+                    return False
+                S['in_p'][j] = p
+
+        starts = [i for i in range(n) if S['in_p'][i] < 0]
+        if len(starts) != 1:
+            return False
+
+        kids, status, _, ok = self._spParseSeq(S, starts[0], [])
+        if not ok or status != 'end' or not all(S['consumed']):
+            return False
+
+        root = self._spSerialNode(S, kids)
+        if root < 0:
+            return False
+
+        tree = {
+            'type': S['type'], 'act': S['act'], 'kids': S['kids'],
+            'parent': S['parent'], 'probs': S['probs'], 'count': S['count'],
+            'alpha': S['alpha'], 'T': S['T'], 'valid': S['valid'],
+            'root': root,
+        }
+        leaf_of = [-1] * n
+        for k, t in enumerate(tree['type']):
+            if t == 'leaf':
+                leaf_of[tree['act'][k]] = k
+        tree['leaf_of'] = leaf_of
+        tree['execs'] = Workflow._spExecutionCounts(tree)
+
+        self._sp_tree = tree
+        self._sp_failed = False
+        return True
+
+    def _spParseSeq(self, S: Dict[str, Any], cur: int,
+                    stop_set: List[int]) -> Tuple[List[int], str, int, bool]:
+        """
+        Parse a maximal sequence of blocks starting at CUR.
+
+        Returns the nodes of the sequence and how it terminated:
+            'end'  - no successor
+            'stop' - reached an activity owned by the caller (stop_at)
+            'join' - reached a join precedence (stop_at is its index)
+        """
+        kids: List[int] = []
+
+        while True:
+            if cur < 0:
+                return kids, 'end', -1, True
+            if stop_set and cur in stop_set:
+                return kids, 'stop', cur, True
+            if S['consumed'][cur]:
+                return kids, 'end', -1, False
+            S['consumed'][cur] = True
+            kids.append(self._spAddNode(S, 'leaf', cur, [], None, 0.0))
+
+            p = S['out_p'][cur]
+            if p < 0:
+                return kids, 'end', -1, True
+            prec = self._precedences[p]
+            if len(prec.pre_acts) > 1:
+                # CUR is the tail of a branch: the caller composes the join
+                return kids, 'join', p, True
+
+            post_inds = self._spIndicesOf(prec.post_acts)
+            if any(i < 0 for i in post_inds):
+                return kids, 'end', -1, False
+
+            if prec.post_type == ActivityPrecedenceType.POST_AND:
+                knode, cur, ok = self._spParseFork(S, post_inds, None, stop_set, True)
+                if not ok:
+                    return kids, 'end', -1, False
+                kids.append(knode)
+            elif prec.post_type == ActivityPrecedenceType.POST_OR:
+                probs = None if prec.post_params is None else np.ravel(
+                    np.asarray(prec.post_params, dtype=float))
+                if probs is None or probs.size != len(post_inds):
+                    return kids, 'end', -1, False
+                knode, cur, ok = self._spParseFork(S, post_inds, probs, stop_set, False)
+                if not ok:
+                    return kids, 'end', -1, False
+                kids.append(knode)
+            elif prec.post_type == ActivityPrecedenceType.POST_LOOP:
+                knode, cur, ok = self._spParseLoop(S, post_inds, prec.post_params, stop_set)
+                if not ok:
+                    return kids, 'end', -1, False
+                kids.append(knode)
+            elif prec.post_type == ActivityPrecedenceType.POST_SEQ:
+                if len(post_inds) != 1:
+                    return kids, 'end', -1, False
+                cur = post_inds[0]
+            else:
+                # POST_CACHE and any other pattern is not a workflow
+                # composition rule
+                return kids, 'end', -1, False
+
+    def _spParseFork(self, S: Dict[str, Any], branch_heads: List[int],
+                     probs: Optional[np.ndarray], stop_set: List[int],
+                     is_and: bool) -> Tuple[int, int, bool]:
+        """Parse the branches of a fork and their join."""
+        nb = len(branch_heads)
+        branch_nodes = [0] * nb
+        bstatus = [''] * nb
+        bstop = [-1] * nb
+
+        for b in range(nb):
+            bkids, st, sa, okb = self._spParseSeq(S, branch_heads[b], stop_set)
+            if not okb:
+                return -1, -1, False
+            bn = self._spSerialNode(S, bkids)
+            if bn < 0:
+                return -1, -1, False
+            branch_nodes[b] = bn
+            bstatus[b] = st
+            bstop[b] = sa
+
+        if all(st == 'join' for st in bstatus):
+            if any(x != bstop[0] for x in bstop):
+                return -1, -1, False
+            join_prec = self._precedences[bstop[0]]
+            if len(join_prec.pre_acts) != nb:
+                return -1, -1, False
+            if is_and:
+                if join_prec.pre_type != ActivityPrecedenceType.PRE_AND:
+                    return -1, -1, False
+            else:
+                if join_prec.pre_type != ActivityPrecedenceType.PRE_OR:
+                    return -1, -1, False
+            post_inds = self._spIndicesOf(join_prec.post_acts)
+            if len(post_inds) != 1 or post_inds[0] < 0:
+                return -1, -1, False
+            next_act = post_inds[0]
+        elif all(st == 'end' for st in bstatus):
+            # Branches terminate the workflow. An AND-fork with no join still
+            # synchronises at the end of the workflow
+            next_act = -1
+        elif (not is_and) and all(st == 'stop' for st in bstatus) \
+                and all(x == bstop[0] for x in bstop):
+            next_act = bstop[0]
+        else:
+            return -1, -1, False
+
+        if is_and:
+            knode = self._spAddNode(S, 'par', -1, branch_nodes, None, 0.0)
+        else:
+            knode = self._spAddNode(S, 'or', -1, branch_nodes, probs, 0.0)
+        return knode, next_act, True
+
+    def _spParseLoop(self, S: Dict[str, Any], post_inds: List[int],
+                     counts: Any, stop_set: List[int]) -> Tuple[int, int, bool]:
+        """
+        Parse a loop block.
+
+        The last post activity is the continuation after the loop; the others
+        form the loop body, which repeats geometrically.
+        """
+        if counts is None or np.size(counts) != 1:
+            return -1, -1, False
+        count = float(np.ravel(np.asarray(counts, dtype=float))[0])
+
+        if len(post_inds) >= 2:
+            body_acts = list(post_inds[:-1])
+            end_act = post_inds[-1]
+        else:
+            body_acts = [post_inds[0]]
+            end_act = -1
+
+        loop_stop = list(stop_set) + list(body_acts)
+        if end_act >= 0:
+            loop_stop.append(end_act)
+
+        body_kids: List[int] = []
+        j = 0
+        while j < len(body_acts):
+            a = body_acts[j]
+            if S['consumed'][a]:
+                j += 1
+                continue
+            this_stop = [x for x in loop_stop if x != a]
+            kk, st, sa, okb = self._spParseSeq(S, a, this_stop)
+            if not okb:
+                return -1, -1, False
+            body_kids.extend(kk)
+            if st == 'end':
+                j += 1
+            elif st == 'stop':
+                if sa in body_acts:
+                    j = body_acts.index(sa)
+                elif end_act >= 0 and sa == end_act:
+                    j = len(body_acts)
+                else:
+                    return -1, -1, False
+            else:
+                # A join reached from inside the body crosses the loop
+                # boundary, so the graph is not series-parallel
+                return -1, -1, False
+
+        body_node = self._spSerialNode(S, body_kids)
+        if body_node < 0:
+            return -1, -1, False
+
+        knode = self._spAddNode(S, 'loop', -1, [body_node], None, count)
+        return knode, end_act, True
+
+    def _spSerialNode(self, S: Dict[str, Any], kids: List[int]) -> int:
+        """
+        Wrap a list of nodes in a serial node.
+
+        A single node is returned as is, so the tree carries no trivial
+        one-child serial nodes.
+        """
+        if not kids:
+            return -1
+        if len(kids) == 1:
+            return kids[0]
+        return self._spAddNode(S, 'serial', -1, kids, None, 0.0)
+
+    @staticmethod
+    def _spAddNode(S: Dict[str, Any], node_type: str, act: int,
+                   kids: List[int], probs: Optional[np.ndarray],
+                   count: float) -> int:
+        """Append a node to the series-parallel tree."""
+        k = len(S['type'])
+        S['type'].append(node_type)
+        S['act'].append(act)
+        S['kids'].append(list(kids))
+        S['probs'].append(probs)
+        S['count'].append(count)
+        S['alpha'].append(None)
+        S['T'].append(None)
+        S['valid'].append(False)
+        S['parent'].append(-1)
+        for c in kids:
+            S['parent'][c] = k
+        return k
+
+    def _spIndicesOf(self, names: List[str]) -> List[int]:
+        """Map a list of activity names to indices."""
+        return [self.getActivityIndex(nm) for nm in names]
+
+    def _composeNode(self, k: int) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Compose the law of one series-parallel node.
+
+        Cached nodes are returned untouched, so a demand change only recomposes
+        the path from the dirty leaf to the root.
+        """
+        tree = self._sp_tree
+        if tree['valid'][k]:
+            return tree['alpha'][k], tree['T'][k]
+
+        kids = tree['kids'][k]
+        ntype = tree['type'][k]
+        if ntype == 'leaf':
+            alpha, T = self._activities[tree['act'][k]].getPHRepresentation()
+        elif ntype == 'serial':
+            alpha, T = self._composeNode(kids[0])
+            for i in range(1, len(kids)):
+                a2, T2 = self._composeNode(kids[i])
+                alpha, T = Workflow._composeSerial(alpha, T, a2, T2)
+        elif ntype == 'par':
+            alpha, T = self._composeNode(kids[0])
+            for i in range(1, len(kids)):
+                a2, T2 = self._composeNode(kids[i])
+                alpha, T = Workflow._composeParallel(alpha, T, a2, T2)
+        elif ntype == 'or':
+            alphas = []
+            Ts = []
+            for c in kids:
+                ai, Ti = self._composeNode(c)
+                alphas.append(ai)
+                Ts.append(Ti)
+            alpha, T = Workflow._composeMixture(alphas, Ts, tree['probs'][k])
+        elif ntype == 'loop':
+            a1, T1 = self._composeNode(kids[0])
+            alpha, T = Workflow._composeLoopGeometric(a1, T1, tree['count'][k])
+        else:
+            raise ValueError("Unknown series-parallel node type '%s'." % ntype)
+
+        tree['alpha'][k] = alpha
+        tree['T'][k] = T
+        tree['valid'][k] = True
         return alpha, T
+
+    @staticmethod
+    def _invalidateBranch(tree: Dict[str, Any], k: int) -> None:
+        """Invalidate a node and all its ancestors."""
+        while k >= 0:
+            tree['valid'][k] = False
+            k = tree['parent'][k]
+
+    @staticmethod
+    def _spExecutionCounts(tree: Dict[str, Any]) -> List[float]:
+        """
+        Expected executions of each node per workflow run.
+
+        Serial and parallel children inherit the count of their parent, an OR
+        branch is weighted by its probability, and a loop body is weighted by
+        the loop count. This is the weight by which a layer result is split
+        back over entries, activities and calls.
+        """
+        n_nodes = len(tree['type'])
+        execs = [0.0] * n_nodes
+        execs[tree['root']] = 1.0
+        stack = [tree['root']]
+        while stack:
+            k = stack.pop()
+            for i, c in enumerate(tree['kids'][k]):
+                if tree['type'][k] == 'or':
+                    execs[c] = execs[k] * float(tree['probs'][k][i])
+                elif tree['type'][k] == 'loop':
+                    execs[c] = execs[k] * float(tree['count'][k])
+                else:
+                    execs[c] = execs[k]
+                stack.append(c)
+        return execs
 
     def _buildCTMC(self) -> Tuple[np.ndarray, np.ndarray]:
         """Build the CTMC representation of the workflow."""
@@ -601,7 +1199,7 @@ class Workflow:
             pre_idx = loop['pre_act']
             loop_acts = loop['loop_acts']
             end_act = loop['end_act']
-            count = int(loop['count'])
+            count = float(loop['count'])
 
             # Compose loop activities
             if len(loop_acts) == 1:
@@ -612,8 +1210,8 @@ class Workflow:
                     next_alpha, next_T = self._activities[loop_acts[j]].getPHRepresentation()
                     alpha_loop, T_loop = self._composeSerial(alpha_loop, T_loop, next_alpha, next_T)
 
-            # Repeat for count iterations
-            conv_alpha, conv_T = self._composeRepeat(alpha_loop, T_loop, count)
+            # POST_LOOP repeats the body a geometric number of times
+            conv_alpha, conv_T = self._composeLoopGeometric(alpha_loop, T_loop, count)
 
             # Compose with pre-activity
             result_alpha, result_T = self._composeSerial(
@@ -760,29 +1358,9 @@ class Workflow:
                             block_alpha: List[np.ndarray],
                             block_T: List[np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
         """Compose branching activities (OR-fork)."""
-        ZERO = 1e-14
-
-        total_phases = sum(block_T[idx].shape[0] for idx in branch_inds)
-
-        T = np.zeros((total_phases, total_phases))
-        alpha = np.zeros((1, total_phases))
-
-        offset = 0
-        for i, idx in enumerate(branch_inds):
-            alpha_i = block_alpha[idx]
-            T_i = block_T[idx]
-            n_i = T_i.shape[0]
-
-            # Copy T block
-            T[offset:offset + n_i, offset:offset + n_i] = T_i
-
-            # Set initial probabilities
-            for j in range(alpha_i.size):
-                alpha[0, offset + j] = probs[i] * alpha_i.flat[j]
-
-            offset += n_i
-
-        return alpha, T
+        alphas = [block_alpha[idx] for idx in branch_inds]
+        Ts = [block_T[idx] for idx in branch_inds]
+        return Workflow._composeMixture(alphas, Ts, np.ravel(np.asarray(probs, dtype=float)))
 
     @staticmethod
     def _composeSerial(alpha1: np.ndarray, T1: np.ndarray,
@@ -809,11 +1387,13 @@ class Workflow:
                 if abs(val) > ZERO:
                     T_out[r, n1 + c] = val
 
-        # Combined initial distribution
-        alpha_out = np.zeros((1, n1 + n2))
+        # A defective alpha1 carries an atom at zero, which starts the second
+        # law immediately; this is aph_simplify pattern 1
         alpha1_flat = alpha1.flatten()
-        for i in range(n1):
-            alpha_out[0, i] = alpha1_flat[i]
+        defect1 = 1.0 - float(np.sum(alpha1_flat))
+        alpha_out = np.zeros((1, n1 + n2))
+        alpha_out[0, :n1] = alpha1_flat
+        alpha_out[0, n1:] = defect1 * alpha2_flat
 
         return alpha_out, T_out
 
@@ -869,11 +1449,119 @@ class Workflow:
         return alpha_out, T_out
 
     @staticmethod
+    def _composeMixture(alphas: List[np.ndarray], Ts: List[np.ndarray],
+                        probs: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Probabilistic mixture of several PH laws.
+
+        Block-diagonal generator whose initial vector picks branch I with
+        probability PROBS[I]. This is aph_simplify pattern 3 generalised to any
+        number of branches.
+        """
+        sizes = [Ti.shape[0] for Ti in Ts]
+        total = int(sum(sizes))
+
+        T_out = np.zeros((total, total))
+        alpha_out = np.zeros((1, total))
+
+        offset = 0
+        for i, Ti in enumerate(Ts):
+            ni = sizes[i]
+            T_out[offset:offset + ni, offset:offset + ni] = Ti
+            alpha_out[0, offset:offset + ni] = float(probs[i]) * np.ravel(alphas[i])
+            offset += ni
+
+        return alpha_out, T_out
+
+    @staticmethod
+    def _composeLoopGeometric(alpha: np.ndarray, T: np.ndarray,
+                              count: float) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Geometric repetition of a PH law.
+
+        Implements the LayeredNetwork POST_LOOP semantics, in which the number
+        of executions of the loop body is geometric of mean COUNT. For COUNT>=1
+        the body runs at least once and repeats on absorption with probability
+        P = 1-1/COUNT, so
+
+            T_OUT = T + P/D * (-T*e)*ALPHA,   ALPHA_OUT = ALPHA/D
+
+        with D = 1 - P*(1-ALPHA*e) the correction for an atom at zero in ALPHA.
+        The order of the law is that of the body, unlike the COUNT-fold
+        convolution _composeRepeat, and the mean is COUNT times the mean of the
+        body in both cases.
+
+        For COUNT<1 the body is executed at most once, with probability COUNT,
+        which is how a fractional loop count is read when the LQN activity
+        graph is built; the skipped branch is an immediate phase, the
+        representation of a zero-time activity used throughout this class.
+        """
+        alpha = np.asarray(alpha, dtype=float).reshape(1, -1)
+        T = np.asarray(T, dtype=float)
+        n = T.shape[0]
+        e = np.ones((n, 1))
+
+        if count <= 0:
+            # zero-time branch
+            return np.array([[1.0]]), np.array([[-GlobalConstants.Immediate]])
+
+        if abs(count - 1.0) <= GlobalConstants.FineTol:
+            return alpha.copy(), T.copy()
+
+        if count < 1:
+            # Executed with probability COUNT, skipped otherwise
+            alpha_out = np.zeros((1, n + 1))
+            alpha_out[0, :n] = count * alpha[0, :]
+            alpha_out[0, n] = 1.0 - count
+            T_out = np.zeros((n + 1, n + 1))
+            T_out[:n, :n] = T
+            T_out[n, n] = -GlobalConstants.Immediate  # zero-time skip branch
+            return alpha_out, T_out
+
+        p = 1.0 - 1.0 / count
+        defect = 1.0 - float(np.sum(alpha))
+        denom = 1.0 - p * defect
+        alpha_out = alpha / denom
+        T_out = T + (p / denom) * ((-T @ e) @ alpha)
+        return alpha_out, T_out
+
+    @staticmethod
+    def isAcyclicGenerator(T: np.ndarray) -> bool:
+        """
+        True if the phase graph of T has no cycle.
+
+        A geometric loop over a body of two or more phases closes a cycle, so
+        the composed law is a PH and not an APH.
+        """
+        T = np.asarray(T, dtype=float)
+        n = T.shape[0]
+        A = np.abs(T) > GlobalConstants.ArcTol
+        np.fill_diagonal(A, False)
+        in_deg = A.sum(axis=0).astype(int)
+        queue = [i for i in range(n) if in_deg[i] == 0]
+        visited = 0
+        while queue:
+            curr = queue.pop(0)
+            visited += 1
+            for sidx in np.flatnonzero(A[curr, :]):
+                in_deg[sidx] -= 1
+                if in_deg[sidx] == 0:
+                    queue.append(int(sidx))
+        return visited == n
+
+    @staticmethod
     def _composeRepeat(alpha: np.ndarray, T: np.ndarray,
                        count: int) -> Tuple[np.ndarray, np.ndarray]:
-        """Compose a PH distribution repeated count times."""
+        """
+        Compose a PH distribution convolved COUNT times.
+
+        This is the deterministic fold, kept for a caller that genuinely needs
+        an exact repetition count. POST_LOOP is geometric and uses
+        _composeLoopGeometric instead.
+        """
+        count = int(count)
         if count <= 0:
-            return np.array([[1.0]]), np.array([[-1e10]])
+            return np.array([[1.0]]), np.array([[-GlobalConstants.Immediate]])
 
         if count == 1:
             return alpha.copy(), T.copy()

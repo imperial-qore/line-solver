@@ -1,0 +1,730 @@
+{
+  "class": {
+    "LN(NC)": "deterministic"
+  },
+  "example": "lqn_ofbiz",
+  "solvers": {
+    "LN(NC)": [
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": "NaN",
+        "ResidT": "NaN",
+        "RespT": "NaN",
+        "Station": "FrontEnd_CPU_Processor",
+        "Tput": "NaN",
+        "Util": 0.11637
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "Jobs",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "USAGE_DELAY_Processor",
+        "Tput": 0.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": "NaN",
+        "ResidT": "NaN",
+        "RespT": "NaN",
+        "Station": "UsageScenario_userType1_1_Processor",
+        "Tput": "NaN",
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": "NaN",
+        "ResidT": "NaN",
+        "RespT": "NaN",
+        "Station": "RequestHandler_HandlerIF_main_345_Processor",
+        "Tput": "NaN",
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": "NaN",
+        "ResidT": "NaN",
+        "RespT": "NaN",
+        "Station": "RequestHandler_HandlerIF_login_345_Processor",
+        "Tput": "NaN",
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": "NaN",
+        "ResidT": "NaN",
+        "RespT": "NaN",
+        "Station": "RequestHandler_HandlerIF_checkLogin_345_Processor",
+        "Tput": "NaN",
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": "NaN",
+        "ResidT": "NaN",
+        "RespT": "NaN",
+        "Station": "RequestHandler_HandlerIF_logout_345_Processor",
+        "Tput": "NaN",
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": "NaN",
+        "ResidT": "NaN",
+        "RespT": "NaN",
+        "Station": "UsageScenario_userType2_7_Processor",
+        "Tput": "NaN",
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": "NaN",
+        "ResidT": "NaN",
+        "RespT": "NaN",
+        "Station": "RequestHandler_HandlerIF_quickadd_345_Processor",
+        "Tput": "NaN",
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.13148,
+        "ResidT": 0.011298,
+        "RespT": "NaN",
+        "Station": "FrontEnd_CPU_Task",
+        "Tput": 11.637,
+        "Util": 0.11637
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "Jobs",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "USAGE_DELAY_Task",
+        "Tput": 0.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.067333,
+        "ResidT": 0.0,
+        "RespT": "NaN",
+        "Station": "UsageScenario_userType1_1_Task",
+        "Tput": 0.99327,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.0465,
+        "ResidT": 0.0,
+        "RespT": "NaN",
+        "Station": "RequestHandler_HandlerIF_main_345_Task",
+        "Tput": 4.1156,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.019241,
+        "ResidT": 0.0,
+        "RespT": "NaN",
+        "Station": "RequestHandler_HandlerIF_login_345_Task",
+        "Tput": 1.703,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.038481,
+        "ResidT": 0.0,
+        "RespT": "NaN",
+        "Station": "RequestHandler_HandlerIF_checkLogin_345_Task",
+        "Tput": 3.4059,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.019241,
+        "ResidT": 0.0,
+        "RespT": "NaN",
+        "Station": "RequestHandler_HandlerIF_logout_345_Task",
+        "Tput": 1.703,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.064148,
+        "ResidT": 0.0,
+        "RespT": "NaN",
+        "Station": "UsageScenario_userType2_7_Task",
+        "Tput": 0.7097,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.0080185,
+        "ResidT": 0.0,
+        "RespT": "NaN",
+        "Station": "RequestHandler_HandlerIF_quickadd_345_Task",
+        "Tput": 0.7097,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.0,
+        "ResidT": "NaN",
+        "RespT": 0.0,
+        "Station": "FrontEnd_CPU_Entry",
+        "Tput": 0.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.0465,
+        "ResidT": "NaN",
+        "RespT": 0.011298,
+        "Station": "InternalAction_main__Iu1-wMhoEeKON4DtRoKCMw_34_50_Entry",
+        "Tput": 4.1156,
+        "Util": 0.041156
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.019241,
+        "ResidT": "NaN",
+        "RespT": 0.011298,
+        "Station": "InternalAction_login__YgxRGw26EeSPwb7XgvxhWQ_34_50_Entry",
+        "Tput": 1.703,
+        "Util": 0.01703
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.038481,
+        "ResidT": "NaN",
+        "RespT": 0.011298,
+        "Station": "InternalAction_CheckLogin__vHMZsMhoEeKON4DtRoKCMw_34_50_Entry",
+        "Tput": 3.4059,
+        "Util": 0.034059
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.019241,
+        "ResidT": "NaN",
+        "RespT": 0.011298,
+        "Station": "InternalAction_logout__j-2E4MhrEeKON4DtRoKCMw_34_50_Entry",
+        "Tput": 1.703,
+        "Util": 0.01703
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.0080185,
+        "ResidT": "NaN",
+        "RespT": 0.011298,
+        "Station": "InternalAction_addcart__5JEHQMhoEeKON4DtRoKCMw_34_50_Entry",
+        "Tput": 0.7097,
+        "Util": 0.007097
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "Jobs",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "USAGE_DELAY0_Entry",
+        "Tput": 0.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.067333,
+        "ResidT": "NaN",
+        "RespT": 0.06779,
+        "Station": "UsageScenario_userType1_1_Entry",
+        "Tput": 0.99327,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.0465,
+        "ResidT": "NaN",
+        "RespT": 0.011298,
+        "Station": "RequestHandler_HandlerIF_main_345_Entry",
+        "Tput": 4.1156,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.019241,
+        "ResidT": "NaN",
+        "RespT": 0.011298,
+        "Station": "RequestHandler_HandlerIF_login_345_Entry",
+        "Tput": 1.703,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.038481,
+        "ResidT": "NaN",
+        "RespT": 0.011298,
+        "Station": "RequestHandler_HandlerIF_checkLogin_345_Entry",
+        "Tput": 3.4059,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.019241,
+        "ResidT": "NaN",
+        "RespT": 0.011298,
+        "Station": "RequestHandler_HandlerIF_logout_345_Entry",
+        "Tput": 1.703,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.064148,
+        "ResidT": "NaN",
+        "RespT": 0.090386,
+        "Station": "UsageScenario_userType2_7_Entry",
+        "Tput": 0.7097,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.0080185,
+        "ResidT": "NaN",
+        "RespT": 0.011298,
+        "Station": "RequestHandler_HandlerIF_quickadd_345_Entry",
+        "Tput": 0.7097,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "FrontEnd_CPU_Activity",
+        "Tput": 0.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.0465,
+        "ResidT": 0.0039958,
+        "RespT": 0.011298,
+        "Station": "InternalAction_main__Iu1-wMhoEeKON4DtRoKCMw_34_50_Activity",
+        "Tput": 4.1156,
+        "Util": 0.041156
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.019241,
+        "ResidT": 0.0016534,
+        "RespT": 0.011298,
+        "Station": "InternalAction_login__YgxRGw26EeSPwb7XgvxhWQ_34_50_Activity",
+        "Tput": 1.703,
+        "Util": 0.01703
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.038481,
+        "ResidT": 0.0033067,
+        "RespT": 0.011298,
+        "Station": "InternalAction_CheckLogin__vHMZsMhoEeKON4DtRoKCMw_34_50_Activity",
+        "Tput": 3.4059,
+        "Util": 0.034059
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.019241,
+        "ResidT": 0.0016534,
+        "RespT": 0.011298,
+        "Station": "InternalAction_logout__j-2E4MhrEeKON4DtRoKCMw_34_50_Activity",
+        "Tput": 1.703,
+        "Util": 0.01703
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.0080185,
+        "ResidT": 0.00068903,
+        "RespT": 0.011298,
+        "Station": "InternalAction_addcart__5JEHQMhoEeKON4DtRoKCMw_34_50_Activity",
+        "Tput": 0.7097,
+        "Util": 0.007097
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "Jobs",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "USAGE_DELAY0_Activity",
+        "Tput": 0.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Start2",
+        "Tput": 0.99327,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.011222,
+        "ResidT": 0.0,
+        "RespT": 0.011298,
+        "Station": "EntryLevelSystemCallcall1main1",
+        "Tput": 0.99327,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.011222,
+        "ResidT": 0.0,
+        "RespT": 0.011298,
+        "Station": "EntryLevelSystemCallcall1login",
+        "Tput": 0.99327,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.011222,
+        "ResidT": 0.0,
+        "RespT": 0.011298,
+        "Station": "EntryLevelSystemCallcall1checkLogin1",
+        "Tput": 0.99327,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.011222,
+        "ResidT": 0.0,
+        "RespT": 0.011298,
+        "Station": "EntryLevelSystemCallcall1checkLogin2",
+        "Tput": 0.99327,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.011222,
+        "ResidT": 0.0,
+        "RespT": 0.011298,
+        "Station": "EntryLevelSystemCallcall1logout",
+        "Tput": 0.99327,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.011222,
+        "ResidT": 0.0,
+        "RespT": 0.011298,
+        "Station": "EntryLevelSystemCallcall1main2",
+        "Tput": 0.99327,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Stop6",
+        "Tput": 0.99327,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 2.4694e-08,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "StartAction_start__EkLVIMhoEeKON4DtRoKCMw_34_5",
+        "Tput": 4.1156,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.0465,
+        "ResidT": 0.0,
+        "RespT": 0.011298,
+        "Station": "InternalAction_main__Iu1-wMhoEeKON4DtRoKCMw_34_50",
+        "Tput": 4.1156,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 3.2925e-08,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "StopAction_stop__EkL8MMhoEeKON4DtRoKCMw_34_5",
+        "Tput": 4.1156,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 1.5327e-08,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "StartAction_aName__XJKk8g26EeSPwb7XgvxhWQ_34_5",
+        "Tput": 1.703,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.019241,
+        "ResidT": 0.0,
+        "RespT": 0.011298,
+        "Station": "InternalAction_login__YgxRGw26EeSPwb7XgvxhWQ_34_50",
+        "Tput": 1.703,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 1.1921e-08,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "StopAction_aName__ae0SIA26EeSPwb7XgvxhWQ_34_5",
+        "Tput": 1.703,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 3.4059e-08,
+        "ResidT": 0.0,
+        "RespT": 1e-08,
+        "Station": "StartAction_start__EkI44MhoEeKON4DtRoKCMw_34_5",
+        "Tput": 3.4059,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.038481,
+        "ResidT": 0.0,
+        "RespT": 0.011298,
+        "Station": "InternalAction_CheckLogin__vHMZsMhoEeKON4DtRoKCMw_34_50",
+        "Tput": 3.4059,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 2.0436e-08,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "StopAction_stop__EkJf8MhoEeKON4DtRoKCMw_34_5",
+        "Tput": 3.4059,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 1.5327e-08,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "StartAction_start__EkVtMMhoEeKON4DtRoKCMw_34_5",
+        "Tput": 1.703,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.019241,
+        "ResidT": 0.0,
+        "RespT": 0.011298,
+        "Station": "InternalAction_logout__j-2E4MhrEeKON4DtRoKCMw_34_50",
+        "Tput": 1.703,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 1.1921e-08,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "StopAction_stop__EkVtMchoEeKON4DtRoKCMw_34_5",
+        "Tput": 1.703,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Start8",
+        "Tput": 0.7097,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.0080185,
+        "ResidT": 0.0,
+        "RespT": 0.011298,
+        "Station": "EntryLevelSystemCallcall2main1",
+        "Tput": 0.7097,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.0080185,
+        "ResidT": 0.0,
+        "RespT": 0.011298,
+        "Station": "EntryLevelSystemCallcall2login",
+        "Tput": 0.7097,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.0080185,
+        "ResidT": 0.0,
+        "RespT": 0.011298,
+        "Station": "EntryLevelSystemCallcall2checkLogin1",
+        "Tput": 0.7097,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.0080185,
+        "ResidT": 0.0,
+        "RespT": 0.011298,
+        "Station": "EntryLevelSystemCallcall2checkLogin2",
+        "Tput": 0.7097,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.0080185,
+        "ResidT": 0.0,
+        "RespT": 0.011298,
+        "Station": "EntryLevelSystemCallcall2main2",
+        "Tput": 0.7097,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.0080185,
+        "ResidT": 0.0,
+        "RespT": 0.011298,
+        "Station": "EntryLevelSystemCallcall2quickadd",
+        "Tput": 0.7097,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.0080185,
+        "ResidT": 0.0,
+        "RespT": 0.011298,
+        "Station": "EntryLevelSystemCallcall2logout",
+        "Tput": 0.7097,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.0080185,
+        "ResidT": 0.0,
+        "RespT": 0.011298,
+        "Station": "EntryLevelSystemCallcall2main3",
+        "Tput": 0.7097,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Stop9",
+        "Tput": 0.7097,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 1e-08,
+        "Station": "StartAction_start__EkBkIMhoEeKON4DtRoKCMw_34_5",
+        "Tput": 0.7097,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.0080185,
+        "ResidT": 0.0,
+        "RespT": 0.011298,
+        "Station": "InternalAction_addcart__5JEHQMhoEeKON4DtRoKCMw_34_50",
+        "Tput": 0.7097,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "StopAction_stop__EkCLMMhoEeKON4DtRoKCMw_34_5",
+        "Tput": 0.7097,
+        "Util": 0.0
+      }
+    ]
+  }
+}

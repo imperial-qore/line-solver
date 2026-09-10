@@ -1,0 +1,93 @@
+{
+  "class": {
+    "JMT": "stochastic",
+    "MVA": "deterministic"
+  },
+  "example": "ld_multiserver_ps_twoclasses",
+  "solvers": {
+    "JMT": [
+      {
+        "ArvR": 0.92113,
+        "JobClass": "Class1",
+        "QLen": 0.92463,
+        "ResidT": 0.98552,
+        "RespT": 0.98552,
+        "Station": "Delay",
+        "Tput": 0.91876,
+        "Util": 0.92463
+      },
+      {
+        "ArvR": 0.26303,
+        "JobClass": "Class2",
+        "QLen": 0.49666,
+        "ResidT": 1.9285,
+        "RespT": 1.9285,
+        "Station": "Delay",
+        "Tput": 0.26009,
+        "Util": 0.49666
+      },
+      {
+        "ArvR": 0.91876,
+        "JobClass": "Class1",
+        "QLen": 3.0754,
+        "ResidT": 3.3834,
+        "RespT": 3.3834,
+        "Station": "Queue1",
+        "Tput": 0.91533,
+        "Util": 0.67693
+      },
+      {
+        "ArvR": 0.26009,
+        "JobClass": "Class2",
+        "QLen": 1.5033,
+        "ResidT": 5.7377,
+        "RespT": 5.7377,
+        "Station": "Queue1",
+        "Tput": 0.26312,
+        "Util": 0.31834
+      }
+    ],
+    "MVA": [
+      {
+        "ArvR": 0.8975,
+        "JobClass": "Class1",
+        "QLen": 0.8975,
+        "ResidT": 1.0,
+        "RespT": 1.0,
+        "Station": "Delay",
+        "Tput": 0.8975,
+        "Util": 0.8975
+      },
+      {
+        "ArvR": 0.25579,
+        "JobClass": "Class2",
+        "QLen": 0.51157,
+        "ResidT": 2.0,
+        "RespT": 2.0,
+        "Station": "Delay",
+        "Tput": 0.25579,
+        "Util": 0.51157
+      },
+      {
+        "ArvR": 0.8975,
+        "JobClass": "Class1",
+        "QLen": 3.1025,
+        "ResidT": 3.4568,
+        "RespT": 3.4568,
+        "Station": "Queue1",
+        "Tput": 0.8975,
+        "Util": 0.67313
+      },
+      {
+        "ArvR": 0.25579,
+        "JobClass": "Class2",
+        "QLen": 1.4884,
+        "ResidT": 5.819,
+        "RespT": 5.819,
+        "Station": "Queue1",
+        "Tput": 0.25579,
+        "Util": 0.31973
+      }
+    ]
+  }
+}

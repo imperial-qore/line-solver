@@ -3,7 +3,7 @@
 closed terminal-driven system.
 
 Mirrors jar/src/test/java/jline/api/PfqnResptPsTest.java and
-line-test.git/test_pfqn_respt_ps.m one for one.
+line-test.git/test/testsAPI/test_pfqn_respt_ps.m one for one.
 
 The mathematics is anchored to results that do not come from that paper: the
 single-class M/M/1-PS second moment of Coffman, Muntz and Trotter (1970), and

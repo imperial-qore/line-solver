@@ -26,11 +26,28 @@ function [x,flag,relres,iter] = ctmc_gmres(A,b,tol,restart,maxit,x0)
 % FLAG follows the MATLAB GMRES convention: 0 converged, 1 iteration limit
 % reached, 2 preconditioner ill-conditioned, 3 stagnation. Callers must check
 % it and fall back to the direct solve when it is nonzero.
+%
+% ITER counts matrix-vector products with A, i.e. total inner iterations across
+% all restart cycles, so that the four codebases report one comparable scalar.
+%
+% The recurrence is in the private GMRES_ITERATE rather than the built-in GMRES,
+% which applies the preconditioner on the LEFT; see that function for what that
+% costs on a generator.
 
 % Copyright (c) 2012-2026, Imperial College London
 % All rights reserved.
 
-% Relative threshold below which ILUT discards a fill-in entry.
+% Relative threshold below which the incomplete factorization discards a fill-in
+% entry.
+%
+% ILU TYPE: CROUT, NOT ILUTP. Pivoting by column destroys the band that reverse
+% Cuthill-McKee just created: on the M/M/1/K generator at K = 5000 the 'ilutp'
+% factor carries 4,981,518 nonzeros against 30,015 for 'crout' at the same drop
+% tolerance, a factor of 166 and 20%% of a dense 5001x5001. The lean factor is
+% usable here only because GMRES_ITERATE applies it on the RIGHT; the built-in
+% GMRES applies it on the left and stagnates on it. This is also what the Java,
+% C++ and Python kernels use, whose ILUT does not pivot either (scipy is asked
+% for permc_spec='NATURAL').
 ILUT_DROP_TOL = 1e-4;
 
 n = size(A,1);
@@ -70,7 +87,7 @@ x0 = x0(p);
 L = [];
 U = [];
 try
-    [L,U] = ilu(A,struct('type','ilutp','droptol',ILUT_DROP_TOL,'udiag',1));
+    [L,U] = ilu(A,struct('type','crout','droptol',ILUT_DROP_TOL,'udiag',1));
     if any(~isfinite(nonzeros(L))) || any(~isfinite(nonzeros(U)))
         L = [];
         U = [];
@@ -89,30 +106,9 @@ if isempty(L)
     U = speye(n);
 end
 
-warnstate = warning('off','MATLAB:gmres:tooSmallTolerance');
-try
-    [xp,flag,relres,iterpair] = gmres(A,b,restart,tol,maxit,L,U,x0);
-catch
-    % A breakdown inside GMRES is reported as non-convergence rather than
-    % propagated, so the caller falls back to the direct solve.
-    warning(warnstate);
-    x = zeros(n,1);
-    x(p) = x0;
-    flag = 3;
-    relres = Inf;
-    iter = 0;
-    return
-end
-warning(warnstate);
+[xp,flag,relres,iter] = gmres_iterate(A,L,U,b,x0,tol,restart,maxit);
 
+% Undo the reverse Cuthill-McKee permutation.
 x = zeros(n,1);
 x(p) = xp;
-
-% GMRES returns ITER as [outer,inner]; report the total inner iteration count so
-% that the three codebases agree on a single scalar.
-if numel(iterpair)>1
-    iter = max(0,(iterpair(1)-1)*restart + iterpair(2));
-else
-    iter = iterpair;
-end
 end

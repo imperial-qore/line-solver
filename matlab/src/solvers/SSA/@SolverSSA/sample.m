@@ -67,6 +67,11 @@ function sampleNodeState = sample(self, node, numEvents, markActivePassive)
 % S_marked = solver.sample(queue1, 1000, true);
 % @endcode
 
+
+% The trajectory is the C++ engine's; markActivePassive below is a rearrangement
+% of the event cell and applies to it unchanged.
+useCpp = isfield(self.options,'lang') && strcmp(self.options.lang,'cpp');
+
 if GlobalConstants.DummyMode
     sampleNodeState = NaN;
     return
@@ -83,6 +88,10 @@ if nargin>=3 %exist('numEvents','var')
 else
     numEvents = options.samples;
 end
+if useCpp
+    sampleNodeState = CPPLINE.nodeSamplePath(self.name, self.model, self.options, ...
+        node, numEvents, false);
+else
 switch options.method
     case {'default','serial'}
         options.method = 'serial'; % nrm does not support tran*
@@ -96,6 +105,14 @@ switch options.method
         sampleNodeState.state = tranSystemState{1+isf};
         
         sn = self.getStruct;
+        % Derived tags of each step, recorded by solver_ssa: sn.sync carries
+        % none, so START and PREEMPT can only come from here.
+        startTag = {};
+        preemptTag = {};
+        if isfield(self.result,'startTag')
+            startTag = self.result.startTag;
+            preemptTag = self.result.preemptTag;
+        end
         sampleNodeState.event = {};
         for e = 1:length(event)
             for a=1:length(sn.sync{event(e)}.active)
@@ -106,18 +123,38 @@ switch options.method
                 sampleNodeState.event{end+1} = sn.sync{event(e)}.passive{p};
                 sampleNodeState.event{end}.t = sampleNodeState.t(e);
             end
+            % PREEMPT before START at the same instant: the victim leaves the
+            % server before the job that displaced it takes it.
+            if e <= numel(preemptTag) && ~isempty(preemptTag{e})
+                for j = 1:size(preemptTag{e},1)
+                    sampleNodeState.event{end+1} = Event(EventType.PREEMPT, ...
+                        sn.statefulToNode(preemptTag{e}(j,1)), preemptTag{e}(j,2));
+                    sampleNodeState.event{end}.t = sampleNodeState.t(e);
+                end
+            end
+            if e <= numel(startTag) && ~isempty(startTag{e})
+                for j = 1:size(startTag{e},1)
+                    sampleNodeState.event{end+1} = Event(EventType.START, ...
+                        sn.statefulToNode(startTag{e}(j,1)), startTag{e}(j,2));
+                    sampleNodeState.event{end}.t = sampleNodeState.t(e);
+                end
+            end
         end
         sampleNodeState.isaggregate = false;
 
     otherwise
         line_error(mfilename,'sample is not available in SolverSSA with the chosen method.');
 end
+end
 %sampleNodeState.t = [0; sampleNodeState.t(2:end)];
 
 if markActivePassive
     apevent = cell(1,length(sampleNodeState.t)-1);
     for ti = 1:length(apevent)
-        apevent{ti} = struct('active',[],'passive',[]);
+        % START and PREEMPT get their own fields: they are tags on the arc
+        % that the active/passive pair already describes, so putting them in
+        % either slot would displace the event that actually fired.
+        apevent{ti} = struct('active',[],'passive',[],'start',{{}},'preempt',{{}});
     end
     for e=1:length(sampleNodeState.event)
         ti = find(sampleNodeState.event{e}.t == sampleNodeState.t);
@@ -125,6 +162,10 @@ if markActivePassive
         switch sampleNodeState.event{e}.event
             case EventType.ARV
                 apevent{ti}.passive = sampleNodeState.event{e};
+            case EventType.START
+                apevent{ti}.start{end+1} = sampleNodeState.event{e};
+            case EventType.PREEMPT
+                apevent{ti}.preempt{end+1} = sampleNodeState.event{e};
             otherwise
                 apevent{ti}.active = sampleNodeState.event{e};
         end

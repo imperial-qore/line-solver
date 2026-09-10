@@ -20,8 +20,14 @@ final class Pfqn_le_hessianZ {
         Matrix A = new Matrix(K, K);
         A.fill(0.0);
         Matrix csi = new Matrix(1, R);
+        // csi2N is csi(r)^2/N(r) rewritten as N(r)/c(r)^2. Identical where both are
+        // defined, but 0 rather than 0/0 for an empty class, which oner() makes
+        // routine in the mean-value pipeline of Pfqn_nc.
+        Matrix csi2N = new Matrix(1, R);
         for (int r = 0; r < R; r++) {
-            csi.set(r, N.get(r) / (Z.get(r) + v * u.mult(Matrix.extractColumn(L, r, null)).get(0)));
+            double c = Z.get(r) + v * u.mult(Matrix.extractColumn(L, r, null)).get(0);
+            csi.set(r, N.get(r) / c);
+            csi2N.set(r, N.get(r) / (c * c));
         }
         Matrix Lhat = new Matrix(K, R);
         Lhat.fill(0.0);
@@ -36,7 +42,7 @@ final class Pfqn_le_hessianZ {
                 if (i != j) {
                     A.set(i, j, -eta * u.get(i) * u.get(j));
                     for (int r = 0; r < R; r++) {
-                        A.set(i, j, A.get(i, j) + csi.get(r) * csi.get(r) * Lhat.get(i, r) * Lhat.get(j, r) * u.get(i) * u.get(j) / N.get(r));
+                        A.set(i, j, A.get(i, j) + csi2N.get(r) * Lhat.get(i, r) * Lhat.get(j, r) * u.get(i) * u.get(j));
                     }
                 }
             }
@@ -54,7 +60,7 @@ final class Pfqn_le_hessianZ {
             Matrix L_col_r = new Matrix(L.getNumRows(), 1);
             Matrix.extract(L, 0, L.getNumRows(), r, r + 1, L_col_r, 0, 0);
             A.set(K - 1, K - 1, A.get(K - 1, K - 1)
-                    - (csi.get(r) * csi.get(r) / N.get(r)) * Z.get(r) * u.mult(L_col_r).get(0));
+                    - csi2N.get(r) * Z.get(r) * u.mult(L_col_r).get(0));
         }
 
         A.set(K - 1, K - 1, v * A.get(K - 1, K - 1));
@@ -64,7 +70,7 @@ final class Pfqn_le_hessianZ {
                 Matrix L_col_r = new Matrix(L.getNumRows(), 1);
                 Matrix.extract(L, 0, L.getNumRows(), r, r + 1, L_col_r, 0, 0);
                 A.set(i, K - 1, A.get(i, K - 1)
-                        + v * u.get(i) * (((csi.get(r) * csi.get(r) / N.get(r)) * Lhat.get(i, r) * (u.mult(L_col_r).get(0))) - csi.get(r) * L.get(i, r)));
+                        + v * u.get(i) * ((csi2N.get(r) * Lhat.get(i, r) * (u.mult(L_col_r).get(0))) - csi.get(r) * L.get(i, r)));
             }
             A.set(K - 1, i, A.get(i, K - 1));
         }

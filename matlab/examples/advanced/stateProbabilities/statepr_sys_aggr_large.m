@@ -75,6 +75,8 @@ tic;
 solver = LINE.load('ctmc',model);
 Pr_ctmc = solver.getProbSysAggr();
 fprintf(1,'CTMC: Pr_ctmc = %.15g\n', Pr_ctmc);
+% Echoed at full precision, mirroring the Python twin's `print('Pr_ctmc ='); print(pr_ctmc)`.
+fprintf(1,'Pr_ctmc =\n%.15g\n', Pr_ctmc);
 
 toc
 tic;

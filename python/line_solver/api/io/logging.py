@@ -22,6 +22,28 @@ from typing import Optional, Any, Dict
 from dataclasses import dataclass, field
 
 
+class LineError(RuntimeError):
+    """The exception every deliberate LINE diagnostic raises.
+
+    A refusal such as "finite station capacity at station 'Queue2' is not
+    supported by SolverNC" is a policy decision LINE made on purpose, not a
+    crash, and its message says everything the caller needs. Giving it a type
+    of its own lets that be caught (``except LineError``) and reported without
+    being confused with an arbitrary ``RuntimeError`` raised by numpy, scipy or
+    a bug in a solver.
+
+    It subclasses ``RuntimeError``, which is what these sites raised before, so
+    existing ``except RuntimeError`` handlers are unaffected.
+
+    Unlike the MATLAB twin (``matlab/src/io/line_error.m``, which throws with an
+    EMPTY stack so the console prints the message alone) this keeps a traceback:
+    pdb, IDEs and Jupyter all navigate by it, and a Python user expects one.
+    What is trimmed instead is its LENGTH -- ``NetworkSolver._ensureAvgResults``
+    re-raises it with the internal analyzer frames dropped, so what survives is
+    the line the user wrote plus the accessor they called.
+    """
+
+
 class VerboseLevel(Enum):
     """Verbosity levels for LINE output."""
     SILENT = 0
@@ -64,10 +86,28 @@ class LineLogger:
         if self._initialized:
             return
         self._initialized = True
-        self.verbose = VerboseLevel.STD
         self.stdout = sys.stdout
         self._warning_state = _WarningState()
         self._suppression_timeout = 60.0  # seconds
+
+    @property
+    def verbose(self) -> VerboseLevel:
+        """The session verbosity.
+
+        ONE STORE, NOT TWO. This used to be a field of its own while every
+        solver took its default from ``GlobalConstants._verbose``
+        (``constants.default_verbose``), so the two drifted the moment either
+        was set alone: ``line_verbosity(VerboseLevel.SILENT)`` set this one and
+        left the solvers printing, and ``GlobalConstants.set_verbose(DEBUG)``
+        set the other and left the console dark. Both now name the same level.
+        """
+        from line_solver.constants import GlobalConstants
+        return GlobalConstants.getVerbose()
+
+    @verbose.setter
+    def verbose(self, level: VerboseLevel) -> None:
+        from line_solver.constants import GlobalConstants
+        GlobalConstants.setVerbose(level)
 
     @classmethod
     def get_instance(cls) -> 'LineLogger':
@@ -88,6 +128,16 @@ class LineLogger:
             warnings.filterwarnings('ignore')
         else:
             warnings.filterwarnings('default')
+
+        # The solver console follows this level (it IS VerboseLevel.DEBUG), so
+        # an interrupted solve that left a run open must not colour the next
+        # one: a fresh setting starts clean. Imported lazily -- console reads
+        # this module back for the session level.
+        try:
+            from line_solver.api.io import console as _console
+            _console.reset()
+        except Exception:
+            pass
 
     def get_verbosity(self) -> VerboseLevel:
         """Get the current verbosity level."""
@@ -208,7 +258,7 @@ class LineLogger:
             msg: Error message
 
         Raises:
-            RuntimeError: Always raises with formatted message
+            LineError: Always raises with formatted message
         """
         # Get call stack info
         stack = traceback.extract_stack()
@@ -220,7 +270,7 @@ class LineLogger:
             filename = caller
 
         error_str = f"[{caller} @ line {line_num}] {msg}"
-        raise RuntimeError(error_str)
+        raise LineError(error_str)
 
     def debug(self, msg: str, *args, options: Optional[Dict] = None) -> None:
         """
@@ -326,7 +376,7 @@ def line_error(caller: str, msg: str) -> None:
         msg: Error message
 
     Raises:
-        RuntimeError: Always raises with formatted message
+        LineError: Always raises with formatted message
 
     References:
         MATLAB: matlab/src/io/line_error.m
@@ -338,6 +388,10 @@ def line_debug(msg: str, *args, options: Optional[Dict] = None) -> None:
     """
     Print debug message if in DEBUG mode.
 
+    While the solver console narrates a run these messages ARE the steps it
+    wants to report, so they are routed to it whether or not the session is at
+    DEBUG level; the console deduplicates and caps that channel.
+
     Args:
         msg: Debug message format string
         *args: Format arguments
@@ -346,6 +400,14 @@ def line_debug(msg: str, *args, options: Optional[Dict] = None) -> None:
     References:
         MATLAB: matlab/src/io/line_debug.m
     """
+    from line_solver.api.io import console as _console
+    if _console.owns_log():
+        try:
+            text = msg % args if args else msg
+        except (TypeError, ValueError):
+            text = msg
+        _console.detail(text)
+        return
     _logger.debug(msg, *args, options=options)
 
 
@@ -376,7 +438,7 @@ _TOOL_ACK = {
 
 # One-line reference to the canonical paper of each tool, printed under the
 # acknowledgement. It describes the same work as the BibTeX entry in
-# _TOOL_BIBTEX (keys BerCS07 and fran.ea09 in doc/latex/biblio.bib), which is
+# _TOOL_BIBTEX (keys BerCS07 and FraAWDD09 in doc/latex/biblio.bib), which is
 # where the citation key belongs: the printed line is for the reader.
 _TOOL_CITE = {
     'JMT': (
@@ -409,7 +471,7 @@ _TOOL_BIBTEX = {
         "}"
     ),
     'LQNS': (
-        "@ARTICLE{fran.ea09,\n"
+        "@ARTICLE{FraAWDD09,\n"
         "  author = {G. Franks and T. Al-Omari and M. Woodside and O. Das and S. Derisavi},\n"
         "  title = {Enhanced Modeling and Solution of Layered Queueing Networks},\n"
         "  journal = {IEEE Trans. Software Engineering},\n"

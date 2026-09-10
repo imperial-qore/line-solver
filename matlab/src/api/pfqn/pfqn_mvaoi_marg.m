@@ -73,21 +73,21 @@ end
 
 % Caches keyed by population-vector string. The OI marginals are carried per
 % station: pM_keys{o}/pM_vals{o} hold station oi_list(o)'s count-vector marginal.
-X_cache = containers.Map('KeyType','char','ValueType','any');   % X_r(k)
-Q_cache = containers.Map('KeyType','char','ValueType','any');   % Q_ir(k)  (M x R)
+X_cache = configureDictionary('string','cell');   % X_r(k)
+Q_cache = configureDictionary('string','cell');   % Q_ir(k)  (M x R)
 pM_keys = cell(1, nOI);
 pM_vals = cell(1, nOI);
 for o = 1:nOI
-    pM_keys{o} = containers.Map('KeyType','char','ValueType','any');
-    pM_vals{o} = containers.Map('KeyType','char','ValueType','any');
+    pM_keys{o} = configureDictionary('string','cell');
+    pM_vals{o} = configureDictionary('string','cell');
 end
 
 zeroKey = vec2key(zeros(1,R));
-X_cache(zeroKey) = zeros(1,R);
-Q_cache(zeroKey) = zeros(M,R);
+X_cache{zeroKey} = zeros(1,R);
+Q_cache{zeroKey} = zeros(M,R);
 for o = 1:nOI
-    pM_keys{o}(zeroKey) = zeros(1,R);
-    pM_vals{o}(zeroKey) = 1.0;
+    pM_keys{o}{zeroKey} = zeros(1,R);
+    pM_vals{o}{zeroKey} = 1.0;
 end
 
 pops = enum_vecs(N);
@@ -109,7 +109,7 @@ for pidx = 1:size(pops,1)
             continue
         end
         kr = k; kr(r) = kr(r) - 1;
-        Qkr = Q_cache(vec2key(kr));
+        Qkr = Q_cache{vec2key(kr)};
         for i = 1:M
             if isOI(i)
                 continue
@@ -167,17 +167,17 @@ for pidx = 1:size(pops,1)
             Qk(i,r) = Xk(r) * Rfix(i,r);
         end
     end
-    X_cache(kkey) = Xk;
-    Q_cache(kkey) = Qk;
+    X_cache{kkey} = Xk;
+    Q_cache{kkey} = Qk;
     for o = 1:nOI
-        pM_keys{o}(kkey) = nkAll{o};
-        pM_vals{o}(kkey) = pvAll{o};
+        pM_keys{o}{kkey} = nkAll{o};
+        pM_vals{o}{kkey} = pvAll{o};
     end
 end
 
 Nkey = vec2key(N);
-XN = X_cache(Nkey);
-QN = Q_cache(Nkey);
+XN = X_cache{Nkey};
+QN = Q_cache{Nkey};
 end
 
 % =========================================================================
@@ -244,8 +244,8 @@ if ~isKey(pM_keys, krkey)
     p = 0;
     return
 end
-keysMat = pM_keys(krkey);
-valsVec = pM_vals(krkey);
+keysMat = pM_keys{krkey};
+valsVec = pM_vals{krkey};
 match = all(keysMat == repmat(nr, size(keysMat,1), 1), 2);
 row = find(match, 1);
 if isempty(row)

@@ -23,7 +23,7 @@ import java.util.List;
 /**
  * Superclass for a node element within a Network model
  */
-public class Node extends NetworkElement implements Serializable {
+public class Node extends NetworkElement implements Serializable, Cloneable {
     private final NodeAttribute attribute;
     public Network model;
     protected InputSection input;
@@ -355,6 +355,79 @@ public class Node extends NetworkElement implements Serializable {
         this.output.setOutputStrategy(jobClass, routingStrategy);
     }
 
+    /** Declared Krzesinski state-dependent routing structures, one per job class. */
+    protected java.util.Map<JobClass, jline.lang.StateDepRouting> sdrDeclarations =
+            new java.util.HashMap<JobClass, jline.lang.StateDepRouting>();
+
+    /**
+     * Declares this node the entry center e of a subnetwork Q(V,V) served by the
+     * product-form state-dependent routing of Krzesinski (1987), "Multiclass
+     * Queueing Networks with State-Dependent Routing", Performance Evaluation
+     * 7(2):125-143.
+     *
+     * <p>The departure center may be this node itself in a central server model.
+     * Branches follow the paper's own indexing: index 0 of the list is the
+     * unused complement M-V and must be null or empty, and entry b lists the
+     * nodes of branch b with its entry center first and its departure center
+     * last. A single-center branch is a one-element list. level[b] is the index
+     * t of the subnetwork with B_b in V_t - V_{t+1}, and level[0] is ignored.</p>
+     *
+     * <p>Negative C_t and positive d_tb make the routing prefer the least
+     * congested branches and impose the population bounds m_b &lt;= d_tb/(-C_t)
+     * and v_t &lt;= D_tt/(-C_t).</p>
+     *
+     * @param jobClass  the job class routed by this subnetwork
+     * @param departure the departure center d of Q(V,V)
+     * @param branches  branch node lists, index 0 unused
+     * @param level     branch levels, index 0 unused
+     * @param C         coefficients C_t, length T
+     * @param d         coefficients d_tb, T rows by B columns
+     */
+    public void setStateDepRouting(JobClass jobClass, Node departure,
+                                   java.util.List<java.util.List<Node>> branches,
+                                   int[] level, double[] C, double[][] d) {
+        if (branches == null || branches.size() < 2
+                || (branches.get(0) != null && !branches.get(0).isEmpty())) {
+            throw new RuntimeException("The branch list must start with an empty entry: "
+                    + "branch index 1 denotes the complement M-V.");
+        }
+        int B = branches.size();
+        int T = C.length;
+        if (level.length != B) {
+            throw new RuntimeException("level must have one entry per branch index, including the unused index 0.");
+        }
+        if (d.length < T) {
+            throw new RuntimeException("d must be at least " + T + "x" + B + ".");
+        }
+        jline.lang.StateDepRouting sdr = new jline.lang.StateDepRouting();
+        sdr.entryNode = this;
+        sdr.departureNode = departure;
+        sdr.branchNodes = new java.util.ArrayList<java.util.List<Node>>(branches);
+        sdr.level = level.clone();
+        sdr.C = C.clone();
+        sdr.d = new double[d.length][];
+        for (int t = 0; t < d.length; t++) {
+            sdr.d[t] = d[t].clone();
+        }
+        for (int b = 1; b < B; b++) {
+            if (branches.get(b) == null || branches.get(b).isEmpty()) {
+                throw new RuntimeException("Branch " + (b + 1) + " is empty.");
+            }
+        }
+        this.sdrDeclarations.put(jobClass, sdr);
+        this.output.setOutputStrategy(jobClass, RoutingStrategy.SDR);
+    }
+
+    /**
+     * Returns the state-dependent routing structure declared for a job class.
+     *
+     * @param jobClass the job class
+     * @return the declared structure, or null when the class is not routed by SDR
+     */
+    public jline.lang.StateDepRouting getStateDepRouting(JobClass jobClass) {
+        return this.sdrDeclarations.get(jobClass);
+    }
+
     /**
      * Configures power-of-K-choices routing for a job class.
      *
@@ -366,26 +439,6 @@ public class Node extends NetworkElement implements Serializable {
             throw new IllegalArgumentException("d must be >= 1");
         }
         this.output.setSQParams(jobClass, d);
-    }
-
-    /**
-     * Configures reinforcement-learning routing for a job class. Mirrors the
-     * MATLAB output strategy fields used by {@code sub_rl}.
-     *
-     * @param jobClass         the job class
-     * @param valueFunction    flat value function (tabular when stateSize=0,
-     *                         coefficient row vector when stateSize&gt;0)
-     * @param vfShape          shape of the tabular value function (per-axis
-     *                         sizes); ignored when stateSize&gt;0
-     * @param nodesNeedAction  node indices that consult the value function
-     * @param stateSize        0 = tabular, &gt;0 = linear approximation, &lt;0 = JSQ fallback
-     */
-    public void setRLRouting(JobClass jobClass, jline.util.matrix.Matrix valueFunction,
-                             int[] vfShape, int[] nodesNeedAction, int stateSize) {
-        this.output.setRLParams(jobClass, valueFunction, vfShape, nodesNeedAction, stateSize);
-        if (this.model != null) {
-            this.model.setHasStruct(false);
-        }
     }
 
     /**
@@ -406,6 +459,112 @@ public class Node extends NetworkElement implements Serializable {
         this.output.setOutputStrategy(jobClass, routingStrategy, destination, probability);
     }
 
-    // Parity gap: MATLAB methods not yet ported here - see _kb/07-cross-language-parity.md
+    /**
+     * Sets a routing strategy taking a single parameter, twin of the MATLAB
+     * {@code setRouting(class, strategy, par1)} call.
+     *
+     * SQ reads the parameter as the number d of sampled destinations; every
+     * other strategy takes none, so the parameter is ignored and the strategy is
+     * declared as in {@link #setRouting(JobClass, RoutingStrategy)}.
+     *
+     * @param jobClass        the job class to configure routing for
+     * @param routingStrategy the routing strategy to use
+     * @param param           the strategy parameter
+     */
+    public void setRouting(JobClass jobClass, RoutingStrategy routingStrategy, Object param) {
+        if (routingStrategy == RoutingStrategy.SQ) {
+            if (!(param instanceof Number)) {
+                throw new IllegalArgumentException("SQ parameter d must be a positive integer.");
+            }
+            double d = ((Number) param).doubleValue();
+            if (d < 1 || Math.abs(d - Math.round(d)) > jline.GlobalConstants.CoarseTol) {
+                throw new IllegalArgumentException("SQ parameter d must be a positive integer.");
+            }
+            this.setSQRouting(jobClass, (int) Math.round(d));
+            return;
+        }
+        this.setRouting(jobClass, routingStrategy);
+    }
+
+    /**
+     * Checks whether this node switches the class of the jobs traversing it.
+     *
+     * @return true when the service section is a class switcher
+     */
+    public boolean hasClassSwitching() {
+        return this.server instanceof jline.lang.sections.ClassSwitcher;
+    }
+
+    /**
+     * Checks whether this node is a station, i.e. a node holding jobs in a queue
+     * or in service.
+     *
+     * @return true if this node is a Station
+     */
+    public boolean isStation() {
+        return this instanceof Station;
+    }
+
+    /**
+     * Links this node to another one in the model it belongs to.
+     *
+     * @param nodeTo the destination node
+     * @return this node, so calls can be chained
+     */
+    public Node link(Node nodeTo) {
+        this.model.addLink(this, nodeTo);
+        return this;
+    }
+
+    /**
+     * Prints the one-line node summary, twin of MATLAB {@code Node.summary}.
+     */
+    public void summary() {
+        System.out.format("\nNode: %s\n", this.getName());
+    }
+
+    /**
+     * Returns a copy of this node, twin of the MATLAB {@code Node.copyElement}:
+     * every field is copied shallowly, then the three sections are copied so the
+     * clone can be re-wired without disturbing the original. The model handle
+     * stays shared, as it does in MATLAB.
+     *
+     * @return a copy of this node
+     */
+    protected Node copyElement() {
+        Node clone;
+        try {
+            clone = (Node) super.clone();
+        } catch (CloneNotSupportedException e) {
+            throw new RuntimeException("Failed to copy node " + this.getName(), e);
+        }
+        if (this.input != null) {
+            clone.input = (InputSection) this.input.copyElement();
+        }
+        if (this.server != null) {
+            clone.server = (ServiceSection) this.server.copyElement();
+        }
+        if (this.output != null) {
+            clone.output = (OutputSection) this.output.copyElement();
+        }
+        if (this.state != null) {
+            clone.state = this.state.copy();
+        }
+        return clone;
+    }
+
+    /**
+     * Returns a copy of this node. Overrides the serialization-based
+     * {@link jline.lang.Copyable#copy()} because that one would also clone the
+     * Network reached through {@link #model}; MATLAB shares the model handle
+     * instead, and {@link #copyElement()} reproduces that.
+     *
+     * @return a copy of this node
+     */
+    @Override
+    @SuppressWarnings("unchecked")
+    public <T extends jline.lang.Copyable> T copy() {
+        return (T) this.copyElement();
+    }
 
 }

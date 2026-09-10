@@ -19,7 +19,7 @@ function [ri, stat, RN] = pathsCS(sn, orignodes, P, curNode, endNode, curClass, 
             % Encountered nested fork, compute the max along the parallel paths
             joinIdx = find(sn.fj(nextNode,:));
             if RN(sn.nodeToStation(joinIdx), nextClass) == 0
-                [ri1, stat1, RN] = pathsCS(sn, P, nextNode, joinIdx, nextClass, RN, 0, []);
+                [ri1, stat1, RN] = ModelAdapter.pathsCS(sn, orignodes, P, nextNode, joinIdx, nextClass, RN, 0, []);
                 lambdai = 1./ri1;
                 d0 = 0;
                 parallel_branches = length(ri1);
@@ -30,9 +30,9 @@ function [ri, stat, RN] = pathsCS(sn, orignodes, P, curNode, endNode, curClass, 
                 RN(sn.nodeToStation(joinIdx), nextClass) = d0;
                 RN(stat1, nextClass) = 0;
             end
-            [ri1, stat1, RN] = pathsCS(sn, orignodes, P, joinIdx, endNode, nextClass, RN, currentTime + currentRn, stats);
+            [ri1, stat1, RN] = ModelAdapter.pathsCS(sn, orignodes, P, joinIdx, endNode, nextClass, RN, currentTime + currentRn, stats);
         else
-            [ri1, stat1, RN] = pathsCS(sn, orignodes, P, nextNode, endNode, nextClass, RN, currentTime + currentRn, stats);
+            [ri1, stat1, RN] = ModelAdapter.pathsCS(sn, orignodes, P, nextNode, endNode, nextClass, RN, currentTime + currentRn, stats);
         end
         ri = [ri, ri1];
         stat = [stat, stat1];

@@ -3,14 +3,15 @@ package jline.examples.java.advanced;
 import jline.lang.Network;
 import jline.solvers.NetworkSolver;
 import jline.solvers.wrappers.jmt.JMT;
+import jline.solvers.mva.MVA;
 import jline.solvers.SolverOptions;
 import java.util.Scanner;
 
 /**
  * Examples demonstrating cyclic polling systems.
  * 
- * This class provides Java implementations corresponding to the Kotlin notebooks
- * in jline.examples.kotlin.advanced.cyclicPolling package.
+ * This class provides Java implementations corresponding to the example notebooks
+ * in jline.examples.java.advanced.cyclicPolling package.
  */
 public class CyclicPollingExamples {
 
@@ -47,18 +48,19 @@ public class CyclicPollingExamples {
      */
     public static void polling_exhaustive_det() throws Exception {
         Network model = CyclicPollingModel.polling_exhaustive_det();
-        
-        NetworkSolver solver = new JMT(model, "seed", 12345);
-        
+
+        // The reference runs MVA first and JMT second, at this seed and run length.
         try {
-            SolverOptions options = JMT.defaultOptions();
-            options.samples = 100000;
-            ((JMT)solver).setOptions(options);
-            
-            solver.getAvgTable().print();
+            new MVA(model).getAvgTable().print();
         } catch (Exception e) {
+            System.out.println("MVA failed: " + e.getMessage());
         }
-        
+        try {
+            new JMT(model, "seed", 23000, "samples", 100000).getAvgTable().print();
+        } catch (Exception e) {
+            System.out.println("JMT failed: " + e.getMessage());
+        }
+
         pauseForUser();
     }
 
@@ -79,18 +81,19 @@ public class CyclicPollingExamples {
      */
     public static void polling_exhaustive_exp() throws Exception {
         Network model = CyclicPollingModel.polling_exhaustive_exp();
-        
-        NetworkSolver solver = new JMT(model, "seed", 12345);
-        
+
+        // The reference runs MVA first and JMT second, at this seed and run length.
         try {
-            SolverOptions options = JMT.defaultOptions();
-            options.samples = 100000;
-            ((JMT)solver).setOptions(options);
-            
-            solver.getAvgTable().print();
+            new MVA(model).getAvgTable().print();
         } catch (Exception e) {
+            System.out.println("MVA failed: " + e.getMessage());
         }
-        
+        try {
+            new JMT(model, "seed", 23000).getAvgTable().print();
+        } catch (Exception e) {
+            System.out.println("JMT failed: " + e.getMessage());
+        }
+
         pauseForUser();
     }
 
@@ -111,18 +114,19 @@ public class CyclicPollingExamples {
      */
     public static void polling_gated() throws Exception {
         Network model = CyclicPollingModel.polling_gated();
-        
-        NetworkSolver solver = new JMT(model, "seed", 12345);
-        
+
+        // The reference runs MVA first and JMT second, at this seed and run length.
         try {
-            SolverOptions options = JMT.defaultOptions();
-            options.samples = 100000;
-            ((JMT)solver).setOptions(options);
-            
-            solver.getAvgTable().print();
+            new MVA(model).getAvgTable().print();
         } catch (Exception e) {
+            System.out.println("MVA failed: " + e.getMessage());
         }
-        
+        try {
+            new JMT(model, "seed", 23000, "samples", 1000000).getAvgTable().print();
+        } catch (Exception e) {
+            System.out.println("JMT failed: " + e.getMessage());
+        }
+
         pauseForUser();
     }
 
@@ -143,18 +147,19 @@ public class CyclicPollingExamples {
      */
     public static void polling_klimited() throws Exception {
         Network model = CyclicPollingModel.polling_klimited();
-        
-        NetworkSolver solver = new JMT(model, "seed", 12345);
-        
+
+        // The reference runs MVA first and JMT second, at this seed and run length.
         try {
-            SolverOptions options = JMT.defaultOptions();
-            options.samples = 100000;
-            ((JMT)solver).setOptions(options);
-            
-            solver.getAvgTable().print();
+            new MVA(model).getAvgTable().print();
         } catch (Exception e) {
+            System.out.println("MVA failed: " + e.getMessage());
         }
-        
+        try {
+            new JMT(model, "seed", 23000, "samples", 100000).getAvgTable().print();
+        } catch (Exception e) {
+            System.out.println("JMT failed: " + e.getMessage());
+        }
+
         pauseForUser();
     }
 

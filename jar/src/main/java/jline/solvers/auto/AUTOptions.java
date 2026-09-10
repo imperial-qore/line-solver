@@ -8,10 +8,16 @@ import jline.solvers.SolverOptions;
 public class AUTOptions extends SolverOptions {
 
     /**
-     * Method for solver selection:
-     * - "default" or "heur": Heuristic-based selection
-     * - "ai": AI-based selection using trained classifier
-     * - "nn": Neural network-based selection
+     * Method for solver selection. Either a SELECTION INTENT -- "default" or
+     * "heur" (heuristic), "sim", "exact", "fast", "accurate", "bound" -- or a
+     * method FAMILY that pins the delegate outright ("nc", "mva", ...,
+     * optionally qualified as "nc.comom").
+     *
+     * <p>"ai" and "nn" are NOT among them. Both were documented here while
+     * {@code SolverAUTO.METHOD_AI} sat commented out as "not yet available", so
+     * this javadoc invited a caller to ask for a classifier that does not exist;
+     * {@code SolverAUTO.resolveMethodToken} now rejects an unknown token by name
+     * and lists what it will take.
      */
     public String selectionMethod = "default";
 

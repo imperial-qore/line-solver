@@ -130,7 +130,11 @@ public class NetworkThink {
             factorialNormalization *= factorial(jobs);
         }
 
-        double probability = solverInstance.value * rescalingFactor / factorialNormalization;
+        // preprocessingDS returns f = prod(diag(X)*diag(Y)) with DS = X A Y, so
+        // perm(A) = perm(DS) / f. This used to MULTIPLY, which is wrong by f^2:
+        // on the two-station one-class three-job model it returned 0.03029
+        // against a truth of 0.464.
+        double probability = solverInstance.value / rescalingFactor / factorialNormalization;
         return new NetworkNoThink.MarginalResult(probability, solverInstance.time, solverInstance.memory);
     }
 

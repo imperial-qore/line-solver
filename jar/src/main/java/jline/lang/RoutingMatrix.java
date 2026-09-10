@@ -6,6 +6,8 @@
 package jline.lang;
 
 import jline.GlobalConstants;
+import jline.api.sn.SnRtnodesToRtorig;
+import jline.util.Pair;
 import jline.lang.constant.RoutingStrategy;
 import jline.lang.nodes.Cache;
 import jline.lang.nodes.ClassSwitch;
@@ -478,18 +480,41 @@ public class RoutingMatrix implements Serializable {
         this.set(jobclass1, jobclass2, rt.get(jobclass1, jobclass2));
     }
     
+    /**
+     * Sets the whole node-by-node routing from one class to another, given the
+     * class indices. The int-indexed family is 1-based throughout, as the
+     * {@link #get(int, int)} readers and MATLAB {@code rt{r,s}} are.
+     *
+     * @param classIndex1 the 1-based index of the departing class
+     * @param classIndex2 the 1-based index of the arriving class
+     * @param rt          the node-by-node routing probabilities
+     */
     public void set(int classIndex1, int classIndex2, Matrix rt) {
-        if (classIndex1 >= 0 && classIndex1 < this.jobClasses.size() && 
-            classIndex2 >= 0 && classIndex2 < this.jobClasses.size()) {
-            
-            JobClass localFromClass = this.jobClasses.get(classIndex1);
-            JobClass localToClass = this.jobClasses.get(classIndex2);
-            
-            for (int i = 0; i < this.nodes.size(); i++) {
-                for (int k = 0; k < this.nodes.size(); k++) {
-                    set(localFromClass, localToClass, this.nodes.get(i), this.nodes.get(k), rt.get(i, k));
-                }
+        checkClassIndex(classIndex1);
+        checkClassIndex(classIndex2);
+        JobClass localFromClass = this.jobClasses.get(classIndex1 - 1);
+        JobClass localToClass = this.jobClasses.get(classIndex2 - 1);
+
+        for (int i = 0; i < this.nodes.size(); i++) {
+            for (int k = 0; k < this.nodes.size(); k++) {
+                set(localFromClass, localToClass, this.nodes.get(i), this.nodes.get(k), rt.get(i, k));
             }
+        }
+    }
+
+    private void checkClassIndex(int classIndex) {
+        if (classIndex < 1 || classIndex > this.jobClasses.size()) {
+            line_error(mfilename(new Object() {
+            }), "Job class index " + classIndex + " out of range in RoutingMatrix (1.."
+                    + this.jobClasses.size() + ").");
+        }
+    }
+
+    private void checkNodeIndex(int nodeIndex) {
+        if (nodeIndex < 1 || nodeIndex > this.nodes.size()) {
+            line_error(mfilename(new Object() {
+            }), "Node index " + nodeIndex + " out of range in RoutingMatrix (1.."
+                    + this.nodes.size() + ").");
         }
     }
 
@@ -540,6 +565,93 @@ public class RoutingMatrix implements Serializable {
         }
     }
 
-    // Parity gap: MATLAB methods not yet ported here - see _kb/07-cross-language-parity.md
+    /**
+     * Sets the whole node-by-node routing of a class onto itself, given the
+     * class index. Twin of the two-argument MATLAB {@code set(jobclass1, mat)},
+     * which assigns {@code rt{r,r} = mat}.
+     *
+     * @param classIndex the 1-based job class index
+     * @param rt         the node-by-node routing probabilities
+     */
+    public void set(int classIndex, Matrix rt) {
+        this.set(classIndex, classIndex, rt);
+    }
+
+    /**
+     * Sets a single routing probability, given class and node indices. Twin of
+     * the five-argument MATLAB {@code set(jobclass1, jobclass2, node1, node2, val)}.
+     *
+     * @param classIndex1 the 1-based index of the departing class
+     * @param classIndex2 the 1-based index of the arriving class
+     * @param nodeIndex1  the 1-based index of the source node
+     * @param nodeIndex2  the 1-based index of the destination node
+     * @param probability the routing probability
+     */
+    public void set(int classIndex1, int classIndex2, int nodeIndex1, int nodeIndex2, double probability) {
+        checkClassIndex(classIndex1);
+        checkClassIndex(classIndex2);
+        checkNodeIndex(nodeIndex1);
+        checkNodeIndex(nodeIndex2);
+        this.set(this.jobClasses.get(classIndex1 - 1), this.jobClasses.get(classIndex2 - 1),
+                this.nodes.get(nodeIndex1 - 1), this.nodes.get(nodeIndex2 - 1), probability);
+    }
+
+    /**
+     * Returns the routing probabilities as a class-by-class table of
+     * node-by-node matrices, twin of MATLAB {@code getCell}.
+     *
+     * The matrices are copies, matching the MATLAB cell array being returned by
+     * value: mutating them does not alter this routing matrix.
+     *
+     * @return routing[r][s] holding the node-by-node probabilities from class r
+     *         to class s
+     */
+    public List<List<Matrix>> getCell() {
+        List<List<Matrix>> out = new ArrayList<List<Matrix>>();
+        for (List<Matrix> row : this.routings) {
+            List<Matrix> outRow = new ArrayList<Matrix>();
+            for (Matrix m : row) {
+                outRow.add(m.copy());
+            }
+            out.add(outRow);
+        }
+        return out;
+    }
+
+    /**
+     * Return value of {@link RoutingMatrix#rtnodes2rtorig(NetworkStruct)}, twin
+     * of the MATLAB {@code [rtorigcell, rtorig]} pair.
+     */
+    public static class RtOrigResult implements Serializable {
+        /** rtorigcell[r][s] holds the node-by-node probabilities from class r to class s. */
+        public final List<List<Matrix>> rtorigcell;
+        /** The (nodes*classes)-square stochastic complement over the pre-class-switch nodes. */
+        public final Matrix rtorig;
+
+        public RtOrigResult(List<List<Matrix>> rtorigcell, Matrix rtorig) {
+            this.rtorigcell = rtorigcell;
+            this.rtorig = rtorig;
+        }
+    }
+
+    /**
+     * Recovers the routing matrix as declared by the user, before the class
+     * switch nodes were materialised, by stochastic complementation of
+     * {@code sn.rtnodes} on the nodes preceding the first {@code CS_} node.
+     * Twin of the static MATLAB {@code RoutingMatrix.rtnodes2rtorig(sn)}, which
+     * is the same computation as {@code sn_rtnodes_to_rtorig}: this method is
+     * the class-level name for it and delegates rather than duplicating it.
+     *
+     * Note this is NOT {@code sn.rtorig}: the complement also fills the rows of
+     * a station a class never visits, which is why MATLAB
+     * {@code refreshRoutingMatrix.m} does not use it to populate that field.
+     *
+     * @param sn the network structure
+     * @return the cell form and the flat form of the recovered routing
+     */
+    public static RtOrigResult rtnodes2rtorig(NetworkStruct sn) {
+        Pair<List<List<Matrix>>, Matrix> res = SnRtnodesToRtorig.snRtnodesToRtorig(sn);
+        return new RtOrigResult(res.getLeft(), res.getRight());
+    }
 
 }

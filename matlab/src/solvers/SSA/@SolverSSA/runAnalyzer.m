@@ -21,7 +21,7 @@ if pyHandled
     return
 end
 
-self.runAnalyzerChecks(options);
+verboseGuard = self.runAnalyzerChecks(options); %#ok<NASGU> restores the caller verbosity on return
 Solver.resetRandomGeneratorSeed(options.seed);
 
 
@@ -45,11 +45,7 @@ if isFJ
         line_warning(mfilename,'The parallel method does not support fork-join models, switching to the serial method.\n');
     end
     options.method = 'serial';
-    sn_orig = sn;
-    Korig = sn.nclasses;
-    [~, fjsn, fjclassmap] = ModelAdapter.fjtag(self.model);
-    sn = fjsn;
-    line_debug(options, 'SSA: fork-join tag augmentation, %d classes (%d auxiliary), %d fork firings', sn.nclasses, sn.nclasses-Korig, length(sn.fjsync));
+    [sn, fjctx] = solver_tr_fjtag_analyzer(self, 'expand', sn, options);
 end
 
 switch options.lang
@@ -71,7 +67,12 @@ switch options.lang
                 R = jmodel.getNumberOfClasses;
                 tic;
                 jsolver = JLINE.SolverSSA(jmodel, options);
-                [QN,UN,RN,WN,AN,TN] = JLINE.arrayListToResults(jsolver.getAvgTable);
+                % getAvgTable(true) is the UNFILTERED grid, and the reshape below needs it:
+                % the no-argument getter DROPS every (station,class) cell whose six metrics
+                % are all zero, so on a model with a disabled pair it returns fewer than M*R
+                % entries and reshape(...,R,M) errors out. MATLAB applies its own filter when
+                % the table is PRINTED, so the bridge must carry the whole grid, zeros included.
+                [QN,UN,RN,WN,AN,TN] = JLINE.arrayListToResults(jsolver.getAvgTable(true));
 
                 % see _kb/06-solver-catalog.md for rationale (SSA lang=java transient trajectory)
                 if nargout > 1
@@ -172,7 +173,7 @@ switch options.lang
         end
     case 'matlab'
         line_debug(options, 'SSA: using lang=matlab');
-        [QN,UN,RN,TN,CN,XN,~,actualmethod,tranSysState, tranSync, sn, QNCI, UNCI, RNCI, TNCI, ANCI, WNCI] = solver_ssa_analyzer(sn, options);
+        [QN,UN,RN,TN,CN,XN,~,actualmethod,tranSysState, tranSync, sn, QNCI, UNCI, RNCI, TNCI, ANCI, WNCI, StartN, PreemptN, tranStartTag, tranPreemptTag] = solver_ssa_analyzer(sn, options);
 
         for isf=1:sn.nstateful
             ind = sn.statefulToNode(isf);
@@ -180,6 +181,9 @@ switch options.lang
                 case NodeType.Cache
                     self.model.nodes{sn.statefulToNode(isf)}.setResultHitProb(sn.nodeparam{ind}.actualhitprob);
                     self.model.nodes{sn.statefulToNode(isf)}.setResultMissProb(sn.nodeparam{ind}.actualmissprob);
+                    if isfield(sn.nodeparam{ind}, 'actualdelayedhitprob')
+                        self.model.nodes{sn.statefulToNode(isf)}.setResultDelayedHitProb(sn.nodeparam{ind}.actualdelayedhitprob);
+                    end
                     if isfield(sn.nodeparam{ind}, 'actualresidt')
                         self.model.nodes{sn.statefulToNode(isf)}.setResultResidT(sn.nodeparam{ind}.actualresidt);
                     end
@@ -190,21 +194,7 @@ switch options.lang
         runtime = toc(T0);
         T = getAvgTputHandles(self);
         if isFJ
-            [QN,UN,RN,TN,CN,XN] = sn_fj_foldback(QN,UN,RN,TN,CN,XN,fjclassmap,Korig);
-            self.result.fjclassmap = fjclassmap;
-            [TN,~,RN] = sn_pn_avg_rates(sn_orig, QN, TN, [], RN);
-            AN = sn_get_arvr_from_tput(sn_orig, TN, T);
-            % Join stations report the per-sibling waiting time (JMT
-            % convention): QLen over the sibling arrival rate
-            for ist=1:sn_orig.nstations
-                if sn_orig.nodetype(sn_orig.stationToNode(ist)) == NodeType.Join
-                    for r=1:Korig
-                        if AN(ist,r) > 0
-                            RN(ist,r) = QN(ist,r)/AN(ist,r);
-                        end
-                    end
-                end
-            end
+            [QN,UN,RN,TN,AN,CN,XN] = solver_tr_fjtag_analyzer(self, 'lift', fjctx, QN,UN,RN,TN,CN,XN, T);
         else
             [TN,~,RN] = sn_pn_avg_rates(sn, QN, TN, [], RN);
             AN = sn_get_arvr_from_tput(sn, TN, T);
@@ -215,14 +205,60 @@ switch options.lang
             self.setAvgResults(QN,UN,RN,TN,AN,[],CN,XN,runtime,options.method);
         end
         self.result.space = sn.space;
+        % Derived START/PREEMPT rates and the per-step tags of the sampled
+        % path. Kept in their own fields: they are annotations on existing
+        % transitions, not metrics, so they add no getAvgTable column.
+        self.result.startRate = StartN;
+        self.result.preemptRate = PreemptN;
+        self.result.startTag = tranStartTag;
+        self.result.preemptTag = tranPreemptTag;
 
         % Store CI data if computed
         if confintEnabled && ~isempty(QNCI)
             self.setAvgResultsCI(QNCI, UNCI, RNCI, TNCI, ANCI, WNCI, [], []);
+            % HOW LONG THE RUN SHOULD HAVE BEEN, when the caller asked. The
+            % batch-means half-width h at confidence 1-alpha over a run of n
+            % samples pins the ASYMPTOTIC variance, sigma^2 = (h/z)^2 n, which is
+            % the quantity a run length is planned from -- not the stationary
+            % variance, which on M/M/1 differs from it by a factor blowing up
+            % like (1-rho)^-2. SIM_RUNLENGTH then turns it into the sample count
+            % that reaches the requested RELATIVE precision.
+            self.result.runLengthPlan = ssa_plan_run_length(options, QN, QNCI, ...
+                confintLevel, numel(tranSysState{1}));
         end
         if lineTimeoutExceeded(options)
             self.result.Avg.timedOut = true;
             line_warning(mfilename,'Solver stopped after the wall-clock time budget (options.timeout=%gs) was exceeded; returning the interim solution.\n', options.timeout);
         end
 end
+end
+
+function plan = ssa_plan_run_length(options, QN, QNCI, confintLevel, nSamples)
+% PLAN = SSA_PLAN_RUN_LENGTH(OPTIONS, QN, QNCI, CONFINTLEVEL, NSAMPLES)
+%
+% The run length the caller would need for the precision they asked for.
+% Returns [] unless options.config.runLengthPlan is set; it is either a scalar
+% target RELATIVE precision or a struct with fields relprecision and confidence.
+%
+% See also SIM_RUNLENGTH_PLAN.
+plan = [];
+if ~isfield(options,'config') || ~isstruct(options.config) ...
+        || ~isfield(options.config,'runLengthPlan') || isempty(options.config.runLengthPlan)
+    return
+end
+spec = options.config.runLengthPlan;
+relprecision = 0.05;
+confidence = confintLevel;
+if isstruct(spec)
+    if isfield(spec,'relprecision') && ~isempty(spec.relprecision)
+        relprecision = spec.relprecision;
+    end
+    if isfield(spec,'confidence') && ~isempty(spec.confidence)
+        confidence = spec.confidence;
+    end
+elseif isnumeric(spec) && isscalar(spec) && spec > 0
+    relprecision = spec;
+end
+plan = sim_runlength_plan(QN, QNCI, nSamples, 'relprecision', relprecision, ...
+    'confidence', confidence);
 end

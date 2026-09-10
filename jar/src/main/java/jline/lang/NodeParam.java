@@ -58,31 +58,11 @@ public class NodeParam implements Serializable {
     public Map<JobClass, Distribution> patience;
 
     /**
-     * RL value function by job class. For tabular RL (rlStateSize=0) this is a
-     * flat representation of an N-dimensional table indexed by per-queue
-     * occupancy; the corresponding shape is in {@link #rlValueFunctionShape}.
-     * For linear approximation (rlStateSize&gt;0) this is the coefficient row
-     * vector applied to a quadratic feature lift of the queue lengths.
+     * Krzesinski (1987) state-dependent routing structure, in node indices, as
+     * declared on the entry center. The station-indexed twin lives on
+     * NetworkStruct.sdr. See jline.lang.StateDepRouting.
      */
-    public Map<JobClass, Matrix> rlValueFunction;
-
-    /**
-     * Per-class shape of the tabular RL value function table. Each int[] is the
-     * size along each dimension; only used when rlStateSize=0.
-     */
-    public Map<JobClass, int[]> rlValueFunctionShape;
-
-    /**
-     * Per-class list of node indices that consult the RL value function. Nodes
-     * not in this list fall back to JSQ-style routing.
-     */
-    public Map<JobClass, int[]> rlNodesNeedAction;
-
-    /**
-     * Per-class state-size hint. 0 selects tabular RL, &gt;0 selects linear
-     * approximation, missing/negative selects JSQ fallback.
-     */
-    public Map<JobClass, Integer> rlStateSize;
+    public Map<JobClass, jline.lang.StateDepRouting> sdr;
 
     /**
      * Constructs an empty NodeParam with initialized parameter maps.
@@ -96,10 +76,6 @@ public class NodeParam implements Serializable {
         weightedOutlinks = new HashMap<JobClass, Matrix>();
         d = new HashMap<JobClass, Integer>();
         patience = new HashMap<JobClass, Distribution>();
-        rlValueFunction = new HashMap<JobClass, Matrix>();
-        rlValueFunctionShape = new HashMap<JobClass, int[]>();
-        rlNodesNeedAction = new HashMap<JobClass, int[]>();
-        rlStateSize = new HashMap<JobClass, Integer>();
     }
 
     /**

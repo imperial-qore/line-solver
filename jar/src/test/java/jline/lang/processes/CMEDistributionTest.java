@@ -155,7 +155,7 @@ public class CMEDistributionTest {
         }
         var /= samples.length;
         assertEquals(1.0, mean, 0.02);
-        assertEquals(cme.getSCV(), var / (mean * mean), 0.01);
+        assertEquals(cme.getSCV(), var / (mean * mean), 1e-3);
     }
 
     @Test
@@ -288,7 +288,7 @@ public class CMEDistributionTest {
      * An ME with a negative entry in alpha whose density touches zero in the interior
      * (f(1.2) = 0 against a peak of 2.79), so it admits NO phase-type representation of
      * any order. Spectrum {-1, -2 +- 2i}, mean 0.5329, SCV 2.6843. Same instance as
-     * line-test.git/test_mam_me_warning.m and the native Python test suite.
+     * line-test.git/test/testsAPI/test_mam_me_warning.m and the native Python test suite.
      */
     private static ME nonPhaseTypeME() {
         Matrix alpha = new Matrix(1, 3);

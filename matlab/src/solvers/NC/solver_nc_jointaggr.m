@@ -1,5 +1,9 @@
-function [Pr,G,runtime] = solver_nc_jointaggr(sn, options)
-% [PR,G,RUNTIME] = SOLVER_NC_JOINTAGGR(QN, OPTIONS)
+function [Pr,G,lG,runtime] = solver_nc_jointaggr(sn, options)
+% [PR,G,LG,RUNTIME] = SOLVER_NC_JOINTAGGR(QN, OPTIONS)
+%
+% LG is the LOG normalizing constant, returned in the same slot as in
+% solver_nc_joint so that the two callers can be written alike. It is what the
+% analyzer computes; G = exp(LG) is the derived value and underflows first.
 
 % Copyright (c) 2012-2026, Imperial College London
 % All rights reserved.

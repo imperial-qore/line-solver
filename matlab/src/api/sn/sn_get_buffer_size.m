@@ -56,8 +56,29 @@ if isfield(sn, 'classcap') && ~isempty(sn.classcap) && size(sn.classcap, 1) >= i
     end
 end
 if isfield(sn, 'njobs') && ~isempty(sn.njobs)
-    totalJobs = sum(sn.njobs(:));
-    if N >= totalJobs
+    % The population that can actually REACH this station, not the model's
+    % total. A capacity is unreachable when it is at least as large as the
+    % jobs able to arrive here, and only the classes served here can arrive.
+    %
+    % Using sum(njobs) over every class made a MIXED model read as finite
+    % buffered at stations an open class never visits: the open class puts Inf
+    % into the total, so the test below could not fire, while classcap at such
+    % a station is the CLOSED chain's population, which refreshCapacity derives
+    % and which can never refuse a job of that chain. On Source/Delay/Queue with
+    % one closed class of 2 and one open class, the Delay reported a buffer of 2
+    % and solver_nc_mem_supports then rejected the whole model with "MEM
+    % supports finite station buffers only in open models", making the mixed MEM
+    % branch unreachable.
+    reach = true(1, numel(sn.njobs));
+    if isfield(sn, 'classcap') && ~isempty(sn.classcap) && size(sn.classcap, 1) >= ist
+        reach = sn.classcap(ist, :) > 0;
+    end
+    if any(reach)
+        reachableJobs = sum(sn.njobs(reach));
+    else
+        reachableJobs = 0;
+    end
+    if N >= reachableJobs
         N = Inf; % declared but unreachable: the buffer can never refuse a job
     end
 end

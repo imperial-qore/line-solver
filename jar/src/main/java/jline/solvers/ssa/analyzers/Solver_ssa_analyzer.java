@@ -2,6 +2,7 @@ package jline.solvers.ssa.analyzers;
 
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -14,14 +15,51 @@ import jline.lang.constant.ImpatienceType;
 import jline.lang.constant.NodeType;
 import jline.lang.constant.ProcessType;
 import jline.lang.constant.SchedStrategy;
+import jline.lang.nodeparam.TransitionNodeParam;
 import jline.lang.nodes.StatefulNode;
 import jline.solvers.SolverOptions;
+import jline.util.SerializableFunction;
 import jline.solvers.ssa.SSAResult;
 import jline.solvers.ssa.SolverSSA;
 import jline.util.matrix.Matrix;
 
 public final class Solver_ssa_analyzer {
     private Solver_ssa_analyzer() {}
+
+    /**
+     * Rejects marking-dependent transition firing rates.
+     *
+     * <p>Neither SSA engine (NRM or serial) applies the g(marking) multiplier set by
+     * {@code Transition.setFiringRateDependence}, unlike SolverCTMC and SolverLDES, so
+     * the model is refused rather than silently simulated at the nominal rate. Mirrors
+     * matlab/src/solvers/SSA/solver_ssa_nrm.m and the native-Python
+     * api/solvers/ssa/{nrm,serial}.py guards.
+     *
+     * @param sn network structure of the analyzed model
+     */
+    private static void assertNoFiringDependence(NetworkStruct sn) {
+        for (int ind = 0; ind < sn.nnodes; ind++) {
+            if (sn.nodetype.get(ind) != NodeType.Transition) {
+                continue;
+            }
+            Object np = sn.nodeparam.get(sn.nodes.get(ind));
+            if (!(np instanceof TransitionNodeParam)) {
+                continue;
+            }
+            List<SerializableFunction<Matrix, Double>> firingdep = ((TransitionNodeParam) np).firingdep;
+            if (firingdep == null) {
+                continue;
+            }
+            for (int m = 0; m < firingdep.size(); m++) {
+                if (firingdep.get(m) != null) {
+                    throw new RuntimeException(String.format(
+                            "Transition %s mode %d uses a marking-dependent firing rate "
+                            + "(setFiringRateDependence), which SolverSSA does not support; "
+                            + "use SolverCTMC or SolverLDES.", sn.nodenames.get(ind), m + 1));
+                }
+            }
+        }
+    }
 
     public static SSAResult solver_ssa_analyzer(NetworkStruct snInput, SolverOptions options, SolverSSA solverSSA) {
         // see _kb/06-solver-catalog.md for rationale
@@ -83,8 +121,10 @@ public final class Solver_ssa_analyzer {
             if (nt == NodeType.Transition) { isSPN = true; break; }
         }
         if (isSPN) {
+            assertNoFiringDependence(sn);
             boolean spnExplicitSerial = "serial".equals(actualOptions.method)
-                    || "ssa".equals(actualOptions.method);
+                    || "ssa".equals(actualOptions.method)
+                    || !gdNrmOK(sn);
             if (spnExplicitSerial) {
                 // see _kb/06-solver-catalog.md for rationale
                 actualOptions.method = "serial";
@@ -99,49 +139,7 @@ public final class Solver_ssa_analyzer {
         }
 
         if ("default".equals(actualOptions.method)) {
-            Set<SchedStrategy> allowedSched = new HashSet<SchedStrategy>();
-            allowedSched.add(SchedStrategy.INF);
-            allowedSched.add(SchedStrategy.EXT);
-            allowedSched.add(SchedStrategy.PS);
-            allowedSched.add(SchedStrategy.LPS);
-            allowedSched.add(SchedStrategy.DPS);
-            allowedSched.add(SchedStrategy.GPS);
-            allowedSched.add(SchedStrategy.PSPRIO);
-            allowedSched.add(SchedStrategy.DPSPRIO);
-            allowedSched.add(SchedStrategy.GPSPRIO);
-            allowedSched.add(SchedStrategy.SIRO);
-            allowedSched.add(SchedStrategy.HOL);
-            allowedSched.add(SchedStrategy.SEPT);
-            allowedSched.add(SchedStrategy.LEPT);
-            allowedSched.add(SchedStrategy.FCFS);
-            allowedSched.add(SchedStrategy.LCFS);
-            allowedSched.add(SchedStrategy.LCFSPR);
-            allowedSched.add(SchedStrategy.PAS);
-            allowedSched.add(SchedStrategy.POLLING);
-
-            boolean nrmSupported = true;
-            for (SchedStrategy s : sn.sched.values()) {
-                if (!allowedSched.contains(s)) { nrmSupported = false; break; }
-            }
-            // see _kb/06-solver-catalog.md for rationale
-            if (nrmSupported && !cacheNrmOK(sn)) nrmSupported = false;
-            // see _kb/06-solver-catalog.md for rationale
-            if (nrmSupported) {
-                for (NodeType nt : sn.nodetype) {
-                    if (nt == NodeType.Fork || nt == NodeType.Join) { nrmSupported = false; break; }
-                }
-            }
-            // NRM handles JSQ natively (join the smallest target queue); the
-            // remaining state-dependent routing strategies need the serial engine
-            if (nrmSupported && hasStateDepRouting(sn)) nrmSupported = false;
-            // see _kb/06-solver-catalog.md for rationale
-            if (nrmSupported && !fcrNrmOK(sn)) nrmSupported = false;
-            // only the state-based QUEUE_LENGTH balking strategy is a function of
-            // the state vector; reneging needs memoryless patience
-            if (nrmSupported && !balkNrmOK(sn)) nrmSupported = false;
-            if (nrmSupported && !renegeNrmOK(sn)) nrmSupported = false;
-            // see _kb/06-solver-catalog.md for rationale
-            if (nrmSupported && !phaseNrmOK(sn)) nrmSupported = false;
+            boolean nrmSupported = nrmEligibleReason(sn).isEmpty();
 
             if (nrmSupported) {
                 actualOptions.method = "nrm";
@@ -155,17 +153,18 @@ public final class Solver_ssa_analyzer {
                 isDefaultMethod = true;
             }
         } else if ("nrm".equals(actualOptions.method)) {
-            if (hasStateDepRouting(sn)) {
-                // see _kb/06-solver-catalog.md for rationale
-                InputOutput.line_warning(InputOutput.mfilename(new Object() {}),
-                        "NRM does not support RROBIN/WRROBIN/SQ/RL routing; falling back to the serial method.");
-                actualOptions = options.copy();
-                actualOptions.method = "serial";
-            } else if (!renegeNrmOK(sn)) {
+            if (!renegeNrmOK(sn)) {
                 // Phase-type patience would need the remaining-patience phase of
                 // each waiting job, which the reaction network does not carry
                 InputOutput.line_warning(InputOutput.mfilename(new Object() {}),
                         "NRM supports only exponential (memoryless) patience for reneging; falling back to the serial method.");
+                actualOptions = options.copy();
+                actualOptions.method = "serial";
+            } else if (!gdNrmOK(sn)) {
+                // A global (Whittle) dependence reads the whole population
+                // matrix, which the per-station propensity closures do not get
+                InputOutput.line_warning(InputOutput.mfilename(new Object() {}),
+                        "NRM does not support a global dependence (setGlobalDependence); falling back to the serial method.");
                 actualOptions = options.copy();
                 actualOptions.method = "serial";
             } else if (!balkNrmOK(sn)) {
@@ -189,10 +188,18 @@ public final class Solver_ssa_analyzer {
             isDefaultMethod = true;
         }
 
+        // 'ssa' is the reference's alias for the serial engine, NOT for the NRM:
+        // solver_ssa_analyzer.m:139 sets options.method='serial' under it. It was
+        // advertised by SolverSSA.listValidMethods and reached the "Unknown
+        // analysis method" arm below, so a listed name always threw.
+        if ("ssa".equals(actualOptions.method)) {
+            actualOptions.method = "serial";
+        }
         if ("serial".equals(actualOptions.method)) {
             res = Solver_ssa_analyzer_serial.solver_ssa_analyzer_serial(sn, false, init_state, actualOptions, solverSSA);
             method = isDefaultMethod ? "default/serial" : "serial";
-        } else if ("para".equals(actualOptions.method) || "parallel".equals(actualOptions.method)) {
+        } else if ("para".equals(actualOptions.method) || "parallel".equals(actualOptions.method)
+                || "ssa.parallel".equals(actualOptions.method)) {
             try {
                 res = Solver_ssa_analyzer_parallel.solver_ssa_analyzer_parallel(sn, init_state, actualOptions, solverSSA);
                 method = isDefaultMethod ? "default/parallel" : "parallel";
@@ -348,23 +355,6 @@ public final class Solver_ssa_analyzer {
         return true;
     }
 
-    private static boolean hasStateDepRouting(NetworkStruct sn) {
-        // see _kb/06-solver-catalog.md for rationale
-        if (sn.routing == null) return false;
-        for (Map.Entry<jline.lang.nodes.Node, Map<jline.lang.JobClass, jline.lang.constant.RoutingStrategy>> e
-                : sn.routing.entrySet()) {
-            Map<jline.lang.JobClass, jline.lang.constant.RoutingStrategy> rmap = e.getValue();
-            if (rmap == null) continue;
-            for (Map.Entry<jline.lang.JobClass, jline.lang.constant.RoutingStrategy> re : rmap.entrySet()) {
-                jline.lang.constant.RoutingStrategy rs = re.getValue();
-                if (rs == jline.lang.constant.RoutingStrategy.RL) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
     /**
      * True: finite capacity regions are supported under both rules. DROP is
      * reproduced by censoring the refused transition; WAITQ parks the refused job
@@ -378,6 +368,128 @@ public final class Solver_ssa_analyzer {
      * firing time; EXPECTED_WAIT and COMBINED depend on the mean waiting time and
      * need the serial engine (State.afterEventStation rejects them likewise).
      */
+    /**
+     * Whether the NRM engine can run this model, as a SENTENCE.
+     *
+     * <p>ONE PREDICATE, TWO CALLERS. The dispatch above asks it to decide whether
+     * to PREFER the NRM on the {@code default} path; {@code SolverSSA
+     * .supportsModelMethod} asks it to decide whether {@code nrm} may be OFFERED
+     * at all. Inlined in the dispatch it could answer only the first, so
+     * {@code findSolver} reported {@code ssa.nrm} runnable on every model and an
+     * explicit {@code SolverSSA(model,"nrm")} then raised from
+     * {@code Solver_ssa_analyzer_nrm} on the very models this test excludes.</p>
+     *
+     * @param sn the network structure
+     * @return empty string when the NRM can run it, else the reason it cannot
+     */
+    public static String nrmMethodRefusal(NetworkStruct sn) {
+        // NOT nrmEligibleReason, and the difference is why there are two.
+        // nrmEligibleReason asks whether the NRM should be PREFERRED on the
+        // 'default' path and is deliberately wide. This asks what a GATE must
+        // ask: will the name the caller typed produce an answer?
+        //
+        // The explicit "nrm" arm above FALLS BACK to the serial engine, with a
+        // warning, for reneging patience, global dependence and balking, so a
+        // model carrying any of those still gets a correct answer under 'nrm'
+        // and must not be refused here. What raises instead of falling back is
+        // exactly two things, both in Solver_ssa_analyzer_nrm: a scheduling
+        // policy the reaction network has no form for, and phase-type service at
+        // a station whose in-service multiset it does not record.
+        //
+        // MATLAB gates on the scheduling rule alone (its NRM analyzer has no
+        // phase check) and C++ on all six (its NRM has no fallback arm). Each
+        // gate states its own engine's reach; that is not a divergence.
+        Set<SchedStrategy> allowedSched = nrmAllowedSched();
+        for (SchedStrategy s : sn.sched.values()) {
+            if (!allowedSched.contains(s)) {
+                return "The 'nrm' engine has no reaction form for the " + s
+                        + " scheduling policy. Use options.method='serial'.";
+            }
+        }
+        if (!phaseNrmOK(sn)) {
+            return "The 'nrm' engine expands phase-type service only at INF/PS and "
+                    + "non-preemptive buffered stations. Use options.method='serial'.";
+        }
+        return "";
+    }
+
+    /** The scheduling policies the NRM has a reaction form for. */
+    private static Set<SchedStrategy> nrmAllowedSched() {
+        Set<SchedStrategy> allowedSched = new HashSet<SchedStrategy>();
+        allowedSched.add(SchedStrategy.INF);
+        allowedSched.add(SchedStrategy.EXT);
+        allowedSched.add(SchedStrategy.PS);
+        allowedSched.add(SchedStrategy.LPS);
+        allowedSched.add(SchedStrategy.DPS);
+        allowedSched.add(SchedStrategy.GPS);
+        allowedSched.add(SchedStrategy.PSPRIO);
+        allowedSched.add(SchedStrategy.DPSPRIO);
+        allowedSched.add(SchedStrategy.GPSPRIO);
+        allowedSched.add(SchedStrategy.SIRO);
+        allowedSched.add(SchedStrategy.HOL);
+        allowedSched.add(SchedStrategy.SEPT);
+        allowedSched.add(SchedStrategy.LEPT);
+        allowedSched.add(SchedStrategy.FCFS);
+        allowedSched.add(SchedStrategy.LCFS);
+        allowedSched.add(SchedStrategy.LCFSPR);
+        allowedSched.add(SchedStrategy.PAS);
+        allowedSched.add(SchedStrategy.POLLING);
+        return allowedSched;
+    }
+
+    public static String nrmEligibleReason(NetworkStruct sn) {
+        Set<SchedStrategy> allowedSched = nrmAllowedSched();
+        for (SchedStrategy s : sn.sched.values()) {
+            if (!allowedSched.contains(s)) {
+                return "The 'nrm' engine has no reaction form for the " + s
+                        + " discipline. Use options.method='serial'.";
+            }
+        }
+        // see _kb/06-solver-catalog.md for rationale
+        if (!cacheNrmOK(sn)) {
+            return "The 'nrm' engine cannot reproduce this cache configuration. "
+                    + "Use options.method='serial'.";
+        }
+        // A global (Whittle) dependence reads the whole population matrix, which
+        // the per-station propensity closures do not receive.
+        if (!gdNrmOK(sn)) {
+            return "The 'nrm' engine builds each reaction propensity from one station's "
+                    + "population slice, so it cannot evaluate a global (Whittle) scaling "
+                    + "handle. Use options.method='serial'.";
+        }
+        // see _kb/06-solver-catalog.md for rationale
+        for (NodeType nt : sn.nodetype) {
+            if (nt == NodeType.Fork || nt == NodeType.Join) {
+                return "The 'nrm' engine has no Fork/Join node handling. "
+                        + "Use options.method='serial'.";
+            }
+        }
+        // see _kb/06-solver-catalog.md for rationale
+        if (!fcrNrmOK(sn)) {
+            return "The 'nrm' engine cannot evaluate this finite capacity region rule. "
+                    + "Use options.method='serial'.";
+        }
+        // Only the state-based QUEUE_LENGTH balking strategy is a function of the
+        // state vector; reneging needs memoryless patience.
+        if (!balkNrmOK(sn)) {
+            return "The 'nrm' engine evaluates only QUEUE_LENGTH balking, which is a function "
+                    + "of the state vector; EXPECTED_WAIT and COMBINED need the mean waiting "
+                    + "time. Use options.method='serial'.";
+        }
+        if (!renegeNrmOK(sn)) {
+            return "The 'nrm' engine abandons at the aggregate rate (waiting count)*mu, which "
+                    + "is exact only for memoryless patience. Use options.method='serial'.";
+        }
+        // see _kb/06-solver-catalog.md for rationale
+        if (!phaseNrmOK(sn)) {
+            return "The 'nrm' engine expands non-exponential service exactly only where every "
+                    + "job present is in service; this model buffers it under a discipline "
+                    + "whose in-service phase multiset it does not record. "
+                    + "Use options.method='serial'.";
+        }
+        return "";
+    }
+
     private static boolean balkNrmOK(NetworkStruct sn) {
         if (sn.balkingStrategy == null || sn.balkingStrategy.isEmpty()) {
             return true;
@@ -463,6 +575,16 @@ public final class Solver_ssa_analyzer {
     private static boolean fcrNrmOK(NetworkStruct sn) {
         // see _kb/06-solver-catalog.md for rationale
         return true;
+    }
+
+    /**
+     * True when no global (Whittle) dependence is declared. The NRM builds one
+     * propensity closure per reaction from the per-station population slice; a
+     * global handle reads the whole population matrix, which that closure does
+     * not receive. The serial engine carries the factor, so the model runs there.
+     */
+    private static boolean gdNrmOK(NetworkStruct sn) {
+        return sn.gdscaling == null;
     }
 
     private static boolean cacheNrmOK(NetworkStruct sn) {

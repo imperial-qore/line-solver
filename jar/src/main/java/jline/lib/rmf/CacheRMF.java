@@ -421,6 +421,104 @@ public class CacheRMF {
     }
 
     /**
+     * Stationary covariance of the occupancy process under the linear noise
+     * approximation: the solution of F'(x) W + W F'(x)' + Q(x) = 0 with the same
+     * {@link #jacobian} and {@link #noiseMatrix} the 1/N correction is built
+     * from, so mean and covariance linearise about the identical drift.
+     *
+     * <p>THE SUBSPACE IS THE POINT. The Jacobian is singular twice over, because
+     * the cache conserves two things: each item is in exactly one list
+     * (sum_k x[i,k] = 1) and each list holds exactly its capacity
+     * (sum_i x[i,k] = m[k]). Every jump is a SWAP,
+     * l(i,j,k) = (e_i - e_j) tensor (e_{k+1} - e_k), so the fluctuation lives on
+     * the tensor product of the zero-sum item space with the zero-sum list
+     * space: the double-centred subspace, of dimension (n-1)*h. Restricting to
+     * an orthonormal basis of it is exact, and it is what makes the covariance
+     * of a deterministic total come out as zero. The reduction used by
+     * {@link #reduceFpFppQ} does not: it drops the last item's rows and pads
+     * with null vectors, which leaves the miss-indicator covariance summing to a
+     * nonzero number.</p>
+     *
+     * @param x occupancy at which to linearise
+     * @return the modelDimension-square covariance, or null when the fixed point
+     *         is not exponentially stable on the reachable subspace
+     */
+    public double[][] lnaCovariance(double[] x) {
+        double[][] Fp = jacobian(x);
+        double[][] Q = noiseMatrix(x);
+
+        double[][] Ui = centeredBasis(numberOfItems);
+        double[][] Ul = centeredBasis(numberOfLists + 1);
+        int nv = Ui[0].length * Ul[0].length;
+        if (nv == 0) {
+            return new double[modelDimension][modelDimension];
+        }
+        // V = kron(Ul, Ui) on the item-major flat index i + k*n
+        double[][] V = new double[modelDimension][nv];
+        for (int k = 0; k <= numberOfLists; k++) {
+            for (int i = 0; i < numberOfItems; i++) {
+                int row = index(i, k);
+                for (int b = 0; b < Ul[0].length; b++) {
+                    for (int a = 0; a < Ui[0].length; a++) {
+                        V[row][b * Ui[0].length + a] = Ul[k][b] * Ui[i][a];
+                    }
+                }
+            }
+        }
+
+        Matrix Vm = arrayToMatrix(V);
+        Matrix Vt = Vm.transpose();
+        Matrix Ar = Vt.mult(arrayToMatrix(Fp)).mult(Vm);
+        Matrix Qr = Vt.mult(arrayToMatrix(symmetrize(Q))).mult(Vm);
+        Qr = arrayToMatrix(symmetrize(matrixToArray(Qr)));
+
+        // the LNA has a stationary covariance only at an exponentially stable
+        // fixed point
+        java.util.List<org.apache.commons.math3.complex.Complex> ev = Ar.eig();
+        double maxRe = Double.NEGATIVE_INFINITY;
+        for (int i = 0; i < ev.size(); i++) {
+            maxRe = Math.max(maxRe, ev.get(i).getReal());
+        }
+        if (!(maxRe < -Math.sqrt(2.220446049250313e-16))) {
+            return null;
+        }
+
+        Matrix Wr = Matrix.sylv(Ar, Ar.transpose(), Qr);
+        double[][] WrArr = symmetrize(matrixToArray(Wr));
+        Matrix W = Vm.mult(arrayToMatrix(WrArr)).mult(Vt);
+        return symmetrize(matrixToArray(W));
+    }
+
+    /** Orthonormal basis of {u in R^n : sum(u) = 0}, n-by-(n-1), by Gram-Schmidt. */
+    private static double[][] centeredBasis(int n) {
+        if (n <= 1) {
+            return new double[Math.max(n, 1)][0];
+        }
+        double[][] U = new double[n][n - 1];
+        // Helmert basis: column j has j entries 1/sqrt(j(j+1)) and one -j/sqrt(j(j+1))
+        for (int j = 0; j < n - 1; j++) {
+            double d = Math.sqrt((j + 1.0) * (j + 2.0));
+            for (int i = 0; i <= j; i++) {
+                U[i][j] = 1.0 / d;
+            }
+            U[j + 1][j] = -(j + 1.0) / d;
+        }
+        return U;
+    }
+
+    /** (M + M')/2. */
+    private static double[][] symmetrize(double[][] M) {
+        int n = M.length;
+        double[][] S = new double[n][n];
+        for (int i = 0; i < n; i++) {
+            for (int j = 0; j < n; j++) {
+                S[i][j] = 0.5 * (M[i][j] + M[j][i]);
+            }
+        }
+        return S;
+    }
+
+    /**
      * Integrate the plain mean-field drift over a finite window on a uniform
      * time grid, from a supplied initial occupancy.
      *

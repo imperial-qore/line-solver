@@ -17,8 +17,18 @@ import jline.api.qsys.Qsys_gig1_approx_klb;
 import jline.api.qsys.Qsys_gig1_approx_kobayashi;
 import jline.api.qsys.Qsys_gig1_approx_marchal;
 import jline.api.qsys.Qsys_gig1_ubnd_kingman;
+import jline.api.qsys.Qsys_erlanga;
+import jline.api.qsys.Qsys_gig1_bnds_extremal;
+import jline.api.qsys.Qsys_ggnm_diffusion;
 import jline.api.qsys.Qsys_gigk_approx;
 import jline.api.qsys.Qsys_gigk_approx_kingman;
+import jline.api.qsys.Qsys_gigk_approx_whitt;
+import jline.api.qsys.Qsys_mg1k_loss_mgs;
+import jline.api.qsys.Qsys_mgisrgi_whitt;
+import jline.api.qsys.Qsys_mmk_qed;
+import jline.api.qsys.QsysAbandonResult;
+import jline.api.sn.SnIsMm1kLoss;
+import jline.api.sn.SnPatienceHandles;
 import jline.api.qsys.Qsys_gm1;
 import jline.api.qsys.Qsys_mg1;
 import jline.api.qsys.Qsys_mg1_prio;
@@ -91,6 +101,62 @@ public final class Solver_mva_qsys_analyzer {
         double mu = sn.rates.get(queue_ist);
         double ca = FastMath.sqrt(sn.scv.get(source_ist));
         double cs = FastMath.sqrt(sn.scv.get(queue_ist));
+        // null unless the queue reneges
+        SnPatienceHandles.Handles hpat = SnPatienceHandles.snPatienceHandles(sn, queue_ist, 0);
+
+        // Finite-capacity loss branch (M/M/1/K with tail drop), the ONE finite
+        // buffer this solver honours. The loss probability is the moment-based
+        // (MacGregor Smith) Qsys_mg1k_loss_mgs, exact only at scv=1; the queue
+        // length comes from the truncated M/M/1/K distribution. Being an
+        // approximation in general it is not offered under method='exact', and
+        // finiteCapacityReason exempts exactly this shape for every other name,
+        // so the gate and the branch have to agree on which models arrive here.
+        if (SnIsMm1kLoss.snIsMm1kLoss(sn)) {
+            if ("exact".equals(method)) {
+                throw new RuntimeException("M/M/1/K tail-drop is solved by the approximate "
+                        + "'mg1k.mgs' method (MacGregor Smith); it is not available under "
+                        + "method='exact'. Use the default method, or SolverCTMC/SolverNC for "
+                        + "an exact result.");
+            }
+            double Kcap = sn.cap.get(queue_ist);
+            double rhoK = lambda / mu;
+            double Ploss = (Double) Qsys_mg1k_loss_mgs
+                    .qsys_mg1k_loss_mgs(lambda, mu, cs * cs, (int) Math.round(Kcap)).get("lossprob");
+            double Tq = lambda * (1.0 - Ploss);   // carried throughput
+            double Uq = Tq / mu;                  // single-server utilization
+            double Lsys;
+            if (Math.abs(rhoK - 1.0) < 1e-10) {
+                Lsys = Kcap / 2.0;                // L'Hopital limit at rho=1
+            } else {
+                double rKp1 = FastMath.pow(rhoK, Kcap + 1.0);
+                Lsys = rhoK / (1.0 - rhoK) - (Kcap + 1.0) * rKp1 / (1.0 - rKp1);
+            }
+            double visitsK = visitsMatrix.get(statefulIndex);
+            double Rq = Lsys / Tq;                // per-visit response time, by Little
+            for (int r = 0; r < sn.nclasses; r++) {
+                RN.set(queue_ist, r, Rq);
+                QN.set(queue_ist, r, Lsys);
+                UN.set(queue_ist, r, Uq);
+                TN.set(queue_ist, r, Tq);         // carried (effective) rate
+                TN.set(source_ist, r, lambda);    // offered arrival rate
+                XN.set(queue_ist, r, Tq);         // system throughput = carried rate
+                CN.set(queue_ist, r, Rq * visitsK);
+            }
+            long endLoss = System.nanoTime();
+            res.QN = QN;
+            res.UN = UN;
+            res.RN = RN;
+            res.TN = TN;
+            res.CN = CN;
+            res.XN = XN;
+            res.AN = AN;
+            res.WN = WN;
+            res.logNormConstAggr = 0.0;
+            res.runtime = (endLoss - startTime) / 1000000000.0;
+            res.iter = it;
+            res.method = "mg1k.mgs";
+            return res;
+        }
 
         // Check if this is a BMAP arrival process (MX/M/1)
         Station sourceStation = sn.stations.get(source_ist);
@@ -120,7 +186,13 @@ public final class Solver_mva_qsys_analyzer {
             }
         }
         if ("default".equals(method)) {
-            if (isBMAP && cs == 1.0 && k == 1) {
+            if (hpat != null) {
+                // A station customers walk away from is a different model, not
+                // a correction to one: nothing in the G/G/k family below carries
+                // an abandonment rate, so the choice is made here and not by
+                // ca/cs.
+                method = hpat.isExponential ? "erlanga" : "mgisrgi";
+            } else if (isBMAP && cs == 1.0 && k == 1) {
                 method = "mxm1";
             } else if (ca == 1.0 && cs == 1.0 && k == 1) {
                 method = "mm1";
@@ -139,9 +211,83 @@ public final class Solver_mva_qsys_analyzer {
         double R = 0.0;
         double lambdaEffective = lambda;
 
+        // Whitt family, full metric set. These methods answer a station whose
+        // CARRIED throughput is below the offered rate -- customers abandon, or
+        // are blocked -- so Little's law on lambda would silently overstate the
+        // queue and the common tail below cannot be used.
+        if ("erlanga".equals(method) || "mgisrgi".equals(method)
+                || "gigk.diffusion".equals(method)) {
+            double cap = sn.cap != null ? sn.cap.get(queue_ist) : Double.POSITIVE_INFINITY;
+            // An uncapped station carries Integer.MAX_VALUE here, not Inf as in
+            // MATLAB and Python; taking it literally asks for an array of that
+            // length. See _kb/04-networkstruct.md (cap).
+            boolean unbounded = !Double.isFinite(cap) || cap >= Integer.MAX_VALUE;
+            // waiting spaces, servers excluded
+            double room = unbounded ? Double.POSITIVE_INFINITY : Math.max(0.0, cap - k);
+            double Lsys;
+            double Tq;
+            double Uq;
+            if ("gigk.diffusion".equals(method)) {
+                Map<String, Double> dif = Qsys_ggnm_diffusion.qsys_ggnm_diffusion(lambda, mu, k, room, ca, cs);
+                Lsys = dif.get("meanNumber");
+                Tq = dif.get("throughput");
+                Uq = dif.get("utilization");
+            } else {
+                if (hpat == null) {
+                    throw new RuntimeException("method '" + method
+                            + "' needs a reneging patience law on the queue.");
+                }
+                QsysAbandonResult ab;
+                if ("erlanga".equals(method) || hpat.isExponential) {
+                    // Exponential patience makes the state-dependent
+                    // approximation exact, so take the exact chain either way.
+                    ab = Qsys_erlanga.qsys_erlanga(lambda, mu, hpat.rate, k, room);
+                } else {
+                    ab = Qsys_mgisrgi_whitt.qsys_mgisrgi_whitt(lambda, mu, k, room, hpat.asPatience());
+                }
+                Lsys = ab.meanNumber;
+                Tq = ab.throughput;
+                Uq = ab.utilization;
+            }
+            double visitsQ = visitsMatrix.get(statefulIndex);
+            // Little's law on the CARRIED rate, as SolverCTMC reports it.
+            double Rq = Tq > 0 ? Lsys / Tq : 0.0;
+            for (int r = 0; r < sn.nclasses; r++) {
+                RN.set(queue_ist, r, Rq);
+                QN.set(queue_ist, r, Lsys);
+                UN.set(queue_ist, r, Uq);
+                TN.set(queue_ist, r, Tq);
+                TN.set(source_ist, r, lambda / visitsQ);
+                XN.set(queue_ist, r, Tq);
+                AN.set(queue_ist, r, lambda);
+                CN.set(queue_ist, r, Rq * visitsQ);
+            }
+            long endAbandon = System.nanoTime();
+            res.QN = QN;
+            res.UN = UN;
+            res.RN = RN;
+            res.TN = TN;
+            res.CN = CN;
+            res.XN = XN;
+            res.AN = AN;
+            res.WN = WN;
+            res.logNormConstAggr = 0.0;
+            res.runtime = (endAbandon - startTime) / 1000000000.0;
+            res.iter = it;
+            res.method = method;
+            return res;
+        }
+
         if ("mm1".equals(method)) {
             Qsys_mm1.qsys_mm1(lambda, mu);
             R = Ret.qsys.W;
+        } else if ("rqt".equals(method)) {
+            // Robust Queueing Theory single-queue solution: the arrival and
+            // service flows enter as polyhedral uncertainty sets
+            double rho1 = lambda / (k * mu);
+            double gammaA = ca / lambda;
+            double gammaS = jline.api.qsys.Qsys_gigk_rqt_gamma.qsys_gigk_rqt_gamma(rho1, mu, gammaA, cs / mu, k);
+            R = jline.api.qsys.Qsys_gigk_rqt.qsys_gigk_rqt(lambda, mu, gammaA, gammaS, k, 2.0, 2.0)[0];
         } else if ("rqna".equals(method)) {
             // Robust Queueing (RQ) single-queue solution: characterize the
             // arrival flow by its index of dispersion for counts (IDC).
@@ -221,6 +367,12 @@ public final class Solver_mva_qsys_analyzer {
         } else if ("gig1.kingman".equals(method)) {
             Qsys_gig1_ubnd_kingman.qsys_gig1_ubnd_kingman(lambda, mu, ca, cs);
             R = Ret.qsys.W;
+        } else if ("gig1.gelenbe".equals(method)) {
+            R = (Double) jline.api.qsys.Qsys_gig1_approx_gelenbe
+                    .qsys_gig1_approx_gelenbe(lambda, mu, ca, cs).get("W");
+        } else if ("gig1.kimura".equals(method)) {
+            R = (Double) jline.api.qsys.Qsys_gig1_approx_kimura
+                    .qsys_gig1_approx_kimura(lambda, mu, ca, cs).get("W");
         } else if ("gig1.heyman".equals(method)) {
             Qsys_gig1_approx_heyman.qsys_gig1_approx_heyman(lambda, mu, ca, cs);
             R = Ret.qsys.W;
@@ -236,6 +388,14 @@ public final class Solver_mva_qsys_analyzer {
         } else if ("gig1.marchal".equals(method)) {
             Qsys_gig1_approx_marchal.qsys_gig1_approx_marchal(lambda, mu, ca, cs);
             R = Ret.qsys.W;
+        } else if ("gigk.whitt".equals(method)) {
+            R = (Double) Qsys_gigk_approx_whitt.qsys_gigk_approx_whitt(lambda, mu, ca, cs, k).get("W");
+        } else if ("qed".equals(method)) {
+            R = Qsys_mmk_qed.qsys_mmk_qed(lambda, mu, k).get("meanWait") + 1.0 / mu;
+        } else if ("gig1.extremal".equals(method)) {
+            // The upper end, gig1.kingman already reporting a bound.
+            R = Qsys_gig1_bnds_extremal.qsys_gig1_bnds_extremal(lambda, mu, ca, cs).get("upperBound")
+                    + 1.0 / mu;
         } else if ("gm1".equals(method) || "gim1".equals(method)) {
             // see _kb/06-solver-catalog.md for rationale
             Double Rgm1 = null;
@@ -287,11 +447,16 @@ public final class Solver_mva_qsys_analyzer {
             if (Rgm1 == null && sn.lst != null && sn.lst.get(sourceStation) != null
                     && sn.lst.get(sourceStation).get(jobClass) != null) {
                 try {
-                    final SerializableFunction<Double, Double> F = sn.lst.get(sourceStation).get(jobClass);
+                    // sn.lst is COMPLEX, since transform inversion and root
+                    // location need arguments off the real axis; the sigma-root
+                    // below walks the real line, so it passes Complex(s, 0).
+                    final SerializableFunction<org.apache.commons.math3.complex.Complex,
+                            org.apache.commons.math3.complex.Complex> F =
+                            sn.lst.get(sourceStation).get(jobClass);
                     final UnivariateFunction LA = new UnivariateFunction() {
                         @Override
                         public double value(double s) {
-                            return F.apply(s);
+                            return F.apply(new org.apache.commons.math3.complex.Complex(s, 0.0)).getReal();
                         }
                     };
                     final double muFinal = mu;
@@ -367,7 +532,11 @@ public final class Solver_mva_qsys_analyzer {
             double x = loB + (hiB - loB) * i / (n - 1);
             double fx = f.value(x);
             if (prevF * fx < 0.0) {
-                return new BrentSolver().solve(1000, f, prevX, x);
+                // MATLAB's fzero converges to machine precision, and the parity
+                // tolerance on the resulting W is itself 1e-6 relative, so the
+                // BrentSolver DEFAULT absolute accuracy (1e-6) is the same order
+                // as the quantity being asserted. Ask for the root properly.
+                return new BrentSolver(1e-14, 1e-14).solve(1000, f, prevX, x);
             }
             prevX = x;
             prevF = fx;

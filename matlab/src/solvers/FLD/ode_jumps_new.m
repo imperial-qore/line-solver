@@ -29,7 +29,10 @@ for i = 1 : M   %state changes: "next service phase" transition
     for c = 1:K
         if enabled(i,c)
             xic = q_indices(i,c);
-            for ki = 1 : (Kic(i,c) - 1)
+            % every source phase, the last included: bounding ki at Kic-1 is
+            % valid only for an acyclic PH and drops the last row of D0 for a
+            % general MAP or MMPP2, whose D0 is cyclic
+            for ki = 1 : Kic(i,c)
                 for kip = 1:Kic(i,c)
                     if ki~=kip
                         jump = 0*jump; % reuse same vector for efficiency

@@ -57,7 +57,7 @@ fprintf('Solving with CTMC solver...\n\n');
 options = Solver.defaultOptions;
 options.verbose = 1;
 
-solver = CTMC(model, options);
+solver = CTMC(model, 'exact', options);
 
 %% Get Steady-State Expected Rewards
 [R, names] = solver.getAvgReward();
@@ -71,7 +71,7 @@ end
 % Track the expected reward E[r(X(t))] over time using getTranReward.
 % Transient analysis requires a finite timespan [0, Tmax].
 Tmax = 5;
-tranSolver = CTMC(model, 'timespan', [0, Tmax], 'verbose', 0);
+tranSolver = CTMC(model, 'exact', 'timespan', [0, Tmax], 'verbose', 0);
 [Rt, t, names] = tranSolver.getTranReward();
 
 fprintf('\n=== Transient Reward Analysis ===\n');

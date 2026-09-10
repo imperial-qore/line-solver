@@ -12,18 +12,25 @@ function [Q,U,R,T,C,X,lG,runtime,iter,method] = solver_nc_lossn_analyzer(sn, opt
 % dropped rather than given a surrogate capacity.
 %
 % Method selection (options.method):
-%   'exact' (default)    - Manjunath-Sikdar transform (lossn_ms): the
+%   'exact' (default)    - Manjunath-Sikdar transform (lossn_manjunath): the
 %                          normalization constant is obtained exactly as a
 %                          multidimensional contour integral evaluated by
 %                          residues. Requires integer A and C.
+%   'rec'                - MDD-rec (lossn_rec): the same constant as the exact
+%                          sum over the admissible set, obtained by one
+%                          memoised walk of the decision diagram holding it.
+%                          Places no integrality demand on A or C.
 %   'erlangfp'           - Erlang fixed-point (reduced-load) approximation.
 %   'mci'                - Monte Carlo importance-sampling summation
 %                          (Ross-Wang 1992): estimates the normalization
 %                          constant g(C) and class blocking with confidence
 %                          intervals. Set options.samples and options.seed.
 %
-% The default falls back to 'erlangfp' when the region declares fractional
-% class sizes or capacities, since the residue argument counts whole units.
+% The default is the residue transform on an integral region and MDD-REC on a
+% fractional one. It used to fall back to 'erlangfp' there, an approximation,
+% because the residue argument counts whole units; MDD-rec needs only that the
+% admissible set be finite and bounded per coordinate, which it still is, so
+% the fractional case is now exact as well.
 
 Tstart = tic;
 K = sn.nclasses;  % number of classes
@@ -47,9 +54,10 @@ for r = 1:K
     c = find(sn.chains(:,r));
     V_r = 1;
     if ~isempty(c)
-        vref = sn.visits{c}(sn.refstat(r), r);
+        % visits is indexed by STATEFUL node, refstat and delayIdx by station
+        vref = sn.visits{c}(sn.stationToStateful(sn.refstat(r)), r);
         if vref > 0
-            V_r = sn.visits{c}(delayIdx, r) / vref;
+            V_r = sn.visits{c}(sn.stationToStateful(delayIdx), r) / vref;
         end
     end
     mu_r = sn.rates(delayIdx, r);
@@ -67,12 +75,15 @@ if any(strcmp(tokens, 'mci'))
     chosen = 'mci';
 elseif any(strcmp(tokens, 'erlangfp'))
     chosen = 'erlangfp';
-elseif any(strcmp(tokens, 'exact')) || any(strcmp(tokens, 'ms'))
+elseif any(strcmp(tokens, 'rec'))
+    chosen = 'rec';
+elseif any(strcmp(tokens, 'exact')) || any(strcmp(tokens, 'manjunath')) || any(strcmp(tokens, 'ms'))
     chosen = 'exact';
 else
     chosen = 'exact';
     if ~isIntegral
-        chosen = 'erlangfp';
+        % the residue argument counts whole units; MDD-rec does not
+        chosen = 'rec';
     end
 end
 
@@ -88,8 +99,11 @@ switch chosen
         end
         [QLen, Loss, lG, ~, niter] = lossn_mci(nu, A, C_vec, mciopt);
         method = 'lossn.mci';
+    case 'rec'
+        [QLen, Loss, lG, niter] = lossn_rec(nu, A, C_vec);
+        method = 'lossn.rec';
     case 'exact'
-        [QLen, Loss, lG, niter] = lossn_ms(nu, A, C_vec);
+        [QLen, Loss, lG, niter] = lossn_manjunath(nu, A, C_vec);
         method = 'lossn.exact';
     otherwise
         [QLen, Loss, ~, niter] = lossn_erlangfp(nu, A, C_vec);

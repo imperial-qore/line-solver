@@ -174,7 +174,7 @@ class TestLineEvaluatorMetricExtraction:
     @pytest.fixture
     def avg_table(self):
         """
-        Build an AvgTable-shaped object matching SolverAuto.getAvgTable().
+        Build an AvgTable-shaped object matching SolverAUTO.getAvgTable().
 
         Mirrors LINE's IndexedTable: a DataFrame keyed by Station/JobClass with
         columns RespT, Tput, Util, QLen. Wrapped in a stub exposing ``.data``.

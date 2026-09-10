@@ -44,6 +44,8 @@ from .continuous import (
     Prior,
     Expolynomial,
     NHPP,
+    MAPt,
+    PHt,
 )
 
 # Discrete distributions
@@ -110,6 +112,8 @@ __all__ = [
     'Prior',
     'Expolynomial',
     'NHPP',
+    'MAPt',
+    'PHt',
     # Discrete
     'Poisson',
     'Geometric',

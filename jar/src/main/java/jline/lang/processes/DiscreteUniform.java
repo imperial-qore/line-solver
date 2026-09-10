@@ -113,7 +113,10 @@ public class DiscreteUniform extends DiscreteDistribution implements Serializabl
         double maxVal = (double) this.getParam(2).getValue();
         double[] samples = new double[(int) n];
         for (int i = 0; i < n; i++) {
-            double randomValue = FastMath.round(minVal + (maxVal - minVal) * random.nextDouble());
+            // floor over the full width, not round over the interior: rounding
+            // gives the two endpoints half the mass of the interior points, so
+            // the sampler had the right mean and a variance below the law's
+            double randomValue = minVal + FastMath.floor((maxVal - minVal + 1) * random.nextDouble());
             samples[i] = randomValue;
         }
         return samples;

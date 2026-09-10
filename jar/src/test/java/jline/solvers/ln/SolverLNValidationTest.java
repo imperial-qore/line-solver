@@ -213,9 +213,10 @@ class SolverLNValidationTest extends SolverLNTestBase {
 
     @Test
     public void test_LQN_err_5() throws Exception {
-        // Test unsupported replyTo patterns - implementation specific
+        // entry3 is replied to but has no boundTo activity: the model is invalid and
+        // getStruct must refuse it, as MATLAB getStruct.m does
         suppressOutput(() -> {
-            try {
+            Exception exception = assertThrows(RuntimeException.class, () -> {
                 LayeredNetwork model = new LayeredNetwork("unsupported_reply");
 
                 Processor P1 = new Processor(model, "proc1", 1, SchedStrategy.INF);
@@ -235,17 +236,9 @@ class SolverLNValidationTest extends SolverLNTestBase {
                 SolverOptions options = new LNOptions();
                 options.verbose = VerboseLevel.SILENT;
                 SolverLN solver = new SolverLN(model, options);
+            });
 
-                // If no exception is thrown, the implementation allows this pattern
-                assertTrue(true);
-            } catch (Exception e) {
-                // Verify error message if exception is thrown
-                assertTrue(e.getMessage().contains("reply") ||
-                           e.getMessage().contains("multiple") ||
-                           e.getMessage().contains("unsupported") ||
-                           e.getMessage().contains("invalid") ||
-                           e.getMessage().contains("service"));
-            }
+            assertTrue(exception.getMessage().contains("boundTo activity"));
         });
     }
 
@@ -431,8 +424,9 @@ class SolverLNValidationTest extends SolverLNTestBase {
 
     @Test
     public void test_LQN_err_12() throws Exception {
-        // Test repeated reply validation - implementation specific
-        try {
+        // entry2 has no boundTo activity: the model is invalid and getStruct must
+        // refuse it, as MATLAB getStruct.m does
+        Exception exception = assertThrows(RuntimeException.class, () -> {
             LayeredNetwork model = new LayeredNetwork("repeated_reply_error");
 
             Processor P1 = new Processor(model, "proc1", 1, SchedStrategy.INF);
@@ -448,16 +442,9 @@ class SolverLNValidationTest extends SolverLNTestBase {
             SolverOptions options = new LNOptions();
             options.verbose = VerboseLevel.SILENT;
             SolverLN solver = new SolverLN(model, options);
+        });
 
-            // If no exception is thrown, the implementation allows multiple replies
-            assertTrue(true);
-        } catch (Exception e) {
-            // Verify error message if exception is thrown
-            assertTrue(e.getMessage().contains("reply") ||
-                       e.getMessage().contains("multiple") ||
-                       e.getMessage().contains("duplicate") ||
-                       e.getMessage().contains("already"));
-        }
+        assertTrue(exception.getMessage().contains("boundTo activity"));
     }
 
     /**

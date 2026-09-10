@@ -51,7 +51,7 @@ disp(AvgTable_MVA);
 
 %% Solve with CTMC for validation
 fprintf('\nSolving with CTMC for validation...\n');
-solver_ctmc = CTMC(model);
+solver_ctmc = CTMC(model,'exact');
 AvgTable_CTMC = solver_ctmc.getAvgTable();
 disp('CTMC Results:');
 disp(AvgTable_CTMC);

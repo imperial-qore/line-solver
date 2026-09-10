@@ -107,7 +107,7 @@ public final class Solver_ctmc_reward {
 
         // Steady-state expected rewards from the stationary distribution:
         // E[r] = sum_s pi(s) * r(s), matching the MATLAB solver_ctmc_reward
-        Matrix pi = Ctmc_solve.ctmc_solve(Q);
+        Matrix pi = jline.solvers.ctmc.CtmcStationary.solve(Q, stateSpace, sn, options);
         double[] piClean = new double[nstates];
         double piSum = 0.0;
         for (int s = 0; s < nstates; s++) {

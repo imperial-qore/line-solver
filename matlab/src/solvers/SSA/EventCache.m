@@ -16,14 +16,14 @@ classdef EventCache
         function eventCache = create(enabled,sn)
             % CREATE Create an event cache container
             %
-            % @brief Creates a containers.Map for event caching if enabled
+            % @brief Creates a dictionary for event caching if enabled
             % @param enabled Boolean flag to enable/disable caching
             % @param sn Network structure containing model information  
-            % @return eventCache containers.Map instance or empty array
+            % @return eventCache dictionary instance or empty array
             if enabled
 %                for i=1:sn.nstateful
 %                    for r=1:sn.nclasses
-                        eventCache = containers.Map('KeyType', 'char', 'ValueType', 'any');
+                        eventCache = configureDictionary('string', 'cell');
 %                    end
 %                end
             else

@@ -68,7 +68,7 @@ solverFactory = @(m) FLD(m, fldOptions);
 
 % Create and run the ENV solver
 envSolver = ENV(env, solverFactory, options);
-[QN, UN, TN] = envSolver.getAvg();
+[QN, UN, RN, TN] = envSolver.getAvg();
 
 % Display average results weighted by environment probabilities
 fprintf('\n--- Environment-Averaged Results ---\n');

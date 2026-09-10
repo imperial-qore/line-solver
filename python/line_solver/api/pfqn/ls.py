@@ -57,7 +57,9 @@ def _pfqn_le_fpiZ(L: np.ndarray, N: np.ndarray, Z: np.ndarray) -> Tuple[np.ndarr
     M, R = L.shape
     eta = np.sum(N) + M
     u = np.ones(M) / M
-    v = eta + 1
+    # eq. (35) in the SIGMETRICS 2017 paper has a spurious +1 in the v equation;
+    # the correct stationary point is v = eta - sum_r xi_r*Z_r.
+    v = eta
     u_1 = np.inf * np.ones(M)
     v_1 = np.inf
     d = []
@@ -79,7 +81,7 @@ def _pfqn_le_fpiZ(L: np.ndarray, N: np.ndarray, Z: np.ndarray) -> Tuple[np.ndarr
             if abs(denom) > 1e-14:
                 xi[r] = N[r] / denom
 
-        v = eta + 1
+        v = eta
         for r in range(R):
             v -= xi[r] * Z[r]
 
@@ -250,7 +252,13 @@ def pfqn_ls(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
     M, R = L.shape
 
     if L.size == 0 or np.sum(L) < 1e-4 or len(N) == 0 or np.sum(N) == 0:
-        lGn = -np.sum(_factln(N)) + np.sum(N * np.log(np.sum(Z) if Z is not None else 1))
+        # Per-class Z, as MATLAB's sum(Z,1) is, and an empty class contributes 0
+        # rather than 0*log(0). Z may also be absent altogether on this branch.
+        Zt = np.zeros(len(N)) if Z is None else np.asarray(Z, dtype=float).ravel()
+        lGn = -np.sum(_factln(N))
+        for r in range(len(N)):
+            if N[r] > 0:
+                lGn += N[r] * np.log(Zt[r] if r < Zt.size else 0.0)
         return np.exp(lGn), lGn
 
     if Z is None or len(Z) == 0 or np.sum(Z) < 1e-4:
@@ -271,11 +279,12 @@ def pfqn_ls(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
         # Generate samples
         try:
             samples = multivariate_normal.rvs(mean=x0, cov=iA, size=I)
-            if I == 1:
-                samples = samples.reshape(1, -1)
         except Exception:
             return np.nan, np.nan
-        samples = np.atleast_2d(samples)
+        # rvs drops the trailing axis whenever the mean is one-dimensional, which
+        # is every two-station model here; atleast_2d then reads the I draws as
+        # one sample of length I
+        samples = np.asarray(samples, dtype=float).reshape(I, x0.size)
 
         # see _kb/03-api-layer.md for rationale
         lT = np.array([_simplex_logfun(samples[i], L, N)
@@ -305,11 +314,9 @@ def pfqn_ls(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
 
         try:
             samples = multivariate_normal.rvs(mean=x0, cov=iA, size=I)
-            if I == 1:
-                samples = samples.reshape(1, -1)
         except Exception:
             return np.nan, np.nan
-        samples = np.atleast_2d(samples)
+        samples = np.asarray(samples, dtype=float).reshape(I, x0.size)
 
         epsilon = 1e-10
         eN = epsilon * np.sum(N)

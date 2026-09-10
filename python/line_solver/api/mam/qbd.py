@@ -21,6 +21,8 @@ from scipy import linalg
 from typing import Tuple, Optional
 from dataclasses import dataclass
 
+from ...constants import GlobalConstants
+
 
 @dataclass
 class QBDResult:
@@ -104,46 +106,35 @@ def qbd_R_logred(B: np.ndarray, L: np.ndarray, F: np.ndarray,
     L = np.asarray(L, dtype=np.float64)
     F = np.asarray(F, dtype=np.float64)
 
-    n = L.shape[0]
+    r = L.shape[0]
+    eye_r = np.eye(r)
 
     try:
-        L_inv = linalg.inv(-L)
+        Linv = linalg.inv(L)
     except LinAlgError:
-        L_inv = linalg.pinv(-L)
+        Linv = linalg.pinv(L)
 
-    A = L_inv @ F  # A_1
-    C = L_inv @ B  # A_{-1}
-
-    H = A.copy()
-    T = C.copy()
+    iLF = -Linv @ F
+    iLB = -Linv @ B
+    T = iLF.copy()
+    S = iLB.copy()
 
     for _ in range(iter_max):
-        # Compute (I - AC - CA)^{-1}
-        I = np.eye(n)
-        M = I - A @ C - C @ A
+        D = iLF @ iLB + iLB @ iLF
         try:
-            M_inv = linalg.inv(M)
+            Minv = linalg.inv(eye_r - D)
         except LinAlgError:
-            M_inv = linalg.pinv(M)
-
-        # Update
-        A_new = M_inv @ A @ A
-        C_new = M_inv @ C @ C
-        H_new = H + T @ M_inv @ A
-
-        if linalg.norm(H_new - H, 1) <= tol:
-            H = H_new
+            Minv = linalg.pinv(eye_r - D)
+        iLF = Minv @ iLF @ iLF
+        iLB = Minv @ iLB @ iLB
+        S = S + T @ iLB
+        T = T @ iLF
+        if linalg.norm(np.ones(r) - S @ np.ones(r), 1) <= tol:
             break
 
-        A = A_new
-        C = C_new
-        T = T @ M_inv @ (A + C)
-        H = H_new
-
-    # R = H * (-L)
-    R = H @ (-L)
-
-    return R
+    # S is the G matrix; U is the taboo generator of a level, R = -F U^-1
+    U = L + F @ S
+    return -F @ linalg.inv(U)
 
 
 def qbd_rg(B: np.ndarray, L: np.ndarray, F: np.ndarray,
@@ -359,7 +350,8 @@ def qbd_mapmap1(
 
     Returns:
         Tuple of (XN, QN, UN, pqueue, R, eta, G, A_1, A0, A1, U, MAPs_scaled)
-        where:
+        where::
+
             XN: System throughput
             QN: Mean queue length
             UN: Utilization
@@ -392,6 +384,8 @@ def qbd_mapmap1(
     # Scale service process if target utilization provided
     if util is not None:
         lambda_a = map_lambda(D0_arr, D1_arr)
+        # map_scale takes the TARGET MEAN: a service mean of util/lambda_a
+        # gives the requested utilization against this arrival rate.
         D0_srv, D1_srv = map_scale(D0_srv, D1_srv, util / lambda_a)
 
     lambda_a = map_lambda(D0_arr, D1_arr)
@@ -499,6 +493,7 @@ def qbd_raprap1(
     # Scale service process if target utilization provided
     if util is not None:
         lambda_a = map_lambda(H0_arr, H1_arr)
+        # As above: the argument is the target service mean.
         H0_srv, H1_srv = map_scale(H0_srv, H1_srv, util / lambda_a)
 
     lambda_a = map_lambda(H0_arr, H1_arr)
@@ -686,13 +681,15 @@ def qbd_rap(A0: np.ndarray, A1: np.ndarray, A2: np.ndarray,
     RAPs; callers with a coupled model must call qbd_rap directly because no
     product form exists to factor out.
 
-    Algorithm (Theorem 7 of the reference):
+    Algorithm (Theorem 7 of the reference)::
+
         1. Solve A0*G^2 + A1*G + A2 = 0 for G.
         2. U = A1 + A0*G.
         3. R = A0*inv(-U).
         4. Find the row vector pihat0 with pihat0*(B1 + R*A2) = 0, pihat0*e = 1.
         5. pi0 = K*pihat0 with K chosen so that pi0*inv(I-R)*e = 1.
         6. pi_n = pi0*R^n, and the marginal level probability is pi_n*e.
+
     The process is positive recurrent iff Sp(R) < 1 and step 4 has a solution.
 
     Computation of G: the blocks are not nonnegative, so the probabilistic
@@ -1031,6 +1028,200 @@ def qbd_setupdelayoff(
     return QN
 
 
+def _coxian_phase_subgen(rate: float, scv: float) -> np.ndarray:
+    """
+    Sub-generator of the canonical Coxian form with the given RATE and SCV,
+    entered at phase 1.
+
+    The four branches of ``Coxian.fitMeanAndSCV`` with CoarseTol 1e-3, written
+    out rather than routed through the class so that the four codebases build
+    the SAME phase: the entry vector has to be ``[1 0 ... 0]`` for every SCV,
+    because :func:`qbd_setupdelayoff_closed` overloads the phase index by level
+    and an arrival to an off server must enter the setup at phase 1.
+
+    THIS IS A HAND COPY OF THE REFERENCE AND MUST TRACK IT. MATLAB and the JAR
+    call the real fitter; native python has no ``Coxian.fit_mean_and_scv`` to
+    call, so these branches are transcribed from
+    ``matlab/src/lang/processes/Coxian.m`` and are only correct while that
+    function is unchanged. Anything that edits the MATLAB fitter has to edit
+    this too, and a divergence here is silent: it changes the phase, not the
+    shape of the answer. The uncapped ``n = ceil(1/scv)`` of the low-SCV branch
+    is the reference's own, deliberately reproduced rather than bounded -- a cap
+    here alone would be the divergence.
+
+    An exponential phase is built from the RATE directly rather than round-tripped
+    through its mean: an Immediate setup has rate 1e8, whose mean is exactly
+    FineTol, and the round trip turns it into an infinite rate.
+
+    Args:
+        rate: reciprocal of the phase mean
+        scv: squared coefficient of variation of the phase
+
+    Returns:
+        The (n x n) sub-generator, n the number of Coxian phases.
+    """
+    if rate <= 0:
+        raise ValueError("_coxian_phase_subgen: the rate must be positive")
+    if scv <= 0:
+        raise ValueError("_coxian_phase_subgen: the SCV must be positive")
+    if scv == 1.0:
+        return np.array([[-rate]], dtype=float)
+
+    tol = 1e-3
+    mean = 1.0 / rate
+    if 1.0 - tol <= scv <= 1.0 + tol:
+        mu = [1.0 / mean]
+        phi = [1.0]
+    elif 0.5 + tol < scv < 1.0 - tol:
+        s = np.sqrt(1.0 + 2.0 * (scv - 1.0))
+        mu = [2.0 / mean / (1.0 + s), 2.0 / mean / (1.0 - s)]
+        phi = [0.0, 1.0]
+    elif scv <= 0.5 + tol:
+        n = int(np.ceil(1.0 / scv))
+        lam = n / mean
+        mu = [lam] * n
+        phi = [0.0] * n
+    else:
+        mu1 = 2.0 / mean
+        mu2 = mu1 / (2.0 * scv)
+        mu = [mu1, mu2]
+        phi = [1.0 - mu2 / mu1, 1.0]
+    phi[-1] = 1.0
+
+    n = len(mu)
+    D0 = np.zeros((n, n))
+    for i in range(n):
+        D0[i, i] = -mu[i]
+        if i + 1 < n:
+            D0[i, i + 1] = mu[i] * (1.0 - phi[i])
+    return D0
+
+
+def qbd_setupdelayoff_closed(
+    N: int,
+    Z: float,
+    mu: float,
+    alpharate: float,
+    alphascv: float,
+    betarate: float,
+    betascv: float
+) -> Tuple[float, float]:
+    """
+    Mean queue length and throughput of a FINITE-POPULATION queue with setup
+    delay and delay-off.
+
+    The closed twin of :func:`qbd_setupdelayoff`. The population N is finite and
+    the complementary delay Z is what the customers not at this station are
+    passing through, so the arrival rate is state dependent, lambda(n) =
+    (N - n)/Z, and the level index is bounded by N. That makes the chain a
+    LEVEL-DEPENDENT QBD over finitely many levels, i.e. a finite CTMC, and it is
+    solved exactly rather than by a matrix-geometric tail.
+
+    THE SEMANTICS ARE THE SIMULATOR'S, not the mean-value shortcut's. When the
+    queue empties the server begins a delay-off period; an arrival DURING it
+    finds the server still warm and resumes without setup (Solver_ssj's
+    cancelDelayoff), and only an arrival after the delay-off has expired pays the
+    setup. That is an M/M/1 with setup time AND close-down time, which in a
+    closed network is what the per-instance cold-start race
+    ``p_cold * E[setup] + S`` fails to be: that formula races the delay-off
+    against the per-instance idle time and carries NO queueing term, so it
+    describes a serverless instance pool rather than a single-server vacation
+    queue, and it left the reported response time byte-identical across a
+    tenfold change in the setup mean.
+
+    The phase index is overloaded by level exactly as in the open twin: at level
+    0 phase 1 is the OFF server and the remaining phases are the delay-off; above
+    level 0 the phases are the setup and the last one is the busy server.
+
+    Args:
+        N: population of the closed chain, a non-negative integer
+        Z: complementary delay, the mean time a customer spends away from this station
+        mu: service rate of the station
+        alpharate: rate of the setup phase
+        alphascv: squared coefficient of variation of the setup phase
+        betarate: rate of the delay-off phase
+        betascv: squared coefficient of variation of the delay-off phase
+
+    Returns:
+        ``(QN, X)``, the mean number at the station and its throughput.
+
+    References:
+        Original MATLAB: matlab/src/api/mam/qbd_setupdelayoff_closed.m
+    """
+    N = int(round(N))
+    if N <= 0 or mu <= 0:
+        return 0.0, 0.0
+    Z = max(float(Z), GlobalConstants.FineTol)
+
+    Ta = _coxian_phase_subgen(alpharate, alphascv)
+    na = Ta.shape[0]
+    ta = -Ta.sum(axis=1)
+    Tb = _coxian_phase_subgen(betarate, betascv)
+    nb = Tb.shape[0]
+    tb = -Tb.sum(axis=1)
+
+    # Only the REACHABLE states are enumerated: the open twin pads every level to
+    # na+nb phases and lets the unused ones sit at zero, which a finite chain
+    # cannot do -- an unreachable row is an absorbing row and makes the
+    # stationary solve singular.
+    off = 0                                        # level 0, server off
+    base = 1 + nb                                  # level 0 delay-off: 1..nb
+    def doff(j):
+        return 1 + j
+    def setup(n, i):
+        return base + (n - 1) * (na + 1) + i
+    def busy(n):
+        return base + (n - 1) * (na + 1) + na
+    m = base + N * (na + 1)
+
+    Q = np.zeros((m, m))
+    def lam(n):
+        return (N - n) / Z if n < N else 0.0
+
+    if lam(0) > 0:
+        Q[off, setup(1, 0)] += lam(0)
+    for j in range(nb):
+        for j2 in range(nb):
+            if j2 != j:
+                Q[doff(j), doff(j2)] += Tb[j, j2]
+        Q[doff(j), off] += tb[j]
+        # an arrival during the delay-off cancels it and resumes WITHOUT setup
+        if lam(0) > 0:
+            Q[doff(j), busy(1)] += lam(0)
+    for n in range(1, N + 1):
+        for i in range(na):
+            for i2 in range(na):
+                if i2 != i:
+                    Q[setup(n, i), setup(n, i2)] += Ta[i, i2]
+            Q[setup(n, i), busy(n)] += ta[i]
+            # an arrival during the setup joins the queue and the setup carries
+            # on in the SAME phase; the level rises, the phase does not move
+            if n < N and lam(n) > 0:
+                Q[setup(n, i), setup(n + 1, i)] += lam(n)
+        if n < N and lam(n) > 0:
+            Q[busy(n), busy(n + 1)] += lam(n)
+        # a completion that empties the queue starts the delay-off at its phase 1
+        Q[busy(n), busy(n - 1) if n - 1 >= 1 else doff(0)] += mu
+    for i in range(m):
+        Q[i, i] = -Q[i].sum()
+
+    A = np.vstack([Q.T, np.ones(m)])
+    b = np.zeros(m + 1)
+    b[-1] = 1.0
+    pi = np.linalg.lstsq(A, b, rcond=None)[0]
+    pi = np.maximum(pi, 0.0)
+    total = pi.sum()
+    if total <= 0:
+        return 0.0, 0.0
+    pi = pi / total
+
+    QN = 0.0
+    for n in range(1, N + 1):
+        QN += n * (float(np.sum([pi[setup(n, i)] for i in range(na)])) + pi[busy(n)])
+    X = mu * float(np.sum([pi[busy(n)] for n in range(1, N + 1)]))
+    return QN, X
+
+
 __all__ = [
     'QBDResult',
     'qbd_R',
@@ -1041,4 +1232,5 @@ __all__ = [
     'qbd_mapmap1',
     'qbd_raprap1',
     'qbd_setupdelayoff',
+    'qbd_setupdelayoff_closed',
 ]

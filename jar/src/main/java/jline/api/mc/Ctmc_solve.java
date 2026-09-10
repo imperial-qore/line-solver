@@ -9,11 +9,13 @@
  */
 package jline.api.mc;
 
+import java.util.Iterator;
 import java.util.Set;
 
 import jline.GlobalConstants;
 import jline.solvers.SolverOptions;
 import jline.util.matrix.Matrix;
+import jline.util.matrix.MatrixEntry;
 
 public final class Ctmc_solve {
     private Ctmc_solve() {}
@@ -24,6 +26,14 @@ public final class Ctmc_solve {
      * nothing; above it the factorization fill-in is what limits the tractable model.
      */
     public static final int GMRES_MIN_STATES = 6000;
+
+    /**
+     * Column mass below which a state counts as ISOLATED and is eliminated. The mass is
+     * a computed sum, so testing it against an exact zero makes the answer depend on the
+     * order the terms were accumulated -- i.e. on the BLAS kernel, i.e. on the CPU. Same
+     * value native python uses in {@code api/mc/ctmc.py}.
+     */
+    private static final double ISOLATED_TOL = 1e-12;
 
     /**
      * Return the steady-state probability of a CTMC, choosing the solution method by
@@ -120,14 +130,30 @@ public final class Ctmc_solve {
         boolean isReducible = false;
         boolean goon = true;
         while (goon) {
-            // nnzel = find(sum(abs(Qnnz),1)~=0 & sum(abs(Qnnz),2)'~=0);
+            // nnzel = find(sum(abs(Qnnz),1) > ISOLATED_TOL);
+            //
+            // AN ISOLATED STATE IS DROPPED; AN ABSORBING ONE IS NOT. The column mass
+            // counts a state's inflow plus its own outflow through the diagonal, so it
+            // vanishes exactly for a state with neither -- isolated, carrying no
+            // stationary mass. This test used to ALSO require a nonzero ROW mass, which
+            // vanishes for an ABSORBING state: the one state the mass ends up in.
+            // Dropping it left its feeders with nothing to flow into, makeinfgen
+            // re-zeroed their diagonals, and the elimination cascaded until nothing was
+            // left and this method refused a chain whose stationary distribution is
+            // unique (Q = [0 0; 1 -1] has pi = [1 0]).
+            //
+            // The row mass is also a COMPUTED SUM tested against an exact zero, so the
+            // same generator assembled through a different BLAS kernel took opposite
+            // branches on two CPUs. In MATLAB that cost SolverMAM's dec.source.mmap a
+            // host-dependent answer on the self-looping sanity models; see
+            // _kb/06-solver-catalog.md. Native python has always tested the column mass
+            // alone (api/mc/ctmc.py).
             Matrix Qnnz_abs = Qnnz.copy();
             Qnnz_abs.absEq();
             Matrix Qnnz_abs_sum_col = Qnnz_abs.sumCols();
-            Matrix Qnnz_abs_sum_rows = Qnnz_abs.sumRows();
             Matrix find_res = new Matrix(1, Qnnz_abs_sum_col.getNumCols());
             for (int i = 0; i < Qnnz_abs_sum_col.getNumCols(); i++) {
-                if (Qnnz_abs_sum_col.get(i) != 0.0 && Qnnz_abs_sum_rows.get(i) != 0.0) find_res.set(0, i, 1);
+                if (Qnnz_abs_sum_col.get(i) > ISOLATED_TOL) find_res.set(0, i, 1);
             }
             nnzel = find_res.find().transpose();
 
@@ -139,19 +165,35 @@ public final class Ctmc_solve {
             }
 
             // Qnnz = Qnnz(nnzel, nnzel);
-            Matrix new_Qnnz = new Matrix(nnzel.getNumCols(), nnzel.getNumCols());
-            for (int i = 0; i < nnzel.getNumCols(); i++) {
-                for (int j = 0; j < nnzel.getNumCols(); j++) {
-                    double matrixValue = Qnnz.get((int) nnzel.get(0, i), (int) nnzel.get(0, j));
-                    // Copy all non-zero values including negative diagonal elements
-                    if (matrixValue != 0.0) new_Qnnz.set(i, j, matrixValue);
-                }
+            //
+            // Walk Qnnz's NONZEROS through an inverse index instead of probing all
+            // nnzel^2 cells. The old form issued a sparse get -- a binary search in a
+            // CSC column -- for every pair, so extracting a submatrix with nnz entries
+            // cost Theta(nnzel^2 log). Same entries, same values, same != 0.0 filter
+            // (a stored explicit zero must still be dropped), so the result is
+            // bit-identical; the insertion order becomes column-major, which is also
+            // the order CSC wants.
+            int nsel = nnzel.getNumCols();
+            int[] inv = new int[Qnnz.getNumRows()];
+            java.util.Arrays.fill(inv, -1);
+            for (int i = 0; i < nsel; i++) {
+                inv[(int) nnzel.get(0, i)] = i;
+            }
+            Matrix new_Qnnz = new Matrix(nsel, nsel, Qnnz.getNonZeros());
+            Iterator<MatrixEntry> qit = Qnnz.nonZeroIterator();
+            while (qit.hasNext()) {
+                MatrixEntry e = qit.next();
+                int i = inv[e.row];
+                if (i < 0) continue;
+                int j = inv[e.col];
+                // Copy all non-zero values including negative diagonal elements
+                if (j >= 0 && e.value != 0.0) new_Qnnz.set(i, j, e.value);
             }
             Qnnz = new_Qnnz;
 
             // bnnz = bnnz(nnzel);
-            Matrix new_bnnz = new Matrix(nnzel.getNumCols(), 1);
-            for (int i = 0; i < nnzel.getNumCols(); i++) {
+            Matrix new_bnnz = new Matrix(nsel, 1, nsel);
+            for (int i = 0; i < nsel; i++) {
                 new_bnnz.set(i, 0, bnnz.get((int) nnzel.get(0, i), 0));
             }
             bnnz = new_bnnz;
@@ -171,17 +213,18 @@ public final class Ctmc_solve {
         }
 
         if (Qnnz == null || Qnnz.isEmpty()) {
-            // The elimination above drops every state whose row is all-zero, which is
-            // precisely an ABSORBING state; makeinfgen then re-zeroes the diagonal of
-            // the survivors that only fed it, so the elimination cascades until nothing
-            // is left. Filling p with a uniform vector here does NOT satisfy p*Q=0 (it
-            // is not a stationary distribution, just a shape of the right size), and a
-            // caller cannot tell it apart from a real answer: a generator missing all
-            // its arrivals reads back as a plausible mean of cutoff/2. Fail instead.
-            // A genuinely absorbing chain has no unique stationary distribution without
-            // an initial vector, so it belongs in ctmc_solve_reducible.
-            throw new RuntimeException("The infinitesimal generator has no recurrent state: every state was "
-                    + "eliminated as absorbing. This generator admits no unique stationary distribution. It "
+            // Every state was ISOLATED -- no inflow and no outflow anywhere -- so the
+            // elimination emptied the generator. Filling p with a uniform vector here
+            // does NOT satisfy p*Q=0 (it is not a stationary distribution, just a shape
+            // of the right size), and a caller cannot tell it apart from a real answer:
+            // a generator missing all its arrivals reads back as a plausible mean of
+            // cutoff/2. Fail instead. A chain with SEVERAL recurrent classes has no
+            // unique stationary distribution without an initial vector either and
+            // belongs in ctmc_solve_reducible; a chain with ONE absorbing state is no
+            // longer refused, its distribution being the point mass the elimination
+            // used to throw away.
+            throw new RuntimeException("The infinitesimal generator has no connected state: every state was "
+                    + "eliminated as isolated. This generator admits no unique stationary distribution. It "
                     + "usually means the generator is malformed -- e.g. a state with no outgoing transitions "
                     + "that absorbs the whole chain, as happens when a class of transitions was dropped while "
                     + "building it. Use ctmc_solve_reducible for a genuinely absorbing chain.");
@@ -196,8 +239,10 @@ public final class Ctmc_solve {
         // see _kb/03-api-layer.md for rationale
         Matrix Qt = Qnnz.transpose();
         boolean gmresRequested = options != null && "gmres".equalsIgnoreCase(options.method);
+        boolean bicgstabRequested = options != null && "bicgstab".equalsIgnoreCase(options.method);
         boolean directRequested = options != null && "direct".equalsIgnoreCase(options.method);
-        if (gmresRequested || (!directRequested && Qnnz.getNumRows() > GMRES_MIN_STATES)) {
+        if (gmresRequested || bicgstabRequested
+                || (!directRequested && Qnnz.getNumRows() > GMRES_MIN_STATES)) {
             int restart = 0;
             int maxit = 0;
             if (options != null) {
@@ -209,10 +254,26 @@ public final class Ctmc_solve {
                     maxit = Math.min((int) Math.ceil((double) Qnnz.getNumRows() / r), options.iter_max);
                 }
             }
-            Ctmc_gmres.GmresResult g = Ctmc_gmres.ctmc_gmres(Qt, bnnz, 0.0, restart, maxit, null);
-            if (g.flag == 0) {
+            // GMRES(m) first: its residual is monotone and it is the more robust of the
+            // two. The way it fails on a generator is stagnation, the useful subspace
+            // being wider than the restart window, and a short-recurrence method has no
+            // restart to stagnate on, so BiCGSTAB is tried before the direct solve rather
+            // than instead of it. The direct solve is cubic at this size, so the second
+            // iterative attempt is cheap against what it may avoid.
+            if (!bicgstabRequested) {
+                Ctmc_gmres.GmresResult g = Ctmc_gmres.ctmc_gmres(Qt, bnnz, 0.0, restart, maxit, null);
+                if (g.flag == 0) {
+                    for (int i = 0; i < nnzel.getNumCols(); i++) {
+                        p.set(0, (int) nnzel.get(0, i), g.x.get(i, 0));
+                    }
+                    return p;
+                }
+            }
+            int bmaxit = options != null && options.iter_max > 0 ? options.iter_max : 0;
+            Ctmc_bicgstab.BicgstabResult bs = Ctmc_bicgstab.ctmc_bicgstab(Qt, bnnz, 0.0, bmaxit, null);
+            if (bs.flag == 0) {
                 for (int i = 0; i < nnzel.getNumCols(); i++) {
-                    p.set(0, (int) nnzel.get(0, i), g.x.get(i, 0));
+                    p.set(0, (int) nnzel.get(0, i), bs.x.get(i, 0));
                 }
                 return p;
             }

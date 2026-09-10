@@ -57,6 +57,30 @@ classdef DMAP < MarkovModulated
             MEAN = al * inv(eye(N) - D0) * ones(N, 1);
         end
 
+        function VAR = getVar(self)
+            % VAR = GETVAR()
+            % Variance of the inter-arrival count: 2*al*(I-D0)^-2*e - m - m^2.
+            %
+            % DECLARED HERE because the inherited Markovian.getVar/getSCV call
+            % map_scv({D0,D1}), a CONTINUOUS-time formula that reads D0+D1 as a
+            % generator. For a DMAP that matrix is STOCHASTIC, so the stationary
+            % solve behind it is singular and the number it returned was not the
+            % variance of anything. jline.lang.processes.DMAP and the native
+            % Python DMAP already carry this formula; MATLAB was the outlier.
+            D0 = self.D(0);
+            N = size(D0, 1);
+            al = dmap_pie({D0, self.D(1)});
+            ImD0inv = inv(eye(N) - D0);
+            e = ones(N, 1);
+            m = al * ImD0inv * e;
+            VAR = 2 * (al * ImD0inv * ImD0inv * e) - m - m^2;
+        end
+
+        function SCV = getSCV(self)
+            % SCV = GETSCV()
+            SCV = self.getVar() / self.getMean()^2;
+        end
+
         function meant = evalMeanT(self, t)
             meant = t / self.getMean();
         end

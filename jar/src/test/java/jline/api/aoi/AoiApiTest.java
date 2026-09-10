@@ -115,6 +115,64 @@ public class AoiApiTest {
         }
     }
 
+    /**
+     * The AoI LST returned by the FCFS routines must itself BE an LST. Nothing
+     * asserted that until 2026-08-19, which is how both rows shipped an
+     * expression that was not one: M/GI/1 returned
+     * (lambda H*(s))/(s+lambda-lambda H*(s)) * W*(s), which diverges as s -> 0
+     * (A*(0) = +Inf) and exceeds 1 for small s, and GI/M/1 returned
+     * (mu sigma(s))/(s+mu-mu sigma(s)) * D*(s), which gives sigma/(1-sigma) at
+     * the origin. The mean and peak columns were right throughout, so every
+     * existing assertion here passed over both.
+     *
+     * A*(0) = 1 is the binding check; the range and monotonicity guards catch
+     * the "above 1 at small s" signature that made the M/GI/1 form obviously
+     * wrong once anyone looked.
+     */
+    @Test
+    public void fcfsAoiLstsAreValidTransforms() {
+        LstFunction erlangH = Aoi_lst.aoi_lst_erlang(2, 4.0);
+        LstFunction erlangY = Aoi_lst.aoi_lst_erlang(2, 1.2);
+        AoiLstResult[] rows = {
+                Aoi_fcfs_mgi1.aoi_fcfs_mgi1(0.6, erlangH, 0.5, 0.375),
+                Aoi_fcfs_gim1.aoi_fcfs_gim1(erlangY, 1.0, 2.0 / 1.2, 6.0 / (1.2 * 1.2))
+        };
+        for (AoiLstResult row : rows) {
+            LstFunction a = row.getLstAoI();
+            assertEquals(1.0, a.evaluate(0.0), 1e-9, "A*(0) must equal 1");
+            double prev = 1.0;
+            for (double s : new double[]{0.05, 0.2, 0.5, 1.0, 2.0}) {
+                double v = a.evaluate(s);
+                assertTrue(v > 0 && v <= 1.0 + 1e-12,
+                        "A*(s) outside (0,1] at s=" + s + ": " + v);
+                assertTrue(v <= prev + 1e-12, "A*(s) must be nonincreasing at s=" + s);
+                prev = v;
+            }
+            // -A*'(0) is the mean AoI, which the mean column already reports.
+            double h = 1e-5;
+            double slope = -(a.evaluate(h) - a.evaluate(0.0)) / h;
+            assertEquals(row.getMeanAoI(), slope, 1e-2 * row.getMeanAoI(),
+                    "-A*'(0) must reproduce the mean AoI");
+        }
+    }
+
+    /**
+     * The M/GI/1 AoI LST against a sample path of the same queue. The values are
+     * a 4e6-cycle simulation of M/E2/1 (lambda 0.6, Erlang(2,4) service),
+     * averaging exp(-s*age) over departure intervals.
+     */
+    @Test
+    public void fcfsMgi1AoiLstMatchesSimulation() {
+        LstFunction erlangH = Aoi_lst.aoi_lst_erlang(2, 4.0);
+        AoiLstResult r = Aoi_fcfs_mgi1.aoi_fcfs_mgi1(0.6, erlangH, 0.5, 0.375);
+        double[] s = {0.3, 1.0, 2.0};
+        double[] simulated = {0.569475, 0.228510, 0.093143};
+        for (int i = 0; i < s.length; i++) {
+            assertEquals(simulated[i], r.getLstAoI().evaluate(s[i]), 5e-4,
+                    "A*(" + s[i] + ") must match the simulated sample path");
+        }
+    }
+
     @Test
     public void lcfsVariantsAreOrderedByPreemptionDegree() {
         // For M/M/1, discarding (lcfsd) and serving (lcfss) variants are valid

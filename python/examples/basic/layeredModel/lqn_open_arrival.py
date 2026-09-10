@@ -6,14 +6,21 @@ This example demonstrates:
 - A single entry receiving an external Poisson arrival stream
 - A bound activity with Exp service that processes each request
 
-Expected: Source delivers arrivals at rate 0.2, the server processes them
-with mean 1.6, so E1_Open throughput ~0.2 and processor utilization ~0.32.
+Expected: arrivals at rate 0.2 against a mean service of 1.6 take 0.32 of the
+host. Nothing else reaches T1, so T1 has no task layer and SolverLN represents
+the stream by the thread pool it drives -- a closed chain of mult(T1) jobs whose
+surrogate delay is closed on the known rate, the construction a forwarding
+target gets (_open_arrival_rate_of). Reported: entry throughput 0.2, host
+utilization 0.32, entry response time 1.6, which lqns gives exactly and lqsim
+(0.192-0.200) and LDES (0.19986 / 0.31957 / 1.599) confirm. MATLAB, the JAR and
+the C++ port agree. Placing an open class on the host layer instead would load
+it twice, since that chain has no other delay to cycle against: that was the
+earlier reading of 0.425 / 0.68 / 2.3529.
 
-Note: pure-open LQN layers exercise the Source/Sink/OpenClass plumbing
-added for entry-level open arrivals (mirrors MATLAB buildLayersRecursive.m
-lines 213-255 and JAR LN.java lines 718-750). The LN loop
-re-applies the static arrival distribution each iteration via
-arvproc_classes_updmap.
+Note: the Source/Sink/OpenClass plumbing for entry-level open arrivals is still
+exercised whenever the entry ALSO has a sync/async caller or is a forwarding
+target; the LN loop re-applies the static arrival distribution each iteration
+via arvproc_classes_updmap.
 """
 
 from line_solver import *

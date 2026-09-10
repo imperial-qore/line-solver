@@ -1,27 +1,29 @@
-function prOt = overtake_prob_markov(self, eidx)
-% OVERTAKE_PROB_MARKOV Overtaking probability via the LQNS phased-server Markov chain.
+function prot = overtake_prob_markov(self, eidx)
+% OVERTAKE_PROB_MARKOV Overtaking probability from the phased-server jump chain.
 %
 % PROT = OVERTAKE_PROB_MARKOV(SELF, EIDX) computes the probability that a new
 % arrival to server entry EIDX finds the server busy in phase 2 (post-reply
-% processing), using the LQNS V6 slice/overtake Markov chain (Layer 1) rather
-% than the reduced 3-state CTMC in OVERTAKE_PROB.
+% processing), from the jump chain of Franks (1999), Sec. 5.4, rather than
+% from the reduced 3-state CTMC in OVERTAKE_PROB.
 %
-% This is the input-mapping layer (Layer 1c): it derives the per-client-phase
-% slice parameters (nSlices, host residence, calls to the server task, calls to
-% other tasks, delay at other tasks) from the LayeredNetworkStruct and the
-% current per-layer MVA residence times, then delegates the chain solution to
-% LQN_OVERTAKE_MARKOV. Contributions of all synchronous caller entries are
-% summed and truncated to 1 (cf. LQNS Markov_Phased_Server::PrOT_e).
+% This routine maps the LayeredNetworkStruct and the current per-layer MVA
+% residence times onto the chain parameters: the slice count of Eq. (3.1),
+% the host residence of each client phase, the calls to the server task and
+% to every other task, and the delay incurred at those other tasks. The
+% chain itself is solved by LQN_OVERTAKE_MARKOV. Every synchronous caller
+% entry contributes a term of Eq. (5.6) and the total is truncated to 1.
 %
-% Reference: Franks & Woodside, "Effectiveness of early replies in client-server
-% systems", Perf. Eval. 36 (1999). See [[overtaking-markov-port]].
+% Reference: G. Franks, "Performance Analysis of Distributed Server
+% Systems", PhD thesis, Carleton University, 1999, Sec. 5.4; published as
+% G. Franks and M. Woodside, "Effectiveness of early replies in
+% client-server systems", Perform. Eval. 36 (1999) 165-183.
 
     lqn = self.lqn;
-    prOt = 0.0;
+    prot = 0.0;
 
-    % Server phase-2 residence (x_j for the tested server phase j=2).
-    xj = self.servt_ph2(eidx);
-    if ~(xj > GlobalConstants.FineTol)
+    % Residence s_jx of the server phase under test (x = 2).
+    srvresid = self.servt_ph2(eidx);
+    if ~(srvresid > GlobalConstants.FineTol)
         return;
     end
     server_tidx = lqn.parent(eidx);
@@ -50,23 +52,23 @@ function prOt = overtake_prob_markov(self, eidx)
         end
 
         % Maximum client phase (LINE activities carry phase 1 or 2).
-        maxPhaseA = 1;
+        maxphase = 1;
         for aidx = acts
             a = aidx - lqn.ashift;
             if a >= 1 && a <= lqn.nacts
-                maxPhaseA = max(maxPhaseA, lqn.actphase(a));
+                maxphase = max(maxphase, lqn.actphase(a));
             end
         end
 
-        % clientPhases rows p=0..maxPhaseA: [nSlices service y_ij y_ik t_k].
-        nStates = maxPhaseA + 1;
-        clientPhases = zeros(nStates, 5);
-        clientPhases(1,1) = 1.0;                          % think slice: nSlices=1
-        clientPhases(1,2) = local_think_time(lqn, ctidx); % service = client think time
+        % phasetab rows p=0..maxphase: [nslices service y_ij y_ik t_k].
+        nphases = maxphase + 1;
+        phasetab = zeros(nphases, 5);
+        phasetab(1,1) = 1.0;                          % think slice: nslices=1
+        phasetab(1,2) = local_think_time(lqn, ctidx); % service = client think time
 
-        y_aj = zeros(1, maxPhaseA + 1);
-        for p = 1:maxPhaseA
-            nSlices = 1.0; service = 0.0;
+        ycalls = zeros(1, maxphase + 1);
+        for p = 1:maxphase
+            nslices = 1.0; service = 0.0;
             y_ij = 0.0; y_ik = 0.0; tk_num = 0.0;
             for aidx = acts
                 a = aidx - lqn.ashift;
@@ -80,7 +82,7 @@ function prOt = overtake_prob_markov(self, eidx)
                     end
                     y = lqn.callproc_mean(c);
                     if y == 0, continue; end
-                    nSlices = nSlices + y;
+                    nslices = nslices + y;
                     dst_tidx = lqn.parent(lqn.callpair(c,2));
                     if dst_tidx == server_tidx
                         y_ij = y_ij + y;
@@ -91,25 +93,25 @@ function prOt = overtake_prob_markov(self, eidx)
                 end
             end
             if y_ik > 0.0, t_k = tk_num / y_ik; else, t_k = 0.0; end
-            clientPhases(p+1,:) = [nSlices, service, y_ij, y_ik, t_k];
-            y_aj(p+1) = y_ij;
-            y_aj(1)   = y_aj(1) + y_ij;
+            phasetab(p+1,:) = [nslices, service, y_ij, y_ik, t_k];
+            ycalls(p+1) = y_ij;
+            ycalls(1)   = ycalls(1) + y_ij;
         end
 
-        if y_aj(1) == 0.0
+        if ycalls(1) == 0.0
             continue;   % this client does not call the server task
         end
 
         % Client entry visit probability (1 for reference/sole entry).
-        prVisit = 1.0;
+        prvisit = 1.0;
         if self.tput(ctidx) > GlobalConstants.FineTol && self.tput(ceidx) > GlobalConstants.FineTol
-            prVisit = self.tput(ceidx) / self.tput(ctidx);
+            prvisit = self.tput(ceidx) / self.tput(ctidx);
         end
 
-        prOt = prOt + lqn_overtake_markov(clientPhases, prVisit, xj, y_aj);
+        prot = prot + lqn_overtake_markov(phasetab, prvisit, srvresid, ycalls);
     end
 
-    prOt = max(0.0, min(1.0, prOt));
+    prot = max(0.0, min(1.0, prot));
 end
 
 % ---------------------------------------------------------------------------

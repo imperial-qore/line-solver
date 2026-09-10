@@ -38,8 +38,10 @@ def lossn_mci(nu: np.ndarray, A: np.ndarray, C: np.ndarray,
     normalization constant is g(C) = sum_{n in Omega} prod_r nu[r]**n_r/n_r!.
     Class-r acceptance is g(C-A[:,r])/g(C) = 1 - beta_r.
 
-    States are drawn from the importance distribution (Eq. 6)
+    States are drawn from the importance distribution (Eq. 6)::
+
         p(n) = (1/c) prod_r gamma_r**n_r / n_r!
+
     over the box {0..N_1} x ... x {0..N_R}, N_r = min_j floor(C_j/A_jr).
     Ratio estimators (Eq. 8) yield g and blocking with delta-method
     confidence intervals.

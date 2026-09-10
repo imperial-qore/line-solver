@@ -167,17 +167,17 @@ S(isinf(S))=0;
 % ---------------------------------------------------------------------
 if false %snIsClosedModel(sn)
     % mixed-radix hashing
-    reactCache = containers.Map('KeyType','uint64','ValueType','any');
+    reactCache = configureDictionary('uint64','cell');
     njobs = sn.njobs;
     mixedradix = [cumprod(repmat(1+njobs,1,I))];
     mixedradix = [1,mixedradix(1:end-1)];
     hashfun = @(v) uint64(mixedradix*v(:));
 else
     % buffer size unbounded so use string
-    reactCache = containers.Map('KeyType','char','ValueType','any');
+    reactCache = configureDictionary('string','cell');
     hashfun = @(v) mat2str(v(:)');
 end
-[t, nvecsim, ~, ~] = next_reaction_method(S, D, a, nvec0, samples, options, reactCache, hashfun);
+[t, nvecsim, ~, ~, reactCache] = next_reaction_method(S, D, a, nvec0, samples, options, reactCache, hashfun);
 
 % ---------------------------------------------------------------------
 % Empirical state probabilities ----------------------------------------
@@ -194,7 +194,7 @@ numStates = size(outspace,1);
 depRates  = zeros(numStates, I*R);
 
 for st = 1:numStates
-    a_state = reactCache(hashfun(outspace(st,:)'));
+    a_state = reactCache{hashfun(outspace(st,:)')};
     for j = 1:length(fromIdx)
         depRates(st, fromIdx(j)) = depRates(st, fromIdx(j)) + a_state(j);
     end
@@ -204,7 +204,7 @@ end  % solver_ssa_nrm
 % ======================================================================
 % Next-Reaction Method core --------------------------------------------
 % ======================================================================
-function [t, nvec, kfires, rfires] = next_reaction_method(S, D, a, nvec0, samples, options, reactcache, hashfun)
+function [t, nvec, kfires, rfires, reactcache] = next_reaction_method(S, D, a, nvec0, samples, options, reactcache, hashfun)
 numReactions = size(S,2);
 rand_pool_size = 1e7;
 
@@ -230,7 +230,7 @@ for k=1:size(S,2)
 end
 nvec   = nvec0;
 key = hashfun(nvec);
-reactcache(key) = Ak;         % cache first state's propensities
+reactcache{key} = Ak;         % cache first state's propensities
 Pk  = -log(rand(1,numReactions));
 Tk  = zeros(1,numReactions);
 
@@ -272,7 +272,7 @@ while n <= samples
 
     key = hashfun(nvec);
     if ~isKey(reactcache,key)
-        reactcache(key) = Ak; % store propensities of new state
+        reactcache{key} = Ak; % store propensities of new state
     end
 
     % maintain random number pool
@@ -292,28 +292,37 @@ while n <= samples
 
     % do not count immediate events
     n = n + 1;
-    print_progress(options, n);
+    print_progress(options, n, t);
 end
-% Print newline after progress counter
-if isfield(options,'verbose') && options.verbose
-    line_printf('\n');
-end
+% The counter row is closed here rather than newline-terminated:
+% line_printf already ends an open row, so an explicit newline was a
+% SECOND one and showed as a blank row before the completion banner.
+LineStatus.close();
 
 t = [0; tout];
 nvec = [nvec0, nvecout];
 
-    function print_progress(opt, samples_collected)
-        if ~isfield(opt,'verbose') || ~opt.verbose || batchStartupOptionUsed, return; end
-        if samples_collected == 1e3
-            line_printf('\nSSA samples: %8d', samples_collected);
-        elseif opt.verbose == 2
-            if samples_collected == 0
-                line_printf('\nSSA samples: %9d', samples_collected);
-            else
-                line_printf('\b\b\b\b\b\b\b\b\b%9d', samples_collected);
+    function print_progress(opt, samples_collected, tnow)
+        if LineConsole.isActive() % the console owns the line; see solver_ssa
+            every = max(1,round(opt.samples/20));
+            if mod(samples_collected, every) == 0
+                LineConsole.iter(samples_collected/every, ...
+                    'simulated %d of %g samples (%.0f%%), simulated time %.4g', ...
+                    samples_collected, opt.samples, ...
+                    100*samples_collected/opt.samples, tnow);
             end
-        elseif mod(samples_collected,1e3)==0 || opt.verbose == 2
-            line_printf('\b\b\b\b\b\b\b\b\b%9d', samples_collected);
+            return
+        end
+        if ~isfield(opt,'verbose') || ~opt.verbose || batchStartupOptionUsed, return; end
+        % ONE REWRITTEN FIELD, not a fixed-width one. LineStatus rewinds by
+        % the width it actually wrote, so a counter that only grows needs no
+        % padding at all and leaves no trailing blanks -- a fixed %-9d field
+        % showed its pad as "SSA samples: 100000   ". It also cannot desync
+        % the way a hardcoded run of backspaces does once the count outgrows
+        % the field. line_printf closes the row, so the completion banner
+        % terminates it without help.
+        if opt.verbose == 2 || (samples_collected > 0 && mod(samples_collected,1e3) == 0)
+            LineStatus.set('SSA samples: %d', samples_collected);
         end
     end
 end  % next_reaction_method

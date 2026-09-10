@@ -1,0 +1,70 @@
+{
+  "class": {
+    "MVA": "deterministic"
+  },
+  "example": "test_gallery_lukumar_reentrant",
+  "solvers": {
+    "MVA": [
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class1",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.08,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class3",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.08,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.08,
+        "JobClass": "Class1",
+        "QLen": 6.1867,
+        "ResidT": 77.333,
+        "RespT": 77.333,
+        "Station": "Station1",
+        "Tput": 0.08,
+        "Util": 0.8
+      },
+      {
+        "ArvR": 0.08,
+        "JobClass": "Class4",
+        "QLen": 5.4667,
+        "ResidT": 68.333,
+        "RespT": 68.333,
+        "Station": "Station1",
+        "Tput": 0.08,
+        "Util": 0.08
+      },
+      {
+        "ArvR": 0.08,
+        "JobClass": "Class2",
+        "QLen": 5.4667,
+        "ResidT": 68.333,
+        "RespT": 68.333,
+        "Station": "Station2",
+        "Tput": 0.08,
+        "Util": 0.08
+      },
+      {
+        "ArvR": 0.08,
+        "JobClass": "Class3",
+        "QLen": 6.1867,
+        "ResidT": 77.333,
+        "RespT": 77.333,
+        "Station": "Station2",
+        "Tput": 0.08,
+        "Util": 0.8
+      }
+    ]
+  }
+}

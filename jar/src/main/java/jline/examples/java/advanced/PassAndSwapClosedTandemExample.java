@@ -66,6 +66,7 @@ public class PassAndSwapClosedTandemExample {
 
     public static NetworkAvgTable ctmc() {
         SolverOptions opt = SolverCTMC.defaultOptions();
+        opt.method = "exact";   // pin the state-space path
         opt.cutoff = Matrix.singleton(6);
         return new SolverCTMC(model(), opt).getAvgTable();
     }

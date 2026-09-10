@@ -1,0 +1,136 @@
+{
+  "class": {
+    "CTMC": "deterministic",
+    "JMT": "stochastic",
+    "SSA": "stochastic"
+  },
+  "example": "prio_psprio",
+  "solvers": {
+    "CTMC": [
+      {
+        "ArvR": 2.2252,
+        "JobClass": "Class1",
+        "QLen": 1.4834,
+        "ResidT": 0.66667,
+        "RespT": 0.66667,
+        "Station": "SlowDelay",
+        "Tput": 2.2252,
+        "Util": 1.4834
+      },
+      {
+        "ArvR": 0.56996,
+        "JobClass": "Class2",
+        "QLen": 0.12349,
+        "ResidT": 0.21667,
+        "RespT": 0.21667,
+        "Station": "SlowDelay",
+        "Tput": 0.56996,
+        "Util": 0.12349
+      },
+      {
+        "ArvR": 2.2252,
+        "JobClass": "Class1",
+        "QLen": 0.51655,
+        "ResidT": 0.23214,
+        "RespT": 0.23214,
+        "Station": "PSPRIOQueue",
+        "Tput": 2.2252,
+        "Util": 0.42278
+      },
+      {
+        "ArvR": 0.56996,
+        "JobClass": "Class2",
+        "QLen": 1.8765,
+        "ResidT": 3.2923,
+        "RespT": 3.2923,
+        "Station": "PSPRIOQueue",
+        "Tput": 0.56996,
+        "Util": 0.56996
+      }
+    ],
+    "JMT": [
+      {
+        "ArvR": 2.2873,
+        "JobClass": "Class1",
+        "QLen": 1.5161,
+        "ResidT": 0.66563,
+        "RespT": 0.66563,
+        "Station": "SlowDelay",
+        "Tput": 2.2388,
+        "Util": 1.5161
+      },
+      {
+        "ArvR": 0.58227,
+        "JobClass": "Class2",
+        "QLen": 0.12717,
+        "ResidT": 0.20933,
+        "RespT": 0.20933,
+        "Station": "SlowDelay",
+        "Tput": 0.58227,
+        "Util": 0.12717
+      },
+      {
+        "ArvR": 2.2388,
+        "JobClass": "Class1",
+        "QLen": 0.48386,
+        "ResidT": 0.21719,
+        "RespT": 0.21719,
+        "Station": "PSPRIOQueue",
+        "Tput": 2.2385,
+        "Util": 0.40341
+      },
+      {
+        "ArvR": 0.58227,
+        "JobClass": "Class2",
+        "QLen": 1.87,
+        "ResidT": 3.179,
+        "RespT": 3.179,
+        "Station": "PSPRIOQueue",
+        "Tput": 0.57109,
+        "Util": 0.59305
+      }
+    ],
+    "SSA": [
+      {
+        "ArvR": 2.1485,
+        "JobClass": "Class1",
+        "QLen": 1.428,
+        "ResidT": 0.65673,
+        "RespT": 0.65673,
+        "Station": "SlowDelay",
+        "Tput": 2.1744,
+        "Util": 1.428
+      },
+      {
+        "ArvR": 0.53552,
+        "JobClass": "Class2",
+        "QLen": 0.11833,
+        "ResidT": 0.20959,
+        "RespT": 0.20959,
+        "Station": "SlowDelay",
+        "Tput": 0.56457,
+        "Util": 0.11833
+      },
+      {
+        "ArvR": 2.1744,
+        "JobClass": "Class1",
+        "QLen": 0.57202,
+        "ResidT": 0.26624,
+        "RespT": 0.26624,
+        "Station": "PSPRIOQueue",
+        "Tput": 2.1485,
+        "Util": 0.41313
+      },
+      {
+        "ArvR": 0.56457,
+        "JobClass": "Class2",
+        "QLen": 1.8817,
+        "ResidT": 3.5137,
+        "RespT": 3.5137,
+        "Station": "PSPRIOQueue",
+        "Tput": 0.53552,
+        "Util": 0.56457
+      }
+    ]
+  }
+}

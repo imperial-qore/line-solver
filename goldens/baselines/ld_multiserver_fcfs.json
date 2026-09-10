@@ -1,0 +1,53 @@
+{
+  "class": {
+    "JMT": "stochastic",
+    "MVA": "deterministic"
+  },
+  "example": "ld_multiserver_fcfs",
+  "solvers": {
+    "JMT": [
+      {
+        "ArvR": 1.3544,
+        "JobClass": "Class1",
+        "QLen": 1.2892,
+        "ResidT": 0.99597,
+        "RespT": 0.99597,
+        "Station": "Delay",
+        "Tput": 1.3484,
+        "Util": 1.2892
+      },
+      {
+        "ArvR": 1.3484,
+        "JobClass": "Class1",
+        "QLen": 14.711,
+        "ResidT": 10.864,
+        "RespT": 10.864,
+        "Station": "Queue1",
+        "Tput": 1.3312,
+        "Util": 0.99999
+      }
+    ],
+    "MVA": [
+      {
+        "ArvR": 1.3333,
+        "JobClass": "Class1",
+        "QLen": 1.3333,
+        "ResidT": 1.0,
+        "RespT": 1.0,
+        "Station": "Delay",
+        "Tput": 1.3333,
+        "Util": 1.3333
+      },
+      {
+        "ArvR": 1.3333,
+        "JobClass": "Class1",
+        "QLen": 14.667,
+        "ResidT": 11.0,
+        "RespT": 11.0,
+        "Station": "Queue1",
+        "Tput": 1.3333,
+        "Util": 1.0
+      }
+    ]
+  }
+}

@@ -65,8 +65,13 @@ for ist=1:M
         isRawParam_ir = ~isempty(dist_ir) && (isa(dist_ir,'Gamma') ...
             || isa(dist_ir,'Weibull') || isa(dist_ir,'Lognormal') ...
             || isa(dist_ir,'Pareto') || isa(dist_ir,'Uniform'));
+        isMatrixSchedule_ir = ~isempty(dist_ir) && (isa(dist_ir,'MAPt') || isa(dist_ir,'PHt'));
         if isempty(ph{ist}{r}) % fluid fails otherwise
             phases(ist,r) = 1;
+        elseif isMatrixSchedule_ir
+            % MAPt/PHt modulate a phase structure, so the phase count is the
+            % order of the segment matrices, not 1 as for a scalar NHPP intensity
+            phases(ist,r) = dist_ir.getNumberOfPhases();
         elseif isSchedule_ir
             phases(ist,r) = 1;
         elseif isRawParam_ir || ~isMAP(ph{ist}{r})
@@ -88,18 +93,31 @@ if ~isempty(self.sn) %&& isprop(self.sn,'mu')
             map_ir = ph{ist}{r};
             % NHPP carries a rate schedule, not D0/D1: skip map_pie
             isSchedule_ir = false;
+            dist_ir = [];
             if isa(stations{ist}, 'Source') && any(ist == self.getIndexSourceStation) ...
                     && length(stations{ist}.input.sourceClasses) >= r ...
                     && ~isempty(stations{ist}.input.sourceClasses{r})
-                isSchedule_ir = ismethod(stations{ist}.input.sourceClasses{r}{end}, 'getRateSchedule');
+                dist_ir = stations{ist}.input.sourceClasses{r}{end};
+                isSchedule_ir = ismethod(dist_ir, 'getRateSchedule');
             elseif isa(stations{ist}, 'ServiceStation') ...
                     && length(stations{ist}.server.serviceProcess) >= r ...
                     && ~isempty(stations{ist}.server.serviceProcess{r})
-                isSchedule_ir = ismethod(stations{ist}.server.serviceProcess{r}{end}, 'getRateSchedule');
+                dist_ir = stations{ist}.server.serviceProcess{r}{end};
+                isSchedule_ir = ismethod(dist_ir, 'getRateSchedule');
             end
+            isMatrixSchedule_ir = ~isempty(dist_ir) && (isa(dist_ir,'MAPt') || isa(dist_ir,'PHt'));
             if ~isempty(map_ir)
                 proc{ist}{r} = map_ir;
-                if isSchedule_ir
+                if isMatrixSchedule_ir
+                    % pie of the time-averaged nominal, which is what the fluid
+                    % carrier uses; NaN would strand the phase structure
+                    if isa(dist_ir,'MAPt')
+                        [D0bar, D1bar] = dist_ir.getTimeAverageProcess();
+                    else
+                        [D0bar, D1bar] = dist_ir.getTimeAverageProcessMAP();
+                    end
+                    pie{ist}{r} = map_pie({D0bar, D1bar});
+                elseif isSchedule_ir
                     pie{ist}{r} = NaN;
                 else
                     pie{ist}{r} = map_pie(map_ir);

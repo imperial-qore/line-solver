@@ -177,6 +177,36 @@ public class HyperExp extends Markovian implements Serializable {
     /**
      * Fit distribution with given mean and squared coefficient of variation (SCV=variance/mean^2)
      */
+    /**
+     * Fit a hyperexponential to the ccdf of {@code dist} ITSELF at points spread
+     * over decades of time scale, rather than to its moments
+     * (HyperexpFitLongtail, Feldmann and Whitt 1998).
+     *
+     * <p>That is the only form available for a long-tail law: a Pareto with tail
+     * index below 2 has no finite variance, so the moment fits above do not
+     * exist at all, and even where the moments are finite they say nothing about
+     * the orders of magnitude over which such a law acts.
+     *
+     * @param dist   the law to approximate
+     * @param method the fitting method; only {@code "feldmannwhitt"} is defined here
+     * @return the fitted hyperexponential
+     */
+    public static HyperExp fit(ContinuousDistribution dist, String method) {
+        if (!"feldmannwhitt".equalsIgnoreCase(method)) {
+            throw new RuntimeException("HyperExp.fit on a distribution supports method "
+                    + "'feldmannwhitt' only; '" + method + "' was requested.");
+        }
+        final ContinuousDistribution law = dist;
+        java.util.Map<String, Object> fit = jline.api.mam.HyperexpFitLongtail.hyperexp_fit_longtail(
+                new java.util.function.DoubleUnaryOperator() {
+                    @Override
+                    public double applyAsDouble(double t) {
+                        return t <= 0 ? 1.0 : 1.0 - law.evalCDF(t);
+                    }
+                });
+        return new HyperExp((double[]) fit.get("p"), (double[]) fit.get("lambda"));
+    }
+
     public static HyperExp fitMeanAndSCV(double mean, double scv) {
         double p, mu1, mu2;
         MatrixCell D = map_hyperexp(mean, scv, 0);
@@ -309,52 +339,52 @@ public class HyperExp extends Markovian implements Serializable {
         return String.format("jline.HyperExp(%f)", this.getRate());
     }
 
-    // =================== KOTLIN-STYLE PROPERTY ALIASES ===================
+    // =================== PROPERTY ALIASES ===================
     
     /**
-     * Kotlin-style property alias for getMean()
+     * Property alias for getMean
      */
     public double mean() {
         return getMean();
     }
     
     /**
-     * Kotlin-style property alias for getRate()
+     * Property alias for getRate
      */
     public double rate() {
         return getRate();
     }
     
     /**
-     * Kotlin-style property alias for getSCV()
+     * Property alias for getSCV
      */
     public double scv() {
         return getSCV();
     }
     
     /**
-     * Kotlin-style property alias for getSkewness()
+     * Property alias for getSkewness
      */
     public double skewness() {
         return getSkewness();
     }
     
     /**
-     * Kotlin-style property alias for getVar()
+     * Property alias for getVar
      */
     public double var() {
         return getVar();
     }
     
     /**
-     * Kotlin-style property alias for getNumberOfPhases()
+     * Property alias for getNumberOfPhases
      */
     public long numberOfPhases() {
         return getNumberOfPhases();
     }
     
     /**
-     * Kotlin-style property alias for getNumberOfPhases()
+     * Property alias for getNumberOfPhases
      */
     public long numPhases() {
         return getNumberOfPhases();

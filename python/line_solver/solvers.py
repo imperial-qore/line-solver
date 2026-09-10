@@ -62,6 +62,9 @@ class SolverOptions:
         # see _kb/11-conventions-and-gotchas.md (Python long-tail low-hit gotchas) for rationale
         self.timeout = float('inf')
         self.init_sol = None
+        # Solver console (see line_solver.api.io.console): None follows the
+        # session setting, True or False forces it for this run alone.
+        self.console = None
         self.lang = os.environ.get('LINE_SOLVER_LANG', 'python')  # env LINE_SOLVER_LANG overrides; 'python' (native) or 'java' (delegate to jline.jar via JSON)
 
 
@@ -80,6 +83,8 @@ class _DefaultOptionsDescriptor:
         options['events'] = None
         options['method'] = 'default'
         options['timeout'] = float('inf')
+        # The solver console has NO option of its own: it IS
+        # VerboseLevel.DEBUG, so options['verbose'] is what asks for it.
         return options
 
 
@@ -247,6 +252,18 @@ class NetworkSolver(Solver):
         return self
 
     run_analyzer = runAnalyzer
+
+    @staticmethod
+    def _as_indexed(result):
+        """A result table in MATLAB's print convention, five SIGNIFICANT digits.
+
+        A bare DataFrame prints five DECIMALS, so a cell above 1 carries one
+        digit more than MATLAB's and the JAR's tables do (2.13066 against
+        2.1307). Every table getter here therefore wraps, not only getAvgTable.
+        """
+        if isinstance(result, pd.DataFrame):
+            return IndexedTable(result)
+        return result
 
     def getAvgTable(self):
         """Get average performance metrics table."""
@@ -420,16 +437,19 @@ class NetworkSolver(Solver):
         This method returns metrics aggregated at the chain level.
 
         Returns:
-            pandas.DataFrame: Table with columns Chain, QLen, Util, RespT, Tput
+            IndexedTable: Table with columns Station, Chain, QLen, Util, RespT,
+            ResidT, ArvR, Tput. Wrapped like getAvgTable so the printed cell
+            carries MATLAB's five SIGNIFICANT digits; a bare DataFrame prints
+            five DECIMALS, which is a different number for any cell above 1.
         """
         # Auto-run analyzer if needed
         if self._native_solver is not None:
             if hasattr(self._native_solver, '_result') and self._native_solver._result is None:
                 self._native_solver.runAnalyzer()
             if hasattr(self._native_solver, 'getAvgChainTable'):
-                return self._native_solver.getAvgChainTable()
+                return self._as_indexed(self._native_solver.getAvgChainTable())
             if hasattr(self._native_solver, 'avg_chain_table'):
-                return self._native_solver.avg_chain_table()
+                return self._as_indexed(self._native_solver.avg_chain_table())
 
         # Fallback: aggregate avg_table by chain if chains exist
         table = self.avg_table()
@@ -457,7 +477,7 @@ class NetworkSolver(Solver):
                             'RespT': chain_data['RespT'].mean() if 'RespT' in chain_data else 0,
                             'Tput': chain_data['Tput'].sum() if 'Tput' in chain_data else 0,
                         })
-            return pd.DataFrame(rows) if rows else table
+            return self._as_indexed(pd.DataFrame(rows)) if rows else table
         else:
             # No chains defined, return per-class data
             return table
@@ -479,9 +499,9 @@ class NetworkSolver(Solver):
             if hasattr(self._native_solver, '_result') and self._native_solver._result is None:
                 self._native_solver.runAnalyzer()
             if hasattr(self._native_solver, 'getAvgSysTable'):
-                return self._native_solver.getAvgSysTable()
+                return self._as_indexed(self._native_solver.getAvgSysTable())
             if hasattr(self._native_solver, 'avg_sys_table'):
-                return self._native_solver.avg_sys_table()
+                return self._as_indexed(self._native_solver.avg_sys_table())
 
         # Fallback: compute from chain table
         chain_table = self.getAvgChainTable()
@@ -504,7 +524,7 @@ class NetworkSolver(Solver):
                 'SysTput': chain_table['Tput'].mean() if 'Tput' in chain_table else 0,
             })
 
-        return pd.DataFrame(rows)
+        return self._as_indexed(pd.DataFrame(rows))
 
     avg_sys_table = getAvgSysTable
 
@@ -825,6 +845,8 @@ class NetworkSolver(Solver):
     def getProb(self, node=None, state=None):
         """Get probability of a specific state at a node."""
         if self._native_solver is not None and hasattr(self._native_solver, 'getProb'):
+            if state is None:
+                return self._native_solver.getProb(node)
             return self._native_solver.getProb(node, state)
         return None
 
@@ -883,12 +905,19 @@ class NetworkSolver(Solver):
             self._native_solver.runAnalyzer()
             self._result = self._native_solver._result
 
-        if hasattr(self._native_solver, 'getProb'):
+        # getProbAggr IS THE AGGREGATE ONE, and this used to call getProb. The
+        # two are different quantities wherever both exist: under SolverNC,
+        # getProb is the DETAILED state's log probability while getProbAggr is
+        # the aggregate station probability. getProb remains the fallback for a
+        # solver that defines only it.
+        for name in ('getProbAggr', 'getProb'):
+            if not hasattr(self._native_solver, name):
+                continue
+            getter = getattr(self._native_solver, name)
             if node is not None:
                 node_idx = node if isinstance(node, int) else self._get_node_index(node)
-                return self._native_solver.getProb(node_idx)
-            else:
-                return self._native_solver.getProb()
+                return getter(node_idx)
+            return getter()
 
         return np.array([])
 
@@ -1045,6 +1074,56 @@ class SolverCTMC(NetworkSolver):
         from .solvers.solver_ctmc import SolverCTMC
         method = kwargs.pop('method', 'default')
         self._native_solver = SolverCTMC(model, method=method, **kwargs)
+
+    def isChainSolver(self):
+        """True when the solver was built from a MarkovProcess or a MarkovChain."""
+        return self._native_solver.isChainSolver()
+
+    is_chain_solver = isChainSolver
+
+    def isDiscreteChain(self):
+        """True in chain mode when the user supplied a DTMC (MarkovChain)."""
+        return self._native_solver.isDiscreteChain()
+
+    is_discrete_chain = isDiscreteChain
+
+    def getTransMat(self):
+        """Transition matrix of the user-supplied DTMC (chain mode only)."""
+        return self._native_solver.getTransMat()
+
+    get_trans_mat = getTransMat
+
+    def getStateSpace(self):
+        """State space and its per-station slices."""
+        return self.state_space()
+
+    def getGenerator(self):
+        """Infinitesimal generator and event filtration."""
+        return self.generator()
+
+    def getInfGen(self):
+        """Infinitesimal generator matrix."""
+        return self._native_solver.getInfGen()
+
+    inf_gen = getInfGen
+
+    def getStateSpaceAggr(self):
+        """Aggregated state space."""
+        return self._native_solver.getStateSpaceAggr()
+
+    state_space_aggr = getStateSpaceAggr
+
+    def getTranProbSys(self, t: float = 1.0):
+        """Transient system state probabilities at time t."""
+        return self._native_solver.getTranProbSys(t)
+
+    tran_prob_sys = getTranProbSys
+
+    def sampleSys(self, numEvents: int = 1000):
+        """Sample path of the system (chain mode only)."""
+        return self._native_solver.sampleSys(numEvents)
+
+    sample_sys = sampleSys
 
     def state_space(self):
         """
@@ -1484,42 +1563,15 @@ class SolverFluid(NetworkSolver):
         Get response time CDF for all station/class combinations.
 
         Returns:
-            Matrix of CDF arrays indexed by [station][class].
-            Each CDF array has columns [cdf_value, time].
+            Matrix of CDF arrays indexed by [station][class], the native
+            SolverFLD.getCdfRespT nested contract; each non-empty element is an
+            (n x 2) array with columns [cdf_value, time].
         """
-        if self._native_solver.result is None:
-            self._native_solver.runAnalyzer()
-            self._result = self._native_solver.result
-
-        import numpy as np
-
-        sn = self._native_solver.sn
-        nstations = sn.nstations if sn else 1
-        nclasses = sn.nclasses if sn else 1
-
-        RD_matrix = [[None for _ in range(nclasses)] for _ in range(nstations)]
-
-        # Get CDF for each station/class
-        for station in range(nstations):
-            for job_class in range(nclasses):
-                try:
-                    cdf_result = self._native_solver.getCdfRespT(station=station, job_class=job_class)
-                    t = cdf_result.get('t', np.array([]))
-                    cdf = cdf_result.get('cdf', np.array([]))
-
-                    if len(t) > 0 and len(cdf) > 0:
-                        # Create array with columns [cdf, time]
-                        cdf_array = np.column_stack([cdf, t])
-                        RD_matrix[station][job_class] = cdf_array
-                except Exception as e:
-                    # Skip if CDF computation fails for this station/class
-                    print(f"Error in getCdfRespT: {e}")
-                    continue
-
-        return RD_matrix
+        return self._native_solver.getCdfRespT()
 
     # Alias without underscore for consistency
     cdf_respt = cdf_resp_t
+    getCdfRespT = cdf_resp_t
 
     @staticmethod
     def defaultOptions():
@@ -1572,50 +1624,28 @@ class SolverJMT(NetworkSolver):
             kwargs.update(opts)
             args = args[1:]
 
-        from .solvers.solver_jmt import SolverJMT
+        from .solvers.wrappers.solver_jmt import SolverJMT
         self._native_solver = SolverJMT(model, **kwargs)
 
     def cdf_resp_t(self):
         """
-        Get response time CDF for all station/class combinations.
-
-        Note: JMT native solver currently does not support CDF extraction.
-        Returns empty matrix. Use SolverFluid (FLD) for CDF analysis.
+        Get response time CDF for all station/class combinations, measured on
+        the logged JMT run (the native wrapper's getCdfRespT).
 
         Returns:
-            Matrix of CDF arrays indexed by [station][class].
+            Matrix of CDF arrays indexed by [station][class]; each non-empty
+            element is an (n x 2) array with columns [cdf, time].
         """
-        import warnings
-        warnings.warn(
-            "SolverJMT native does not currently support CDF extraction. "
-            "Returning empty results. Use SolverFluid (FLD) for CDF analysis.",
-            UserWarning
-        )
-
-        if self._native_solver._result is None:
-            self._native_solver.runAnalyzer()
-            self._result = self._native_solver._result
-
-        sn = self._native_solver._sn
-        nstations = sn.nstations if sn else 1
-        nclasses = sn.nclasses if sn else 1
-
-        # Return empty matrix since JMT doesn't provide CDF data yet
-        RD_matrix = [[None for _ in range(nclasses)] for _ in range(nstations)]
-        return RD_matrix
+        return self._native_solver.getCdfRespT()
 
     # Alias without underscore for consistency
     cdf_respt = cdf_resp_t
+    getCdfRespT = cdf_resp_t
 
     def get_tran_cdf_respt(self):
-        """Get transient response time CDF (stub - returns empty results)."""
-        import warnings
-        warnings.warn(
-            "SolverJMT native does not currently support transient CDF extraction. "
-            "Returning empty results.",
-            UserWarning
-        )
-        return self.cdf_resp_t()
+        """Get transient response time CDF: the same logged pipeline without
+        the steady-state seed (the native wrapper's getTranCdfRespT)."""
+        return self._native_solver.getTranCdfRespT()
 
     getTranCdfRespT = get_tran_cdf_respt
 
@@ -1638,7 +1668,7 @@ class SolverLDES(NetworkSolver):
         options = SolverOptions(SolverType.LDES)
         super().__init__(model, options, *args, **kwargs)
 
-        from .solvers.solver_ldes import SolverLDES
+        from .solvers.wrappers.solver_ldes.solver_ldes import SolverLDES
         self._native_solver = SolverLDES(model, **kwargs)
 
     @staticmethod
@@ -1654,15 +1684,15 @@ class SolverLDES(NetworkSolver):
     default_options = defaultOptions
 
 
-class SolverAuto(NetworkSolver):
+class SolverAUTO(NetworkSolver):
     """Automatic solver selection."""
 
     def __init__(self, model, *args, **kwargs):
         options = SolverOptions(SolverType.AUTO)
         super().__init__(model, options, *args, **kwargs)
 
-        from .solvers.solver_auto import SolverAuto
-        self._native_solver = SolverAuto(model, **kwargs)
+        from .solvers.solver_auto import SolverAUTO
+        self._native_solver = SolverAUTO(model, **kwargs)
 
     @staticmethod
     def defaultOptions():
@@ -1674,8 +1704,8 @@ class SolverAuto(NetworkSolver):
     default_options = defaultOptions
 
 
-class LINE(SolverAuto):
-    """Alias for SolverAuto - automatic solver selection."""
+class LINE(SolverAUTO):
+    """Alias for SolverAUTO - automatic solver selection."""
 
     @staticmethod
     def load(filepath):
@@ -1751,7 +1781,9 @@ class SolverENV(EnsembleSolver):
         Compute average performance metrics across environments.
 
         Returns:
-            Tuple of (QN, UN, TN) - queue lengths, utilizations, throughputs
+            Tuple of (QN, UN, RN, TN, AN, WN), matching MATLAB SolverENV.getAvg.
+            Throughput is the FOURTH output, not the third: RN comes third and
+            is always NaN because ENV computes no response time, as does AN.
         """
         import numpy as np
 
@@ -1764,7 +1796,8 @@ class SolverENV(EnsembleSolver):
             E = len(self._solvers)
 
         if E == 0 or len(self._solvers) == 0:
-            return np.array([]), np.array([]), np.array([])
+            empty = np.array([])
+            return empty, empty, empty, empty, empty, empty
 
         # Get steady-state probabilities
         if hasattr(self.model, 'get_steady_state_probs'):
@@ -1780,50 +1813,58 @@ class SolverENV(EnsembleSolver):
         all_UN = []
         all_TN = []
 
-        for solver in self._solvers:
-            if solver is not None:
-                try:
-                    # Try to get results from solver
-                    if hasattr(solver, 'getAvgQLen'):
-                        QN = solver.getAvgQLen()
-                    elif hasattr(solver, 'avg_qlen'):
-                        QN = solver.avg_qlen()
-                    else:
-                        QN = np.array([0.0])
-
-                    if hasattr(solver, 'getAvgUtil'):
-                        UN = solver.getAvgUtil()
-                    elif hasattr(solver, 'avg_util'):
-                        UN = solver.avg_util()
-                    else:
-                        UN = np.array([0.0])
-
-                    if hasattr(solver, 'getAvgTput'):
-                        TN = solver.getAvgTput()
-                    elif hasattr(solver, 'avg_tput'):
-                        TN = solver.avg_tput()
-                    else:
-                        TN = np.array([0.0])
-
-                    all_QN.append(np.asarray(QN))
-                    all_UN.append(np.asarray(UN))
-                    all_TN.append(np.asarray(TN))
-                except Exception:
-                    all_QN.append(np.array([0.0]))
-                    all_UN.append(np.array([0.0]))
-                    all_TN.append(np.array([0.0]))
+        # A stage that fails must not contribute a fabricated zero: the result
+        # is a pi-weighted average over stages, so a substituted zero silently
+        # biases every metric downward and reports a number for a model that
+        # was never solved. Let the stage's own error name the stage instead.
+        for e, solver in enumerate(self._solvers):
+            if solver is None:
+                raise RuntimeError(
+                    "SolverENV: no solver was constructed for stage %d; the "
+                    "environment cannot be averaged over an unsolved stage." % e)
+            if hasattr(solver, 'getAvgQLen'):
+                QN = solver.getAvgQLen()
+            elif hasattr(solver, 'avg_qlen'):
+                QN = solver.avg_qlen()
             else:
-                all_QN.append(np.array([0.0]))
-                all_UN.append(np.array([0.0]))
-                all_TN.append(np.array([0.0]))
+                raise AttributeError(
+                    "SolverENV: stage %d solver %s exposes no queue-length "
+                    "accessor." % (e, type(solver).__name__))
+
+            if hasattr(solver, 'getAvgUtil'):
+                UN = solver.getAvgUtil()
+            elif hasattr(solver, 'avg_util'):
+                UN = solver.avg_util()
+            else:
+                raise AttributeError(
+                    "SolverENV: stage %d solver %s exposes no utilization "
+                    "accessor." % (e, type(solver).__name__))
+
+            if hasattr(solver, 'getAvgTput'):
+                TN = solver.getAvgTput()
+            elif hasattr(solver, 'avg_tput'):
+                TN = solver.avg_tput()
+            else:
+                raise AttributeError(
+                    "SolverENV: stage %d solver %s exposes no throughput "
+                    "accessor." % (e, type(solver).__name__))
+
+            all_QN.append(np.asarray(QN))
+            all_UN.append(np.asarray(UN))
+            all_TN.append(np.asarray(TN))
 
         # Weighted average based on steady-state probabilities
         QN_avg = sum(pi[e] * all_QN[e] for e in range(E) if e < len(all_QN))
         UN_avg = sum(pi[e] * all_UN[e] for e in range(E) if e < len(all_UN))
         TN_avg = sum(pi[e] * all_TN[e] for e in range(E) if e < len(all_TN))
 
-        self._result = (QN_avg, UN_avg, TN_avg)
-        return QN_avg, UN_avg, TN_avg
+        with np.errstate(divide='ignore', invalid='ignore'):
+            WN_avg = np.asarray(QN_avg, dtype=float) / np.asarray(TN_avg, dtype=float)
+        RN_avg = np.nan * WN_avg
+        AN_avg = np.nan * np.asarray(TN_avg, dtype=float)
+
+        self._result = (QN_avg, UN_avg, RN_avg, TN_avg, AN_avg, WN_avg)
+        return QN_avg, UN_avg, RN_avg, TN_avg, AN_avg, WN_avg
 
     def avg_table(self):
         """
@@ -1838,7 +1879,7 @@ class SolverENV(EnsembleSolver):
         if not hasattr(self, '_result') or self._result is None:
             self.avg()
 
-        QN, UN, TN = self._result
+        QN, UN, _, TN, _, _ = self._result
 
         # Build table from first solver's model/network
         data = []
@@ -1908,8 +1949,8 @@ class SolverQNS(NetworkSolver):
         options = SolverOptions(SolverType.QNS)
         super().__init__(model, options, *args, **kwargs)
 
-        from .solvers.solver_qns import SolverQNS as NativeSolverQNS
-        from .solvers.solver_qns.solver_qns import QNSOptions
+        from .solvers.wrappers.solver_qns import SolverQNS as NativeSolverQNS
+        from .solvers.wrappers.solver_qns.solver_qns import QNSOptions
         qns_options = QNSOptions(method=method, **qns_kwargs)
         # Get the network structure from the model
         sn = model.getStruct(True) if hasattr(model, 'getStruct') else model._sn
@@ -1943,7 +1984,7 @@ class SolverLQNS(Solver):
         super().__init__(options, *args, **kwargs)
         self.model = model
 
-        from .solvers.solver_lqns import SolverLQNS
+        from .solvers.wrappers.solver_lqns.solver_lqns import SolverLQNS
         self._native_solver = SolverLQNS(model, **kwargs)
 
     def runAnalyzer(self):
@@ -1991,7 +2032,7 @@ class SolverLQNS(Solver):
     def isAvailable():
         """Check if LQNS solver is available."""
         try:
-            from .solvers.solver_lqns import SolverLQNS
+            from .solvers.wrappers.solver_lqns.solver_lqns import SolverLQNS
             return SolverLQNS.isAvailable()
         except ImportError:
             return False
@@ -2169,7 +2210,9 @@ Fluid = SolverFluid
 MAM = SolverMAM
 JMT = SolverJMT
 LDES = SolverLDES
-AUTO = SolverAuto
+AUTO = SolverAUTO
+# Pre-rename name, kept so existing scripts and notebooks keep importing.
+SolverAuto = SolverAUTO
 QNS = SolverQNS
 LQNS = SolverLQNS
 LN = SolverLN
@@ -2189,6 +2232,7 @@ __all__ = [
     'SolverMAM',
     'SolverJMT',
     'SolverLDES',
+    'SolverAUTO',
     'SolverAuto',
     'SolverENV',
     'SolverQNS',

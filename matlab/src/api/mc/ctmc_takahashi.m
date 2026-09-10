@@ -17,7 +17,11 @@ function [p,p_1,pcourt,Qperm,eps,epsMAX]=ctmc_takahashi(Q,MS,numSteps)
 % * No convergence stop criterion is currently implented
 
 %% INIT
-nMacroStates = size(MS,1); % Number of macro-states
+% NUMEL, NOT SIZE(MS,1). MS is a cell array of index sets and its ORIENTATION
+% carries no meaning, but size(MS,1) is 1 for the row form {a,b}, so a row
+% partition was silently analysed as its FIRST macro-state alone: p came back
+% shorter than the state space and eps described a partition nobody asked for.
+nMacroStates = numel(MS); % Number of macro-states
 nStates=size(Q,1);
 %% START FROM COURTOIS DECOMPOSITION SOLUTION
 [pcourt,Qperm,Qdec,eps,epsMAX,P,B,C,q]=ctmc_courtois(Q,MS);
@@ -86,6 +90,12 @@ for I = 1:nMacroStates  % for each source macro-state
         [xg,gflag]=ctmc_gmres(sparse(A),b);
         if gflag==0
             xI=xg;
+        else
+            % Short-recurrence retry before the cubic factorization, as in ctmc_solve.
+            [xb,bflag]=ctmc_bicgstab(sparse(A),b);
+            if bflag==0
+                xI=xb;
+            end
         end
     end
     if isempty(xI)

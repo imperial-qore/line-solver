@@ -110,7 +110,7 @@ public class UnifiedTestRunner {
             });
         }
 
-        System.out.println("=== Unified Test Runner (Java/Kotlin) ===");
+        System.out.println("=== Unified Test Runner (Java) ===");
         System.out.println("Found " + jsonFiles.size() + " test definitions\n");
 
         for (File jsonFile : jsonFiles) {

@@ -209,11 +209,17 @@ public class EnvBreakdownExample {
         // Create solvers for each stage
         // Note: SolverENV.init() automatically sets a reasonable ODEMaxStep for
         // sub-solvers if the user hasn't explicitly configured it.
+        // Integrate each stage to t=100: the slowest relaxation time in this
+        // model is 1/breakdownRate = 10, so t=100 is ~10 relaxation times, well
+        // past steady state. A larger horizon (e.g. 1000) yields the same
+        // averages but makes each ODE integration ~two orders of magnitude
+        // slower, pushing the ENV fixed-point loop past the example runner's
+        // 10-minute cap.
         int numStages = env.getEnsemble().size();
         NetworkSolver[] solvers = new NetworkSolver[numStages];
         for (int e = 0; e < numStages; e++) {
             solvers[e] = new FLD(env.getModel(e));
-            solvers[e].options.timespan[1] = 1000;
+            solvers[e].options.timespan[1] = 100;
         }
 
         // Create and run ENV solver

@@ -1,6 +1,6 @@
 function jar_path = lineDownloadJAR(verbose)
 % LINEDOWNLOADJAR Download jline.jar from SourceForge if not found locally.
-%
+
 % jar_path = lineDownloadJAR()
 % jar_path = lineDownloadJAR(verbose)
 %

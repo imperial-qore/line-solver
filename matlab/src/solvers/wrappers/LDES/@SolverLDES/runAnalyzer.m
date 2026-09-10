@@ -25,12 +25,18 @@ tranSysState = [];
 tranSync = [];
 
 if isa(self.model, 'LayeredNetwork')
+    % The gate's own sentence before the backend's: ldes_ln_refusal is what
+    % supports() asks, so a refusal reads the same here as in model.help.
+    [okln, whyln] = ldes_ln_refusal(self.model);
+    if ~okln
+        line_error(mfilename, whyln);
+    end
     self.obj.getAvg(); % runs the LN LDES analyzer (Java ensemble backend)
     runtime = toc(T0);
     return
 end
 
-self.runAnalyzerChecks(options);
+verboseGuard = self.runAnalyzerChecks(options); %#ok<NASGU> restores the caller verbosity on return
 Solver.resetRandomGeneratorSeed(options.seed);
 
 line_debug('LDES solver starting: samples=%d, seed=%d', options.samples, options.seed);
@@ -72,11 +78,21 @@ if isTransient
     end
 end
 
-data = self.solveCli(options, extraFlags);
+LineConsole.step('serializing the model to JSON and running the LDES engine');
+[data, engine] = self.solveCli(options, extraFlags);
+LineConsole.substep('engine that answered: %s', engine);
+% NAME THE ENGINE THAT ANSWERED. The constructor pins options.lang='java' to
+% keep this solver off the JLINE/CPPLINE dispatch (getAvg.m and getAvgTable.m
+% exclude SolverLDES by name for the same reason), but the banner prints
+% options.lang, so every solve claimed 'java' while common/ldes -- the NATIVE
+% C++ engine since 2026-08-01 -- was what actually ran. Set after the solve, so
+% the dispatch decisions upstream are untouched.
+self.options.lang = engine;
 if ~isstruct(data) || ~isfield(data, 'metrics')
     line_error(mfilename, 'LDES engine returned no metrics.');
 end
 
+LineConsole.step('parsing the LDES result document');
 if isTransient
     parseTransient(self, data, M, R, options);
 else
@@ -101,6 +117,28 @@ CN = ldesJson2mat(data.metrics.CN, 1, R);
 XN = ldesJson2mat(data.metrics.XN, 1, R);
 if isempty(QN)
     line_error('runAnalyzer', 'LDES result metrics could not be parsed.');
+end
+
+% A closed chain must conserve its population in the reported queue lengths.
+% Engine builds that drop blocked closed jobs at a finite-capacity station
+% (pre-guard ldes.jar) leak population silently, and the reported means then
+% describe a different model. Surface it here, at the wrapper, so a stale
+% engine cannot fail silently. FCR models are excluded: a WAITQ waiter is
+% parked outside the station rows and would trip the check spuriously.
+if sn.nregions == 0
+    for nc = 1:sn.nchains
+        inchain = find(sn.chains(nc,:));
+        njobs_chain = sum(sn.njobs(inchain));
+        if isfinite(njobs_chain) && njobs_chain > 0
+            qtot = sum(sum(QN(:,inchain), 'omitnan'));
+            if abs(qtot - njobs_chain) > max(0.05*njobs_chain, 0.05)
+                line_warning(mfilename, sprintf(['LDES returned %.3f jobs for closed chain %d, whose population is %g: ' ...
+                    'the engine dropped blocked jobs at a finite-capacity station, so these averages describe a different ' ...
+                    'model. Use SolverCTMC/SolverSSA for capped closed networks, or rebuild common/ldes.jar.\n'], ...
+                    qtot, nc, njobs_chain));
+            end
+        end
+    end
 end
 
 % Fork-Join quorum sibling-drop rate (station-indexed), folded into
@@ -148,7 +186,11 @@ if F > 0 && isfield(data, 'fcr')
 end
 
 if options.verbose
-    line_printf('LDES samples: %8d\n', options.samples);
+    if LineConsole.isActive()
+        LineConsole.substep('sample path of %d samples drawn', options.samples);
+    else
+        line_printf('LDES samples: %8d\n', options.samples);
+    end
 end
 
 self.setAvgResults(QN, UN, RN, TN, AN, WN, CN, XN, runtime, options.method, options.samples);
@@ -173,6 +215,7 @@ for ind = 1:sn.nnodes
         mcache.setResultMissProb(sparse([]));
         mcache.setResultDelayedHitProb(sparse([]));
         mcache.setResultResidT(sparse([]));
+        mcache.setResultListCost([]);
         if haveCacheMetrics
             cname = matlab.lang.makeValidName(char(mcache.getName()));
             if isfield(data.cacheMetrics, cname)
@@ -183,12 +226,14 @@ for ind = 1:sn.nnodes
                 lp  = ldesJson2mat(ldesGetField(cm, 'latency', []), [], []);
                 hpl = ldesJson2mat(ldesGetField(cm, 'hitList', []), [], []);
                 ip  = ldesJson2mat(ldesGetField(cm, 'itemProb', []), [], []);
+                lc  = ldesJson2mat(ldesGetField(cm, 'listCost', []), [], []);
                 if ~isempty(hp),  mcache.setResultHitProb(hp);         end
                 if ~isempty(mp),  mcache.setResultMissProb(mp);        end
                 if ~isempty(dhp), mcache.setResultDelayedHitProb(dhp); end
                 if ~isempty(lp),  mcache.setResultResidT(lp);          end
                 if ~isempty(hpl), mcache.setResultHitProbList(hpl);    end
                 if ~isempty(ip),  mcache.setResultItemProb(ip);        end
+                if ~isempty(lc),  mcache.setResultListCost(lc);        end
             end
         end
     end
@@ -204,6 +249,42 @@ if confintEnabled && isfield(data, 'confidenceIntervals')
     ANCI = ldesJson2mat(ldesGetField(ci, 'ANCI', []), M, R);
     WNCI = ldesJson2mat(ldesGetField(ci, 'WNCI', []), M, R);
     self.setAvgResultsCI(QNCI, UNCI, RNCI, TNCI, ANCI, WNCI, [], []);
+    % HOW LONG THE RUN SHOULD HAVE BEEN, when the caller asked for it. The
+    % engine's half-width at the configured confidence over the events it ran
+    % pins the ASYMPTOTIC variance, which is the quantity a run length is
+    % planned from -- not the stationary variance, which on M/M/1 differs from
+    % it by a factor blowing up like (1-rho)^-2.
+    if isfield(options,'config') && isstruct(options.config) ...
+            && isfield(options.config,'runLengthPlan') && ~isempty(options.config.runLengthPlan)
+        spec = options.config.runLengthPlan;
+        relprecision = 0.05;
+        [~, confidence] = Solver.parseConfInt(options.confint);
+        if isstruct(spec)
+            if isfield(spec,'relprecision') && ~isempty(spec.relprecision)
+                relprecision = spec.relprecision;
+            end
+            if isfield(spec,'confidence') && ~isempty(spec.confidence)
+                confidence = spec.confidence;
+            end
+        elseif isnumeric(spec) && isscalar(spec) && spec > 0
+            relprecision = spec;
+        end
+        % The ACTUAL number of events simulated where the engine reports it,
+        % not the budget: LDES stops early on convergence, and planning from a
+        % budget it never spent would overstate N and so overstate sigma^2.
+        used = 0;
+        if isfield(data,'totalSimulatedEvents') && data.totalSimulatedEvents > 0
+            used = data.totalSimulatedEvents;
+        elseif isfield(data,'events') && data.events > 0
+            used = data.events;
+        elseif isfield(options,'samples')
+            used = options.samples;
+        end
+        if used > 0
+            self.result.runLengthPlan = sim_runlength_plan(self.result.Avg.Q, QNCI, used, ...
+                'relprecision', relprecision, 'confidence', confidence);
+        end
+    end
 end
 end
 

@@ -97,6 +97,19 @@ def write_jmva(sn: NetworkStruct, output_path: str, options: Optional[Dict[str, 
     # Track load-dependent stations
     is_load_dep = [False] * sn.nstations
 
+    # Effective server count per station. A load-dependent scaling reaches JMVA
+    # as the c of an <ldstation>, the same encoding the JSIM writer uses:
+    # SolverJMT.supportsModelMethod admits only alpha(n) = min(n,c), so max(alpha)
+    # is that c. Reading sn.nservers alone wrote a <listation> at nominal service
+    # time and dropped the scaling.
+    # A Delay carries nservers = inf, so this stays a float throughout.
+    c_eff = [float(sn.nservers[i]) if i < len(sn.nservers) else 1.0 for i in range(sn.nstations)]
+    if getattr(sn, 'lldscaling', None) is not None:
+        lld = np.atleast_2d(np.asarray(sn.lldscaling, dtype=float))
+        for i in range(min(sn.nstations, lld.shape[0])):
+            if lld.shape[1] > 0:
+                c_eff[i] = max(c_eff[i], float(np.max(lld[i, :])))
+
     # Add station elements
     for i in range(sn.nstations):
         node_idx = int(sn.stationToNode[i])
@@ -106,8 +119,7 @@ def write_jmva(sn: NetworkStruct, output_path: str, options: Optional[Dict[str, 
             stat_elem = SubElement(stations, 'delaystation')
             stat_elem.set('name', sn.nodenames[node_idx])
         elif node_type == NodeType.QUEUE:
-            nservers = sn.nservers[i] if i < len(sn.nservers) else 1
-            if nservers == 1:
+            if c_eff[i] == 1:
                 is_load_dep[i] = False
                 stat_elem = SubElement(stations, 'listation')
             else:
@@ -132,10 +144,9 @@ def write_jmva(sn: NetworkStruct, output_path: str, options: Optional[Dict[str, 
                 # see _kb/06-solver-catalog.md (Wrappers: "QNS wrapper") for
                 # the load-dependent service-time string convention
                 total_pop = int(np.sum([n for n in Nchain if np.isfinite(n)]))
-                nservers = sn.nservers[i] if i < len(sn.nservers) else 1
                 ld_srv_string = str(st_value)  # n=1: base service time
                 for n in range(2, total_pop + 1):
-                    ld_srv_string += f';{st_value / min(n, nservers)}'
+                    ld_srv_string += f';{st_value / min(n, c_eff[i])}'
                 stat_srv_time.text = ld_srv_string
             else:
                 stat_srv_time = SubElement(srv_times, 'servicetime')
@@ -220,20 +231,25 @@ def _set_algorithm_name(alg_elem: Element, sn: NetworkStruct, method: str) -> No
                 has_multi_server = True
                 break
 
-    if method == 'jmva.recal':
-        alg_elem.set('name', 'RECAL')
+    # MATLAB writeJMVA.m refuses these six on a multi-server model, since the
+    # JMVA implementations of them are single-server only. has_multi_server was
+    # computed here and never read, so the model was handed over regardless and
+    # the algorithm answered for a station population it cannot represent.
+    _SINGLE_SERVER_ONLY = {
+        'jmva.recal': 'RECAL',
+        'jmva.chow': 'Chow',
+        'jmva.bs': 'Bard-Schweitzer',
+        'jmva.amva': 'Bard-Schweitzer',
+        'jmva.aql': 'AQL',
+        'jmva.lin': 'Linearizer',
+        'jmva.dmlin': 'De Souza-Muntz Linearizer',
+    }
+    if method in _SINGLE_SERVER_ONLY:
+        if has_multi_server:
+            raise ValueError('%s does not support multi-server stations.' % method)
+        alg_elem.set('name', _SINGLE_SERVER_ONLY[method])
     elif method == 'jmva.comom':
         alg_elem.set('name', 'CoMoM')
-    elif method == 'jmva.chow':
-        alg_elem.set('name', 'Chow')
-    elif method in ('jmva.bs', 'jmva.amva'):
-        alg_elem.set('name', 'Bard-Schweitzer')
-    elif method == 'jmva.aql':
-        alg_elem.set('name', 'AQL')
-    elif method == 'jmva.lin':
-        alg_elem.set('name', 'Linearizer')
-    elif method == 'jmva.dmlin':
-        alg_elem.set('name', 'De Souza-Muntz Linearizer')
     else:
         alg_elem.set('name', 'MVA')
 

@@ -219,8 +219,6 @@ class ParamEstimator:
             est_val = self._estimator_mcmc(nodes)
         elif method == 'mle':
             est_val = self._estimator_mle(nodes)
-        elif method == 'rnn':
-            est_val = self._estimator_rnn(nodes)
         elif method == 'mlps':
             est_val = self._estimator_mlps(nodes)
         elif method == 'fmlps':
@@ -229,28 +227,52 @@ class ParamEstimator:
             est_val = self._estimator_qmle(nodes)
         elif method == 'gibbs':
             est_val = self._estimator_gibbs(nodes)
+        elif method == 'vi':
+            est_val = self._estimator_variational(nodes)
         else:
             raise ValueError(f'Unknown inference method: {method}.')
 
         # Update model parameters
         sn = (self.model.refreshStruct(), self.model.getStruct())[1]
         classes = self.model.getClasses()
+        est_val = self._as_estimate_matrix(est_val, len(nodes), int(sn.nclasses))
         for n_idx in range(len(nodes)):
             nd = nodes[n_idx]
             if isinstance(nd, (Source, Sink)):
                 continue
             for r in range(sn.nclasses):
-                if isinstance(est_val, np.ndarray) and est_val.ndim == 2:
-                    val = est_val[n_idx, r]
-                elif isinstance(est_val, np.ndarray) and est_val.ndim == 1:
-                    val = est_val[r]
-                else:
-                    val = float(est_val)
+                val = est_val[n_idx, r] if est_val.ndim == 2 else est_val[r]
                 if not np.isnan(val) and val > 0:
                     nd.setService(classes[r], Exp.fitMean(val))
         self.model.reset()
 
         return est_val
+
+    def _as_estimate_matrix(self, est_val, n_nodes, n_classes):
+        """Put an estimator's output into the one shape callers may rely on.
+
+        The estimators disagree on what they hand back -- `ubo` returns a
+        (nodes x classes) matrix, `ekf` and `mle` a per-class vector, and some
+        report a flat vector over EVERY node of the model -- and every caller
+        then has to guess. MATLAB and the JAR both settle this by returning a
+        (nodes x classes) matrix from `estimateAt`, so that is the shape imposed
+        here, with one concession to Python: a single requested node yields the
+        per-class vector directly, which is what `estVal[r]` in the examples
+        reads and what MATLAB's own `estVal(r)` linear indexing amounts to.
+        """
+        arr = np.asarray(est_val, dtype=float).ravel()
+        if arr.size == n_nodes * n_classes:
+            rows = n_nodes
+        elif n_classes > 0 and arr.size % n_classes == 0:
+            # an estimator that reports every node of the model, not only the
+            # requested ones; keep all of its rows
+            rows = arr.size // n_classes
+        else:
+            raise ValueError(
+                'estimator returned %d values, which is not a whole number of '
+                'per-class rows (%d classes)' % (arr.size, n_classes))
+        matrix = arr.reshape(rows, n_classes)
+        return matrix[0] if rows == 1 else matrix
 
     def _build_closed_equivalent_for_ps(self, node):
         """Build a closed equivalent model for open/mixed networks."""
@@ -332,10 +354,6 @@ class ParamEstimator:
         from line_solver.inference.api._estimators import estimator_mle
         return estimator_mle(self, nodes)
 
-    def _estimator_rnn(self, nodes):
-        from line_solver.inference.api._estimators import estimator_rnn
-        return estimator_rnn(self, nodes)
-
     def _estimator_mlps(self, nodes):
         from line_solver.inference.api._estimators import estimator_mlps
         return estimator_mlps(self, nodes)
@@ -351,6 +369,10 @@ class ParamEstimator:
     def _estimator_gibbs(self, nodes):
         from line_solver.inference.api._estimators import estimator_gibbs
         return estimator_gibbs(self, nodes)
+
+    def _estimator_variational(self, nodes):
+        from line_solver.inference.api._estimators import estimator_variational
+        return estimator_variational(self, nodes)
 
     @staticmethod
     def default_options():
@@ -373,11 +395,11 @@ class ParamEstimator:
             'ekf': 'RespT (per-class) + Util (aggregate). Sequential/recursive estimation.',
             'mcmc': 'QLen (aggregate). Gibbs sampling with MCMC. Open/mixed via closed equivalence.',
             'mle': 'ArvR (per-class) + RespT (per-class) + Util (aggregate)',
-            'rnn': 'QLen (per-class, trace format). Transient queue-length traces.',
             'mlps': 'ArvR (per-class, trace) + RespT (per-class, trace). PS stations only.',
             'fmlps': 'ArvR (per-class, trace) + RespT (per-class, trace). PS stations only.',
             'qmle': 'QLen (per-class). Open/mixed via closed equivalence.',
             'gibbs': 'ArvR (per-class, trace) + RespT (per-class, trace) + Tput (per-class). Gibbs sampling.',
+            'vi': 'QLen (per-class, timeseries) at every station. Variational inference over transition counts; noisy readings, Gamma posteriors.',
         }
         return descs.get(method, f'Unknown method: {method}')
 

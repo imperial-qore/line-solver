@@ -19,8 +19,12 @@ sched = sn.sched;
 M = sn.nstations;
 K = sn.nchains;
 
-if ~sn_has_product_form(sn)
-    line_error(mfilename, 'MVAC requires a product-form model.');
+% One predicate for the gate and the run: SolverMVA.supportsModelMethod asks
+% the same question before the report offers 'mvac', so a listed row is a row
+% that runs and a refusal reads the same either way.
+[mvacOk, mvacReason] = SolverMVA.supportsMvac(sn, 'mvac');
+if ~mvacOk
+    line_error(mfilename, mvacReason);
 end
 if any(isinf(Nchain))
     line_error(mfilename, 'MVAC supports closed models only; use method ''exact'' for open/mixed networks.');
@@ -39,9 +43,6 @@ for ist=1:M
         otherwise
             line_error(mfilename, sprintf('MVAC does not support %s scheduling.',SchedStrategy.toText(sched(ist))));
     end
-end
-if any(nservers(qSET) ~= 1)
-    line_error(mfilename, 'MVAC supports single-server (SSFR) queues only; use method ''exact'' for multiserver stations.');
 end
 
 Uchain = zeros(M,K); Tchain = zeros(M,K); C = zeros(1,K); Wchain = zeros(M,K); Qchain = zeros(M,K);

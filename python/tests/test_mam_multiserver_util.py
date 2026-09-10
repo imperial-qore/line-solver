@@ -39,7 +39,7 @@ def _mmc(lam, mu, c, sched):
     (1.5, 1.0, 2, SchedStrategy.PS),     # rho = 0.75
     (0.6, 1.0, 1, SchedStrategy.PS),     # single server: must be unchanged
     (0.6, 1.0, 1, SchedStrategy.FCFS),
-])
+], ids=['ps-c3', 'fcfs-c3', 'ps-c2', 'ps-c1', 'fcfs-c1'])
 def test_mam_multiserver_util_follows_utilization_law(lam, mu, c, sched):
     m = _mmc(lam, mu, c, sched)
     t = SolverMAM(m, verbose=False).getAvgTable()
@@ -55,7 +55,7 @@ def test_mam_multiserver_util_follows_utilization_law(lam, mu, c, sched):
     (1.2, 1.0, 3, SchedStrategy.PS),
     (1.2, 1.0, 3, SchedStrategy.FCFS),
     (1.5, 1.0, 2, SchedStrategy.PS),
-])
+], ids=['ps-c3', 'fcfs-c3', 'ps-c2'])
 def test_mam_agrees_with_mva_on_multiserver(lam, mu, c, sched):
     """MVA is exact for the product-form M/M/c and is an independent recursion."""
     a = SolverMAM(_mmc(lam, mu, c, sched), verbose=False).getAvgTable()

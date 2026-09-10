@@ -45,7 +45,7 @@ public class MamArrivalScvTest {
         SolverMAM s16 = new SolverMAM(build(16.0), "verbose", VerboseLevel.SILENT);
         s16.getAvg();
         double L16 = s16.result.QN.get(1, 0);
-        assertEquals(2.08423, L2, 5e-2);  // CTMC exact
+        assertEquals(2.08423, L2, 1e-3);  // CTMC exact
         assertEquals(4.62730, L16, 2e-1); // CTMC exact
     }
 }

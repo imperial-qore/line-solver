@@ -13,14 +13,22 @@ import jline.io.Ret;
 import jline.io.Ret.DistributionResult;
 import jline.io.Ret.ProbabilityResult;
 import jline.io.Ret.SampleResult;
+import jline.lang.FeatureSet;
+import jline.lang.Model;
 import jline.lang.Network;
 import jline.lang.NetworkStruct;
+import jline.lang.constant.SolverType;
+import jline.api.sn.SnJoinDroprate;
+import jline.api.sn.SnJoinQuorum;
 import jline.lang.constant.NodeType;
 import jline.lang.constant.SchedStrategy;
 import jline.lang.nodeparam.CacheNodeParam;
 import jline.lang.JobClass;
 import jline.lang.processes.Distribution;
 import jline.api.fj.FJ_tail_forktail;
+import jline.api.fj.FJ_tail_ordstat;
+import jline.io.MAPQN2RENV;
+import jline.solvers.env.SolverENV;
 import jline.io.LineCitations;
 import jline.lang.processes.DistributionScaling;
 import jline.lang.nodes.Cache;
@@ -41,6 +49,7 @@ import jline.util.matrix.Matrix;
 
 import javax.xml.parsers.ParserConfigurationException;
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -54,6 +63,7 @@ import static jline.api.pfqn.sens.Pfqn_sens_linearizer.pfqn_sens_linearizer;
 import jline.api.pfqn.sens.Pfqn_sens_mom;
 import static jline.api.pfqn.sens.Pfqn_sens_mom.pfqn_sens_mom;
 import static jline.api.pfqn.sens.Pfqn_sens_mva.pfqn_sens_mva;
+import jline.api.pfqn.mva.Pfqn_momlin;
 import static jline.api.pfqn.sens.Pfqn_sens_mvaldmx.pfqn_sens_mvaldmx;
 import static jline.api.pfqn.sens.Pfqn_sens_respt.pfqn_sens_respt;
 import static jline.api.sn.SnGetArvRFromTput.snGetArvRFromTput;
@@ -117,6 +127,10 @@ public abstract class NetworkSolver extends Solver {
     protected NetworkSolver(Network model, String name, SolverOptions options) {
         super(name, options);
         this.model = model;
+        // NetworkSolver.model shadows Solver.model, and the two-argument Solver
+        // constructor never sets the latter: without this the base
+        // supportsModelMethod dereferences a null model.
+        super.model = model;
         // Allow null model for LayeredNetwork-based solvers (e.g., SolverLDES with LQN)
         if (model != null) {
             if (model.getNumberOfNodes() == 0) {
@@ -765,6 +779,243 @@ public abstract class NetworkSolver extends Solver {
         return false;
     }
 
+
+    /**
+     * Should this model be solved through the random-environment image of its
+     * MAP/MMPP processes instead of natively?
+     *
+     * <p>True when the ONLY features the resolved method cannot consume are
+     * non-renewal processes, i.e. the model becomes supported once each
+     * modulated process is frozen into an exponential stage (see
+     * {@link #mapEnvApprox(SolverOptions)} and jline.io.MAPQN2RENV). A model
+     * that also uses some other unsupported feature keeps its original
+     * rejection, since the environment image would not make it solvable.
+     *
+     * <p>Mirrors matlab @NetworkSolver/NetworkSolver.m needsMapEnv.
+     *
+     * @param options the solver options in force
+     * @return true when the fallback should run in place of runAnalyzer
+     */
+    public boolean needsMapEnv(SolverOptions options) {
+        if (!(this.model instanceof Network)) {
+            return false;
+        }
+        if (options == null || options.config == null || options.config.map_env == null
+                || options.config.map_env.equalsIgnoreCase("off")) {
+            return false;
+        }
+        if (this instanceof jline.solvers.ba.SolverBA) {
+            // A bound request must be answered with a bound: the environment image
+            // is an approximation of the model, so its bounds do not bracket the
+            // original one.
+            return false;
+        }
+        FeatureSet featSupported = getMethodFeatureSet(resolveMethod(options));
+        if (featSupported == null) {
+            // The solver does not diverge per method: fall back to its declared
+            // solver-level envelope, the static getFeatureSet(). A solver that
+            // has neither (e.g. AUTO, LN) is never intercepted.
+            try {
+                featSupported = (FeatureSet) this.getClass().getMethod("getFeatureSet").invoke(null);
+            } catch (Exception e) {
+                return false;
+            }
+        }
+        if (featSupported == null) {
+            return false;
+        }
+        List<String> unsupported = FeatureSet.unsupportedFeatures(
+                featSupported, ((Network) this.model).getUsedLangFeatures());
+        if (unsupported.isEmpty()) {
+            return false;
+        }
+        for (String feat : unsupported) {
+            if (!feat.equals("MAP") && !feat.equals("MMPP2") && !feat.equals("MMAP")) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Solver-agnostic random-environment approximation of a network with
+     * MAP/MMPP/MMAP arrival or service processes, for solvers that cannot
+     * consume a non-renewal process natively.
+     *
+     * <p>MAPQN2RENV.map2renv turns each modulated process into a set of
+     * environment stages in which that process is exponential with the
+     * phase-conditional intensity, and SolverENV recombines the stages with the
+     * calling solver as the stage solver. Three recombinations exist and which
+     * ones are reachable is decided by the solver's transient capability:
+     * 'meanfield' carries the queue state across a phase switch but needs
+     * getTranAvg on the stage solver, while 'dec' (quasi-stationary limit) and
+     * 'avg' (rate-averaged limit) use steady state alone.
+     * options.config.map_env_method selects one; 'auto' takes 'meanfield'
+     * whenever the solver supports transient analysis and otherwise compares the
+     * mean stage holding time with the model relaxation time.
+     *
+     * <p>Mirrors matlab @NetworkSolver/mapEnvApprox.m.
+     *
+     * @param options the solver options in force
+     */
+    public void mapEnvApprox(SolverOptions options) {
+        long T0 = System.nanoTime();
+        Network net = (Network) this.model;
+        MAPQN2RENV.RenvImage image = MAPQN2RENV.map2renvImage(net, options);
+
+        String envMethod = options.config.map_env_method == null ? "auto" : options.config.map_env_method;
+        if (envMethod.equalsIgnoreCase("auto")) {
+            envMethod = supportsTransientAnalysis() ? "meanfield" : selectEnvLimit(net, image);
+        }
+        if (!envMethod.equalsIgnoreCase("dec") && !envMethod.equalsIgnoreCase("avg")
+                && !envMethod.equalsIgnoreCase("meanfield")) {
+            line_error(mfilename(new Object() {
+            }), "options.config.map_env_method='" + envMethod + "' is not a supported environment recombination. "
+                    + "Use 'meanfield', 'dec', 'avg' or 'auto'.");
+        }
+        if (envMethod.equalsIgnoreCase("meanfield") && !supportsTransientAnalysis()) {
+            line_error(mfilename(new Object() {
+            }), "The mean-field environment coupling integrates each stage over its sojourn, so it needs transient "
+                    + "averages from the stage solver, which " + this.getClass().getSimpleName() + " does not "
+                    + "produce. Use options.config.map_env_method='dec' or 'avg'.");
+        }
+
+        // Stage solvers are instances of the calling solver. The recursion guard
+        // is redundant on a correct transformation (no stage model carries a MAP)
+        // but keeps a mis-detected process from re-entering this driver.
+        SolverOptions innerOptions = options.copy();
+        innerOptions.config.map_env = "off";
+        if (envMethod.equalsIgnoreCase("meanfield")) {
+            // The stage transients are weighted by the sojourn density over the
+            // integration grid, so the horizon must cover the sojourn distribution;
+            // beyond it the weights vanish and the extra span is inert.
+            innerOptions.timespan = new double[]{0, 20 * image.maxHoldTime};
+        }
+        Model[] stageModels = image.env.getStageModels();
+        Solver[] stageSolvers = new Solver[image.nstages];
+        for (int e = 0; e < image.nstages; e++) {
+            try {
+                stageSolvers[e] = (Solver) this.getClass()
+                        .getConstructor(Network.class, SolverOptions.class)
+                        .newInstance((Network) stageModels[e], innerOptions);
+            } catch (Exception ex) {
+                throw new RuntimeException("Cannot instantiate the stage solver "
+                        + this.getClass().getSimpleName() + ": " + ex.getMessage(), ex);
+            }
+        }
+
+        SolverOptions envOptions = new SolverOptions(SolverType.ENV);
+        envOptions.method = envMethod.equalsIgnoreCase("meanfield") ? "default" : envMethod.toLowerCase();
+        envOptions.verbose = options.verbose;
+        envOptions.iter_max = options.iter_max;
+        envOptions.iter_tol = options.iter_tol;
+
+        SolverENV envSolver = new SolverENV(image.env, stageSolvers, envOptions);
+        envSolver.getEnsembleAvg();
+        SolverResult envResult = envSolver.result;
+
+        NetworkStruct sn = net.getStruct(false);
+        int M = sn.nstations;
+        int K = sn.nclasses;
+        Matrix QN = envResult.QN;
+        Matrix UN = envResult.UN;
+        Matrix TN = envResult.TN;
+        Matrix RN = new Matrix(M, K);
+        Matrix CN = new Matrix(1, K);
+        Matrix XN = new Matrix(1, K);
+        for (int k = 0; k < K; k++) {
+            double totQ = 0;
+            for (int i = 0; i < M; i++) {
+                if (TN.get(i, k) > 0) {
+                    RN.set(i, k, QN.get(i, k) / TN.get(i, k));
+                }
+                totQ += QN.get(i, k);
+            }
+            XN.set(0, k, TN.get((int) sn.refstat.get(k, 0), k));
+            if (XN.get(0, k) > 0) {
+                CN.set(0, k, totQ / XN.get(0, k));
+            }
+        }
+        Matrix AN = snGetArvRFromTput(sn, TN, this.avgHandles.T);
+        Matrix WN = snGetResidTFromRespT(sn, RN, this.avgHandles.W);
+
+        // The system metrics read the reference station, which for an open class
+        // is the Source. A stage solver whose transient does not report Source
+        // throughput (SolverFluid) leaves it at zero under the mean-field
+        // coupling, and the zero propagates into XN and CN. Report that rather
+        // than substituting the arrival rate, which would hide whose metric is
+        // missing.
+        StringBuilder openZero = new StringBuilder();
+        for (int k = 0; k < K; k++) {
+            if (!Double.isInfinite(sn.njobs.get(k)) || XN.get(0, k) != 0) {
+                continue;
+            }
+            double totQ = 0;
+            for (int i = 0; i < M; i++) {
+                totQ += QN.get(i, k);
+            }
+            if (totQ > 0) {
+                openZero.append(openZero.length() > 0 ? ", " : "").append(k + 1);
+            }
+        }
+        if (openZero.length() > 0) {
+            line_warning(mfilename(new Object() {
+            }), "The " + envMethod.toLowerCase() + " environment coupling returned no reference-station throughput "
+                    + "for open class(es) " + openZero + ", so their system throughput and system response time are "
+                    + "reported as zero. This stage solver does not measure Source throughput in transient mode; use "
+                    + "options.config.map_env_method='dec' or 'avg' for system-level metrics.");
+        }
+
+        double runtime = (System.nanoTime() - T0) / 1000000000.0;
+        String actualmethod = "env." + envMethod.toLowerCase();
+        String reported = "default".equals(options.method) ? "default/" + actualmethod : options.method;
+        setAvgResults(QN, UN, RN, TN, AN, WN, CN, XN, runtime, reported, 1);
+
+        line_warning(mfilename(new Object() {
+        }), "This solver has no native support for the non-renewal (MAP/MMPP) processes of this model; the reported "
+                + "averages come from its " + envMethod.toLowerCase() + " random-environment approximation ("
+                + image.nstages + " stages, " + (image.isMMPP ? "exact-modulation" : "intensity-matched")
+                + " image). Set options.config.map_env='off' to reject the model instead.");
+    }
+
+    /**
+     * Timescale test: compare the mean stage holding time of the environment
+     * with the relaxation time of the model, taken as the time the slowest
+     * station needs to clear the jobs it can hold. A stage that outlives the
+     * relaxation time lets each stage reach its own steady state, which is the
+     * quasi-stationary regime ('dec'); a stage that expires first leaves the
+     * model responding to the mean rate only, which is the rate-averaged regime
+     * ('avg'). The closed population enters the relaxation time because a closed
+     * queue drains in N services.
+     */
+    private String selectEnvLimit(Network net, MAPQN2RENV.RenvImage image) {
+        if (image.maxHoldTime <= 0) {
+            return "dec"; // absorbing environment: every stage is its own steady state
+        }
+        NetworkStruct sn = net.getStruct(false);
+        double minRate = Inf;
+        for (int i = 0; i < sn.nstations; i++) {
+            for (int k = 0; k < sn.nclasses; k++) {
+                double rate = sn.rates.get(i, k);
+                if (!Double.isNaN(rate) && !Double.isInfinite(rate) && rate > 0) {
+                    minRate = Math.min(minRate, rate);
+                }
+            }
+        }
+        if (Double.isInfinite(minRate)) {
+            return "dec";
+        }
+        double njobs = 0;
+        for (int k = 0; k < sn.nclasses; k++) {
+            double nk = sn.njobs.get(k);
+            if (!Double.isInfinite(nk) && !Double.isNaN(nk)) {
+                njobs += nk;
+            }
+        }
+        double tauSys = (1 + njobs) / minRate;
+        return image.maxHoldTime >= tauSys ? "dec" : "avg";
+    }
+
     public SolverResult getAvg() {
 
         if (this.avgHandles == null || this.avgHandles.Q == null || this.avgHandles.U == null || this.avgHandles.R == null ||
@@ -782,20 +1033,38 @@ public abstract class NetworkSolver extends Solver {
         }
 
         if (!this.hasAvgResults() || !this.options.cache) {
+            // Solver console: getAvg is the entry point every accessor of the
+            // averages goes through, so the narrated run is opened here and
+            // closed in the finally below -- on an exception too, so a failed
+            // analysis still reports what it had reached.
+            jline.io.LineConsole.beginRun(this, this.options);
             try {
-                runAnalyzer();
+                // A non-renewal (MAP/MMPP/MMAP) process that the resolved method
+                // cannot consume is solved through its random-environment image
+                // rather than rejected; every other unsupported feature keeps its
+                // rejection in runAnalyzer. see _kb/05-solvers-overview.md
+                checkDeclaredMethod(this.options);
+                if (needsMapEnv(this.options)) {
+                    mapEnvApprox(this.options);
+                } else {
+                    runAnalyzer();
+                }
+            // the cause is carried through: re-reporting only getMessage() drops
+            // the stack trace of where the failure actually arose
             } catch (IllegalAccessException e) {
                 line_error(mfilename(new Object() {
-                }), "IllegalAccessException upon running runAnalyzer(): " + e.getMessage());
+                }), "IllegalAccessException upon running runAnalyzer(): " + e.getMessage(), e);
             } catch (ParserConfigurationException e) {
                 line_error(mfilename(new Object() {
-                }), "ParserConfigurationException upon running runAnalyzer(): " + e.getMessage());
+                }), "ParserConfigurationException upon running runAnalyzer(): " + e.getMessage(), e);
             } catch (IOException e) {
                 line_error(mfilename(new Object() {
-                }), "IOException upon running runAnalyzer(): " + e.getMessage());
+                }), "IOException upon running runAnalyzer(): " + e.getMessage(), e);
             } catch (RuntimeException e) {
                 line_error(mfilename(new Object() {
-                }), "RuntimeException upon running runAnalyzer(): " + e.getMessage());
+                }), "RuntimeException upon running runAnalyzer(): " + e.getMessage(), e);
+            } finally {
+                jline.io.LineConsole.closeRun(this);
             }
             if (!this.hasAvgResults()) {
                 line_error(mfilename(new Object() {
@@ -925,12 +1194,48 @@ public abstract class NetworkSolver extends Solver {
                             && sn.nodetype.get(nodeIdx) == NodeType.Source) {
                         continue; // source station
                     }
+                    // A STATION WITH A BINDING BUFFER CANNOT BE UNSTABLE, however
+                    // heavily it is offered: the buffer bounds the queue and the
+                    // excess is blocked or lost. rho = T/(c*rate) reaches exactly 1
+                    // at such a station -- that is what a saturated server WITH a
+                    // finite buffer looks like -- so without this the queue length
+                    // of an M/M/1/K in overload is reported as Inf while the
+                    // solver's own answer is the cap. CTMC escapes it only because
+                    // its carried throughput lands a hair below the service rate.
+                    if (hasBoundedBuffer(sn, i)) {
+                        continue;
+                    }
+                    // A STATION CUSTOMERS ABANDON CANNOT BE UNSTABLE EITHER, and
+                    // for the same reason: reneging bounds the queue however
+                    // heavily it is offered, the excess leaving instead of
+                    // accumulating. rho = T/(c*rate) reaches exactly 1 there --
+                    // that is what a saturated server WITH abandonment looks
+                    // like -- so without this the Erlang A queue length that
+                    // qsys_erlanga and qsys_ggisgi_fluid compute exactly is
+                    // overwritten with Inf.
+                    if (hasReneging(sn, i)) {
+                        continue;
+                    }
                     // Batch (bulk) service station: sn.rates holds the per-event
                     // service rate, not the per-job capacity rate*E[batch], so the
                     // rho = T/(c*rate) test spuriously reads >= 1. The measured
                     // queue length/response time are trusted instead of capping.
                     if (isBatchServiceStation(sn, i)) {
                         continue;
+                    }
+                    // A load-dependent station serves faster than its nominal
+                    // rate; without the peak scaling the test reads the rate at
+                    // population one and calls a stable station saturated (e.g.
+                    // the discrete-time p(n)=p*min(n,s) server of Daduna's
+                    // example 2.10).
+                    double lldpeak = 1.0;
+                    if (sn.lldscaling != null && sn.lldscaling.getNumRows() > i) {
+                        for (int k = 0; k < sn.lldscaling.getNumCols(); k++) {
+                            double v = sn.lldscaling.get(i, k);
+                            if (!Double.isNaN(v) && !isInf(v) && v > lldpeak) {
+                                lldpeak = v;
+                            }
+                        }
                     }
                     double[] rho = new double[K];
                     double rhoOpen = 0.0;
@@ -940,7 +1245,7 @@ public abstract class NetworkSolver extends Solver {
                         double rate = sn.rates.get(i, r);
                         double t = TNclass.get(i, r);
                         if (rate > 0 && t > 0) {
-                            rho[r] = t / (c * rate);
+                            rho[r] = t / (c * lldpeak * rate);
                             rhoTot += rho[r];
                             if (isInf(sn.njobs.get(0, r))) {
                                 rhoOpen += rho[r];
@@ -1098,6 +1403,15 @@ public abstract class NetworkSolver extends Solver {
      * @return table containing station metrics organized by chains
      */
     public NetworkAvgChainTable getAvgChainTable() {
+        return jline.io.LineResultRecorder.around(this, "chain", () -> getAvgChainTableImpl());
+    }
+
+    /**
+     * Body of {@link #getAvgChainTable()}, split out so {@link jline.io.LineResultRecorder}
+     * sees what the getter RETURNED. The JAVA cross-codebase parity row is
+     * measured from that rather than from what an example printed.
+     */
+    protected NetworkAvgChainTable getAvgChainTableImpl() {
 
         this.sn = model.getStruct(true);
 
@@ -1279,6 +1593,15 @@ public abstract class NetworkSolver extends Solver {
      * @return table containing station metrics organized by chains
      */
     public NetworkAvgChainTable getAvgChainTable(boolean keepDisabled) {
+        return jline.io.LineResultRecorder.around(this, "chain", () -> getAvgChainTableImpl(keepDisabled));
+    }
+
+    /**
+     * Body of {@link #getAvgChainTable(boolean)}, split out so {@link jline.io.LineResultRecorder}
+     * sees what the getter RETURNED. The JAVA cross-codebase parity row is
+     * measured from that rather than from what an example printed.
+     */
+    protected NetworkAvgChainTable getAvgChainTableImpl(boolean keepDisabled) {
         // Modify the implementation to support keepDisabled
         this.sn = model.getStruct(true);
         this.avgHandles = model.getAvgHandles();
@@ -1798,6 +2121,15 @@ public abstract class NetworkSolver extends Solver {
      * @return table containing node-level metrics organized by job chains
      */
     public NetworkAvgNodeChainTable getAvgNodeChainTable() {
+        return jline.io.LineResultRecorder.around(this, "nodechain", () -> getAvgNodeChainTableImpl());
+    }
+
+    /**
+     * Body of {@link #getAvgNodeChainTable()}, split out so {@link jline.io.LineResultRecorder}
+     * sees what the getter RETURNED. The JAVA cross-codebase parity row is
+     * measured from that rather than from what an example printed.
+     */
+    protected NetworkAvgNodeChainTable getAvgNodeChainTableImpl() {
 
         this.sn = model.getStruct(true);
 
@@ -1979,6 +2311,15 @@ public abstract class NetworkSolver extends Solver {
      * @return table containing node-level metrics organized by job chains
      */
     public NetworkAvgNodeChainTable getAvgNodeChainTable(boolean keepDisabled) {
+        return jline.io.LineResultRecorder.around(this, "nodechain", () -> getAvgNodeChainTableImpl(keepDisabled));
+    }
+
+    /**
+     * Body of {@link #getAvgNodeChainTable(boolean)}, split out so {@link jline.io.LineResultRecorder}
+     * sees what the getter RETURNED. The JAVA cross-codebase parity row is
+     * measured from that rather than from what an example printed.
+     */
+    protected NetworkAvgNodeChainTable getAvgNodeChainTableImpl(boolean keepDisabled) {
         // Implement keepDisabled functionality
         this.sn = model.getStruct(true);
         this.avgHandles = model.getAvgHandles();
@@ -2387,6 +2728,15 @@ public abstract class NetworkSolver extends Solver {
      * @return table containing node-level metrics for each class
      */
     public NetworkAvgNodeTable getAvgNodeTable() {
+        return jline.io.LineResultRecorder.around(this, "node", () -> getAvgNodeTableImpl());
+    }
+
+    /**
+     * Body of {@link #getAvgNodeTable()}, split out so {@link jline.io.LineResultRecorder}
+     * sees what the getter RETURNED. The JAVA cross-codebase parity row is
+     * measured from that rather than from what an example printed.
+     */
+    protected NetworkAvgNodeTable getAvgNodeTableImpl() {
 
         this.sn = model.getStruct(true);
 
@@ -2583,6 +2933,15 @@ public abstract class NetworkSolver extends Solver {
      * @return table containing node-level metrics for each class
      */
     public NetworkAvgNodeTable getAvgNodeTable(boolean keepDisabled) {
+        return jline.io.LineResultRecorder.around(this, "node", () -> getAvgNodeTableImpl(keepDisabled));
+    }
+
+    /**
+     * Body of {@link #getAvgNodeTable(boolean)}, split out so {@link jline.io.LineResultRecorder}
+     * sees what the getter RETURNED. The JAVA cross-codebase parity row is
+     * measured from that rather than from what an example printed.
+     */
+    protected NetworkAvgNodeTable getAvgNodeTableImpl(boolean keepDisabled) {
         // Implement keepDisabled functionality
         this.sn = model.getStruct(true);
         this.avgHandles = model.getAvgHandles();
@@ -2696,13 +3055,22 @@ public abstract class NetworkSolver extends Solver {
      * @return cache performance table
      */
     public NetworkAvgCacheTable getAvgCacheTable() {
+        return jline.io.LineResultRecorder.around(this, "cache", () -> getAvgCacheTableImpl());
+    }
+
+    /**
+     * Body of {@link #getAvgCacheTable()}, split out so {@link jline.io.LineResultRecorder}
+     * sees what the getter RETURNED. The JAVA cross-codebase parity row is
+     * measured from that rather than from what an example printed.
+     */
+    protected NetworkAvgCacheTable getAvgCacheTableImpl() {
         this.sn = model.getStruct(true);
         int K = sn.nclasses;
 
         List<Double> List_ = new ArrayList<>(), ListCap = new ArrayList<>(), Items = new ArrayList<>();
         List<Double> HitProb = new ArrayList<>(), DelayedHitProb = new ArrayList<>(), MissProb = new ArrayList<>();
         List<Double> HitRate = new ArrayList<>(), DelayedHitRate = new ArrayList<>(), MissRate = new ArrayList<>();
-        List<Double> ArvR = new ArrayList<>(), Latency = new ArrayList<>();
+        List<Double> ArvR = new ArrayList<>(), Latency = new ArrayList<>(), Cost = new ArrayList<>();
         List<String> nodeName = new ArrayList<>(), className = new ArrayList<>();
 
         boolean anyCache = false;
@@ -2727,6 +3095,13 @@ public abstract class NetworkSolver extends Solver {
                 Matrix hitp = cache.getHitRatio(), missp = cache.getMissRatio();
                 Matrix dhitp = cache.getDelayedHitRatio(), lat = cache.getResidT();
                 Matrix hitplist = cache.getHitRatioByList();
+                Matrix listcost = cache.getListCost();
+                boolean haveCost = listcost != null && !listcost.isEmpty();
+                double totcost = Double.NaN;
+                if (haveCost) {
+                    totcost = 0;
+                    for (int l = 0; l < listcost.length(); l++) totcost += listcost.get(l);
+                }
                 for (int r = 0; r < K; r++) {
                     if (hitclass == null || r >= hitclass.length() || hitclass.get(r) <= 0) continue;
                     double ph = nanGetAt(hitp, r), pm = nanGetAt(missp, r), pd = nanGetAt(dhitp, r);
@@ -2753,7 +3128,7 @@ public abstract class NetworkSolver extends Solver {
                     List_.add(0.0); ListCap.add(totcap); Items.add((double) nitems);
                     HitProb.add(ph); DelayedHitProb.add(pd); MissProb.add(pm);
                     HitRate.add(arvr * ph); DelayedHitRate.add(arvr * pd); MissRate.add(arvr * pm);
-                    ArvR.add(arvrRetr); Latency.add(latr);
+                    ArvR.add(arvrRetr); Latency.add(latr); Cost.add(totcost);
                     // per-list rows (only when a multi-list breakdown is available)
                     boolean haveList = h > 1 && hitplist != null && r < hitplist.getNumRows();
                     if (haveList) {
@@ -2768,7 +3143,9 @@ public abstract class NetworkSolver extends Solver {
                                 List_.add((double) (l + 1)); ListCap.add(capl); Items.add((double) nitems);
                                 HitProb.add(phl); DelayedHitProb.add(Double.NaN); MissProb.add(Double.NaN);
                                 HitRate.add(arvr * phl); DelayedHitRate.add(Double.NaN); MissRate.add(Double.NaN);
-                                ArvR.add(arvr); Latency.add(Double.NaN);
+                                double costl = (haveCost && l < listcost.length())
+                                        ? listcost.get(l) : Double.NaN;
+                                ArvR.add(arvr); Latency.add(Double.NaN); Cost.add(costl);
                             }
                         }
                     }
@@ -2777,7 +3154,7 @@ public abstract class NetworkSolver extends Solver {
         }
 
         NetworkAvgCacheTable t = new NetworkAvgCacheTable(List_, ListCap, Items, HitProb, DelayedHitProb,
-                MissProb, HitRate, DelayedHitRate, MissRate, ArvR, Latency);
+                MissProb, HitRate, DelayedHitRate, MissRate, ArvR, Latency, Cost);
         t.setOptions(this.options);
         t.setNodeNames(nodeName);
         t.setClassNames(className);
@@ -2793,16 +3170,35 @@ public abstract class NetworkSolver extends Solver {
      * Returns a table of item-level cache occupancy: one row per Cache node,
      * item and cache list (level), with the steady-state probability the item
      * resides in that list. Populated only where the solver computes a per-item
-     * distribution (exact cache algorithms and the delayed-hit retrieval algorithms).
+     * distribution (the NC/MVA cache algorithms, isolated and integrated alike,
+     * the delayed-hit retrieval algorithms, and SolverCTMC); the simulators leave
+     * it empty. SolverCTMC reports the TIME-WEIGHTED (time-stationary) law, a state
+     * reward of the exact stationary distribution, where the NC/MVA algorithms report
+     * the EMBEDDED (per-request) law of the cache-content chain seen at request
+     * instants; the two coincide only under PASTA, so they differ once service times
+     * distinguish hits from misses.
+     * DelayedHitQLen is the mean number of secondary requests waiting on the
+     * in-flight fetch of the item (exact under SolverCTMC, NaN where not computed)
+     * and DelayedHitQLenFull additionally counts the triggering request.
      * Port of matlab getAvgItemTable.m.
      *
      * @return item-level cache occupancy table
      */
     public NetworkAvgItemTable getAvgItemTable() {
+        return jline.io.LineResultRecorder.around(this, "item", () -> getAvgItemTableImpl());
+    }
+
+    /**
+     * Body of {@link #getAvgItemTable()}, split out so {@link jline.io.LineResultRecorder}
+     * sees what the getter RETURNED. The JAVA cross-codebase parity row is
+     * measured from that rather than from what an example printed.
+     */
+    protected NetworkAvgItemTable getAvgItemTableImpl() {
         this.sn = model.getStruct(true);
 
         List<Double> Item = new ArrayList<>(), List_ = new ArrayList<>();
         List<Double> ListCap = new ArrayList<>(), Prob = new ArrayList<>();
+        List<Double> DHQ = new ArrayList<>(), DHQF = new ArrayList<>();
         List<String> nodeName = new ArrayList<>();
 
         boolean anyCache = false;
@@ -2816,22 +3212,30 @@ public abstract class NetworkSolver extends Solver {
                 Matrix itemcap = np.itemcap;
                 int h = (itemcap == null) ? 0 : itemcap.length();
                 Matrix itemprob = cache.getItemProb();
-                if (itemprob == null || itemprob.isEmpty() || h == 0) continue;
-                int n = itemprob.getNumRows();
+                Matrix dhq = cache.getDelayedHitQLen();
+                Matrix dhqf = cache.getDelayedHitQLenFull();
+                boolean hasProb = itemprob != null && !itemprob.isEmpty();
+                boolean hasDhq = dhq != null && !dhq.isEmpty();
+                // A solver may compute the per-item occupancy (NC/MVA), the delayed-hit
+                // queue length (CTMC), or both; emit rows whenever either is available.
+                if (h == 0 || (!hasProb && !hasDhq)) continue;
+                int n = hasProb ? itemprob.getNumRows() : dhq.length();
                 for (int i = 0; i < n; i++) {
                     for (int l = 0; l < h; l++) {
-                        double p = (l + 1 < itemprob.getNumCols()) ? itemprob.get(i, l + 1) : Double.NaN;
+                        double p = (hasProb && l + 1 < itemprob.getNumCols()) ? itemprob.get(i, l + 1) : Double.NaN;
                         nodeName.add(sn.nodenames.get(ind));
                         Item.add((double) (i + 1));
                         List_.add((double) (l + 1));
                         ListCap.add(itemcap.get(l));
                         Prob.add(p);
+                        DHQ.add(nanGetAt(dhq, i));
+                        DHQF.add(nanGetAt(dhqf, i));
                     }
                 }
             }
         }
 
-        NetworkAvgItemTable t = new NetworkAvgItemTable(Item, List_, ListCap, Prob);
+        NetworkAvgItemTable t = new NetworkAvgItemTable(Item, List_, ListCap, Prob, DHQ, DHQF);
         t.setOptions(this.options);
         t.setNodeNames(nodeName);
         return t;
@@ -3200,6 +3604,15 @@ public abstract class NetworkSolver extends Solver {
      * @return the orbit table
      */
     public NetworkAvgOrbitTable getAvgOrbitTable() {
+        return jline.io.LineResultRecorder.around(this, "orbit", () -> getAvgOrbitTableImpl());
+    }
+
+    /**
+     * Body of {@link #getAvgOrbitTable()}, split out so {@link jline.io.LineResultRecorder}
+     * sees what the getter RETURNED. The JAVA cross-codebase parity row is
+     * measured from that rather than from what an example printed.
+     */
+    protected NetworkAvgOrbitTable getAvgOrbitTableImpl() {
         Matrix ON = getAvgOrbit();
         Matrix QN = getAvgQLen();
         Matrix TN = getAvgTput();
@@ -3266,13 +3679,27 @@ public abstract class NetworkSolver extends Solver {
         List<Double> lossRate = new ArrayList<Double>();
         List<Double> lossRatio = new ArrayList<Double>();
 
-        // Fork-Join quorum sibling-drop rate (LDES only): at a synchronizing Join
-        // the station identity LossRate = ArvR - Tput does not hold (Tput is in
-        // parent units, discarded siblings in sibling units), so on Join rows the
-        // explicit drop rate replaces ArvR - Tput. ArvR is already the offered
-        // sibling rate (flow balance over all forked siblings), so LossRatio =
-        // drop / ArvR.
+        // Fork-Join sibling-drop rate: at a synchronizing Join the station identity
+        // LossRate = ArvR - Tput does not hold, because the two rates are in
+        // different units - ArvR counts the SIBLINGS offered (N per parent job) and
+        // Tput the PARENT jobs released. Reading ArvR - Tput there charges (N-1)/N
+        // of the offered traffic as lost at EVERY join, standard joins included. On
+        // a Join row the drop rate therefore replaces ArvR - Tput unconditionally:
+        // the solver's own measurement when it supplies one (SolverLDES counts the
+        // discards on its sample path), otherwise SnJoinDroprate's ArvR - K*Tput,
+        // which is exact given the two rates. LossRatio stays drop / ArvR.
         Matrix dropJoin = this.result == null ? null : this.result.DropRateJoin;
+        boolean anyJoin = false;
+        for (int ind = 0; snl.nodetype != null && ind < snl.nodetype.size(); ind++) {
+            if (snl.nodetype.get(ind) == NodeType.Join) {
+                anyJoin = true;
+                break;
+            }
+        }
+        if (anyJoin && (dropJoin == null || dropJoin.getNumRows() != AN.getNumRows()
+                || dropJoin.getNumCols() != AN.getNumCols())) {
+            dropJoin = SnJoinDroprate.snJoinDroprate(snl, TN, AN);
+        }
 
         for (int ist = 0; ist < AN.getNumRows(); ist++) {
             if (ist >= snl.stations.size()) {
@@ -3286,11 +3713,16 @@ public abstract class NetworkSolver extends Solver {
                 double t = TN.get(ist, r);
                 double d = (dropJoin != null && ist < dropJoin.getNumRows()
                         && r < dropJoin.getNumCols()) ? dropJoin.get(ist, r) : 0.0;
+                int indIst = ist < snl.stationToNode.getNumElements()
+                        ? (int) snl.stationToNode.get(ist) : -1;
+                boolean isJoinRow = indIst >= 0 && snl.nodetype != null
+                        && indIst < snl.nodetype.size()
+                        && snl.nodetype.get(indIst) == NodeType.Join;
                 double lr;
                 double lc;
-                if (Double.isFinite(d) && d > 0) {
-                    lr = d;
-                    lc = d / a;
+                if (isJoinRow) {
+                    lr = Math.max(0.0, d);
+                    lc = lr / a;
                 } else {
                     lr = a - t;
                     lc = (a - t) / a;
@@ -3400,8 +3832,8 @@ public abstract class NetworkSolver extends Solver {
         return this.avgHandles.Q;
     }
 
-    // ========== Kotlin-style Alias Methods ==========
-    // Aliases for get* methods following Kotlin naming conventions
+    // ========== Alias Methods ==========
+    // Aliases for get* methods following property-style naming conventions
 
     /**
      * Computes and returns average residence times in queue (including service).
@@ -3774,6 +4206,15 @@ public abstract class NetworkSolver extends Solver {
      * @return table containing system response times and throughputs by chain
      */
     public NetworkAvgSysTable getAvgSysTable() {
+        return jline.io.LineResultRecorder.around(this, "sys", () -> getAvgSysTableImpl());
+    }
+
+    /**
+     * Body of {@link #getAvgSysTable()}, split out so {@link jline.io.LineResultRecorder}
+     * sees what the getter RETURNED. The JAVA cross-codebase parity row is
+     * measured from that rather than from what an example printed.
+     */
+    protected NetworkAvgSysTable getAvgSysTableImpl() {
 
         this.getAvgSys();
 
@@ -3955,6 +4396,15 @@ public abstract class NetworkSolver extends Solver {
      * @return table containing station-level metrics for each class
      */
     public NetworkAvgTable getAvgTable() {
+        return jline.io.LineResultRecorder.around(this, "avg", () -> getAvgTableImpl());
+    }
+
+    /**
+     * Body of {@link #getAvgTable()}, split out so {@link jline.io.LineResultRecorder}
+     * sees what the getter RETURNED. The JAVA cross-codebase parity row is
+     * measured from that rather than from what an example printed.
+     */
+    protected NetworkAvgTable getAvgTableImpl() {
 
         this.sn = model.getStruct(true);
 
@@ -4145,6 +4595,15 @@ public abstract class NetworkSolver extends Solver {
      * @return table containing station-level metrics for each class
      */
     public NetworkAvgTable getAvgTable(boolean keepDisabled) {
+        return jline.io.LineResultRecorder.around(this, "avg", () -> getAvgTableImpl(keepDisabled));
+    }
+
+    /**
+     * Body of {@link #getAvgTable(boolean)}, split out so {@link jline.io.LineResultRecorder}
+     * sees what the getter RETURNED. The JAVA cross-codebase parity row is
+     * measured from that rather than from what an example printed.
+     */
+    protected NetworkAvgTable getAvgTableImpl(boolean keepDisabled) {
         // Implement keepDisabled functionality
         this.sn = model.getStruct(true);
         this.avgHandles = model.getAvgHandles();
@@ -4820,6 +5279,56 @@ public abstract class NetworkSolver extends Solver {
     }
 
     /**
+     * Number of population points the exact moment recursion would visit, prod(N+1)
+     * over the closed classes.
+     */
+    private static double latticePoints(Matrix Np) {
+        double pts = 1.0;
+        for (int r = 0; r < Np.length(); r++) {
+            double nr = Np.get(r);
+            if (!isInf(nr) && nr > 0) {
+                pts *= (nr + 1.0);
+            }
+        }
+        return pts;
+    }
+
+    /**
+     * Whether the approximate queue-length branch is taken. The exact recursion is
+     * exponential in the number of CLASSES, not in the population, which is what the
+     * lattice gate guards against.
+     */
+    private static boolean useMomlinBranch(String momMethod, Matrix Np) {
+        if ("momlin".equals(momMethod)) {
+            return true;
+        }
+        if ("exact".equals(momMethod)) {
+            return false;
+        }
+        return latticePoints(Np) > 1e6;
+    }
+
+    /**
+     * Reshapes Pfqn_momlin's cross-station covariance tensor into the per-station
+     * R x R blocks that Pfqn_sens_mva returns, so both branches fill
+     * {@code NetworkMomentResult.QCov} identically.
+     */
+    private static Matrix[] momlinStationBlocks(Matrix[][] QCovFull, int M, int R) {
+        Matrix[] blocks = new Matrix[M];
+        for (int i = 0; i < M; i++) {
+            Matrix b = new Matrix(R, R);
+            for (int r = 0; r < R; r++) {
+                for (int s = 0; s < R; s++) {
+                    double v = 0.5 * (QCovFull[i][r].get(i, s) + QCovFull[i][s].get(i, r));
+                    b.set(r, s, v);
+                }
+            }
+            blocks[i] = b;
+        }
+        return blocks;
+    }
+
+    /**
      * Exact higher moments of the per-class performance measures, up to the second
      * moment.
      *
@@ -4901,10 +5410,44 @@ public abstract class NetworkSolver extends Solver {
      * @see #getAvgTable()
      */
     public NetworkMomentTable getMomentTable(int[] order) {
+        return getMomentTable(order, "");
+    }
+
+    /**
+     * Higher moments of the per-class performance measures, selecting how the
+     * queue-length moments are obtained on a closed single-server model.
+     *
+     * <p>{@code method} is "" (or null) for the default, "exact" to force the
+     * {@code Pfqn_sens_*} recursion however large the population lattice, and
+     * "momlin" to force {@code Pfqn_momlin}: the same covariance identity, but with
+     * the demand derivatives taken by linearizing the Schweitzer-Bard fixed point
+     * instead of the exact recursion. The default is exact unless the lattice
+     * prod(N+1) exceeds 1e6 points, in which case momlin is used and a warning is
+     * raised. The cost of the exact recursion is exponential in the number of
+     * CLASSES, not in the population, which is what the gate guards against. On the
+     * momlin branch BOTH moments carry the AMVA error, and
+     * {@code NetworkMomentResult.qlenMomlin} is non-null.</p>
+     *
+     * <p>{@code method} is ignored on multiserver, mixed and purely open models,
+     * which have no momlin path.</p>
+     *
+     * @param order  the set of moment orders to report; each an integer in 1..3
+     * @param method "", "exact" or "momlin"
+     * @return table of per-class queue-length and response-time moments
+     */
+    public NetworkMomentTable getMomentTable(int[] order, String method) {
         if (order == null || order.length == 0) {
             order = momentOrderUpTo(2, 3);
         }
         order = validateMomentOrder(order, 3);
+        String momMethod = (method == null) ? "" : method.toLowerCase();
+        if ("default".equals(momMethod)) {
+            momMethod = "";
+        }
+        if (!"".equals(momMethod) && !"exact".equals(momMethod) && !"momlin".equals(momMethod)) {
+            throw new RuntimeException("getMomentTable: unknown moment method '" + method
+                    + "'. Supported: \"\" (auto), 'exact', 'momlin'.");
+        }
         int maxOrder = order[order.length - 1];
 
         NetworkStruct snl = model.getStruct();
@@ -4953,7 +5496,22 @@ public abstract class NetworkSolver extends Solver {
                     break;
                 }
             }
-            if (allSingleServer) {
+            if (allSingleServer && useMomlinBranch(momMethod, Np)) {
+                // Approximate branch: the exact recursion is exponential in the
+                // number of classes, so above the lattice gate it is not run at
+                // all. Announced, never silent.
+                if ("".equals(momMethod)) {
+                    line_warning(mfilename(new Object() {}),
+                            "The exact moment recursion needs " + latticePoints(Np)
+                            + " population points; falling back to the Pfqn_momlin approximation. "
+                            + "Pass \"exact\" to force the recursion, or \"momlin\" to select this branch explicitly.");
+                }
+                mom.qlenMomlin = Pfqn_momlin.pfqn_momlin(D, Np, Ztot);
+                mom.X = mom.qlenMomlin.X;
+                mom.QCov = momlinStationBlocks(mom.qlenMomlin.QCov, D.getNumRows(), R);
+                QLen = mom.qlenMomlin.Q;
+                QLenVar = mom.qlenMomlin.QVar;
+            } else if (allSingleServer) {
                 mom.qlenMva = pfqn_sens_mva(D, Np, Ztot);
                 mom.X = mom.qlenMva.X;
                 mom.QCov = mom.qlenMva.QCov;
@@ -5766,7 +6324,7 @@ public abstract class NetworkSolver extends Solver {
      * exact recursion: the moment analysis has only these two algorithms, and the
      * exact one is the right default for a method with no approximate counterpart.
      *
-     * @param method the solver's method token
+     * @param method the solver's method name
      * @return true if the method selects the Linearizer approximation
      */
     private static boolean isLinearizerMethod(String method) {
@@ -5783,7 +6341,7 @@ public abstract class NetworkSolver extends Solver {
      * Methods whose means are the exact MVA recursion, so {@code Pfqn_sens_mom}'s
      * analytic derivatives apply directly.
      *
-     * @param method the solver's method token
+     * @param method the solver's method name
      * @return true if the method selects the exact recursion
      */
     private static boolean isExactMvaMethod(String method) {
@@ -6641,6 +7199,13 @@ public abstract class NetworkSolver extends Solver {
                 addMethodToken(tokens, family, part);
             }
         }
+        // the layering strategy of a layered solve, when it is not the default one
+        if (family.equals("ln") && this.options != null && this.options.config != null
+                && this.options.config.layering != null
+                && (this.options.config.layering.equalsIgnoreCase("flat")
+                    || this.options.config.layering.equalsIgnoreCase("squashed"))) {
+            tokens.add("ln.flat");
+        }
         try {
             if (this.model != null && this.model.hasFork()) {
                 String fjm = (this.options != null && this.options.config != null
@@ -6652,12 +7217,215 @@ public abstract class NetworkSolver extends Solver {
                     fjm = "ht";
                 }
                 tokens.add(fjm);
+                // a quorum join is a second method on top of the transformation: the
+                // synchronisation delay it charges is an order statistic, not a maximum
+                if (jline.api.sn.SnHasQuorumJoin.snHasQuorumJoin(this.model.getStruct())) {
+                    tokens.add("quorum");
+                }
             }
         } catch (Exception e) {
             // a model that cannot report its topology contributes no token
         }
+        // THE DAE ROUTE CARRIES THREE METHODS BESIDE ITS CLOSURE, and a user writing
+        // the run up needs all three: the Rosenbrock integrator that takes the
+        // singular mass matrix, the active set that decides which capacity limits
+        // bind, and -- when a finite horizon was asked for with a cap present -- the
+        // event location that cuts the trajectory into segments.
+        // THE RCAT ROUTE CARRIES ITS QBD, and a user writing the run up needs it:
+        // every isolated component is a quasi-birth-death process over
+        // (queue length, phase), and its open tail is Neuts' rate matrix R
+        // rather than a scalar ratio.
+        for (int t = 0; t < tokens.size(); t++) {
+            String tk = tokens.get(t);
+            if ("inap".equals(tk) || "inapplus".equals(tk) || "inapinf".equals(tk)
+                    || "ag.inap".equals(tk) || "ag.inapplus".equals(tk)
+                    || "ag.inapinf".equals(tk)
+                    || "mam.inap".equals(tk) || "mam.inapplus".equals(tk)
+                    || "mam.inapinf".equals(tk)) {
+                tokens.add("rcat.qbd");
+                break;
+            }
+        }
+
+        // THE BETHE ARM CARRIES ITS OBJECTIVE. The polytope, the quadratic
+        // reduction and the metric readout of 'qrf.bethe' are the QRF paper's;
+        // the functional minimised over them is the tree-reweighted free
+        // entropy, and the weight lambda = 1/M is chosen by the spanning-tree
+        // polytope condition of Wainwright, Jaakkola and Willsky. Both papers
+        // are needed to write the run up.
+        for (int t = 0; t < tokens.size(); t++) {
+            String tk = tokens.get(t);
+            if ("qrf.bethe".equals(tk) || "ba.qrf.bethe".equals(tk)
+                    || "qrf.bas.bethe".equals(tk) || "ba.qrf.bas.bethe".equals(tk)) {
+                tokens.add("qrf.trw");
+                break;
+            }
+        }
+
+        // THE ITERATIVE PB(k) AND BJB(k) CARRY THE HIERARCHY THEY EVALUATE.
+        // Casale, Muntz and Serazzi name the iteration counts and tabulate
+        // them, but both brackets are produced by the Eager-Sevcik performance
+        // bound hierarchy recursion (pfqn_pbh), so a run write-up needs that
+        // paper beside theirs.
+        for (int t = 0; t < tokens.size(); t++) {
+            String tk = tokens.get(t);
+            if ("pbk".equals(tk) || "pbk.upper".equals(tk) || "pbk.lower".equals(tk)
+                    || "bjbk".equals(tk) || "bjbk.upper".equals(tk)
+                    || "bjbk.lower".equals(tk)
+                    || "ba.pbk".equals(tk) || "ba.pbk.upper".equals(tk)
+                    || "ba.pbk.lower".equals(tk)
+                    || "ba.bjbk".equals(tk) || "ba.bjbk.upper".equals(tk)
+                    || "ba.bjbk.lower".equals(tk)) {
+                tokens.add("pbh");
+                break;
+            }
+        }
+
+        // THE LOAD-DEPENDENT DIVDIFF ROUTE CARRIES TWO PAPERS. The outer divided
+        // difference over the class populations is Casale (SIGMETRICS 2017); only
+        // the single-class kernel it substitutes is the limited load-dependent
+        // closed form of Casale, Harrison and Ong. A run write-up needs both.
+        for (int t = 0; t < tokens.size(); t++) {
+            String tk = tokens.get(t);
+            if ("divdiff.ld".equals(tk) || "nc.divdiff.ld".equals(tk)) {
+                tokens.add("divdiff");
+                break;
+            }
+        }
+
+        boolean isDae = false;
+        for (int t = 0; t < tokens.size(); t++) {
+            String tk = tokens.get(t);
+            isDae |= "dae".equals(tk) || tk.endsWith(".dae");
+        }
+        if (isDae) {
+            tokens.add("dae.integrator");
+            try {
+                NetworkStruct snc = this.model.getStruct();
+                double total = 0;
+                boolean allFinite = true;
+                for (int r = 0; r < snc.njobs.length(); r++) {
+                    if (!Double.isFinite(snc.njobs.get(r))) { allFinite = false; }
+                    else { total += snc.njobs.get(r); }
+                }
+                if (!allFinite) { total = Double.POSITIVE_INFINITY; }
+                // a cap the population cannot reach is not a cap: refreshCapacity
+                // derives a FINITE classcap at every station of every closed model
+                boolean binds = snc.nregions > 0;
+                if (!binds && snc.cap != null) {
+                    for (int i = 0; i < snc.cap.length(); i++) {
+                        double c = snc.cap.get(i);
+                        binds |= Double.isFinite(c) && c < total && c < Integer.MAX_VALUE;
+                    }
+                }
+                if (!binds && snc.classcap != null) {
+                    for (int i = 0; i < snc.classcap.getNumRows(); i++) {
+                        for (int r = 0; r < snc.classcap.getNumCols() && r < snc.njobs.length(); r++) {
+                            double c = snc.classcap.get(i, r);
+                            binds |= Double.isFinite(c) && c < snc.njobs.get(r);
+                        }
+                    }
+                }
+                if (binds) {
+                    tokens.add("dae.activeset");
+                    if (this.options != null && this.options.timespan != null
+                            && this.options.timespan.length > 1
+                            && Double.isFinite(this.options.timespan[1])) {
+                        tokens.add("dae.events");
+                    }
+                }
+            } catch (Exception e) {
+                // a model that cannot report its struct contributes no further token
+            }
+        }
+        // THE LDQBD METHOD CARRIES A SECOND CONSTRUCTION when the queue is a
+        // multiserver with phase-type service: the level's inner coordinate is then
+        // the MULTISET of the phases the busy servers sit in, which is Asmussen and
+        // Moller's state space rather than Phung-Duc's recursion. Only that shape
+        // uses it -- exponential service, or a single server, needs no
+        // configuration coordinate at all.
+        boolean isLdqbd = false;
+        for (int t = 0; t < tokens.size(); t++) {
+            String tk = tokens.get(t);
+            isLdqbd |= "ldqbd".equals(tk) || tk.endsWith(".ldqbd");
+        }
+        if (isLdqbd) {
+            try {
+                NetworkStruct snq = this.model.getStruct();
+                // a Delay carries nservers = Inf and the open Source is exponential
+                // by the method's own guard, so a finite c > 1 with a non-EXP
+                // process is the queue
+                boolean isMultiserver = false;
+                for (int i = 0; i < snq.nservers.length(); i++) {
+                    double c = snq.nservers.get(i);
+                    isMultiserver |= Double.isFinite(c) && c > 1;
+                }
+                boolean isPHservice = false;
+                if (snq.procid != null) {
+                    for (int i = 0; i < snq.nstations; i++) {
+                        java.util.Map<jline.lang.JobClass, jline.lang.constant.ProcessType> pm =
+                                snq.procid.get(snq.stations.get(i));
+                        if (pm == null) continue;
+                        for (int r = 0; r < snq.nclasses; r++) {
+                            jline.lang.constant.ProcessType pt = pm.get(snq.jobclasses.get(r));
+                            double rate = snq.rates.get(i, r);
+                            isPHservice |= pt != null && pt != jline.lang.constant.ProcessType.EXP
+                                    && Double.isFinite(rate) && rate > 0;
+                        }
+                    }
+                }
+                if (isMultiserver && isPHservice) {
+                    tokens.add("ldqbd_mphc");
+                }
+            } catch (Exception e) {
+                // a model that cannot report its struct contributes no further token
+            }
+        }
+        // THE TBI ROUTE CARRIES ITS RELAXATION SCHEME: the cell decomposition is one
+        // method and the sweep that reconciles the cells is another, so a user
+        // writing the run up needs Lelarasmee's waveform relaxation beside the TBI
+        // paper.
+        boolean isTbi = false;
+        for (int t = 0; t < tokens.size(); t++) {
+            String tk = tokens.get(t);
+            isTbi |= "tbi".equals(tk) || tk.endsWith(".tbi");
+        }
+        if (isTbi) {
+            tokens.add("tbi.relaxation");
+        }
+        // THE COUPLED LAYERED TRANSIENT IS THE SAME RELAXATION over the LQN
+        // ensemble. It only runs when a finite horizon was asked for: without one
+        // getTranAvg falls back to the decoupled, frozen-demand transient and no
+        // sweep happens.
+        if (family.equals("ln") && this.options != null && this.options.timespan != null
+                && this.options.timespan.length > 1
+                && Double.isFinite(this.options.timespan[0])
+                && Double.isFinite(this.options.timespan[1])) {
+            String lnTran = (this.options.config != null && this.options.config.ln_transient != null
+                    && !this.options.config.ln_transient.isEmpty())
+                    ? this.options.config.ln_transient : "coupled";
+            if (lnTran.equalsIgnoreCase("coupled")) {
+                tokens.add("ln.transient.coupled");
+            }
+        }
+        // the random-environment image of the MAP/MMPP processes, when the run
+        // was dispatched through it rather than solving the model natively
+        if (this.result != null && this.result.method != null && this.result.method.contains("env.")) {
+            tokens.add("env");
+            tokens.add("map2renv");
+            tokens.add(this.result.method.contains("env.dec") ? "env.dec" : "env.avg");
+        }
         if (this.lastPerctMethod != null && !this.lastPerctMethod.isEmpty()) {
             tokens.add(this.lastPerctMethod);
+        }
+        // the permanent engine of the last getProbSysMarg call, if any. The
+        // identity behind the metric is Ryser's expansion in every case, so
+        // "perm" is reported alongside the estimator that evaluated it.
+        if (this.lastPermEngine != null && !this.lastPermEngine.isEmpty()) {
+            tokens.add("perm");
+            if (!"exact".equalsIgnoreCase(this.lastPermEngine)) {
+                tokens.add("perm." + this.lastPermEngine.toLowerCase());
+            }
         }
         return LineCitations.citationsFor(tokens);
     }
@@ -6753,6 +7521,13 @@ public abstract class NetworkSolver extends Solver {
     /** Percentile extraction method of the last getPerctRespT call, for citations(). */
     protected String lastPerctMethod = "";
 
+    /**
+     * Permanent engine of the last getProbSysMarg call ("exact", "bethe", ...),
+     * so that citations() reports the estimator that produced the number rather
+     * than only the identity behind the metric.
+     */
+    protected String lastPermEngine = "";
+
     public Matrix getPerctRespT(double[] percentiles, String method) {
         this.lastPerctMethod = method == null ? "" : method.toLowerCase();
         if (method == null || !"forktail".equalsIgnoreCase(method)) {
@@ -6828,9 +7603,15 @@ public abstract class NetworkSolver extends Solver {
                 VT[bi] = m.variance;
                 maxrho = Math.max(maxrho, UN.get(ist, r));
             }
+            // The request completes on the kreq-th branch, not on the last one: a quorum
+            // join fires early and the stragglers are discarded. Reading the maximum there
+            // returns the AND-join tail under a quorum's name, which is the same number
+            // for every k. See FJ_tail_ordstat.
+            int kreq = SnJoinQuorum.snJoinQuorum(sn, this.model.getNodes().get(joinIdx),
+                    this.model.getClassByIndex(r), branches.size());
             for (int pi = 0; pi < percentiles.length; pi++) {
                 out.set(r, pi, traverses
-                    ? FJ_tail_forktail.fj_tail_forktail(ET, VT, percentiles[pi])
+                    ? FJ_tail_ordstat.fj_tail_ordstat(ET, VT, percentiles[pi], kreq)
                     : Double.NaN);
             }
             if (traverses && maxrho < 0.5) {
@@ -7217,6 +7998,33 @@ public abstract class NetworkSolver extends Solver {
     }
 
     /**
+     * Returns the joint probability of the per-station TOTAL queue lengths, all
+     * classes summed out. Unlike getProbSysAggr this is not a product form: it
+     * sums the per-class joint over every table with these row sums, which
+     * SolverNC does through a permanent.
+     *
+     * @param nvec per-station total job counts
+     * @return result containing the joint probability
+     * @throws RuntimeException if not implemented by the concrete solver
+     */
+    public ProbabilityResult getProbSysMarg(Matrix nvec) {
+        throw new RuntimeException("getProbSysMarg is not supported by " + this.getClass().getSimpleName());
+    }
+
+    /**
+     * Returns the joint probability of the per-station total queue lengths,
+     * evaluated with a chosen permanent engine.
+     *
+     * @param nvec   per-station total job counts
+     * @param engine permanent engine
+     * @return result containing the joint probability
+     * @throws RuntimeException if not implemented by the concrete solver
+     */
+    public ProbabilityResult getProbSysMarg(Matrix nvec, String engine) {
+        throw new RuntimeException("getProbSysMarg is not supported by " + this.getClass().getSimpleName());
+    }
+
+    /**
      * Returns a table of average stage metrics organized by job classes.
      * For non-environment models, this returns the same as getAvgTable()
      * since there is only one implicit stage.
@@ -7282,6 +8090,7 @@ public abstract class NetworkSolver extends Solver {
                 }
             }
             try {
+                checkDeclaredMethod(this.options);
                 runAnalyzer();
             } catch (IllegalAccessException e) {
                 line_error(mfilename(new Object(){}), "IllegalAccessException upon running runAnalyzer()");
@@ -7515,6 +8324,7 @@ public abstract class NetworkSolver extends Solver {
         if (options != null) {
             GlobalConstants.Verbose = options.verbose;
         }
+        checkDeclaredMethod(options);
         // Basic model validation - check for empty model
         if (model == null) {
             throw new RuntimeException("Model cannot be null");
@@ -7540,6 +8350,192 @@ public abstract class NetworkSolver extends Solver {
             if (options.timespan[0] < 0 || (Double.isFinite(options.timespan[1]) && options.timespan[1] <= options.timespan[0])) {
                 throw new RuntimeException("Invalid timespan configuration: start time must be non-negative and end time must be greater than start time");
             }
+        }
+    }
+
+    /**
+     * THE PER-SOLVER METHOD GATE: a method outside this solver's own
+     * {@code listValidMethods} is refused before any analyzer sees it.
+     *
+     * <p>It went missing in the JAR, and that is what let the lists drift.
+     * {@code Solver.runAnalyzerChecks} gates against the flat cross-solver blob
+     * of {@code listValidOptions().allMethods}, which names every method of
+     * every solver, {@code NetworkSolver.runAnalyzerChecks} replaced it with
+     * nothing, and only SolverNC and SolverFluid called that method at all -- so
+     * in the JAR alone a name could be advertised by listValidMethods and never
+     * dispatched (SolverSSA 'ssa', SolverFluid 'softmin'), or dispatched and
+     * never advertised (SolverMAM 'dec.source.mmap'), with nothing to catch
+     * either. MATLAB gates on the solver's OWN list in
+     * {@code @NetworkSolver/NetworkSolver.m:218} and python in
+     * {@code solvers/base.py} runAnalyzerChecks; this is called from getAvg and
+     * getTranAvg, the two entry points every accessor reaches, so no solver has
+     * to remember to.
+     *
+     * <p>{@code enableChecks} exempts it, which is how a SolverLN layer backend
+     * keeps passing its layer method through.
+     *
+     * <p>IT ASKS WHAT THE SOLVER IMPLEMENTS, NOT WHAT THIS MODEL CAN RUN. Where a
+     * solver publishes {@code listAllMethods()} that is the list, because
+     * {@code listValidMethods()} narrows to the model in hand and gating on it
+     * replaces a rejection the analyzer would have EXPLAINED with a flat "the
+     * method is unsupported by this solver". SolverBA already made that
+     * distinction for its own dispatcher (see the {@code listAllMethods, NOT
+     * listValidMethods} comment there); this gate sits above the dispatcher and
+     * has to make it too, or `qrf.mmi` on a model with a delay station reports
+     * "unsupported by this solver" instead of naming the infinite-server
+     * station that actually rules it out.
+     *
+     * @param options the options carrying the requested method
+     */
+    protected void checkDeclaredMethod(SolverOptions options) {
+        if (!this.enableChecks || options == null || options.method == null) {
+            return;
+        }
+        List<String> declared = declaredAllMethods();
+        if (declared == null || declared.isEmpty()) {
+            declared = declaredValidMethods();
+        }
+        if (declared != null && !declared.isEmpty() && !declared.contains(options.method)) {
+            // A solver that can SAY something about the name says it instead.
+            // This gate sits above every dispatcher, so without the ask it
+            // silently outranks them: SolverMAM's "the inap method moved to
+            // SolverAG, use new SolverAG(model, \"inap\")" never reached a
+            // caller, who was told only that the method was unsupported and
+            // left to find SolverAG on their own.
+            String moved = unsupportedMethodReason(options.method);
+            if (moved != null && !moved.trim().isEmpty()) {
+                line_error(mfilename(new Object() {
+                }), moved);
+                return;
+            }
+            line_error(mfilename(new Object() {
+            }), "The '" + options.method + "' method is unsupported by this solver.");
+        }
+    }
+
+    /**
+     * A BY-NAME explanation for a method this solver does not implement, or an
+     * empty string when it has none.
+     *
+     * <p>It answers about the NAME and not about the model, which is what makes
+     * it safe to call from {@link #checkDeclaredMethod}: that gate runs before
+     * the struct is necessarily usable, so an override must not reach for
+     * {@code getStruct()} or for anything else that depends on the model. A
+     * reason that depends on the model belongs in
+     * {@link #supportsModelMethod(String)}, which runs later and is allowed to.
+     *
+     * <p>The case this exists for is a method that MOVED. Dropping the name
+     * from {@code listValidMethods} is what makes the solver refuse it, and it
+     * is also what loses the forwarding address, so the two have to be declared
+     * together. C++ has always ordered the two this way -- {@code check_method}
+     * calls {@code rcat_moved_to_ag} BEFORE its unlisted-method throw -- and
+     * this is the JAR counterpart of that helper.
+     *
+     * @param method the requested method name
+     * @return the explanation, or "" when the solver has none
+     */
+    protected String unsupportedMethodReason(String method) {
+        return "";
+    }
+
+    /**
+     * Every method this solver IMPLEMENTS, from its own {@code listAllMethods()},
+     * or null when it publishes no such list.
+     *
+     * <p>Static on the solvers that have it, so the lookup is by name and not
+     * through an instance method; the {@code String[]}/{@code List<String>}
+     * normalisation is the same as {@link #declaredValidMethods(Object)}.
+     */
+    @SuppressWarnings("unchecked")
+    protected List<String> declaredAllMethods() {
+        try {
+            java.lang.reflect.Method m = this.getClass().getMethod("listAllMethods");
+            Object own = m.invoke(this);
+            if (own instanceof String[]) {
+                return Arrays.asList((String[]) own);
+            }
+            if (own instanceof List) {
+                return (List<String>) own;
+            }
+            return null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * This solver's own {@code listValidMethods()}, as a list, or null when it
+     * declares none.
+     *
+     * <p>The signature is not uniform across the solvers -- some return
+     * {@code String[]} and some {@code List<String>} -- and there is no common
+     * declaration to override, so the lookup is reflective and normalises both
+     * shapes. A solver with no such method, or one that throws while building
+     * its list (e.g. because the struct is not ready), contributes null and is
+     * not gated: no claim, no gate.
+     *
+     * @return the declared method names, or null when the solver declares none
+     */
+    protected List<String> declaredValidMethods() {
+        return declaredValidMethods(this);
+    }
+
+    /**
+     * The same lookup for any solver instance, so that SolverAUTO can build the
+     * union over its candidates without repeating the {@code String[]} versus
+     * {@code List<String>} normalisation (it used to cast every candidate's
+     * answer to {@code String[]}, which throws for the List-returning half).
+     *
+     * @param solver the solver to interrogate
+     * @return the declared method names, or null when the solver declares none
+     */
+    @SuppressWarnings("unchecked")
+    public static List<String> declaredValidMethods(Object solver) {
+        if (solver == null) {
+            return null;
+        }
+        try {
+            java.lang.reflect.Method m = solver.getClass().getMethod("listValidMethods");
+            Object own = m.invoke(solver);
+            if (own instanceof String[]) {
+                return Arrays.asList((String[]) own);
+            }
+            if (own instanceof List) {
+                return (List<String>) own;
+            }
+            return null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * The {@code listAllMethods()} lookup for any solver instance, the
+     * model-INDEPENDENT counterpart of {@link #declaredValidMethods(Object)}, so
+     * that SolverAUTO can build its method name universe without repeating the
+     * {@code String[]} versus {@code List<String>} normalisation.
+     *
+     * @param solver the solver to interrogate
+     * @return every method the solver implements, or null when it publishes no
+     *         such list
+     */
+    @SuppressWarnings("unchecked")
+    public static List<String> declaredAllMethods(Object solver) {
+        if (solver == null) {
+            return null;
+        }
+        try {
+            java.lang.reflect.Method m = solver.getClass().getMethod("listAllMethods");
+            Object own = m.invoke(solver);
+            if (own instanceof String[]) {
+                return Arrays.asList((String[]) own);
+            }
+            if (own instanceof List) {
+                return (List<String>) own;
+            }
+            return null;
+        } catch (Exception e) {
+            return null;
         }
     }
 
@@ -7608,11 +8604,48 @@ public abstract class NetworkSolver extends Solver {
      * @param method  solution algorithm used
      * @param iter    number of iterations performed
      */
+    /**
+     * Zeroes every Source row of a station-by-class metric, in place.
+     *
+     * A Source holds no jobs and occupies no server, so its queue length and
+     * utilization are zero BY DISCIPLINE, not by sign. Applied at the single
+     * sink for SolverResult so a caller reading result.QN directly sees what
+     * the average table shows. MATLAB solvers were measured leaving arbitrary
+     * values in that row on an open M/M/1 (NC U=1, MAM Q=1, CTMC Q=Inf), which
+     * the table layer only ever suppressed incidentally, via a threshold on
+     * RESPONSE TIME. Twin of MATLAB NetworkSolver.zeroSourceMetrics.
+     *
+     * @param M station-by-class metric, possibly null or empty
+     * @return the same matrix, with Source rows set to zero
+     */
+    private Matrix zeroSourceMetrics(Matrix M) {
+        if (M == null || M.isEmpty()) {
+            return M;
+        }
+        NetworkStruct sn = model.getStruct();
+        if (sn == null || sn.nodetype == null || sn.nodeToStation == null) {
+            return M;
+        }
+        for (int i = 0; i < sn.nnodes; i++) {
+            if (sn.nodetype.get(i) != NodeType.Source) {
+                continue;
+            }
+            int ist = (int) sn.nodeToStation.get(i);
+            if (ist < 0 || ist >= M.getNumRows()) {
+                continue;
+            }
+            for (int r = 0; r < M.getNumCols(); r++) {
+                M.set(ist, r, 0.0);
+            }
+        }
+        return M;
+    }
+
     public void setAvgResults(Matrix Q, Matrix U, Matrix R, Matrix T, Matrix A, Matrix W, Matrix C, Matrix X,
                               double runtime, String method, int iter) {
         this.result.solver = this.getName();
-        this.result.QN = Q.copy();
-        this.result.UN = U.copy();
+        this.result.QN = zeroSourceMetrics(Q.copy());
+        this.result.UN = zeroSourceMetrics(U.copy());
         this.result.RN = R.copy();
         this.result.TN = T.copy();
         this.result.AN = A.copy();
@@ -7627,22 +8660,36 @@ public abstract class NetworkSolver extends Solver {
         // printable -- it is what distinguishes a converged AMVA solve from one
         // that exhausted options.iter_max.
         this.result.iter = iter;
+        // A Join row's loss is NOT ArvR - Tput: the two rates are in sibling and in
+        // parent units. Derive the sibling-drop rate for any solver that did not
+        // measure one on its own sample path. See SnJoinDroprate and
+        // getAvgLossTable.
+        if (this.result.DropRateJoin == null && this.model != null) {
+            NetworkStruct snd = this.model.getStruct(false);
+            if (snd != null && snd.fj != null && snd.fj.getNumRows() > 0) {
+                this.result.DropRateJoin = SnJoinDroprate.snJoinDroprate(snd, this.result.TN,
+                        this.result.AN);
+            }
+        }
 
+        // with the console on this line is held until after DONE
         if (this.options.verbose != VerboseLevel.SILENT) {
             if (iter <= 1) {
-                System.out.printf(
-                        "%s analysis [method: %s, lang: %s, env: %s] completed in %fs.\n",
+                jline.io.LineConsole.deferPrint(
+                        "%s analysis [method: %s; type: %s; lang: %s; env: %s] completed in %fs.\n",
                         this.name.replaceFirst("^Solver", ""),   // solver name with prefix stripped
                         this.result.method,                      // algorithm/method
+                        MethodType.of(this.name, this.result.method),   // accuracy and randomness
                         "java",                                  // language label
                         System.getProperty("java.version"),      // actual JVM version in use
                         this.result.runtime                      // elapsed time in seconds
                 );
             } else {
-                System.out.printf(
-                        "%s analysis [method: %s, lang: %s, env: %s] completed in %fs. Iterations: %d.\n",
+                jline.io.LineConsole.deferPrint(
+                        "%s analysis [method: %s; type: %s; lang: %s; env: %s] completed in %fs. Iterations: %d.\n",
                         this.name.replaceFirst("^Solver", ""),   // solver name with prefix stripped
                         this.result.method,                      // algorithm/method
+                        MethodType.of(this.name, this.result.method),   // accuracy and randomness
                         "java",                                  // language label
                         System.getProperty("java.version"),      // actual JVM version in use
                         this.result.runtime,                     // elapsed time in seconds
@@ -7792,42 +8839,115 @@ public abstract class NetworkSolver extends Solver {
      * @return null if no capacity can bind, otherwise the reason naming the
      *         offending station
      */
-    public static String bindingCapacityReason(Network model, NetworkStruct sn, String solverName) {
-        List<Node> nodes = model.getNodes();
-        for (Node node : nodes) {
-            if (node instanceof Cache) {
-                return null;
+    /**
+     * Whether station {@code i} has a buffer that bounds its queue: its own finite
+     * capacity, a finite per-class capacity, or membership of a finite capacity
+     * region. Such a station cannot be unstable no matter how heavily it is
+     * offered, which is what the saturation guard in {@link #getAvg()} needs to
+     * know before reporting an infinite queue length.
+     */
+    /**
+     * Whether any class at station {@code i} declares reneging, i.e. a waiting
+     * job may abandon. Such a station has a bounded queue at every offered load,
+     * so the saturation test in getAvg does not apply to it.
+     *
+     * @param sn the network struct
+     * @param i  station index
+     * @return true if some class at the station reneges
+     */
+    public static boolean hasReneging(NetworkStruct sn, int i) {
+        if (sn.impatienceClass == null || sn.stations == null || i >= sn.stations.size()) {
+            return false;
+        }
+        java.util.Map<JobClass, jline.lang.constant.ImpatienceType> m =
+                sn.impatienceClass.get(sn.stations.get(i));
+        if (m == null) {
+            return false;
+        }
+        for (jline.lang.constant.ImpatienceType t : m.values()) {
+            if (t == jline.lang.constant.ImpatienceType.RENEGING) {
+                return true;
             }
         }
-        List<JobClass> jobClasses = model.getClasses();
-        double totalJobs = 0; // Inf as soon as one class is open
-        for (int r = 0; r < sn.nclasses; r++) {
-            totalJobs += sn.njobs.get(0, r);
+        return false;
+    }
+
+    public static boolean hasBoundedBuffer(NetworkStruct sn, int i) {
+        if (sn == null) {
+            return false;
         }
-        for (Node node : nodes) {
-            if (!(node instanceof Station) || node instanceof Source || node instanceof Sink) {
-                continue;
+        if (sn.cap != null && i < sn.cap.length()) {
+            double c = sn.cap.get(i);
+            if (Double.isFinite(c) && c >= 0 && c < Integer.MAX_VALUE) {
+                return true;
             }
-            Station station = (Station) node;
-            // hasFiniteCap() decodes the three "unbounded" encodings (MAX_VALUE, Inf, and
-            // JMT2LINE's negative sentinel) in one place; see Station.hasFiniteCap.
-            if (station.hasFiniteCap() && station.getCap() < totalJobs) {
-                return "Finite station capacity (setCapacity=" + (long) station.getCap() + ") at station '"
-                        + station.getName() + "' is not supported by " + solverName
-                        + ". Use SolverCTMC, SolverJMT or SolverLDES.";
-            }
-            for (int r = 0; r < Math.min(jobClasses.size(), sn.nclasses); r++) {
-                JobClass jobClass = jobClasses.get(r);
-                double classCap = station.getClassCap(jobClass);
-                if (classCap > 0 && classCap < Integer.MAX_VALUE && classCap < sn.njobs.get(0, r)) {
-                    return "Finite per-class capacity (setClassCap=" + (long) classCap + " for class '"
-                            + jobClass.getName() + "') at station '" + station.getName()
-                            + "' is not supported by " + solverName
-                            + ". Use SolverCTMC, SolverJMT or SolverLDES.";
+        }
+        if (sn.classcap != null && i < sn.classcap.getNumRows()) {
+            for (int r = 0; r < sn.classcap.getNumCols(); r++) {
+                double c = sn.classcap.get(i, r);
+                if (Double.isFinite(c) && c >= 0 && c < Integer.MAX_VALUE) {
+                    return true;
                 }
             }
         }
-        return null;
+        if (sn.nregions > 0 && sn.regionmembers != null) {
+            for (int f = 0; f < sn.regionmembers.size(); f++) {
+                Matrix mm = sn.regionmembers.get(f);
+                if (mm != null && i < mm.length() && mm.get(i) != 0) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Which solvers to point at when a finite capacity is refused. The two lists
+     * differ, and naming the wrong one sends the user to a solver that also refuses.
+     * <p>
+     * An OPEN refused arrival is LOST, which SolverJMT reproduces (its queue
+     * section carries the drop rule directly). A CLOSED one BLOCKS: LINE disables
+     * the upstream departure and holds the job where it is, and no JMT drop
+     * strategy expresses that -- "waiting queue" does not enforce the size at all
+     * and "BAS blocking" completes the service before blocking, a different
+     * queueing model. SolverJMT refuses the closed case by name (see
+     * {@code SaveHandlers.jmtStationCapAssert} and BUG-81), so it must not be
+     * advertised here for it.
+     * </p>
+     */
+    private static String capacityFallbackAdvice(boolean isOpenClass) {
+        return isOpenClass ? "Use SolverCTMC, SolverJMT or SolverLDES."
+                           : "Use SolverCTMC, SolverSSA or SolverLDES.";
+    }
+
+    /**
+     * THE TEST ITSELF IS {@code Network.findBindingCapacity}, one predicate with
+     * two callers: this gate, which words the refusal, and
+     * {@code Network.getUsedLangFeatures}, which marks the registry name
+     * {@code FiniteCapacity} on the same answer, so a solver method that does not
+     * declare the name is refused by the feature set on exactly the models this
+     * gate refuses. The rules (node-level caps, not sn.cap/sn.classcap; only a
+     * capacity that can BIND; open classes always bind; Cache models exempt) are
+     * documented on the helper, which reads the class populations from the class
+     * objects rather than from {@code sn}.
+     *
+     * @param sn - unused; kept so that the call sites, which all pass the model's
+     *             own struct, need not change
+     */
+    public static String bindingCapacityReason(Network model, NetworkStruct sn, String solverName) {
+        Network.BindingCapacity binding = model.findBindingCapacity();
+        if (!binding.binds) {
+            return null;
+        }
+        if (binding.classIndex < 0) {
+            return "Finite station capacity (setCapacity=" + (long) binding.cap + ") at station '"
+                    + binding.station.getName() + "' is not supported by " + solverName
+                    + ". " + capacityFallbackAdvice(binding.isOpen);
+        }
+        return "Finite per-class capacity (setClassCap=" + (long) binding.cap + " for class '"
+                + binding.jobClass.getName() + "') at station '" + binding.station.getName()
+                + "' is not supported by " + solverName
+                + ". " + capacityFallbackAdvice(binding.isOpen);
     }
 
 }

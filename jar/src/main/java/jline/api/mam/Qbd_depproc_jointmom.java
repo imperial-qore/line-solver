@@ -45,16 +45,18 @@ public final class Qbd_depproc_jointmom {
 
         double lambdaS = Map_lambda.map_lambda(MAPs);
         double invLambdaS = 1.0 / lambdaS;
+        // departure epochs are the B transitions, so the embedded vector weighs the level
+        // probabilities by B and not by the arrival matrix F
         Matrix v0R = v0.mult(R);
-        Matrix v0D = v0R.mult(F).scale(invLambdaS);
+        Matrix v0D = v0R.mult(B).scale(invLambdaS);
 
         Matrix v0R2 = v0R.mult(R);
-        Matrix v1D = v0R2.mult(F).scale(invLambdaS);
+        Matrix v1D = v0R2.mult(B).scale(invLambdaS);
 
         Matrix v0R3 = v0R2.mult(R);
         Matrix ImR = Matrix.eye(R.getNumRows()).add(-1.0, R);
         Matrix ImRinv = ImR.inv();
-        Matrix v2Dp = v0R3.mult(ImRinv).mult(F).scale(invLambdaS);
+        Matrix v2Dp = v0R3.mult(ImRinv).mult(B).scale(invLambdaS);
 
         Matrix z = new Matrix(1, 3 * lvlsz);
         for (int j = 0; j < lvlsz; j++) {

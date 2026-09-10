@@ -89,7 +89,18 @@ lsn.delayofftime_mean = nan(lsn.nidx, 1);
 lsn.delayofftime_scv = nan(lsn.nidx, 1);
 lsn.delayofftime_proc = cell(lsn.nidx, 1);
 
-lsn.isfunction = zeros(lsn.nhosts+lsn.ntasks,1);
+lsn.hassetup = zeros(lsn.nhosts+lsn.ntasks,1);
+
+% Admission constraints on the layer station of a host or task -- see _kb/04-networkstruct.md
+lsn.lincon = cell(lsn.nhosts+lsn.ntasks,2);
+
+% Service-rate dependences on the layer station of a host or task -- see _kb/04-networkstruct.md
+lsn.lldscaling = cell(lsn.nhosts+lsn.ntasks,1);
+lsn.cdscaling = cell(lsn.nhosts+lsn.ntasks,1);
+lsn.cdscalingpeak = cell(lsn.nhosts+lsn.ntasks,1);
+lsn.jdscaling = cell(lsn.nhosts+lsn.ntasks,1);
+lsn.jdscalingpeak = cell(lsn.nhosts+lsn.ntasks,1);
+lsn.pools = cell(lsn.nhosts+lsn.ntasks,1);
 
 % Open arrival distributions
 lsn.arrival = {};
@@ -104,10 +115,14 @@ for p=1:lsn.nhosts  % for every processor, scheduling, multiplicity, replication
     lsn.sched(idx,1) = SchedStrategy.fromText(self.hosts{p}.scheduling);
     lsn.mult(idx,1) = self.hosts{p}.multiplicity;
     lsn.repl(idx,1) = self.hosts{p}.replication;
+    lsn.prio(idx,1) = 0; % a processor carries no priority of its own
     lsn.names{idx,1} = self.hosts{p}.name;
     lsn.hashnames{idx,1} = ['P:',lsn.names{idx,1}];
     %lsn.shortnames{idx,1} = ['P',num2str(p)];
     lsn.type(idx,1) = LayeredNetworkElement.HOST; % processor
+    if self.hosts{p}.hasLinearConstraints()
+        [lsn.lincon{idx,1}, lsn.lincon{idx,2}] = self.hosts{p}.getLinearConstraints();
+    end
     idx = idx + 1;
 end
 
@@ -123,6 +138,7 @@ for t=1:lsn.ntasks
     [lsn.think_type(idx), lsn.think_params{idx}, lsn.think_mean(idx), lsn.think_scv(idx), lsn.think_proc{idx}] = extractDistParams(thinkDist);
     lsn.mult(idx,1) = self.tasks{t}.multiplicity;
     lsn.repl(idx,1) = self.tasks{t}.replication;
+    lsn.prio(idx,1) = self.tasks{t}.priority;
     lsn.names{idx,1} = self.tasks{t}.name;
     switch lsn.sched(idx,1)
         case SchedStrategy.REF
@@ -139,20 +155,33 @@ for t=1:lsn.ntasks
             lsn.replacestrat(idx,1) = self.tasks{t}.replacestrategy;
             lsn.hasretrieval(idx,1) = self.tasks{t}.retrieval;
             lsn.hashnames{idx,1} = ['C:',lsn.names{idx,1}];
-        case 'FunctionTask'
-            setupDist = self.tasks{t}.SetupTime;
-            lsn.setuptime{idx,1} = setupDist;
-            [lsn.setuptime_type(idx), lsn.setuptime_params{idx}, lsn.setuptime_mean(idx), lsn.setuptime_scv(idx), lsn.setuptime_proc{idx}] = extractDistParams(setupDist);
-            delayoffDist = self.tasks{t}.DelayOffTime;
-            lsn.delayofftime{idx,1} = delayoffDist;
-            [lsn.delayofftime_type(idx), lsn.delayofftime_params{idx}, lsn.delayofftime_mean(idx), lsn.delayofftime_scv(idx), lsn.delayofftime_proc{idx}] = extractDistParams(delayoffDist);
-            lsn.hashnames{idx,1} = ['F:',lsn.names{idx,1}];
-            %lsn.shortnames{idx,1} = ['C',num2str(idx-tshift)];
+    end
+    % Setup / delay-off is a property of the BASE Task, so it is read from any
+    % task carrying one and not only from a SetupTask -- which SetupTask.m
+    % itself describes as a backward-compatible alias. Keying this on the class
+    % instead left a plain Task's setSetupTime silently dropped here, so every
+    % solver answered for a server that never powers down. The JAR gates it on
+    % hasSetupDelayoff (LayeredNetwork.java:1262, "not just SetupTask") and
+    % python on has_setup||has_delayoff||is_function_task; this matches both.
+    % A CacheTask keeps its C: prefix: the two kinds are exclusive downstream.
+    if self.tasks{t}.hasSetupDelayoff()
+        setupDist = self.tasks{t}.setupTime;
+        lsn.setuptime{idx,1} = setupDist;
+        [lsn.setuptime_type(idx), lsn.setuptime_params{idx}, lsn.setuptime_mean(idx), lsn.setuptime_scv(idx), lsn.setuptime_proc{idx}] = extractDistParams(setupDist);
+        delayoffDist = self.tasks{t}.delayOffTime;
+        lsn.delayofftime{idx,1} = delayoffDist;
+        [lsn.delayofftime_type(idx), lsn.delayofftime_params{idx}, lsn.delayofftime_mean(idx), lsn.delayofftime_scv(idx), lsn.delayofftime_proc{idx}] = extractDistParams(delayoffDist);
+        if lsn.nitems(idx,1) == 0
+            lsn.hashnames{idx,1} = ['T:',lsn.names{idx,1}];
+        end
     end
     pidx = find(cellfun(@(x) strcmp(x.name, self.tasks{t}.parent.name), self.hosts));
     lsn.parent(idx) = pidx;
     lsn.graph(idx, pidx) = 1;
     lsn.type(idx) = LayeredNetworkElement.TASK; % task
+    if self.tasks{t}.hasLinearConstraints()
+        [lsn.lincon{idx,1}, lsn.lincon{idx,2}] = self.tasks{t}.getLinearConstraints();
+    end
     idx = idx + 1;
 end
 
@@ -209,6 +238,95 @@ for e=1:lsn.nentries
     idx = idx + 1;
 end
 
+% Admission constraint columns are only resolvable once tasksof/entriesof exist
+for cidx = 1:(lsn.nhosts+lsn.ntasks)
+    if cidx <= lsn.nhosts
+        elem = self.hosts{cidx};
+        colIdx = lsn.tasksof{cidx};
+        colwhat = 'tasks on this host';
+    else
+        elem = self.tasks{cidx-lsn.nhosts};
+        colIdx = lsn.entriesof{cidx};
+        colwhat = 'entries of this task';
+    end
+    ncols = length(colIdx);
+    if ~isempty(lsn.lincon{cidx,1}) && size(lsn.lincon{cidx,1},2) ~= ncols
+        line_error(mfilename,'Admission constraint on %s has %d columns but there are %d %s.', lsn.names{cidx}, size(lsn.lincon{cidx,1},2), ncols, colwhat);
+    end
+    % Rate dependences share the operand order of the constraint columns
+    if ~isempty(elem.lldScaling)
+        lsn.lldscaling{cidx,1} = elem.lldScaling;
+    end
+    if ~isempty(elem.lcdScaling)
+        lsn.cdscaling{cidx,1} = elem.lcdScaling;
+        lsn.cdscalingpeak{cidx,1} = expandPeak(elem.lcdScalingPeak, ncols, lsn.names{cidx}, colwhat, 'Class');
+    end
+    if ~isempty(elem.ljdScaling)
+        lsn.jdscaling{cidx,1} = elem.ljdScaling;
+        lsn.jdscalingpeak{cidx,1} = expandPeak(elem.ljdScalingPeak, ncols, lsn.names{cidx}, colwhat, 'Joint');
+    end
+    % Compatibility pools name the operands they may serve, so the names become
+    % columns only here, on the same operand order as the constraints above.
+    if ~isempty(elem.serverPools)
+        colNamesPool = lsn.names(colIdx);
+        npools = numel(elem.serverPools);
+        compat = zeros(npools, ncols);
+        counts = zeros(1, npools);
+        rates = zeros(1, npools);
+        poolNames = cell(1, npools);
+        for t = 1:npools
+            pool = elem.serverPools{t};
+            poolNames{t} = pool.name;
+            counts(t) = pool.count;
+            rates(t) = pool.rate;
+            compNames = pool.compatible;  % already resolved to names in addServerType
+            for k = 1:numel(compNames)
+                pos = find(strcmp(colNamesPool, compNames{k}), 1);
+                if isempty(pos)
+                    line_error(mfilename,'Server pool ''%s'' on %s names %s, which is not one of the %s.', pool.name, lsn.names{cidx}, compNames{k}, colwhat);
+                end
+                compat(t,pos) = 1;
+            end
+        end
+        % An operand no pool can serve would be served at rate zero and never
+        % complete, so it is a declaration error rather than an empty column.
+        unserved = find(~any(compat ~= 0, 1), 1);
+        if ~isempty(unserved)
+            line_error(mfilename,'%s on %s is compatible with no server pool, so it can never be served.', colNamesPool{unserved}, lsn.names{cidx});
+        end
+        % The pools describe HOW the declared servers are shared, not how many
+        % there are, so the two statements have to agree. Letting them diverge
+        % would leave the layer station sized by the multiplicity and scaled by
+        % a peak taken over a different number of servers, which reports a
+        % utilization against a denominator the model never declared.
+        if isfinite(lsn.mult(cidx)) && abs(sum(counts) - lsn.mult(cidx)) > 0
+            line_error(mfilename,'Server pools on %s hold %g servers but its multiplicity is %g; the pools partition the declared servers, so the two must agree.', lsn.names{cidx}, sum(counts), lsn.mult(cidx));
+        end
+        lsn.pools{cidx,1} = struct('names', {poolNames}, 'counts', counts, ...
+            'rates', rates, 'compat', compat);
+    end
+    if isempty(elem.linConRows)
+        continue
+    end
+    % resolve rows declared by operand name against this server's columns
+    colNames = lsn.names(colIdx);
+    Anamed = zeros(length(elem.linConRows), ncols);
+    bnamed = zeros(length(elem.linConRows), 1);
+    for r = 1:length(elem.linConRows)
+        namedRow = elem.linConRows{r};
+        for k = 1:length(namedRow.names)
+            pos = find(strcmp(colNames, namedRow.names{k}), 1);
+            if isempty(pos)
+                line_error(mfilename,'Admission constraint on %s names %s, which is not one of the %s.', lsn.names{cidx}, namedRow.names{k}, colwhat);
+            end
+            Anamed(r,pos) = namedRow.coeffs(k);
+        end
+        bnamed(r) = namedRow.cap;
+    end
+    lsn.lincon{cidx,1} = [lsn.lincon{cidx,1}; Anamed];
+    lsn.lincon{cidx,2} = [lsn.lincon{cidx,2}; bnamed];
+end
+
 for a=1:lsn.nacts
     lsn.names{idx,1} = self.activities{a}.name;
     lsn.hashnames{idx,1} = ['A:',lsn.names{idx,1}];
@@ -240,6 +358,11 @@ lsn.iscaller = sparse(lsn.nidx,lsn.nidx);
 lsn.issynccaller = sparse(lsn.nidx,lsn.nidx);
 lsn.isasynccaller = sparse(lsn.nidx,lsn.nidx);
 lsn.callpair = [];
+% Calls dispatched as a group by a routing strategy, as a cell of
+% struct('caller',aidx,'strategy',RoutingStrategy,'targets',[eidx ...]).
+% Empty for every model that does not use Activity.synchCallRoundRobin.
+% Requires the squashed layering; see SolverLN.assertCallGroups.
+lsn.callgroups = {};
 lsn.callproc = {};
 lsn.callproc_type = [];
 lsn.callproc_params = {};
@@ -302,7 +425,7 @@ for t = 1:lsn.ntasks
             lsn.callnames{cidx,1} = [lsn.names{aidx},'=>',lsn.names{target_eidx}];
             lsn.callhashnames{cidx,1} = [lsn.hashnames{aidx},'=>',lsn.hashnames{target_eidx}];
             %lsn.callshortnames{cidx,1} = [lsn.shortnames{aidx},'=>',lsn.shortnames{target_eidx}];
-            callDist = Geometric(1/tasks{t}.activities(a).syncCallMeans(s)); % synch
+            callDist = callCountDist(tasks{t}.activities(a).syncCallMeans(s)); % synch
             lsn.callproc{cidx,1} = callDist;
             [lsn.callproc_type(cidx), lsn.callproc_params{cidx}, lsn.callproc_mean(cidx), lsn.callproc_scv(cidx), lsn.callproc_proc{cidx}] = extractDistParams(callDist);
             lsn.callsof{aidx}(end+1) = cidx;
@@ -316,6 +439,24 @@ for t = 1:lsn.ntasks
             lsn.issynccaller(aidx, target_eidx) = true;
             lsn.taskgraph(tidx, target_tidx) = 1;
             lsn.graph(aidx, target_eidx) = 1;
+        end
+
+        for g=1:length(tasks{t}.activities(a).syncCallGroups)
+            grp = tasks{t}.activities(a).syncCallGroups{g};
+            gtargets = [];
+            for i=1:numel(grp.dests)
+                geidx = findstring(lsn.hashnames, ['E:',grp.dests{i}]);
+                if geidx < 0
+                    geidx = findstring(lsn.hashnames, ['I:',grp.dests{i}]);
+                end
+                if geidx > 0
+                    gtargets(end+1) = geidx; %#ok<AGROW>
+                end
+            end
+            if numel(gtargets) >= 2
+                lsn.callgroups{end+1} = struct('caller', aidx, ...
+                    'strategy', grp.strategy, 'targets', gtargets);
+            end
         end
 
         for s=1:length(tasks{t}.activities(a).asyncCallDests)
@@ -339,7 +480,7 @@ for t = 1:lsn.ntasks
             lsn.callnames{cidx,1} = [lsn.names{aidx},'->',lsn.names{target_eidx}];
             lsn.callhashnames{cidx,1} = [lsn.hashnames{aidx},'->',lsn.hashnames{target_eidx}];
             %lsn.callshortnames{cidx,1} = [lsn.shortnames{aidx},'->',lsn.shortnames{target_eidx}];
-            callDist = Geometric(1/tasks{t}.activities(a).asyncCallMeans(s)); % asynch
+            callDist = callCountDist(tasks{t}.activities(a).asyncCallMeans(s)); % asynch
             lsn.callproc{cidx,1} = callDist;
             [lsn.callproc_type(cidx), lsn.callproc_params{cidx}, lsn.callproc_mean(cidx), lsn.callproc_scv(cidx), lsn.callproc_proc{cidx}] = extractDistParams(callDist);
             lsn.callsof{aidx}(end+1) = cidx;
@@ -517,7 +658,7 @@ for e = 1:length(self.entries)
 
         % Forwarding probability (stored as mean calls)
         fwdProb = entry.forwardingProbs(fw);
-        callDist = Geometric(1.0 / fwdProb);
+        callDist = callCountDist(fwdProb);
         lsn.callproc{cidx, 1} = callDist;
         [lsn.callproc_type(cidx), lsn.callproc_params{cidx}, lsn.callproc_mean(cidx), lsn.callproc_scv(cidx), lsn.callproc_proc{cidx}] = extractDistParams(callDist);
 
@@ -597,12 +738,12 @@ end
 
 lsn.isref = lsn.sched == SchedStrategy.REF;
 lsn.iscache(1:(lsn.tshift+lsn.ntasks)) = lsn.nitems(1:(lsn.tshift+lsn.ntasks))>0;
-lsn.isfunction(1:(lsn.tshift+lsn.ntasks)) = ~cellfun(@isempty, lsn.setuptime(1:(lsn.tshift+lsn.ntasks)));
+lsn.hassetup(1:(lsn.tshift+lsn.ntasks)) = ~cellfun(@isempty, lsn.setuptime(1:(lsn.tshift+lsn.ntasks)));
 
 % Build fan-out matrix from Task objects' fanOutDest/fanOutValue
 % fanout(source_task_idx, dest_task_idx) = fan-out value (0 means not set)
 lsn.fanout = zeros(lsn.nidx, lsn.nidx);
-taskNameToIdx = containers.Map();
+taskNameToIdx = configureDictionary('string','double');
 for t = 1:lsn.ntasks
     tidx = lsn.tshift + t;
     taskNameToIdx(self.tasks{t}.name) = tidx;
@@ -612,7 +753,7 @@ for t = 1:lsn.ntasks
     task = self.tasks{t};
     for f = 1:length(task.fanOutDest)
         destName = task.fanOutDest{f};
-        if taskNameToIdx.isKey(destName)
+        if isKey(taskNameToIdx, destName)
             destIdx = taskNameToIdx(destName);
             lsn.fanout(tidx, destIdx) = task.fanOutValue(f);
         end
@@ -694,6 +835,22 @@ if ~isempty(lsn.callpair)
 end
 
 self.lsn = lsn;
+end
+
+function callDist = callCountDist(meanCalls)
+% CALLCOUNTDIST Distribution of the number of calls issued per invocation
+%
+% A mean below 1 is a call that either happens or does not, hence Bernoulli.
+% Geometric(1/m) is undefined there: its parameter would exceed 1 and its SCV
+% (1-p) would come out negative.
+
+if isnan(meanCalls) || meanCalls <= GlobalConstants.FineTol
+    callDist = Immediate();
+elseif meanCalls < 1
+    callDist = Bernoulli(meanCalls);
+else
+    callDist = Geometric(1/meanCalls);
+end
 end
 
 function [dtype, params, mean_val, scv_val, proc] = extractDistParams(dist)
@@ -859,5 +1016,15 @@ switch distClass
         dtype = ProcessType.DISABLED;
         params = [];
         proc = {};
+end
+end
+function peak = expandPeak(peak, ncols, elemname, colwhat, what)
+% PEAK = EXPANDPEAK(PEAK, NCOLS, ELEMNAME, COLWHAT, WHAT) per-operand peak rate scaling
+if isscalar(peak)
+    peak = peak * ones(1,ncols);
+elseif numel(peak) ~= ncols
+    line_error(mfilename,'%s-dependence peak rate on %s has %d entries but there are %d %s.', what, elemname, numel(peak), ncols, colwhat);
+else
+    peak = peak(:)';
 end
 end

@@ -91,8 +91,19 @@ public final class Map_pntiter {
             }
         }
 
+        // Uniformization: V(n,k) holds the paths making exactly n arrivals in k
+        // STEPS of the uniformized chain, so V(0,k) = V(0,k-1)*K is the
+        // no-arrival path of length k and carries real mass for every k. It was
+        // previously left at zero past k = 0, which truncated P_0 to its k = 0
+        // term. A POISSON PROCESS CANNOT SEE THAT: there K = D0/tau + I = 0, so
+        // V(0,k) really is zero for k >= 1 and the omission is invisible. The
+        // identity that does see it is P_0(t) = expm(D0*t).
         V[0][0] = I.copy();
         P[0] = V[0][0].scale(br(tau, t, 0));
+        for (int k = 1; k <= N; k++) {
+            V[0][k] = V[0][k - 1].mult(K);
+            P[0] = P[0].add(V[0][k].scale(br(tau, t, k)));
+        }
 
         for (int n = 1; n <= na; n++) {
             V[n][0] = new Matrix(D0.getNumRows(), D0.getNumCols());

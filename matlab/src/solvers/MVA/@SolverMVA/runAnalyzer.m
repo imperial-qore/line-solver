@@ -15,7 +15,7 @@ if pyHandled
     return
 end
 
-self.runAnalyzerChecks(options);
+verboseGuard = self.runAnalyzerChecks(options); %#ok<NASGU> restores the caller verbosity on return
 
 sn = self.getStruct();
 % Finite Capacity Region: MVA does not enforce the aggregate per-region job
@@ -47,7 +47,12 @@ switch options.lang
         if options.config.fj_warmstart && ~isempty(self.fjForkLambda)
             jsolver.setForkWarmStart(JLINE.from_line_matrix(self.fjForkLambda));
         end
-        [QN,UN,RN,WN,AN,TN] = JLINE.arrayListToResults(jsolver.getAvgTable);
+        % getAvgTable(true) is the UNFILTERED grid, and the reshape below needs it:
+        % the no-argument getter DROPS every (station,class) cell whose six metrics
+        % are all zero, so on a model with a disabled pair it returns fewer than M*R
+        % entries and reshape(...,R,M) errors out. MATLAB applies its own filter when
+        % the table is PRINTED, so the bridge must carry the whole grid, zeros included.
+        [QN,UN,RN,WN,AN,TN] = JLINE.arrayListToResults(jsolver.getAvgTable(true));
         if self.model.hasFork
             self.fjForkLambda = JLINE.from_jline_matrix(jsolver.getForkWarmStart());
         end

@@ -27,11 +27,74 @@ for r0 = 1:K
         end
     end
 end
+% A chain routed through a QUORUM join is not population-conserving either, and
+% for the same reason: the join releases the parent at the k-th of n siblings
+% and the n-k stragglers stay in the branches, so the parent forks again while
+% they are still in flight. Nothing bounds that backlog -- a single circulating
+% job can leave arbitrarily many stragglers on a merely-stable branch -- so a
+% branch station holds no more than the class population only under a STANDARD
+% join. Capping it at sum(njobs) makes a simulator drop a closed job.
+% see _kb/05-solvers-overview.md
+% Read off the node objects, not off sn.nodeparam: refreshCapacity runs before
+% refreshLocalVars rebuilds nodeparam, so reading sn there would make the
+% capacity depend on the refresh order.
+quorumClasses = false(1, K);
+for i0 = 1:length(self.nodes)
+    nodeObj = self.nodes{i0};
+    if ~isa(nodeObj,'Join') || isempty(nodeObj.input) || ~isprop(nodeObj.input,'joinStrategy')
+        continue
+    end
+    nsib = 0;
+    if isfield(sn,'connmatrix') && ~isempty(sn.connmatrix) && i0 <= size(sn.connmatrix,2)
+        nsib = nnz(sn.connmatrix(:,i0));
+        joinof = nodeObj.joinOf;
+        if ~isempty(joinof) && isobject(joinof) && joinof.index > 0 && joinof.index <= size(sn.connmatrix,1)
+            w = 1;
+            if isprop(joinof.output,'tasksPerLink') && ~isempty(joinof.output.tasksPerLink)
+                w = max(1, round(joinof.output.tasksPerLink(1)));
+            end
+            nsib = nnz(sn.connmatrix(joinof.index,:)) * w;
+        end
+    end
+    for r0 = 1:min(K, numel(nodeObj.input.joinStrategy))
+        js = nodeObj.input.joinStrategy{r0};
+        if isempty(js) || js == JoinStrategy.STD || r0 > numel(nodeObj.input.joinRequired)
+            continue
+        end
+        kreq = nodeObj.input.joinRequired{r0};
+        if ~isempty(kreq) && kreq > 0 && (nsib <= 0 || kreq < nsib)
+            quorumClasses(r0) = true;
+        end
+    end
+end
+quorumFedChain = false(1, C);
+for c0 = 1:C
+    if any(quorumClasses(sn.inchain{c0}))
+        quorumFedChain(c0) = true;
+    end
+end
+% A fork with tasksPerLink = w > 1 puts w tasks of the SAME parent on one link,
+% so a branch station can hold w jobs per circulating parent and the chain
+% population is no longer its bound. The multiplier is the PRODUCT over the
+% forks, because a fork nested in another's branch multiplies again; that is an
+% upper bound for forks in series, where a cap that never binds costs nothing,
+% and exact for the single-fork case. Without it a simulator drops a closed job
+% at a branch station. see _kb/04-networkstruct.md
+forkTaskFactor = 1;
+for i0 = 1:length(self.nodes)
+    nodeObj = self.nodes{i0};
+    if ~isa(nodeObj,'Fork') || isempty(nodeObj.output) || ~isprop(nodeObj.output,'tasksPerLink')
+        continue
+    end
+    if ~isempty(nodeObj.output.tasksPerLink)
+        forkTaskFactor = forkTaskFactor * max(1, round(nodeObj.output.tasksPerLink(1)));
+    end
+end
 for c = 1:C
     inchain = sn.inchain{c};
     for r = inchain
-        chainCap = sum(njobs(inchain));
-        if spawnFedChain(c)
+        chainCap = sum(njobs(inchain)) * forkTaskFactor;
+        if spawnFedChain(c) || quorumFedChain(c)
             chainCap = Inf;
         end
         for ist=1:M

@@ -181,6 +181,18 @@ fprintf(1,'\n\nExample: <strong>cdf_respt_populations</strong>\n');
 clear; cdf_respt_populations; fprintf(1,'Pausing...'); pause(3.0); try close(handleFig); end
 
 %%
+fprintf(1,'\n<strong>RUNNING: advanced/busyPeriod examples</strong>');
+fprintf(1,'\n\nExample: <strong>busyp_subnetwork</strong>\n');
+clear; busyp_subnetwork; fprintf(1,'Pausing...'); pause(3.0);
+
+%%
+fprintf(1,'\n<strong>RUNNING: advanced/networkCalculus examples</strong>');
+fprintf(1,'\n\nExample: <strong>snc_delay_quantile</strong>\n');
+clear; snc_delay_quantile; fprintf(1,'Pausing...'); pause(3.0);
+fprintf(1,'\n\nExample: <strong>snc_tandem_multiclass</strong>\n');
+clear; snc_tandem_multiclass; fprintf(1,'Pausing...'); pause(3.0);
+
+%%
 fprintf(1,'\n<strong>RUNNING: advanced/randomEnv examples</strong>');
 fprintf(1,'\n\nExample: <strong>renv_twostages_repairmen</strong>\n');
 clear; renv_twostages_repairmen; fprintf(1,'Pausing...'); pause(3.0);
@@ -198,6 +210,27 @@ fprintf(1,'\n\nExample: <strong>cqn_mmpp2_service</strong>\n');
 fprintf(1,'This example shows that LINE automatically checks if a solver is feasible for a given model.\n');
 fprintf(1,'If not, an empty result set is returned.\n');
 clear; cqn_mmpp2_service; fprintf(1,'Pausing...'); pause(3.0);
+
+%%
+fprintf(1,'\n<strong>RUNNING: discrete examples</strong>');
+fprintf(1,'\n\nExample: <strong>dt_geogeo1</strong>\n');
+fprintf(1,'This example shows a Geo/Geo/1 queue on a discrete time scale.\n');
+clear; dt_geogeo1; fprintf(1,'Pausing...'); pause(3.0);
+fprintf(1,'\n\nExample: <strong>dt_geogeo1_loss</strong>\n');
+fprintf(1,'This example shows the discrete-time loss system and its blocking probability.\n');
+clear; dt_geogeo1_loss; fprintf(1,'Pausing...'); pause(3.0);
+fprintf(1,'\n\nExample: <strong>dt_bernoulli_loaddep</strong>\n');
+fprintf(1,'This example shows a load-dependent Bernoulli server and the discrete-time arrival theorem.\n');
+clear; dt_bernoulli_loaddep; fprintf(1,'Pausing...'); pause(3.0);
+fprintf(1,'\n\nExample: <strong>dt_cycle</strong>\n');
+fprintf(1,'This example shows the product form of a closed cycle of Bernoulli servers.\n');
+clear; dt_cycle; fprintf(1,'Pausing...'); pause(3.0);
+fprintf(1,'\n\nExample: <strong>dt_cycle_loaddep</strong>\n');
+fprintf(1,'This example shows a closed cycle with state dependent service probabilities.\n');
+clear; dt_cycle_loaddep; fprintf(1,'Pausing...'); pause(3.0);
+fprintf(1,'\n\nExample: <strong>dt_cycle_multiclass</strong>\n');
+fprintf(1,'This example shows the multichain closed cycle.\n');
+clear; dt_cycle_multiclass; fprintf(1,'Pausing...'); pause(3.0);
 
 %%
 %fprintf(1,'\n<strong>RUNNING: example_svcEstimation_*</strong>');

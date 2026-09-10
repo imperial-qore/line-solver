@@ -106,21 +106,11 @@ public final class Solver_ctmc_fcr_waitq {
         for (int f = 0; f < F; f++) {
             Matrix Rmat = sn.region.get(f); // M x (K+1)
             Matrix memMat = (sn.regionmaxmem != null && sn.regionmaxmem.size() > f) ? sn.regionmaxmem.get(f) : null;
+            // membership is read from sn.regionmembers, never re-derived from -1
+            boolean[] isMember = jline.api.sn.SnRegionMembers.snRegionMembers(sn, f, Rmat, memMat);
             List<Integer> members = new ArrayList<Integer>();
             for (int i = 0; i < M; i++) {
-                boolean isMember = false;
-                for (int col = 0; col <= K; col++) {
-                    if (Rmat.get(i, col) != -1) {
-                        isMember = true;
-                        break;
-                    }
-                }
-                // membership: any job-count cap OR the region memory budget set
-                // on the station row (a memory-only region has all caps at -1)
-                if (!isMember && memMat != null && memMat.get(i, 0) != -1) {
-                    isMember = true;
-                }
-                if (isMember) {
+                if (isMember[i]) {
                     members.add(i);
                     memberMask[f][i] = true;
                 }

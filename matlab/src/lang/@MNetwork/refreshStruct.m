@@ -41,6 +41,9 @@ cdscaling = getLimitedClassDependence(self);
 cdscalingpeak = getLimitedClassDependencePeak(self);
 jdscaling = getLimitedJointDependence(self);
 jdscalingpeak = getLimitedJointDependencePeak(self);
+gdscaling = getGlobalDependence(self);
+gdscalingpeak = getGlobalDependencePeak(self);
+gdscalingcutoff = getGlobalDependenceCutoff(self);
 
 %% init minimal structure
 sn = NetworkStruct(); % create in self to ensure propagation
@@ -61,6 +64,9 @@ sn.nnodes = numel(self.nodes);
 sn.nclasses = length(classnames);
 
 %% get routing strategies
+LineConsole.compiling(self.getName());
+LineConsole.compileDetail('reading the routing strategies of %s and %s', ...
+    LineConsole.plural(sn.nnodes,'node'), LineConsole.plural(sn.nclasses,'class','classes'));
 routing = zeros(sn.nnodes, sn.nclasses);
 for ind=1:sn.nnodes
     for r=1:sn.nclasses
@@ -141,14 +147,17 @@ sn.cdscaling = cdscaling;
 sn.cdscalingpeak = cdscalingpeak;
 sn.jdscaling = jdscaling;
 sn.jdscalingpeak = jdscalingpeak;
+sn.gdscaling = gdscaling;
+sn.gdscalingpeak = gdscalingpeak;
+sn.gdscalingcutoff = gdscalingcutoff;
 sn.nodetype = nodetypes;
 sn.nstations = sum(sn.isstation);
 sn.isstateful = (nodetypes == NodeType.Source | nodetypes == NodeType.Delay | nodetypes == NodeType.Queue | nodetypes == NodeType.Cache | nodetypes == NodeType.Join | nodetypes == NodeType.Router | nodetypes == NodeType.Place | nodetypes == NodeType.Transition | (nodetypes == NodeType.Fork & self.forkStateful));
 sn.isstatedep = false(sn.nnodes,3); % col 1: buffer, col 2: srv, col 3: routing
-sn.isfunction = [];
+sn.hassetup = [];
 for ind = 1:sn.nstations
     if isa(self.stations{ind},'Queue')
-        sn.isfunction(ind) = ~isempty(self.stations{ind}.setupTime);
+        sn.hassetup(ind) = ~isempty(self.stations{ind}.setupTime);
     end
 end
 
@@ -164,7 +173,7 @@ for ind=1:sn.nnodes
 
     for r=1:sn.nclasses
         switch sn.routing(ind,r)
-            case {RoutingStrategy.RROBIN, RoutingStrategy.WRROBIN, RoutingStrategy.JSQ, RoutingStrategy.RL, RoutingStrategy.SQ}
+            case {RoutingStrategy.RROBIN, RoutingStrategy.WRROBIN, RoutingStrategy.JSQ, RoutingStrategy.SQ, RoutingStrategy.SDR}
                 sn.isstatedep(ind,3) = true; % state dependent routing
         end
     end
@@ -221,6 +230,7 @@ end
 
 sn.fj = self.getForkJoins();
 self.sn = sn;
+LineConsole.compileDetail('refreshing class priorities and deadlines');
 refreshPriorities(self);
 if exist('refreshDeadlines', 'file')
     refreshDeadlines(self);
@@ -248,6 +258,7 @@ if ~isempty(self.sn)
     end
 end
 
+LineConsole.compileDetail('refreshing service and arrival processes');
 refreshProcesses(self);
 
 % Export patience/impatience fields for abandonment-aware solvers (MAPMsG, JMT, etc.)
@@ -500,15 +511,16 @@ self.sn = sn;
 % Check if priorities are specified but no priority-aware scheduling policy is used
 sn = self.sn;
 if ~all(sn.classprio == sn.classprio(1))
-    % Priority classes exist, check if any station uses priority-aware scheduling
+    % Priority classes exist, check if any station uses priority-aware scheduling.
+    % Only the *PRIO policies belong here: priority-awareness is a property of the
+    % DECLARED policy, never of the data (see _kb/11-conventions-and-gotchas.md).
     prioScheds = [SchedStrategy.PSPRIO, SchedStrategy.DPSPRIO, SchedStrategy.GPSPRIO, ...
                   SchedStrategy.HOL, SchedStrategy.FCFSPRIO, SchedStrategy.LCFSPRIO, ...
                   SchedStrategy.LCFSPRPRIO, SchedStrategy.LCFSPIPRIO, ...
                   SchedStrategy.FCFSPRPRIO, SchedStrategy.FCFSPIPRIO, ...
-                  SchedStrategy.LCFS, SchedStrategy.LCFSPR, ...
-                  SchedStrategy.FCFSPR];
+                  SchedStrategy.SRPTPRIO];
     if ~any(ismember(sn.sched, prioScheds))
-        line_warning(mfilename, 'Priority classes are specified but no priority-aware scheduling policy is used in the model. Priorities will be ignored.');
+        line_warning(mfilename, 'Priority classes are specified but no priority-aware scheduling policy (PSPRIO, DPSPRIO, GPSPRIO, HOL, FCFSPRIO, FCFSPRPRIO, FCFSPIPRIO, LCFSPRIO, LCFSPRPRIO, LCFSPIPRIO, SRPTPRIO) is used in the model. Priorities will be ignored.');
     else
         % Display priority info unless silent
         global LINEVerbose;
@@ -524,6 +536,7 @@ if ~all(sn.classprio == sn.classprio(1))
     end
 end
 
+LineConsole.compileDetail('computing the routing table and the chains');
 if any(nodetypes == NodeType.Cache)
     % this also refreshes the routing matrix and the visits
     refreshChains(self, false); % wantVisits
@@ -531,6 +544,8 @@ else
     % this also refreshes the routing matrix and the visits
     refreshChains(self, true); % wantVisits
 end
+LineConsole.compileDetail('found %s over %s', LineConsole.plural(self.sn.nchains,'chain'), ...
+    LineConsole.plural(self.sn.nclasses,'class','classes'));
 sn = self.sn;
 refclasses = getReferenceClasses(self);
 refclass = zeros(1,sn.nchains);
@@ -542,8 +557,11 @@ for c=1:sn.nchains
 end
 sn.refclass = refclass;
 self.sn = sn;
+LineConsole.compileDetail('refreshing node parameters and state-dependent routing');
 refreshLocalVars(self); % depends on chains (rtnodes)
+refreshStateDepRouting(self); % depends on nodeparam (rebuilt by refreshLocalVars)
 refreshPetriNetNodes(self);
+LineConsole.compileDetail('building the synchronization events');
 refreshSync(self); % this assumes that refreshChain is called before
 refreshGlobalSync(self);
 
@@ -598,6 +616,7 @@ if any(sn.fj(:)) && ~self.isFJAugmented % if there are forks
     end
 end
 
+LineConsole.compileDetail('refreshing finite capacity regions');
 sn = refreshRegions(self);
 self.sn = sn;
 
@@ -623,13 +642,13 @@ for ist = 1:self.sn.nstations
             % Build compatibility matrix and per-(type,class) rates
             classMap = [];
             if ~isempty(hsd) && isKey(hsd, st.getName())
-                classMap = hsd(st.getName());
+                classMap = hsd{st.getName()};
             end
             for r = 1:self.sn.nclasses
                 if st.isCompatible(self.classes{r})
                     self.sn.nodeparam{nodeIdx}.servercompat(t, r) = 1;
                     if ~isempty(classMap) && isKey(classMap, self.classes{r}.getName())
-                        dist = classMap(self.classes{r}.getName());
+                        dist = classMap{self.classes{r}.getName()};
                         mval = dist.getMean();
                         if mval > 0
                             self.sn.nodeparam{nodeIdx}.heterorates(t, r) = 1/mval;
@@ -645,6 +664,24 @@ for ist = 1:self.sn.nstations
         end
     end
 end
+
+% Server parallelism (setServerParallelism): number of servers a job seizes.
+% Populated for every Queue that declares it, with or without server types.
+for ist = 1:self.sn.nstations
+    if isa(self.stations{ist}, 'Queue') && self.stations{ist}.hasServerParallelism()
+        nodeIdx = self.sn.stationToNode(ist);
+        par = ones(1, self.sn.nclasses);
+        declared = self.stations{ist}.serverParallelism;
+        par(1:min(numel(declared), self.sn.nclasses)) = max(1, declared(1:min(numel(declared), self.sn.nclasses)));
+        if iscell(self.sn.nodeparam{nodeIdx})
+            % A polling station keeps a per-buffer cell here, not a struct
+            self.sn.nodeparam{nodeIdx}{1}.serverparallelism = par;
+        else
+            self.sn.nodeparam{nodeIdx}.serverparallelism = par;
+        end
+    end
+end
+
 end
 
 function stat_idx = nd2st(sn, node_idx)

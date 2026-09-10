@@ -1,139 +1,107 @@
 # LINE CLI
 
-Command-line interface for the LINE queueing network solver.
-
-
-## Usage
-
-The CLI is a single Python script with no external dependencies (only Python 3.9+ standard library).
+`line-cli.py` — a single-file command-line front end for the LINE queueing
+network solver. Pure Python 3.9+ standard library, no dependencies; wraps `jline.jar`.
 
 ```bash
-# Make executable (optional)
-chmod +x line-cli.py
-
-# Run directly
-python line-cli.py <command> [options]
-./line-cli.py <command> [options]
+python line-cli.py <command> [options]   # or ./line-cli.py after chmod +x
 ```
 
-### Solve a Model
+This is one of five LINE command-line front ends; see "The other front ends"
+below for which one to reach for and what each covers.
+
+## solve
 
 ```bash
-# Solve with default settings (MVA solver)
-python line-cli.py solve model.jsimg
-
-# Use a specific solver
-python line-cli.py solve model.jsimg -s fluid
-
-# Output as JSON
-python line-cli.py solve model.jsimg -o json
-
-# Solve with specific analysis type
-python line-cli.py solve model.jsimg -a avg  # Average metrics only
-python line-cli.py solve model.jsimg -a sys  # System metrics only
-
-# Use a random seed for stochastic solvers
-python line-cli.py solve model.jsimg -s jmt -d 12345
-
-# Read from stdin
-cat model.jsimg | python line-cli.py solve -i jsimg -s mva
+python line-cli.py solve model.json               # default MVA solver
+python line-cli.py solve model.json -s fluid      # pick a solver
+python line-cli.py solve model.json -o json       # output: table (default) | json | csv
+python line-cli.py solve model.json -a avg        # analysis: avg | sys | ...
+python line-cli.py solve model.json -s jmt -d 12345     # seed for stochastic solvers
+python line-cli.py solve model.json -s ssa --samples 1e6   # simulation run length
+cat model.jsimg | python line-cli.py solve -i jsimg -s mva   # read from stdin (external format)
 ```
 
-### Available Solvers
+Solvers (`list solvers`): `mva` (default), `auto`, `ag`, `ba`, `ctmc`, `env`,
+`fld`/`fluid`, `jmt`, `ldes` (alias `des`), `ln`, `ln.mva`, `ln.nc`,
+`ln.comom`, `lqns`, `mam`, `nc`, `qns`/`qnsolver`, `ssa`, `uq`.
+`env` reads an Environment model and takes no other token; `uq` needs
+`--uq-solver` to name the engine it runs at each design point.
 
-- `mva` - Mean Value Analysis (default)
-- `auto` - Automatic solver selection based on input format
-- `ctmc` - Continuous-Time Markov Chain
-- `des` - LINE Discrete Event Simulator (LDES)
-- `fld` - Fluid/Mean-Field ODE (alias: `fluid`)
-- `jmt` - Java Modelling Tools (simulation)
-- `mam` - Matrix Analytic Methods
-- `nc` - Normalizing Constant
-- `qns` - External QNSolver integration (alias: `qnsolver`)
-- `ssa` - Stochastic Simulation Algorithm
-- `ln` - Layered Network solver
-- `lqns` - LQN Solver
+Input formats (`list formats`): `json`, `jsim`, `jsimg`, `jsimw`, `lqnx`,
+`xml`, `pnml`. `json` is LINE's own portable model format
+([`doc/line-model.schema.json`](doc/line-model.schema.json), also read and
+written through the library API `save_model`/`load_model`); the others are
+external model file types (JMT's JSIMG/JSIMW/JSIM, LQNS's LQNX, ISO/IEC 15909-2
+PNML) that can also be passed to the CLI.
+
+Analyses (`list analysis`) cover the average tables (`avg`, `sys`, `chain`,
+`node`, `nodechain`, `stage`), the cache and station-class tables (`cache`,
+`item`, `orbit`, `loss`, `region-loss`, `deadline`), `normconst`, `busyperiod`,
+`sens`, the distribution and transient families (`cdf-respt`, `cdf-passt`,
+`perct-respt`, `tran-*`), the probability and sampling families (`prob*`,
+`sample*`), the CTMC rewards (`reward*`) and the solver-internal reports
+(`generator`, `statevec`, `moments`, `interval`).
+
+Numeric controls are forwarded verbatim to the JAR: `--samples`, `--cutoff`,
+`--timespan` (alias `--tspan`), `--timestep`, `--method`, `--tol`,
+`--iter_tol`, `--iter_max`, `--multiserver`, `--warmupfrac`, `--stage-solver`,
+`--uq-solver`, `--busyperiod`, `--busyperiod-subnet`, `--sens-method`,
+`--sens-scheme`, `--sens-step`.
+
+## info
 
 ```bash
-# List all solvers
-python line-cli.py list solvers
+python line-cli.py info    # system info, JAR status, solver compatibility
 ```
 
-### Input Formats
-
-- `jsim` - JSIM format
-- `jsimg` - JSIMG format (with graphics)
-- `jsimw` - JSIMW workspace format
-- `lqnx` - LQN XML format
-- `xml` - Generic XML format
+## server / rest
 
 ```bash
-# List all formats
-python line-cli.py list formats
+python line-cli.py server                  # WebSocket server on port 5863
+python line-cli.py server -H 0.0.0.0 -p 8080
 ```
 
-### System Information
+`rest` is an alias of `server` (execs `java -jar jline.jar -p <port>`): it starts
+the WebSocket server (default port 8080) and does **not** serve HTTP. The HTTP
+REST API is the separate `io/rest-api/` Maven module, not reachable through this CLI:
 
 ```bash
-# Display system info, JAR status, and solver compatibility
-python line-cli.py info
+cd io/rest-api && mvn clean package
+java -cp target/line-rest.jar:common/jline.jar jline.rest.LineRestServer --port 8080
 ```
 
-### Server Mode
-
-```bash
-# Start WebSocket server on default port (5863)
-python line-cli.py server
-
-# Start on custom port
-python line-cli.py server -p 8080
-
-# Bind to all interfaces
-python line-cli.py server -H 0.0.0.0 -p 5863
-```
-
-### REST API Server Mode
-
-```bash
-# Start REST API server on default port (8080)
-python line-cli.py rest
-
-# Start on custom port
-python line-cli.py rest -p 8080
-```
+It serves JSON under `/api/v1` (`POST /api/v1/models/solve`, `GET /api/v1/health`,
+plus job/analysis/metrics routes); see `io/rest-api/README.md` and `io/rest-api/openapi.yaml`.
 
 ## Configuration
 
-Create `~/.config/line-cli/config.yaml` (requires PyYAML):
-
-```yaml
-# Path to jline.jar (auto-detected if not specified)
-# jar_path: /path/to/jline.jar
-
-# Java executable path
-java_path: java
-
-# Default solver
-default_solver: mva
-
-# Default output format
-default_output_format: table
-
-# Server settings
-server:
-  host: localhost
-  port: 5863
-```
-
-## Environment Variables
-
-- `LINE_JAR_PATH` - Path to jline.jar
+Optional `~/.config/line-cli/config.yaml` (needs PyYAML) overrides defaults:
+`jar_path`, `java_path`, `default_solver`, `default_output_format`, and a `server:`
+block with `host`/`port`. Otherwise the JAR is auto-detected in `common/jline.jar`
+or taken from the `LINE_JAR_PATH` env var.
 
 ## Requirements
 
-- Python 3.9+
-- Java 8+ (for running the LINE solver JAR)
-- jline.jar (auto-detected in `common/jline.jar` or set via `LINE_JAR_PATH`)
+Python 3.9+, Java 8+, `jline.jar`. PyYAML is optional (config file only).
 
-Optional:
-- PyYAML (for configuration file support)
+## The other front ends
+
+| Front end | Invocation | Covers |
+|---|---|---|
+| `line-cli.py` (this one) | `python line-cli.py solve ...` | a thin wrapper over the JAR; everything the JAR serves, plus `csv` output and the `list`/`info` subcommands |
+| JAR `LineCLI` | `java -jar common/jline.jar -s ... -a ...` | the reference vocabulary this wrapper forwards to |
+| C++ `line-cli` | `common/line-cli -f model.json -s ...` | a superset: `--arith` multiprecision, `--api`, sensitivity/UQ knobs, and a dozen analyses with no JAR spelling. `--help-all` prints the full reference |
+| native python | `python3 -m line_solver.cli -f model.json -s ...` | the no-JVM twin; same formats and the same analysis vocabulary, with `pickle`/`mat` output on top |
+| MATLAB `linemcr` | `linemcr('-f','model.json','-s','mva')` | the MCR/Docker front end: the average tables (`avg`, `sys`, `chain`, `node`, `nodechain`, `cache`, `item`) only |
+
+Two deliberate differences between the JAR and the C++ CLI, documented because
+neither can be removed without breaking a bridge:
+
+- **`-n`/`--node` and `-c`/`--class` are 0-based in the JAR (and in both Python
+  CLIs) and 1-based in the C++ `line-cli`**, which indexes stations as MATLAB
+  does. `python/line_solver/solvers/cpp_dispatch.py` and `jar_dispatch.py` each
+  convert for their own CLI. Both spellings parse in both, so a command line is
+  portable; the *number* is not.
+- The JAR spells the default verbosity `normal` and the C++ CLI `standard`.
+  Both now accept both.

@@ -32,7 +32,7 @@ def trace_var(trace: ArrayLike) -> float:
     """
     Compute the variance of trace data.
 
-    Uses population variance (ddof=0) for consistency with Kotlin.
+    Uses population variance (ddof=0) for consistency with the JAR.
 
     Args:
         trace: Array of trace values.
@@ -135,7 +135,16 @@ def trace_gamma(trace: ArrayLike, limit: int = 1000) -> np.ndarray:
 
     Example:
         >>> gamma, rho0, residuals = trace_gamma(trace_data)
+
+    Mirrors trace_gamma.m: rho_k = RHO0 * gamma^k is fitted by ROBUST nonlinear
+    least squares over the whole range of gamma, started at 0.99. MATLAB uses
+    nlinfit with RobustWgtFun 'fair', whose weight 1/(1 + |r|/c) at the default
+    tuning c = 1.4 is exactly the derivative of the fair loss passed to
+    least_squares below, so the two minimize the same criterion. An unweighted
+    fit is the fallback, as MATLAB falls back to lsqcurvefit.
     """
+    from scipy.optimize import least_squares
+
     trace = np.asarray(trace, dtype=np.float64).ravel()
 
     M1 = trace_mean(trace)
@@ -144,24 +153,40 @@ def trace_gamma(trace: ArrayLike, limit: int = 1000) -> np.ndarray:
     max_lag = min(limit, len(trace) - 1)
     lag = np.arange(1, max_lag + 1)
     rho = trace_acf(trace, lag)
+    lag = lag[:len(rho)]
 
     VAR = M2 - M1 * M1
     SCV = VAR / (M1 * M1) if M1 != 0 else 1.0
     RHO0 = 0.5 * (1.0 - 1.0 / SCV) if SCV != 0 else 0.0
 
-    # Grid search for best gamma
-    best_gamma = 0.99
-    min_residuals = np.inf
+    if lag.size == 0:
+        return np.array([0.99, RHO0, 0.0])
 
-    for gamma_int in range(990, 1000):
-        g = gamma_int / 1000.0
-        expected = RHO0 * (g ** lag[:len(rho)])
-        residuals = np.sum((rho - expected) ** 2)
-        if residuals < min_residuals:
-            min_residuals = residuals
-            best_gamma = g
+    def resid(x):
+        return RHO0 * (x[0] ** lag) - rho
 
-    return np.array([best_gamma, RHO0, min_residuals])
+    def fair(z):
+        # rho(z), rho'(z), rho''(z) of the fair loss at tuning c; rho'(z) is the
+        # 1/(1 + |r|/c) weight itself. z = r^2, clipped off zero for rho''.
+        c = 1.4
+        u = np.sqrt(z) / c
+        zc = np.maximum(z, 1e-300)
+        return np.array([2.0 * c * c * (u - np.log1p(u)),
+                         1.0 / (1.0 + u),
+                         -0.5 / ((1.0 + u) ** 2 * np.sqrt(zc) * c)])
+
+    gamma = 0.99
+    for loss in (fair, 'linear'):
+        try:
+            sol = least_squares(resid, np.array([0.99]), bounds=(-1.0, 1.0),
+                                loss=loss, max_nfev=100000)
+            gamma = float(sol.x[0])
+            break
+        except Exception:
+            continue
+
+    residuals = float(np.sum((rho - RHO0 * (gamma ** lag)) ** 2))
+    return np.array([gamma, RHO0, residuals])
 
 def trace_iat2counts(trace: ArrayLike, scale: float) -> np.ndarray:
     """
@@ -985,9 +1010,15 @@ def mtrace_bootstrap(T: ArrayLike, A: ArrayLike, n_samples: int = 100,
 
 def mtrace_iat2counts(T: ArrayLike, L: ArrayLike, scale: float) -> np.ndarray:
     """
-    Compute counting process from marked inter-arrival times.
+    Per-class counting processes of a marked trace: for each arrival, how many
+    events of each class fall in the window of length ``scale`` that starts at
+    that arrival.
 
-    For each class, counts arrivals in windows of specified scale.
+    Port of the pure-MATLAB branch of ``m3a/mtrace/mtrace_iat2counts.m``. The
+    windows are anchored at EVERY arrival, not at each class's own arrivals, so
+    the rows are aligned across classes and cross-class count covariances are
+    well defined. The series is truncated at the first window that reaches the
+    end of the trace, because from there on the counts are censored.
 
     Args:
         T: Array of inter-arrival times
@@ -995,24 +1026,33 @@ def mtrace_iat2counts(T: ArrayLike, L: ArrayLike, scale: float) -> np.ndarray:
         scale: Time scale for counting
 
     Returns:
-        Array of counts per class per window.
+        (rows, K) array; column k is the counting process of the k-th label in
+        increasing label order.
     """
     T = np.asarray(T, dtype=np.float64).ravel()
     L = np.asarray(L).ravel()
     labels = np.unique(L)
-    C = len(labels)
+    K = len(labels)
+    n = len(T)
+    if n < 2:
+        return np.zeros((0, K), dtype=np.int64)
 
-    # Split by class and compute counts
-    TL = mtrace_split(T, L)
+    CT = np.cumsum(T)
+    rows = []
+    for i in range(n - 1):
+        cur = i
+        censored = False
+        while CT[cur + 1] - CT[i] <= scale:
+            cur += 1
+            if cur == n - 1:
+                censored = True
+                break
+        window = L[(i + 1):(cur + 1)]
+        rows.append([int(np.sum(window == labels[j])) for j in range(K)])
+        if censored:
+            break
 
-    counts = []
-    for c in range(C):
-        if len(TL[c]) > 0:
-            counts.append(trace_iat2counts(TL[c], scale))
-        else:
-            counts.append(np.array([]))
-
-    return counts
+    return np.array(rows, dtype=np.int64).reshape(len(rows), K)
 
 def trace_bicov(trace: ArrayLike, grid: ArrayLike) -> Tuple[np.ndarray, np.ndarray]:
     """

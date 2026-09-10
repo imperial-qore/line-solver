@@ -11,6 +11,7 @@
  */
 package jline.api.mc;
 
+import org.apache.commons.math3.special.Gamma;
 import org.apache.commons.math3.util.FastMath;
 
 import jline.util.matrix.Matrix;
@@ -109,6 +110,30 @@ public final class Ctmc_foxglynn {
      * @return Truncation points and weights
      */
     public static FoxGlynnWeights ctmc_foxglynn_weights(double lambda, double tol, int maxiter) {
+        return ctmc_foxglynn_weights(lambda, tol, maxiter, true);
+    }
+
+    /**
+     * Return the Fox-Glynn truncation window and Poisson weights for a
+     * Poisson(lambda) mixing distribution at tail-mass tolerance tol.
+     *
+     * <p>With normalize set the window is rescaled to sum to one, as Fox and
+     * Glynn prescribe, so the truncated tails are redistributed over the
+     * window. Cleared, the anchor is scaled by the true mode probability
+     * through a log-gamma instead, so the returned values are the Poisson
+     * probabilities themselves and 1 - sum(w) is the discarded tail rather
+     * than being absorbed; {@link Ctmc_fau} needs that, its error being
+     * reported as missing mass rather than as a bound.</p>
+     *
+     * @param lambda    Poisson rate, that is the uniformization constant times the horizon
+     * @param tol       Poisson tail-mass truncation tolerance
+     * @param maxiter   Cap on the right truncation point; nonpositive to leave it uncapped
+     * @param normalize Rescale the window to sum to one, rather than returning
+     *                  the true Poisson probabilities
+     * @return Truncation points and weights
+     */
+    public static FoxGlynnWeights ctmc_foxglynn_weights(double lambda, double tol, int maxiter,
+                                                        boolean normalize) {
         double eps = (tol > 0.0) ? tol : 1e-12;
         int left = leftTruncationPoint(lambda, eps);
         int right = rightTruncationPoint(lambda, eps);
@@ -118,7 +143,7 @@ public final class Ctmc_foxglynn {
                 left = right;
             }
         }
-        return new FoxGlynnWeights(left, right, poissonWeights(lambda, left, right));
+        return new FoxGlynnWeights(left, right, poissonWeights(lambda, left, right, normalize));
     }
 
     /**
@@ -236,7 +261,7 @@ public final class Ctmc_foxglynn {
      * tails inwards, in increasing order of magnitude, with compensated
      * summation.
      */
-    private static double[] poissonWeights(double lambda, int left, int right) {
+    private static double[] poissonWeights(double lambda, int left, int right, boolean normalize) {
         int len = right - left + 1;
         double[] w = new double[len];
         int mode = (int) FastMath.floor(lambda);
@@ -252,6 +277,15 @@ public final class Ctmc_foxglynn {
         }
         for (int k = mode; k < right; k++) {
             w[k + 1 - left] = w[k - left] * lambda / (k + 1);
+        }
+
+        if (!normalize) {
+            double logMode = -lambda + mode * FastMath.log(lambda) - Gamma.logGamma(mode + 1.0);
+            double scale = FastMath.exp(logMode);
+            for (int i = 0; i < len; i++) {
+                w[i] *= scale;
+            }
+            return w;
         }
 
         double total = 0.0;

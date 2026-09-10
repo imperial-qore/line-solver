@@ -52,8 +52,13 @@ public final class Solver_ssa_analyzer_nrm {
         } else {
             // Use the default direct metric computation version
             SolverSSAResultNRM result = Solver_ssa_nrm.solver_ssa_nrm(sn, options);
-            return new SSAResult(result.getQN(), result.getUN(), result.getRN(), result.getTN(),
+            SSAResult ssaResult = new SSAResult(result.getQN(), result.getUN(), result.getRN(), result.getTN(),
                     result.getCN(), result.getXN(), null, null, sn);
+            // the derived rates are counted by the NRM engine itself, so they do
+            // not depend on which back-end the dispatch picks
+            ssaResult.startRate = result.StartN;
+            ssaResult.preemptRate = result.PreemptN;
+            return ssaResult;
         }
     }
 }

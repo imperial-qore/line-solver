@@ -104,8 +104,11 @@ else
     vmax = min(sum(sld-1),ceil(sum(N)));
     Y = pfqn_mva(y,N,0*N); % single class model
     rhoN = y*Y';
+    % vmax=0 leaves the loop below empty, so lEN must exist beforehand: E_0=1 is
+    % the no-load-dependence limit and Cgamma is then 1
+    lEN = zeros(1,vmax+1);
     for vtot=1:vmax
-        lEN(vtot+1) = real(pfqn_gldsingle(rhoN,vtot,beta));
+        lEN(vtot+1) = real(pfqn_lldsingle(rhoN,vtot,beta));
     end
     
     for vtot=0:vmax

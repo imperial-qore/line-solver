@@ -105,6 +105,8 @@ start = time.time()
 solver_ctmc = CTMC(model, options)
 pr_ctmc = solver_ctmc.getProbSysAggr()
 print(f'CTMC: Pr_ctmc = {pr_ctmc}')
+print('Pr_ctmc =')
+print(pr_ctmc)
 print(f'CTMC time: {time.time() - start:.3f}s')
 print(f'(Expected MATLAB result: ~0.000348)\n')
 

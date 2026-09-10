@@ -22,6 +22,14 @@ else
     isDebug = (GlobalConstants.Verbose == VerboseLevel.DEBUG);
 end
 
+% The solver console narrates the run, and these messages are exactly the
+% steps it wants to report: they are routed to it whether or not the session
+% is at DEBUG level, deduplicated and capped by LineConsole.detail.
+if LineConsole.ownsLog()
+    LineConsole.detail(sprintf(MSG, args{:}));
+    return
+end
+
 if isDebug
     MSG = sprintf('[DEBUG] %s', sprintf(MSG, args{:}));
     line_printf('%s\n', MSG);

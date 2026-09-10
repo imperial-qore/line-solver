@@ -250,17 +250,20 @@ def pfqn_mvaldmx(lam: np.ndarray, D: np.ndarray, N: np.ndarray,
 
     C = len(closedClasses)
     if C == 0:
-        # Pure open network - use standard formulas
+        # Purely open network: the closed lattice is the single empty population,
+        # so P(station holds 0 closed jobs)=1 and the reference's sums collapse to
+        # their n=0 term. That term is the effective capacity, which is where the
+        # load dependence enters -- the single-server law lam*D/(1-rho) is the
+        # answer only when mu is flat, and silently drops mu(n) otherwise.
+        Pc = np.ones((M, 1))
         for r in openClasses:
             XN[r] = lam[r]
             for ist in range(M):
-                rho = np.sum([lam[s] * D[ist, s] for s in openClasses])
-                if rho < 1:
-                    QN[ist, r] = lam[r] * D[ist, r] / (1 - rho)
-                    CN[ist, r] = D[ist, r] / (1 - rho)
-                    UN[ist, r] = lam[r] * D[ist, r]
+                QN[ist, r] = lam[r] * D[ist, r] * EC[ist, 0]
+                CN[ist, r] = D[ist, r] * EC[ist, 0]
+                UN[ist, r] = lam[r] * Eprime[ist, 1] / E[ist, 1]
 
-        return XN, QN, UN, CN, lGN, np.array([])
+        return XN, QN, UN, CN, lGN, Pc
 
     Dc = D[:, closedClasses]
     Nc = N[closedClasses].astype(int)

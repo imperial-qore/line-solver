@@ -84,6 +84,7 @@ self.sn = sn;
 
 %% compute visits
 if propagate
+    LineConsole.compileDetail('solving the routing DTMC for the visit ratios');
     [visits, nodevisits, sn] = sn_refresh_visits(sn, sn.chains, rt, rtnodes);
 end
 

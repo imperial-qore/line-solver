@@ -1,0 +1,53 @@
+{
+  "class": {
+    "JMT": "stochastic",
+    "LDES": "stochastic"
+  },
+  "example": "oqn_trace_driven",
+  "solvers": {
+    "JMT": [
+      {
+        "ArvR": 0.0,
+        "JobClass": "OpenClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 1.0205,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 1.0205,
+        "JobClass": "OpenClass",
+        "QLen": 0.1128,
+        "ResidT": 0.11275,
+        "RespT": 0.11275,
+        "Station": "Queue",
+        "Tput": 1.0211,
+        "Util": 0.10284
+      }
+    ],
+    "LDES": [
+      {
+        "ArvR": 0.0,
+        "JobClass": "OpenClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 1.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 1.0,
+        "JobClass": "OpenClass",
+        "QLen": 0.11299,
+        "ResidT": 0.11236,
+        "RespT": 0.11236,
+        "Station": "Queue",
+        "Tput": 1.0004,
+        "Util": 0.10112
+      }
+    ]
+  }
+}

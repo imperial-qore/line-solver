@@ -36,11 +36,14 @@ function [res, hitprob, missprob, delayedprob, it, sn] = da_cacheqn_retrieval(sn
 %    singular routing and a zero read-rate denominator, so a plain closed model
 %    can return an empty or unreliable table. Treat the closed path as
 %    experimental and validate any closed model against LDES before trusting it.
-%    The counterpart is ported to Python (api/da/cacheqn_retrieval.py) and the
-%    JAR (Da_cacheqn_retrieval), which share the same caveats; the C++ SolverMVA
-%    (line-mp) deliberately REFUSES it by name (the OPEN retrieval analyzer IS
-%    ported there). Verified 2026-07-24 that the open path matches across
-%    codebases while the closed path lacks a clean, exampled reference.
+%    The counterpart is ported to Python (api/da/cacheqn_retrieval.py), the
+%    JAR (Da_cacheqn_retrieval) and C++ (cpp/include/line/api/da/
+%    da_cacheqn_retrieval.h), which share the same caveats. Both C++ solver-level
+%    analyzers are now in as well: solver_nc_cacheqn_retrieval.h and
+%    solver_mva_cacheqn_retrieval.h, the latter wired into mvaDispatch branch 2
+%    on the no-Source test. Verified 2026-07-29 that the closed MVA path agrees
+%    with the closed NC path to 1e-9 on the Delay->Cache->Fetch fixture, which is
+%    the check that closed the SolverMVA refusal.
 %
 % Copyright (c) 2012-2026, Imperial College London
 % All rights reserved.
@@ -63,8 +66,8 @@ ch = sn.nodeparam{ci};
 
 % --- retrieval configuration ---
 rk = keys(ch.retrievalSystemQueueIndices);
-readClass = double(rk{1}) + 1;                 % 1-indexed read class
-queueNodes = double(ch.retrievalSystemQueueIndices(rk{1}));
+readClass = double(rk(1)) + 1;                 % 1-indexed read class
+queueNodes = double(ch.retrievalSystemQueueIndices{rk(1)});
 if numel(queueNodes) ~= 1
     line_error(mfilename, 'da_cacheqn_retrieval currently supports a single-station (single-backend) retrieval system.');
 end

@@ -57,6 +57,12 @@ public class ServiceNodeParam extends NodeParam {
     public HeteroSchedPolicy heteroschedpolicy;
 
     /**
+     * Servers seized at once by a job, per class: Matrix (1 x K), all ones unless
+     * some class declares job parallelism. Null when the station declares none.
+     */
+    public Matrix serverparallelism;
+
+    /**
      * Checks if this service parameter container is empty.
      *
      * @return true if no file names are specified, false otherwise

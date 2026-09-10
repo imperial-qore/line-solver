@@ -86,8 +86,8 @@ classdef JLayeredNetwork < Model
                     case 'CacheTask'
                         node = CacheTask(self, char(javaNode.getName()));
                         node.obj = javaNode;
-                    case 'FunctionTask'
-                        node = FunctionTask(self, char(javaNode.getName()));
+                    case {'SetupTask','FunctionTask'}
+                        node = SetupTask(self, char(javaNode.getName()));
                         node.obj = javaNode;
                     case 'Entry'
                         node = Entry(self, char(javaNode.getName()));

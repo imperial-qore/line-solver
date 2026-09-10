@@ -17,6 +17,7 @@ import jline.lang.nodes.*;
 import jline.lang.processes.*;
 import jline.solvers.NetworkAvgTable;
 import jline.solvers.SolverOptions;
+import jline.solvers.ag.SolverAG;
 import jline.solvers.mva.SolverMVA;
 import jline.util.matrix.Matrix;
 import org.junit.jupiter.api.*;
@@ -29,10 +30,9 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Coverage tests for SolverMAM targeting the biggest gaps:
- * - Handler methods: dec.mmap, dec.poisson, ldqbd, inap/inapplus
+ * - Handler methods: dec.mmap, dec.poisson, ldqbd
  * - Solver_mam_basic.kt (source decomposition)
  * - Solver_mna_closed.kt / Solver_mna_open.kt
- * - Solver_mam_ag.kt (RCAT)
  * - Solver_mam_ldqbd.kt (Level-Dependent QBD)
  * - Solver_mam_passage_time.kt (CDF)
  * - SolverMAM.getProbMarg()
@@ -490,61 +490,9 @@ public class SolverMAMCoverageTest {
     }
 
     // =====================================================================
-    // 6. INAP / INAPPLUS METHODS - Solver_mam_ag.kt (RCAT)
+    // 6. INAP / INAPPLUS METHODS - the RCAT arm moved to SolverAG, and its
+    //    cases with it: see jline.solvers.ag.SolverAGMethodsTest
     // =====================================================================
-
-    @Test
-    public void testINAP_closedNetwork() {
-        Network model = buildClosedDelayQueue(5, 1.0, 2.0);
-
-        SolverMAM solver = new SolverMAM(model, new MAMOptions().method("inap"));
-        NetworkAvgTable table = solver.getAvgTable();
-        assertNotNull(table, "INAP should produce results");
-
-        // Cross-validate against MVA
-        Network model2 = buildClosedDelayQueue(5, 1.0, 2.0);
-        SolverMVA mvaSolver = new SolverMVA(model2);
-        NetworkAvgTable mvaTable = mvaSolver.getAvgTable();
-
-        double mamTput = getMetric(table, "Queue", "Class1", "Tput");
-        double mvaTput = getMetric(mvaTable, "Queue", "Class1", "Tput");
-
-        assertTrue(mamTput > 0, "INAP throughput should be positive");
-        // INAP is an iterative approximation; wider tolerance needed
-        assertEquals(mvaTput, mamTput, 0.35 * mvaTput,
-            "INAP should approximate MVA within 35% for Exp service");
-    }
-
-    @Test
-    public void testINAPPlus_closedNetwork() {
-        Network model = buildClosedDelayQueue(5, 1.0, 2.0);
-
-        SolverMAM solver = new SolverMAM(model, new MAMOptions().method("inapplus"));
-        NetworkAvgTable table = solver.getAvgTable();
-        assertNotNull(table, "INAPPLUS should produce results");
-
-        double tput = getMetric(table, "Queue", "Class1", "Tput");
-        assertTrue(tput > 0, "INAPPLUS throughput should be positive");
-    }
-
-    @Test
-    public void testExact_closedNetwork() {
-        // "exact" falls back to INAP in JAR
-        Network model = buildClosedDelayQueue(5, 1.0, 2.0);
-
-        SolverMAM solver = new SolverMAM(model, new MAMOptions().method("exact"));
-        NetworkAvgTable table = solver.getAvgTable();
-        assertNotNull(table, "exact (fallback to INAP) should produce results");
-    }
-
-    @Test
-    public void testINAP_openNetwork() {
-        Network model = buildOpenMM1(0.5, 1.0);
-
-        SolverMAM solver = new SolverMAM(model, new MAMOptions().method("inap"));
-        NetworkAvgTable table = solver.getAvgTable();
-        assertNotNull(table, "INAP should produce results for open network");
-    }
 
     // =====================================================================
     // 7. PH SERVICE DISTRIBUTIONS - exercises Solver_mam_basic.kt paths
@@ -952,10 +900,49 @@ public class SolverMAMCoverageTest {
         assertTrue(methods.contains("dec.mmap"));
         assertTrue(methods.contains("dec.poisson"));
         assertTrue(methods.contains("mna"));
-        assertTrue(methods.contains("inap"));
-        assertTrue(methods.contains("inapplus"));
-        assertTrue(methods.contains("exact"));
         assertTrue(methods.contains("ldqbd"));
+
+        // The RCAT names moved to SolverAG, which is where they are listed now
+        // (jline.solvers.ag.SolverAGMethodsTest.testListValidMethods). MAM must
+        // not re-advertise a method it no longer dispatches: supportsModelMethod
+        // redirects a caller that still asks by name.
+        assertFalse(methods.contains("inap"));
+        assertFalse(methods.contains("inapplus"));
+        assertFalse(methods.contains("inapinf"));
+        assertFalse(methods.contains("exact"));
+    }
+
+    /**
+     * Dropping a name from listValidMethods is what makes the solver refuse it
+     * and also what loses the forwarding address, so the refusal has to carry
+     * the address. NetworkSolver.checkDeclaredMethod sits above every
+     * dispatcher and used to outrank this one silently: it reported the flat
+     * "the 'inap' method is unsupported by this solver" and the caller was left
+     * to find SolverAG alone. It now asks unsupportedMethodReason first.
+     */
+    @Test
+    public void testMovedMethodsRedirectToSolverAG() {
+        for (String moved : new String[]{"inap", "inapplus", "inapinf", "exact"}) {
+            Network model = buildOpenMM1(0.5, 1.0);
+            RuntimeException e = assertThrows(RuntimeException.class,
+                    () -> new SolverMAM(model, new MAMOptions().method(moved)).getAvgTable());
+            String msg = String.valueOf(e.getMessage());
+            assertTrue(msg.contains("moved to SolverAG"),
+                    "'" + moved + "' must name where it went, got: " + msg);
+            assertTrue(msg.contains("SolverAG(model, \"" + moved + "\")"),
+                    "'" + moved + "' must show the call that replaces it, got: " + msg);
+        }
+    }
+
+    /** A name that never existed still gets the flat refusal, not a redirect. */
+    @Test
+    public void testUnknownMethodKeepsTheFlatRefusal() {
+        Network model = buildOpenMM1(0.5, 1.0);
+        RuntimeException e = assertThrows(RuntimeException.class,
+                () -> new SolverMAM(model, new MAMOptions().method("nosuchmethod")).getAvgTable());
+        String msg = String.valueOf(e.getMessage());
+        assertTrue(msg.contains("unsupported by this solver"), msg);
+        assertFalse(msg.contains("moved to"), msg);
     }
 
     @Test
@@ -1077,9 +1064,12 @@ public class SolverMAMCoverageTest {
         Network m2 = buildClosedDelayQueue(5, 1.0, 2.0);
         double tput2 = getMetric(new SolverMAM(m2, new MAMOptions().method("ldqbd")).getAvgTable(), "Queue", "Class1", "Tput");
 
-        // inap (iterative approximation, needs wider tolerance)
+        // inap (iterative approximation, needs wider tolerance). RCAT is
+        // SolverAG's since the move, so this arm crosses solvers rather than
+        // methods; it is kept here because what it checks is that the RCAT
+        // answer still agrees with MAM's own arms on one model.
         Network m3 = buildClosedDelayQueue(5, 1.0, 2.0);
-        double tput3 = getMetric(new SolverMAM(m3, new MAMOptions().method("inap")).getAvgTable(), "Queue", "Class1", "Tput");
+        double tput3 = getMetric(new SolverAG(m3, "inap").getAvgTable(), "Queue", "Class1", "Tput");
 
         // mna (iterative, needs wider tolerance)
         Network m4 = buildClosedDelayQueue(5, 1.0, 2.0);

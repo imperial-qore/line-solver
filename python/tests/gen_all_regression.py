@@ -12,35 +12,21 @@ import numpy as np
 import warnings
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# The single source of truth for which notebooks exist and where their baseline
+# lives. This file used to carry its own hardcoded subfolder list, which drifted
+# out of step with the suites' own list -- a notebook could be executed by a
+# suite and yet have no baseline anyone could generate for it.
+from notebook_suite import NotebookSuite
+
+SOURCE_DIR = 'examples'
+
 
 class RegressionGenerator:
     def __init__(self):
-        self.notebook_dirs = ['examples/gettingstarted', 'examples/basic', 'examples/advanced']
         self.regression_dir = 'tests/regression'
         self.working_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-
-        self.enabled_examples_subfolders = [
-            'cacheModel',
-            'cdfRespT',
-            'classSwitching',
-            'closedQN',
-            'cyclicPolling',
-            'forkJoin',
-            'initState',
-            'layeredCQ',
-            'layeredModel',
-            'loadDependent',
-            'misc',
-            'mixedQN',
-            'openQN',
-            'prioModel',
-            'randomEnv',
-            'rewardModel',
-            'stateDepRouting',
-            'stateProbabilities',
-            'stochPetriNet',
-            'switchoverTimes',
-        ]
 
         regression_path = os.path.join(self.working_dir, self.regression_dir)
         os.makedirs(regression_path, exist_ok=True)
@@ -220,64 +206,23 @@ class RegressionGenerator:
         raise TypeError(f"Object {obj} of type {type(obj)} is not JSON serializable")
 
     def generate_all_regression(self):
-        """Generate regression results for all notebooks in advanced and gettingstarted."""
+        """Generate regression results for every notebook the suites execute."""
         print("Generating regression data for all Python notebooks...")
         print(f"Working directory: {self.working_dir}")
-        print(f"Source directories: {', '.join(self.notebook_dirs)}")
+        print(f"Source directory: {SOURCE_DIR}")
         print(f"Regression data will be saved to: {os.path.join(self.working_dir, self.regression_dir)}")
+
+        notebook_files = all_notebooks()
+        print(f"Found {len(notebook_files)} notebook files in {SOURCE_DIR}/")
 
         total_successful = 0
         total_failed = 0
 
-        for source_dir in self.notebook_dirs:
-            print(f"\n{'='*50}")
-            print(f"Processing {source_dir}/ directory")
-            print(f"{'='*50}")
-
-            source_path = os.path.join(self.working_dir, source_dir)
-            if not os.path.exists(source_path):
-                print(f"Warning: Directory {source_path} does not exist, skipping...")
-                continue
-
-            notebook_files = []
-
-            if source_dir in ['examples/advanced', 'examples/basic']:
-                for subfolder in self.enabled_examples_subfolders:
-                    subfolder_path = os.path.join(source_path, subfolder)
-                    if not os.path.exists(subfolder_path):
-                        continue
-
-                    for file in os.listdir(subfolder_path):
-                        if file.endswith('.ipynb'):
-                            rel_path = os.path.join(subfolder, file)
-                            notebook_files.append(rel_path)
+        for notebook_file in notebook_files:
+            if self.generate_regression(notebook_file, SOURCE_DIR):
+                total_successful += 1
             else:
-                for root, dirs, files in os.walk(source_path):
-                    for file in files:
-                        if file.endswith('.ipynb'):
-                            rel_path = os.path.relpath(os.path.join(root, file), source_path)
-                            notebook_files.append(rel_path)
-
-            notebook_files.sort()
-
-            print(f"Found {len(notebook_files)} notebook files in {source_dir}/")
-
-            successful = 0
-            failed = 0
-
-            for notebook_file in notebook_files:
-                if self.generate_regression(notebook_file, source_dir):
-                    successful += 1
-                else:
-                    failed += 1
-
-            print(f"\n{source_dir}/ results:")
-            print(f"  Successful: {successful}")
-            print(f"  Failed: {failed}")
-            print(f"  Total: {len(notebook_files)}")
-
-            total_successful += successful
-            total_failed += failed
+                total_failed += 1
 
         print(f"\n{'='*60}")
         print(f"OVERALL REGRESSION GENERATION SUMMARY")
@@ -292,21 +237,67 @@ class RegressionGenerator:
 
         return True
 
+def all_notebooks():
+    """Every notebook the per-area suites execute, relative to `examples/`."""
+
+    class _All(NotebookSuite):
+        roots = ['basic', 'advanced', 'gettingstarted', 'gallery',
+                 'discrete', 'inference', 'opt', 'solvers', '']
+
+    return _All.discover_notebooks()
+
+
+def _split_source_dir(path):
+    """Split a notebook path into the (source_dir, relative path) pair used above.
+
+    Accepts either a path rooted at python/ ('examples/basic/x/y.ipynb') or one
+    already relative to `examples/` ('basic/x/y.ipynb'). Anything the suites do
+    not execute has no baseline to write and is rejected rather than written to
+    a path nothing reads.
+    """
+    path = path.replace(os.sep, '/').lstrip('./')
+    if path.startswith(SOURCE_DIR + '/'):
+        path = path[len(SOURCE_DIR) + 1:]
+    if path in all_notebooks():
+        return SOURCE_DIR, path
+    return None, path
+
+
 def main():
-    """Main function to run regression generation."""
+    """Main function to run regression generation.
+
+    With notebook paths on the command line only those baselines are rewritten.
+    Rebasing every notebook at once is almost never right: a baseline that moved
+    because a solver was fixed and one that moved because a solver broke look
+    identical here, so the whole set has to be adjudicated notebook by notebook
+    and only the adjudicated ones regenerated.
+    """
     print("=" * 60)
     print("LINE Solver Python Notebooks - Regression Generator")
     print("=" * 60)
 
     generator = RegressionGenerator()
+
+    targets = sys.argv[1:]
+    if targets:
+        success = True
+        for target in targets:
+            source_dir, rel_path = _split_source_dir(target)
+            if source_dir is None:
+                print(f'✗ {target} is not a notebook any example suite executes; '
+                      f'expected a path under examples/')
+                success = False
+                continue
+            success &= generator.generate_regression(rel_path, source_dir)
+        sys.exit(0 if success else 1)
+
     success = generator.generate_all_regression()
 
     if success:
         print("\n✓ All regression data generated successfully!")
         print("You can now run test_all_examples.py to verify notebooks against this regression data.")
         print("\nRegression data structure:")
-        print("  tests/regression/advanced/     - Examples regression data")
-        print("  tests/regression/gettingstarted/ - Getting started regression data")
+        print("  tests/regression/examples/<area>/<name>_regression.json")
     else:
         print("\n✗ Some regression data failed to generate.")
         print("Check the error messages above and fix any issues before running tests.")

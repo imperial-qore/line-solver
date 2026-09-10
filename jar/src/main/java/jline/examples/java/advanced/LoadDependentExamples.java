@@ -1,6 +1,9 @@
 package jline.examples.java.advanced;
 
+import jline.api.fes.FESResult;
 import jline.lang.Network;
+import jline.lang.ModelAdapter;
+import jline.lang.nodes.Station;
 import jline.solvers.NetworkSolver;
 import jline.solvers.ctmc.CTMC;
 import jline.solvers.wrappers.jmt.JMT;
@@ -12,8 +15,8 @@ import java.util.Scanner;
 /**
  * Examples demonstrating load-dependent queueing behavior.
  * 
- * This class provides Java implementations corresponding to the Kotlin notebooks
- * in jline.examples.kotlin.advanced.loadDependent package.
+ * This class provides Java implementations corresponding to the example notebooks
+ * in jline.examples.java.advanced.loadDependent package.
  */
 public class LoadDependentExamples {
 
@@ -50,26 +53,34 @@ public class LoadDependentExamples {
      */
     public static void ld_class_dependence() throws Exception {
         Network model = LoadDependentModel.ld_class_dependence();
-        
-        NetworkSolver[] solvers = new NetworkSolver[] {
-            new CTMC(model),
-            new JMT(model, "seed", 12345)
-        };
-        
-        for (NetworkSolver solver : solvers) {
-            try {
-                
-                if (solver instanceof JMT) {
-                    SolverOptions options = JMT.defaultOptions();
-                    options.samples = 100000;
-                    ((JMT)solver).setOptions(options);
-                }
-                
-                solver.getAvgTable().print();
-            } catch (Exception e) {
-            }
-        }
-        
+
+        // JMT is not solved here, as in ld_class_dependence.m: the JSIM writer
+        // has no representation for the class-dependence handle, so SolverJMT
+        // rejects the model rather than silently solving it unscaled.
+        new CTMC(model, "exact").getAvgTable().print();
+        new MVA(model, "method", "qd").getAvgTable().print();
+
+        pauseForUser();
+    }
+
+    /**
+     * Demonstrates joint (non-product-form) load dependence (ld_joint_dependence.m).
+     *
+     * <p>The station rate reads the class-1 marginal only and is shared by every
+     * class, so it is NOT the product-form beta_{i,r}(n_{i,r}) of
+     * {@link #ld_class_dependence()}; the exact CTMC is the reference against
+     * which the QD-AMVA approximation is read.</p>
+     *
+     * @throws Exception if the solver encounters an error
+     */
+    public static void ld_joint_dependence() throws Exception {
+        Network model = LoadDependentModel.ld_joint_dependence();
+
+        // JMT is not solved here, as in ld_joint_dependence.m: the JSIM writer
+        // has no representation for the joint-dependence handle.
+        new CTMC(model, "exact").getAvgTable().print();
+        new MVA(model, "method", "qd").getAvgTable().print();
+
         pauseForUser();
     }
 
@@ -90,26 +101,26 @@ public class LoadDependentExamples {
      */
     public static void ld_multiserver_fcfs() throws Exception {
         Network model = LoadDependentModel.ld_multiserver_fcfs();
-        
-        NetworkSolver[] solvers = new NetworkSolver[] {
-            new CTMC(model),
-            new JMT(model, "seed", 12345)
-        };
-        
-        for (NetworkSolver solver : solvers) {
-            try {
-                
-                if (solver instanceof JMT) {
-                    SolverOptions options = JMT.defaultOptions();
-                    options.samples = 100000;
-                    ((JMT)solver).setOptions(options);
-                }
-                
-                solver.getAvgTable().print();
-            } catch (Exception e) {
-            }
+
+        // The reference's order on the load-dependent model: CTMC, then exact MVA,
+        // then JMT at seed 23000. Its golden holds the FIRST table each solver
+        // produced, so the order and the pinned method are part of the answer.
+        try {
+            new CTMC(model).getAvgTable().print();
+        } catch (Exception e) {
+            System.out.println("CTMC failed: " + e.getMessage());
         }
-        
+        try {
+            new MVA(model, "method", "exact").getAvgTable().print();
+        } catch (Exception e) {
+            System.out.println("MVA failed: " + e.getMessage());
+        }
+        try {
+            new JMT(model, "seed", 23000, "samples", 100000).getAvgTable().print();
+        } catch (Exception e) {
+            System.out.println("JMT failed: " + e.getMessage());
+        }
+
         pauseForUser();
     }
 
@@ -141,7 +152,13 @@ public class LoadDependentExamples {
             try {
                 
                 if (solver instanceof JMT) {
-                    SolverOptions options = JMT.defaultOptions();
+                    // The solver's OWN options, not a fresh defaultOptions(): the latter
+                    // draws a RANDOM seed in its constructor (SolverOptions ->
+                    // RandomManager.generateRandomSeed), so replacing the object wholesale
+                    // discards the seed passed to the constructor above and makes this
+                    // example irreproducible -- which is what left the ld_multiserver_ps
+                    // parity row disagreeing with its golden on a Monte-Carlo margin.
+                    SolverOptions options = solver.getOptions();
                     options.samples = 100000;
                     ((JMT)solver).setOptions(options);
                 }
@@ -182,7 +199,13 @@ public class LoadDependentExamples {
             try {
                 
                 if (solver instanceof JMT) {
-                    SolverOptions options = JMT.defaultOptions();
+                    // The solver's OWN options, not a fresh defaultOptions(): the latter
+                    // draws a RANDOM seed in its constructor (SolverOptions ->
+                    // RandomManager.generateRandomSeed), so replacing the object wholesale
+                    // discards the seed passed to the constructor above and makes this
+                    // example irreproducible -- which is what left the ld_multiserver_ps
+                    // parity row disagreeing with its golden on a Monte-Carlo margin.
+                    SolverOptions options = solver.getOptions();
                     options.samples = 100000;
                     ((JMT)solver).setOptions(options);
                 }
@@ -192,6 +215,108 @@ public class LoadDependentExamples {
             }
         }
         
+        pauseForUser();
+    }
+
+    /**
+     * The subset every FES entry aggregates, named on the model it belongs to.
+     *
+     * <p>The stations are looked up BY NAME rather than by index: the reference
+     * scripts name them (Queue1/Queue2, or Q1/Q2/Q3) and a positional lookup
+     * would silently aggregate a different subset if the tandem were ever
+     * reordered, which is the one error this transform cannot report.
+     */
+    private static java.util.List<Station> subsetOf(Network model, String[] names) {
+        java.util.List<Station> subset = new java.util.ArrayList<Station>();
+        for (String name : names) {
+            for (Station station : model.getStations()) {
+                if (station.getName().equals(name)) {
+                    subset.add(station);
+                    break;
+                }
+            }
+        }
+        if (subset.size() != names.length)
+            throw new IllegalArgumentException("FES subset: a named station is not in the model");
+        return subset;
+    }
+
+    /**
+     * Flow-equivalent-server aggregation of a two-class tandem (fes_aggregation).
+     *
+     * <p>Queue1 and Queue2 are replaced by one limited-class-dependent station
+     * whose per-class rates are the isolated subnetwork's throughputs. For a
+     * closed product-form network Norton's theorem makes this EXACT, so the
+     * aggregated throughput reproduces the original's rather than approximating
+     * it, which is what the comparison below prints.
+     *
+     * @throws Exception if the solver encounters an error
+     */
+    public static void fes_aggregation() throws Exception {
+        Network model = LoadDependentModel.fes_aggregation();
+        System.out.println("MVA (original):");
+        new MVA(model, "method", "exact").getAvgTable().print();
+
+        FESResult fes = ModelAdapter.aggregateFES(
+                model, subsetOf(model, new String[] {"Queue1", "Queue2"}));
+        System.out.println("MVA (FES model):");
+        new MVA(fes.fesModel, "method", "exact").getAvgTable().print();
+        pauseForUser();
+    }
+
+    /**
+     * Flow-equivalent-server aggregation of a single-class tandem (fes_single_class).
+     *
+     * @throws Exception if the solver encounters an error
+     */
+    public static void fes_single_class() throws Exception {
+        Network model = LoadDependentModel.fes_single_class();
+        System.out.println("MVA (original):");
+        new MVA(model, "method", "exact").getAvgTable().print();
+
+        FESResult fes = ModelAdapter.aggregateFES(
+                model, subsetOf(model, new String[] {"Queue1", "Queue2"}));
+        System.out.println("MVA (FES model):");
+        new MVA(fes.fesModel, "method", "exact").getAvgTable().print();
+        pauseForUser();
+    }
+
+    /**
+     * Norton's theorem on a single-class tandem, solved by convolution
+     * (ld_fes_singleclass).
+     *
+     * <p>All THREE queues are aggregated, leaving the think time beside one FES,
+     * and the aggregate is solved with exact NC: the FES rates are Sauer's
+     * chain-dependent service rates, which the convolution consumes directly.
+     *
+     * @throws Exception if the solver encounters an error
+     */
+    public static void ld_fes_singleclass() throws Exception {
+        Network model = LoadDependentModel.ld_fes_singleclass();
+        System.out.println("MVA (original):");
+        new MVA(model, "method", "exact").getAvgTable().print();
+
+        FESResult fes = ModelAdapter.aggregateFES(
+                model, subsetOf(model, new String[] {"Q1", "Q2", "Q3"}));
+        System.out.println("NC (FES model):");
+        new NC(fes.fesModel, "method", "exact").getAvgTable().print();
+        pauseForUser();
+    }
+
+    /**
+     * The same aggregation with two classes (ld_fes_multiclass).
+     *
+     * @throws Exception if the solver encounters an error
+     */
+    public static void ld_fes_multiclass() throws Exception {
+        Network model = LoadDependentModel.ld_fes_multiclass();
+        System.out.println("MVA (original):");
+        new MVA(model, "method", "exact").getAvgTable().print();
+
+        FESResult fes = ModelAdapter.aggregateFES(
+                model, subsetOf(model, new String[] {"Q1", "Q2", "Q3"}));
+        System.out.println("NC (FES model):");
+        new NC(fes.fesModel, "method", "exact").getAvgTable().print();
         pauseForUser();
     }
 
@@ -230,6 +355,38 @@ public class LoadDependentExamples {
             ld_multiserver_ps_twoclasses();
         } catch (Exception e) {
             System.err.println("ld_multiserver_ps_twoclasses failed: " + e.getMessage());
+            e.printStackTrace();
+        }
+
+        System.out.println("\n=== Running example: fes_aggregation ===");
+        try {
+            fes_aggregation();
+        } catch (Exception e) {
+            System.err.println("fes_aggregation failed: " + e.getMessage());
+            e.printStackTrace();
+        }
+
+        System.out.println("\n=== Running example: fes_single_class ===");
+        try {
+            fes_single_class();
+        } catch (Exception e) {
+            System.err.println("fes_single_class failed: " + e.getMessage());
+            e.printStackTrace();
+        }
+
+        System.out.println("\n=== Running example: ld_fes_singleclass ===");
+        try {
+            ld_fes_singleclass();
+        } catch (Exception e) {
+            System.err.println("ld_fes_singleclass failed: " + e.getMessage());
+            e.printStackTrace();
+        }
+
+        System.out.println("\n=== Running example: ld_fes_multiclass ===");
+        try {
+            ld_fes_multiclass();
+        } catch (Exception e) {
+            System.err.println("ld_fes_multiclass failed: " + e.getMessage());
             e.printStackTrace();
         }
         

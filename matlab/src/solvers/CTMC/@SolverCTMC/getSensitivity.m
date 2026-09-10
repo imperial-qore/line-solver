@@ -40,6 +40,7 @@ function [S, SS, dpi, pi] = getSensitivity(self, param, reward, method)
 % reward rates do not themselves depend on theta. Rewards that depend on
 % theta need the second term of Eq. (9.83) and are not handled here.
 %
+% @param self The SolverCTMC instance
 % @param param Struct describing the parameter, see above
 % @param reward Reward rate vector or handle over the state space (optional)
 % @param method 'fd' (default) or 'symbolic' (optional)
@@ -50,6 +51,14 @@ function [S, SS, dpi, pi] = getSensitivity(self, param, reward, method)
 %
 % Copyright (c) 2012-2026, Imperial College London
 % All rights reserved.
+
+
+% lang='cpp' cannot serve this getter; the reason is named, not blanket.
+if isfield(self.options,'lang') && strcmp(self.options.lang,'cpp')
+    CPPLINE.cppUnsupported(self.name, 'getSensitivity', ...
+        ['the sensitivities would have to be differentiated here, from another ' ...
+        'engine''s solves, which is the one thing lang=''cpp'' may not do']);
+end
 
 if ~isstruct(param) || ~isfield(param, 'set') || ~isfield(param, 'value')
     line_error(mfilename, 'param must be a struct with fields value and set');

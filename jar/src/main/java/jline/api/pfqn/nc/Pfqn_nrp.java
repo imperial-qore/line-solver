@@ -28,11 +28,11 @@ public final class Pfqn_nrp {
         double Nt = N.elementSum();
         if (Z.elementSum() > 0) {
             L = Matrix.concatRows(L, Z, null);
+            // the delay is an infinite server: rates 1..Nt along row 0 of a
+            // single-row block, which is the station concatRows appends
             Matrix alpha_tmp = new Matrix(1, (int) Nt);
-            int i = 0;
-            while (i < Nt + 1) {
-                alpha_tmp.set(1, i, (double) (i + 1));
-                i++;
+            for (int k = 0; k < (int) Nt; k++) {
+                alpha_tmp.set(0, k, k + 1.0);
             }
             alpha = Matrix.concatRows(alpha, alpha_tmp, null);
         }

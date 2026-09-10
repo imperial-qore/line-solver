@@ -879,3 +879,53 @@ def _make_oi_fnc_eval(muv: np.ndarray, shp: np.ndarray, stride: np.ndarray) -> C
             return np.inf
         return float(muv[int(np.sum(n * stride))])
     return oi_fnc_eval
+
+
+def pfqn_ncjd(Z: Sequence[float],
+              N: Sequence[int],
+              mu: Optional[Union[Callable, List[Callable]]] = None,
+              visits=None,
+              options=None) -> Tuple[float, float, np.ndarray]:
+    """Joint-dependent name of :func:`pfqn_ncoi`.
+
+    The two names denote the SAME routine because the balanced-fairness
+    recursion mu_i(n) Phi_i(n) = sum_{r: n_r>0} v_{i,r} Phi_i(n - e_r) never
+    inspects the structure of mu_i: it evaluates the handle at the full count
+    vector n. Order independence (mu_i constant on each support) is a modelling
+    restriction that buys insensitivity and a physical reading of Phi, not
+    something the convolution uses, so any joint-dependent scaling eta_i(n) is
+    admissible here.
+
+    Use :func:`pfqn_ncoi` when the model is genuinely order independent and the
+    name should say so; use this one when the rate is a general joint
+    dependence. See :func:`pfqn_clwjd` for the transform route, which needs the
+    rate to saturate at a finite cutoff and is not merely a renaming.
+
+    Arguments and returns are exactly those of :func:`pfqn_ncoi`.
+    """
+    return pfqn_ncoi(Z, N, mu, visits, options)
+
+
+def pfqn_mvajd(Z: Sequence[float],
+               N: Sequence[int],
+               mu: Union[Callable, List[Callable]] = None,
+               Dli: Optional[Sequence[Sequence[float]]] = None,
+               visits=None,
+               options=None) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Joint-dependent name of :func:`pfqn_mvaoi`.
+
+    The two names denote the SAME routine because the recursion evaluates the
+    rate handle at a full occupancy vector, mu_i(s_i + e_r) with s_i the shift
+    already committed at the bottom of station i, and never inspects the
+    structure of mu_i. This is the "third form" of the Conditional MVA of
+    Casale, "A Note on Stable Flow-Equivalent Aggregation in Closed Networks"
+    (QUESTA 2009): a rate depending on the full per-class occupancy vector.
+
+    Unlike the AMVA joint-dependence route, which evaluates eta at the MEAN
+    arrival-instant vector 1 + E[Q] and therefore collapses a support indicator
+    to 1, this routine evaluates the rate at exact integer occupancies and is
+    exact for the balanced-fair station.
+
+    Arguments and returns are exactly those of :func:`pfqn_mvaoi`.
+    """
+    return pfqn_mvaoi(Z, N, mu, Dli, visits, options)

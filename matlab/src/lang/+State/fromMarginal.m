@@ -269,7 +269,7 @@ switch sn.nodetype(ind)
                 end
 
                 % gen permutation of their positions in the waiting buffer
-                mi = uniqueperms(vi);
+                mi = multiset_perms(vi);
                 % now generate server states
                 if isempty(mi)
                     mi_buf = zeros(1,max(0,sum(n)-S(ist)));
@@ -361,7 +361,7 @@ switch sn.nodetype(ind)
                 end
 
                 % gen permutation of their positions in the waiting buffer
-                mi = uniqueperms(vi);
+                mi = multiset_perms(vi);
                 % now generate server states
                 if isempty(mi)
                     mi_buf = zeros(1,max(0,sum(n)-S(ist)));
@@ -471,7 +471,7 @@ switch sn.nodetype(ind)
                             vi=[vi, r*ones(1,n(r))];
                         end
                     end
-                    mi = uniqueperms(vi);
+                    mi = multiset_perms(vi);
                     space = [mi, zeros(size(mi,1), W - size(mi,2))];
                 end
             case {SchedStrategy.SJF, SchedStrategy.LJF}

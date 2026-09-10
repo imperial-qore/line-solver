@@ -8,18 +8,23 @@ Key algorithms:
     ctmc_solve: Steady-state distribution
     ctmc_makeinfgen: Construct valid infinitesimal generator
     ctmc_transient: Transient probabilities via matrix exponential
-    ctmc_uniformization: Uniformization for transient analysis
+    ctmc_uniformization: Transient distribution by Jensen uniformization
+    ctmc_randomization: Randomized (uniformized) DTMC P = I + Q/q
     ctmc_stochcomp: Stochastic complementation
 """
 
 import numpy as np
+import warnings
 from numpy.linalg import LinAlgError
 from scipy import linalg
+from scipy.linalg import LinAlgWarning
 import scipy.sparse as sp
 from scipy.sparse import csc_matrix, issparse, diags
 from scipy.sparse.linalg import spsolve, gmres, splu
 from scipy.sparse.csgraph import connected_components
 from scipy.integrate import solve_ivp
+
+from ...constants import GlobalConstants
 from typing import Dict, Any, Optional, List, Tuple, Union
 from dataclasses import dataclass
 import json
@@ -323,12 +328,28 @@ def ctmc_solve(Q: np.ndarray, method: Optional[str] = None) -> np.ndarray:
 
     # see _kb/03-api-layer.md for rationale
     method = (method or 'default').lower()
-    if method == 'gmres' or (method != 'direct' and n_active > GMRES_MIN_STATES):
-        from .gmres import ctmc_gmres
-        x_gmres, gflag, _, _ = ctmc_gmres(sp.csc_matrix(QsolT), b)
-        if gflag == 0:
+    if method in ('gmres', 'bicgstab') or (method != 'direct' and n_active > GMRES_MIN_STATES):
+        # GMRES(m) first: its residual is monotone and it is the more robust of
+        # the two. The way it fails on a generator is stagnation, the useful
+        # subspace being wider than the restart window, and a short-recurrence
+        # method has no restart to stagnate on, so BiCGSTAB is tried before the
+        # direct solve rather than instead of it. The direct solve is cubic at
+        # this size, so the second iterative attempt is cheap against what it
+        # may avoid.
+        QsolT_csc = sp.csc_matrix(QsolT)
+        if method != 'bicgstab':
+            from .gmres import ctmc_gmres
+            x_gmres, gflag, _, _ = ctmc_gmres(QsolT_csc, b)
+            if gflag == 0:
+                p = np.zeros(n)
+                p[active_idx] = x_gmres
+                total = p.sum()
+                return p / total if total > 0 else np.ones(n) / n
+        from .bicgstab import ctmc_bicgstab
+        x_bicg, bflag, _, _ = ctmc_bicgstab(QsolT_csc, b)
+        if bflag == 0:
             p = np.zeros(n)
-            p[active_idx] = x_gmres
+            p[active_idx] = x_bicg
             total = p.sum()
             return p / total if total > 0 else np.ones(n) / n
 
@@ -336,7 +357,12 @@ def ctmc_solve(Q: np.ndarray, method: Optional[str] = None) -> np.ndarray:
     rcond_threshold = 1e-10
     fast_pi = None
     try:
-        lu, piv = linalg.lu_factor(QsolT)
+        # A reducible generator factors with an exactly zero pivot; that is the case
+        # the rcond gate below exists to reject, so scipy's LinAlgWarning is expected
+        # here and carries no information the gate does not already act on.
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', LinAlgWarning)
+            lu, piv = linalg.lu_factor(QsolT)
         anorm = linalg.norm(QsolT, 1)
         rcond, _info = linalg.lapack.dgecon(lu, anorm)
         if rcond > rcond_threshold:
@@ -432,6 +458,85 @@ def ctmc_sens(Q: np.ndarray, dQ: np.ndarray,
     return np.linalg.solve(A, b)
 
 
+def ctmc_transient_sens(Q: np.ndarray, dQ: np.ndarray,
+                        pi0: Optional[np.ndarray] = None,
+                        t0: Optional[float] = None,
+                        t1: Optional[float] = None
+                        ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Sensitivity of the transient distribution of a CTMC to a scalar parameter
+    theta, given the generator Q and its derivative dQ = dQ/dtheta.
+
+    Differentiating the forward equations d pi(t)/dt = pi(t) Q with respect to
+    theta, and assuming the initial vector does not depend on theta, gives
+
+      d/dt (dpi(t)/dtheta) = (dpi(t)/dtheta) Q + pi(t) (dQ/dtheta),
+      dpi(0)/dtheta = 0,
+
+    i.e. Trivedi and Bobbio (2017), Eq. (9.82). The state and its sensitivity
+    are integrated as one augmented system of size 2n, since the sensitivity
+    equation is driven by pi(t) and the two cannot be advanced separately.
+
+    Args:
+        Q: Generator matrix (n x n)
+        dQ: Derivative of the generator with respect to theta (n x n)
+        pi0: Initial distribution (length n); uniform if None
+        t0: Initial time; 0 if omitted
+        t1: Final time
+
+    Returns:
+        (dpi, pi, t) with dpi the sensitivity of the distribution at each time
+        point (len(t), n), pi the distribution at each time point (len(t), n)
+        and t the vector of time points.
+
+    References:
+        Original MATLAB: matlab/src/api/mc/ctmc_transient_sens.m
+    """
+    Q = np.asarray(Q.todense() if issparse(Q) else Q, dtype=np.float64)
+    dQ = np.asarray(dQ.todense() if issparse(dQ) else dQ, dtype=np.float64)
+    n = Q.shape[0]
+
+    # MATLAB's trailing-argument forms: (Q,dQ,t1) and (Q,dQ,pi0,t1)
+    if t1 is None:
+        if t0 is None:
+            t1 = float(np.asarray(pi0).ravel()[0]) if pi0 is not None else None
+            pi0 = None
+            t0 = 0.0
+        else:
+            t1 = float(t0)
+            t0 = 0.0
+    if t0 is None:
+        t0 = 0.0
+    if t1 is None:
+        raise ValueError("ctmc_transient_sens requires a final time t1")
+    if pi0 is None:
+        pi0 = np.ones(n) / n
+    pi0 = np.asarray(pi0, dtype=np.float64).ravel()
+    if dQ.shape != Q.shape:
+        raise ValueError("dQ must have the same size as Q")
+
+    # Augmented state v = [pi, dpi], with dpi(0) = 0 since pi(0) does not
+    # depend on theta
+    v0 = np.concatenate([pi0, np.zeros(n)])
+
+    def augmented_ode(_t, v):
+        p = v[:n]
+        s = v[n:]
+        return np.concatenate([p @ Q, s @ Q + p @ dQ])
+
+    # RK23 is the scipy counterpart of MATLAB's ode23, at its default tolerances
+    sol = solve_ivp(augmented_ode, [float(t0), float(t1)], v0, method='RK23',
+                    rtol=1e-3, atol=1e-6)
+    if not sol.success:
+        raise RuntimeError("ctmc_transient_sens: integration failed: %s" % sol.message)
+
+    t = np.asarray(sol.t, dtype=np.float64)
+    v = np.asarray(sol.y, dtype=np.float64).T
+    pi = v[:, :n]
+    dpi = v[:, n:]
+    return dpi, pi, t
+
+
 def ctmc_solve_reducible(Q: np.ndarray, pin: Optional[np.ndarray] = None) -> np.ndarray:
     """
     Solve reducible CTMCs by converting to DTMC via uniformization.
@@ -473,6 +578,24 @@ def ctmc_solve_reducible(Q: np.ndarray, pin: Optional[np.ndarray] = None) -> np.
     return dtmc_solve_reducible(P, pin)
 
 
+def _factor_or_false(A: np.ndarray):
+    """LU factorization of A, or False when A is too ill-conditioned to use.
+
+    Same rcond gate as ctmc_solve: lu_factor accepts an exactly singular matrix
+    and only warns, so the condition number is what decides, not an exception.
+    """
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', LinAlgWarning)
+            lu, piv = linalg.lu_factor(A)
+    except LinAlgError:
+        return False
+    rcond, _info = linalg.lapack.dgecon(lu, linalg.norm(A, 1))
+    if not np.isfinite(rcond) or rcond <= 1e-10:
+        return False
+    return (lu, piv)
+
+
 def ctmc_solve_reducible_blkdecomp(
     Q: np.ndarray,
     pin: Optional[np.ndarray] = None
@@ -482,8 +605,8 @@ def ctmc_solve_reducible_blkdecomp(
 
     Algorithm:
       1. Decompose states into transient and recurrent classes via SCC
-      2. For transient states: solve n * Q_tt = -p0_t for expected sojourn
-      3. Compute hitting probabilities: h = n * Q_ta + p0_r
+      2. For transient states: solve sojourn * Q_tt = -p0_t for expected sojourn
+      3. Compute hitting probabilities: hit = sojourn * Q_ta + p0_r
       4. For each recurrent class: solve pi_c * Q_cc = 0, scale by hitting prob
 
     This avoids the randomization to DTMC used in ctmc_solve_reducible.
@@ -505,33 +628,33 @@ def ctmc_solve_reducible_blkdecomp(
     Q = ctmc_makeinfgen(Q)
 
     # Find strongly connected components
+    # arc by MAGNITUDE, never by sign: an ME generator embeds genuinely negative off-diagonals -- see _kb/11-conventions-and-gotchas.md
     Adj = Q.copy()
     np.fill_diagonal(Adj, 0.0)
-    n_components, scc_labels = connected_components(
-        csc_matrix(Adj > 0), directed=True, connection='strong',
+    numSCC, scc = connected_components(
+        csc_matrix(np.abs(Adj) > GlobalConstants.ArcTol), directed=True, connection='strong',
         return_labels=True
     )
 
     # Irreducible case
-    if n_components == 1:
+    if numSCC == 1:
         return ctmc_solve(Q)
 
-    num_scc = n_components
-    scc_idx = [np.where(scc_labels == i)[0] for i in range(num_scc)]
+    scc_idx = [np.where(scc == i)[0] for i in range(numSCC)]
 
     # Classify SCCs as recurrent (no outgoing edges) or transient
-    is_rec = np.zeros(num_scc, dtype=bool)
-    for i in range(num_scc):
+    isrec = np.zeros(numSCC, dtype=bool)
+    for i in range(numSCC):
         states_i = scc_idx[i]
         outgoing = 0.0
         for s in states_i:
-            for j in range(num_scc):
+            for j in range(numSCC):
                 if j != i:
                     outgoing += np.sum(Adj[s, scc_idx[j]])
-        is_rec[i] = outgoing < 1e-10
+        isrec[i] = outgoing < 1e-10
 
-    trans_scc_ids = np.where(~is_rec)[0]
-    rec_scc_ids = np.where(is_rec)[0]
+    trans_scc_ids = np.where(~isrec)[0]
+    rec_scc_ids = np.where(isrec)[0]
 
     # Gather ordered state indices
     trans_states = np.sort(np.concatenate([scc_idx[i] for i in trans_scc_ids])
@@ -548,88 +671,123 @@ def ctmc_solve_reducible_blkdecomp(
         Q_tt = Q[np.ix_(trans_states, trans_states)]
         Q_ta = Q[np.ix_(trans_states, rec_states)]
 
-    # Compute per-SCC limiting distributions
-    pis = np.zeros((num_scc, N))
+    # Both blocks below are solved once per SCC start vector, and _absorb_limiting
+    # is called numSCC times. Neither the transient factorization nor a recurrent
+    # class's stationary vector depends on p0, so both are computed on first use
+    # and reused; recomputing them per call makes the unseeded path quadratic in
+    # the number of SCCs (measured at 1302s on sdroute_twoclasses_closed, 439
+    # SCCs, against 900s of budget in the JSON parity harness).
+    #
+    # lu_tt[0] is the (lu, piv) pair; False marks Q_tt.T as too ill-conditioned
+    # to factor, sending every right-hand side to the least-squares fallback the
+    # LinAlgError branch used to reach when each call re-solved from scratch.
+    lu_tt = [None]
+    rec_stat = {}           # recurrent SCC id -> its stationary vector
 
-    for s in range(num_scc):
-        class_states = scc_idx[s]
-        class_size = len(class_states)
+    def _absorb_limiting(p0: np.ndarray) -> np.ndarray:
+        """Limiting distribution reached from p0: the mass absorbed in each recurrent
+        class (BSCC) redistributed over that class by its own stationary vector.
+        Transient states receive zero."""
+        piv = np.zeros(N)
 
-        # Build initial distribution: uniform within SCC s
-        p0 = np.zeros(N)
-        p0[class_states] = 1.0 / class_size
-
-        # Compute absorption probabilities into recurrent states
+        # Absorption probabilities into the recurrent states
         hit = np.zeros(nr)
-
         if nt > 0 and Q_tt is not None and Q_ta is not None:
             p0_t = p0[trans_states]
             if np.any(np.abs(p0_t) > 0):
-                # Solve n * Q_tt = -p0_t  =>  Q_tt' * n' = -p0_t'
+                # Solve sojourn * Q_tt = -p0_t, i.e. Q_tt' * sojourn' = -p0_t'
                 # Q_tt is non-singular (Hurwitz) for transient states
-                try:
-                    # Above the dispatch threshold the transient block is what
-                    # the direct factorization cannot hold; it stays the fallback.
-                    sojourn = None
-                    if Q_tt.shape[0] > GMRES_MIN_STATES:
-                        from .gmres import ctmc_gmres
-                        x_gmres, gflag, _, _ = ctmc_gmres(Q_tt.T, -p0_t)
-                        if gflag == 0:
-                            sojourn = x_gmres
-                    if sojourn is None:
-                        sojourn = np.linalg.solve(Q_tt.T, -p0_t)
-                except np.linalg.LinAlgError:
-                    sojourn = np.linalg.lstsq(Q_tt.T, -p0_t, rcond=None)[0]
+                # Above the dispatch threshold the transient block is what
+                # the direct factorization cannot hold; it stays the fallback.
+                sojourn = None
+                if Q_tt.shape[0] > GMRES_MIN_STATES:
+                    from .gmres import ctmc_gmres
+                    x_gmres, gflag, _, _ = ctmc_gmres(Q_tt.T, -p0_t)
+                    if gflag == 0:
+                        sojourn = x_gmres
+                    else:
+                        # Short-recurrence retry before the cubic factorization,
+                        # as in ctmc_solve.
+                        from .bicgstab import ctmc_bicgstab
+                        x_bicg, bflag, _, _ = ctmc_bicgstab(Q_tt.T, -p0_t)
+                        if bflag == 0:
+                            sojourn = x_bicg
+                if sojourn is None:
+                    if lu_tt[0] is None:
+                        lu_tt[0] = _factor_or_false(Q_tt.T)
+                    if lu_tt[0] is False:
+                        sojourn = np.linalg.lstsq(Q_tt.T, -p0_t, rcond=None)[0]
+                    else:
+                        sojourn = linalg.lu_solve(lu_tt[0], -p0_t)
+                        if not np.all(np.isfinite(sojourn)):
+                            sojourn = np.linalg.lstsq(Q_tt.T, -p0_t, rcond=None)[0]
                 hit = sojourn @ Q_ta
 
         # Add initial mass already in recurrent states
         hit = hit + p0[rec_states]
 
-        # Solve steady-state per recurrent class, scaled by hitting probability
+        # Solve steady state per recurrent class, scaled by hitting probability
         for c in rec_scc_ids:
             idx_c = scc_idx[c]
-            # Map class states to positions in rec_states
             loc = np.searchsorted(rec_states, idx_c)
             reachprob = np.sum(hit[loc])
-
             if reachprob < 1e-15:
                 continue
-
             if len(idx_c) == 1:
                 # Absorbing state: hitting probability IS the final probability
-                pis[s, idx_c[0]] = reachprob
+                piv[idx_c[0]] = reachprob
             else:
-                # Solve pi_c * Q_cc = 0 within this recurrent class
-                Q_cc = Q[np.ix_(idx_c, idx_c)]
-                pi_c = ctmc_solve(Q_cc)
-                pis[s, idx_c] = pi_c * reachprob
+                stat_c = rec_stat.get(c)
+                if stat_c is None:
+                    stat_c = ctmc_solve(Q[np.ix_(idx_c, idx_c)])
+                    rec_stat[c] = stat_c
+                piv[idx_c] = stat_c * reachprob
 
-    # Compute initial SCC probabilities for weighted average
+        return piv
+
+    # Per-SCC limiting distributions, each from a uniform start within its SCC
+    pis = np.zeros((numSCC, N))
+    for s in range(numSCC):
+        p0 = np.zeros(N)
+        p0[scc_idx[s]] = 1.0 / len(scc_idx[s])
+        pis[s, :] = _absorb_limiting(p0)
+
     if pin is None:
-        pinl = np.ones(num_scc)
-        # Zero out SCCs containing states with zero column sums (no incoming)
+        # No initial vector: mix the uniform-start rows, weighting the SCCs equally.
+        # An SCC holding a state whose column of Q is entirely zero is EXCLUDED: such
+        # a state has no transition in and none out, so it is isolated and carries no
+        # dynamics to start from. (Not the same as absorbing, which has incoming
+        # transitions and a zero off-diagonal ROW.)
+        pinl = np.ones(numSCC)
         col_sums = np.sum(np.abs(Q), axis=0)
         for j in np.where(col_sums < 1e-12)[0]:
-            pinl[scc_labels[j]] = 0.0
+            pinl[scc[j]] = 0.0
         total_pinl = np.sum(pinl)
         if total_pinl > 0:
             pinl /= total_pinl
         else:
-            pinl = np.ones(num_scc) / num_scc
+            pinl = np.ones(numSCC) / numSCC
+
+        pi = np.zeros(N)
+        for i in range(numSCC):
+            if pinl[i] > 0:
+                pi += pis[i, :] * pinl[i]
+
+        # Special case: single transient SCC without explicit initial distribution
+        if len(trans_scc_ids) == 1:
+            pi = pis[trans_scc_ids[0], :].copy()
     else:
-        pinl = np.zeros(num_scc)
-        for i in range(num_scc):
-            pinl[i] = np.sum(pin[scc_idx[i]])
-
-    # Weighted average over starting SCCs
-    pi = np.zeros(N)
-    for i in range(num_scc):
-        if pinl[i] > 0:
-            pi += pis[i, :] * pinl[i]
-
-    # Special case: single transient SCC without explicit initial distribution
-    if len(trans_scc_ids) == 1 and pin is None:
-        pi = pis[trans_scc_ids[0], :]
+        # An initial vector is available, so the exact absorption probabilities can be
+        # computed from it directly. Lumping pin onto its SCCs and mixing the pis rows
+        # would instead assume a uniform start within each SCC, which differs from the
+        # truth whenever pin puts mass on a transient SCC holding more than one state
+        # (states of the same transient SCC reach the recurrent classes with different
+        # probabilities).
+        p0 = np.asarray(pin, dtype=np.float64).ravel().copy()
+        total0 = np.sum(p0)
+        if total0 > 0:
+            p0 = p0 / total0
+        pi = _absorb_limiting(p0)
 
     # Normalize
     total = np.sum(pi)
@@ -643,7 +801,9 @@ def ctmc_transient(
     Q: np.ndarray,
     initial_dist: np.ndarray,
     time_points: Union[float, np.ndarray],
-    method: str = 'expm'
+    method: str = 'expm',
+    epsilon: float = 1e-6,
+    delta: float = 1e-12
 ) -> np.ndarray:
     """
     Compute transient probabilities of a CTMC.
@@ -655,7 +815,12 @@ def ctmc_transient(
         Q: Infinitesimal generator matrix
         initial_dist: Initial probability distribution π(0)
         time_points: Array of time points to evaluate, or single time value
-        method: 'expm' for matrix exponential, 'ode' for ODE solver
+        method: 'expm' for matrix exponential, 'ode' for ODE solver, 'fau' for
+            fast adaptive uniformization (ctmc_fau) MARCHED over the grid
+        epsilon: 'fau' only, total probability mass the whole grid may discard;
+            it is divided by the number of steps, each step removing mass and
+            none putting any back, so the accumulated defect stays below it
+        delta: 'fau' only, occupancy below which a state is dropped
 
     Returns:
         Transient probabilities at each time point.
@@ -674,7 +839,26 @@ def ctmc_transient(
     n = Q.shape[0]
     results = np.zeros((len(time_points), n))
 
-    if method == 'expm':
+    if method == 'fau':
+        # Fast adaptive uniformization, marched: pi(t_{k+1}) comes from pi(t_k)
+        # over the step rather than from pi(0) over the whole horizon, which is
+        # what keeps the cost proportional to the grid instead of quadratic in
+        # it. Unlike the two branches below, the trajectory is therefore
+        # sequential and the grid must be non-decreasing.
+        from .fau import ctmc_fau
+        if np.any(np.diff(np.asarray(time_points, dtype=np.float64)) < 0.0):
+            raise ValueError("ctmc_transient: method 'fau' marches the grid, "
+                             "which must be non-decreasing")
+        eps_step = epsilon / max(1, len(time_points) - 1)
+        cur = initial_dist
+        prev_t = 0.0
+        for i, t in enumerate(time_points):
+            dt = float(t) - prev_t
+            if dt > 0.0:
+                cur, _ = ctmc_fau(cur, Q, dt, eps_step, delta)
+            results[i] = cur
+            prev_t = float(t)
+    elif method == 'expm':
         # Use matrix exponential: π(t) = π(0) * exp(Qt)
         for i, t in enumerate(time_points):
             if t == 0:
@@ -701,7 +885,7 @@ def ctmc_transient(
 
 
 def ctmc_timeaverage(pi0: np.ndarray, Q: np.ndarray, t: float,
-                     tol: float = 1e-12, maxiter: int = 100):
+                     tol: float = 1e-12, maxiter: int = -1):
     """
     Time-averaged transient distribution of a CTMC over [0, t] via uniformization.
 
@@ -711,7 +895,9 @@ def ctmc_timeaverage(pi0: np.ndarray, Q: np.ndarray, t: float,
 
     as well as the endpoint piExit = pi0*exp(Q*t), both from the same Jensen
     uniformization series. Used by the SolverENV state-vector analyzer
-    (deterministic-sojourn option). Mirrors matlab ctmc_timeaverage.m.
+    (deterministic-sojourn option). Mirrors matlab ctmc_timeaverage.m, including
+    the horizon splitting that keeps exp(-q*t) from underflowing and the
+    adaptive truncation depth (maxiter <= 0).
 
     Returns:
         (piTimeAvg, piExit) as 1D arrays.
@@ -720,22 +906,38 @@ def ctmc_timeaverage(pi0: np.ndarray, Q: np.ndarray, t: float,
     pi0 = np.asarray(pi0, dtype=np.float64).ravel()
     n = Q.shape[0]
     q = 1.1 * np.max(np.abs(np.diag(Q)))
-    Qs = np.eye(n) + Q / q
     qt = q * t
 
-    # Number of Poisson terms needed (right-tail below tol).
-    k = 0
+    # Split the horizon into equal segments with q*tSeg below the underflow
+    # bound (exp(-745) == 0): the integral over [0,t] is the sum of segment
+    # integrals, each started from the previous segment's endpoint
+    MAXQT = 500.0
+    if qt > MAXQT:
+        n_seg = int(np.ceil(qt / MAXQT))
+        t_seg = t / n_seg
+        pi_cur = pi0.copy()
+        integral = np.zeros(n)
+        for _ in range(n_seg):
+            avg_seg, pi_cur = ctmc_timeaverage(pi_cur, Q, t_seg, tol, maxiter)
+            integral = integral + t_seg * np.asarray(avg_seg).ravel()
+        return integral / t, pi_cur
+
+    if maxiter <= 0:
+        # The Poisson(q*t) mass concentrates around q*t with spread
+        # O(sqrt(q*t)); a fixed cap silently truncates the series
+        maxiter = max(100, int(np.ceil(qt + 10 * np.sqrt(qt) + 20)))
+
+    Qs = np.eye(n) + Q / q
+
+    # Number of Poisson terms needed (right-tail below tol), as in ctmc_uniformization
     s = 1.0
     r = 1.0
-    it = 0
     kmax = 1
-    while it < maxiter:
-        it += 1
-        k += 1
+    for k in range(1, maxiter + 1):
         r = r * qt / k
         s += r
+        kmax = k
         if 1 - np.exp(-qt) * s <= tol:
-            kmax = k
             break
 
     w = np.exp(-qt)   # Poisson PMF w_0
@@ -753,88 +955,84 @@ def ctmc_timeaverage(pi0: np.ndarray, Q: np.ndarray, t: float,
     return piTimeAvg, piExit
 
 
-def ctmc_uniformization(
+def ctmc_randomization(
     Q: np.ndarray,
-    lambda_rate: Optional[float] = None
-) -> Dict[str, Any]:
+    q: Optional[float] = None
+) -> Tuple[np.ndarray, float]:
     """
-    Uniformize CTMC generator matrix.
+    Randomize (uniformize) a CTMC generator into a DTMC.
 
-    Converts CTMC to an equivalent uniformized discrete-time chain
-    for numerical analysis and simulation purposes.
-
-    The uniformized DTMC has transition matrix P = I + Q/λ where
-    λ is the uniformization rate (max exit rate).
+    The randomized DTMC has transition matrix P = I + Q/q, where q is the
+    randomization rate; it carries the same stationary vector as Q. Same name
+    and meaning as MATLAB ctmc_randomization and as the kpctoolbox twin
+    line_solver.lib.kpctoolbox.mc.ctmc_randomization. For the transient
+    distribution by Jensen's method see ctmc_uniformization.
 
     Args:
         Q: Infinitesimal generator matrix
-        lambda_rate: Uniformization rate (optional, auto-computed if None)
+        q: Randomization rate (optional, auto-computed as max exit rate)
 
     Returns:
-        dict containing:
-            - 'P': Uniformized transition matrix
-            - 'lambda': Uniformization rate
+        (P, q): the randomized transition matrix and the rate used
     """
     Q = np.asarray(Q, dtype=np.float64)
 
-    if lambda_rate is None:
+    if q is None:
         # Use max exit rate (max |diagonal|)
-        lambda_rate = -np.min(np.diag(Q))
-        if lambda_rate <= 0:
-            lambda_rate = 1.0
+        q = -np.min(np.diag(Q))
+        if q <= 0:
+            q = 1.0
 
     n = Q.shape[0]
-    I = np.eye(n)
-    P = I + Q / lambda_rate
+    P = np.eye(n) + Q / q
 
-    return {
-        'P': P,
-        'lambda': lambda_rate
-    }
+    return P, q
 
 
-def ctmc_randomization(
+def ctmc_uniformization(
+    pi0: np.ndarray,
     Q: np.ndarray,
-    initial_dist: np.ndarray,
-    time_points: np.ndarray,
+    time_points: Union[float, np.ndarray],
     precision: float = 1e-10
 ) -> np.ndarray:
     """
-    Compute CTMC transient probabilities using randomization.
+    Transient distribution of a CTMC by uniformization (Jensen's method).
 
-    Uses Jensen's randomization method (uniformization) to compute
-    transient probabilities by converting the CTMC to a uniformized DTMC.
-
-    This method is numerically stable and avoids matrix exponentials.
+    Numerically stable and free of matrix exponentials: the CTMC is randomized
+    into a DTMC and the distribution is the Poisson-weighted sum of its powers.
+    Argument order follows MATLAB ctmc_uniformization(pi0, Q, t) and the
+    kpctoolbox twin; for the randomized matrix itself see ctmc_randomization.
 
     Args:
+        pi0: Initial probability distribution
         Q: Infinitesimal generator matrix
-        initial_dist: Initial probability distribution
-        time_points: Array of time points to evaluate
+        time_points: Time point, or array of time points, to evaluate
         precision: Numerical precision for truncation (Poisson tail)
 
     Returns:
-        Transient probabilities at each time point
+        Transient probabilities: shape (len(time_points), n), or (n,) when a
+        single time point is given.
     """
     Q = np.asarray(Q, dtype=np.float64)
-    initial_dist = np.asarray(initial_dist, dtype=np.float64).flatten()
-    time_points = np.asarray(time_points)
+    pi0 = np.asarray(pi0, dtype=np.float64).flatten()
+    scalar_time = np.isscalar(time_points) or np.asarray(time_points).ndim == 0
+    time_points = np.atleast_1d(np.asarray(time_points, dtype=np.float64))
 
     n = Q.shape[0]
 
-    # Uniformization rate
+    # Randomization rate
     lambda_rate = -np.min(np.diag(Q))
     if lambda_rate <= 0:
         lambda_rate = 1.0
 
-    # Uniformized transition matrix
+    # Randomized transition matrix
     P = np.eye(n) + Q / lambda_rate
 
     results = np.zeros((len(time_points), n))
 
     for idx, t in enumerate(time_points):
         if t == 0:
-            results[idx] = initial_dist
+            results[idx] = pi0
             continue
 
         # Compute Poisson probabilities and truncation point
@@ -847,17 +1045,17 @@ def ctmc_randomization(
         # Compute Poisson probabilities
         poisson_probs = poisson.pmf(np.arange(k_max + 1), q)
 
-        # Compute π(t) = Σ_k P(N(t)=k) * π(0) * P^k
+        # Compute pi(t) = sum_k P(N(t)=k) * pi(0) * P^k
         pi_t = np.zeros(n)
-        pi_k = initial_dist.copy()  # π(0) * P^0 = π(0)
+        pi_k = pi0.copy()  # pi(0) * P^0 = pi(0)
 
         for k in range(k_max + 1):
             pi_t += poisson_probs[k] * pi_k
-            pi_k = pi_k @ P  # π(0) * P^(k+1)
+            pi_k = pi_k @ P  # pi(0) * P^(k+1)
 
         results[idx] = pi_t
 
-    return results
+    return results[0] if scalar_time else results
 
 
 def ctmc_stochcomp(
@@ -926,6 +1124,12 @@ def ctmc_stochcomp(
         T_it, gflag = ctmc_gmres_multi(Q22_neg, Q21)
         if gflag == 0:
             T = T_it
+        else:
+            # Short-recurrence retry before the dense factorization, as in ctmc_solve.
+            from .bicgstab import ctmc_bicgstab_multi
+            T_it, bflag = ctmc_bicgstab_multi(Q22_neg, Q21)
+            if bflag == 0:
+                T = T_it
     if T is None:
         try:
             T = linalg.solve(Q22_neg, Q21)

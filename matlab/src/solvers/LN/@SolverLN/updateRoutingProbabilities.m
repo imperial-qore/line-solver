@@ -16,17 +16,17 @@ for u = 1:length(self.unique_route_prob_updmap)
         classidxfrom = self.route_prob_updmap(r,6);
         classidxto = self.route_prob_updmap(r,7);
         if ~isempty(self.ensemble{self.idxhash(idx)}.items) % if idx is a cache node
-            Xtot = sum(self.results{end,self.idxhash(host)}.TN(self.ensemble{self.idxhash(host)}.attribute.serverIdx,:));
+            Xtot = sum(self.results{end,self.idxhash(host)}.TN(self.stationIdxOf(self.idxhash(host),host),:));
             if Xtot > 0
-                hm_tput = sum(self.results{end,self.idxhash(host)}.TN(self.ensemble{self.idxhash(host)}.attribute.serverIdx,classidxto));
+                hm_tput = sum(self.results{end,self.idxhash(host)}.TN(self.stationIdxOf(self.idxhash(host),host),classidxto));
                 P{classidxfrom,classidxto}(nodefrom, nodeto) = hm_tput / Xtot;
                 idx_updated = true;
             end
         else % if idx is not a cache
-            Xtot = sum(self.results{end,self.idxhash(tidx_caller)}.TN(self.ensemble{self.idxhash(tidx_caller)}.attribute.serverIdx,:));
+            Xtot = sum(self.results{end,self.idxhash(tidx_caller)}.TN(self.stationIdxOf(self.idxhash(tidx_caller),tidx_caller),:));
             if Xtot > 0
                 eidxclass = self.ensemble{self.idxhash(tidx_caller)}.attribute.calls(find(self.ensemble{self.idxhash(tidx_caller)}.attribute.calls(:,4) == eidx),1); %#ok<FNDSB>
-                entry_tput = sum(self.results{end,self.idxhash(tidx_caller)}.TN(self.ensemble{self.idxhash(tidx_caller)}.attribute.serverIdx,eidxclass));
+                entry_tput = sum(self.results{end,self.idxhash(tidx_caller)}.TN(self.stationIdxOf(self.idxhash(tidx_caller),tidx_caller),eidxclass));
                 P{classidxfrom,classidxto}(nodefrom, nodeto) = entry_tput / Xtot;
                 idx_updated = true;
             end

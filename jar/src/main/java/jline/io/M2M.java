@@ -479,7 +479,9 @@ public class M2M {
         }
 
         for (int i = 0; i < classes.size(); i++) {
-            ref = node_name.indexOf(classes.get(i).getNamedItem("referenceSource").getNodeValue());
+            // the XML names a station as written, before the '/' sanitization below, so the
+            // lookup must go through orig_node_name (as the <link> resolution already does)
+            ref = orig_node_name.indexOf(classes.get(i).getNamedItem("referenceSource").getNodeValue());
             // Invert priority: JMT uses higher=higher, LINE uses lower=higher
             int linePrio = maxPrio - Integer.parseInt(classes.get(i).getNamedItem("priority").getNodeValue());
             switch (classes.get(i).getNamedItem("type").getNodeValue()) {
@@ -1545,7 +1547,7 @@ public class M2M {
                             xroutprobdest = getSubParameter(xroutprob);
                             for (int j = 0; j < xroutprobdest.size(); j++) {
                                 List<List<Node>> xprob = getChildNodes("value", xroutprobdest.get(j));
-                                int target = node_name.indexOf(xprob.get(0).get(0).getTextContent());
+                                int target = orig_node_name.indexOf(xprob.get(0).get(0).getTextContent());
                                 double prob = Double.parseDouble(xprob.get(1).get(0).getTextContent());
                                 if (target >= 0) {
                                     node.get(from).setProbRouting(jobclass.get(r), node.get(target), prob);
@@ -1574,7 +1576,7 @@ public class M2M {
                             xroutprobdest = getSubParameter(xroutprob);
                             for (int j = 0; j < xroutprobdest.size(); j++) {
                                 List<Node> xprob = getChildNodes("value", xroutprobdest.get(j)).get(0);
-                                int target = node_name.indexOf(xprob.get(0).getTextContent());
+                                int target = orig_node_name.indexOf(xprob.get(0).getTextContent());
                                 double weight = Double.parseDouble(xprob.get(1).getTextContent());
                                 node.get(from)
                                         .setRouting(jobclass.get(r), RoutingStrategy.WRROBIN, node.get(target), weight);
@@ -1632,20 +1634,50 @@ public class M2M {
                                 Double.parseDouble(((Element) classPopulation.item(r)).getAttribute("population")));
                     }
 
-                    if (node.get(ind) instanceof Place) {
-                        if (classes.size() > 1) {
-                            line_error(
-                                    mfilename(new Object() {
-                                    }),
-                                    "Import failed: Colored Petri net models are not yet supported in LINE.\n");
-                        }
-                    }
+                    // A PLACE NEEDS NO SPECIAL CASE HERE. A multi-class preload used
+                    // to be refused as a "colored Petri net", but a Place has been
+                    // per-class since it was given Storage/Linkage over the class list
+                    // and a per-class classCap, the Enabling and Firing parsers above
+                    // already read one arc weight per refClass, and initFromMarginal
+                    // sets a Place from the same (node,class) row it sets every other
+                    // stateful node from. The refusal was left over from before that
+                    // and only fired on the preload, so an identical colored net
+                    // WITHOUT a preload imported fine.
                 }
                 
                 // Only try to initialize from marginal if we have actual preload data
                 try {
                     model.initFromMarginal(state);
                 } catch (Exception e) {
+                    // NAME WHAT ACTUALLY BROKE. The common cause is a preload above the
+                    // per-class capacity the SAME file declares: JMT does not cross-check
+                    // the two, while LINE's state space cannot hold a marking above a
+                    // capacity. Falling back to initDefault there leaves a DIFFERENT model
+                    // than the file describes, with nothing said about it.
+                    NetworkStruct snImp = model.getStruct();
+                    StringBuilder over = new StringBuilder();
+                    for (int indOver = 0; indOver < state.getNumRows(); indOver++) {
+                        int istOver = (int) snImp.nodeToStation.get(indOver);
+                        if (istOver < 0) {
+                            continue;
+                        }
+                        for (int rOver = 0; rOver < state.getNumCols(); rOver++) {
+                            if (state.get(indOver, rOver) > snImp.classcap.get(istOver, rOver)) {
+                                over.append("\n - '").append(snImp.nodenames.get(indOver))
+                                    .append("' preloads ").append(state.get(indOver, rOver))
+                                    .append(" tokens of class '").append(snImp.classnames.get(rOver))
+                                    .append("' but declares a capacity of ").append(snImp.classcap.get(istOver, rOver))
+                                    .append(" for it");
+                            }
+                        }
+                    }
+                    if (over.length() > 0) {
+                        line_error(
+                                mfilename(new Object() {
+                                }),
+                                "Import failed: the preload of this model lies outside the state space it declares:"
+                                        + over + "\nRaise the capacity or lower the preload so the two agree.\n");
+                    }
                     line_warning(
                             mfilename(new Object() {
                             }), "Import failed to automatically initialize the model with preload data. Trying default initialization.\n");

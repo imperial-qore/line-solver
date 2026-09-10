@@ -15,16 +15,26 @@ classdef Cache < StatefulNode
         popularity;
         nLevels;
         itemLevelCap;
+        itemSize;                     % per-item storage cost (size); [] when unset
+        costCap;                      % per-list storage cost cap; [] when unset
+        costCapGlobal;                % true when costCap came from a single cache-wide cap
         items;
         accessProb;
         graph;
         totalCacheCapacity;           % sum(itemLevelCap)
         retrievalSystemCapacity;      % 0 until setRetrievalSystem is called; nitems-totalCacheCapacity otherwise
-        retrievalSystemQueueIndices;  % containers.Map jobinClassIdx -> [queue node indices]
+        retrievalSystemQueueIndices;  % dictionary jobinClassIdx -> [queue node indices]
         retrievalClassIndices;        % set of indices of retrieval classes (used in afterEventCache READ)
         retrievalRoutingEntries;      % cell array of [fromCls,toCls,srcNode,dstNode,prob] routing tuples;
                                       % link() injects these into the routing matrix P (the auto-generated
                                       % retrieval classes are not part of the user-supplied P).
+        itemClasses;                  % cell indexed by the chain's first read class -> [per-item class
+                                      % indices]; carries item identity between cache nodes. Set by
+                                      % setItemReadClasses at the entry cache and by setItemClasses at
+                                      % every cache fed by another cache.
+        itemOfClass;                  % (1,K) item each per-item class reads, 0 where the class is not
+                                      % one. Stored rather than inferred from a one-hot popularity,
+                                      % which is ambiguous against a genuine single-item popularity.
     end
     
     methods
@@ -60,14 +70,19 @@ classdef Cache < StatefulNode
                 self.cap = Inf; % job capacity
                 self.accessProb = {};
                 self.itemLevelCap = itemLevelCap; % item capacity
+                self.itemSize = [];
+                self.costCap = [];
+                self.costCapGlobal = false;
                 self.totalCacheCapacity = sum(itemLevelCap);
                 self.retrievalSystemCapacity = 0;  % no retrieval system by default
                 if self.totalCacheCapacity > nitems
                     line_error(mfilename,sprintf('The number of items is smaller than the capacity of %s.',name));
                 end
-                self.retrievalSystemQueueIndices = containers.Map('KeyType','int32','ValueType','any');
+                self.retrievalSystemQueueIndices = configureDictionary('int32','cell');
                 self.retrievalClassIndices = [];
                 self.retrievalRoutingEntries = {};
+                self.itemClasses = {};
+                self.itemOfClass = [];
                 self.replacestrategy = replStrat;
                 self.admissionProb = 1.0; % default: always admit on a miss (overridden for q-LRU)
                 %probHit = min(sum(itemLevelCap)/nitems,1.0); % initial estimate of hit probability
@@ -156,7 +171,7 @@ classdef Cache < StatefulNode
             % Return node indices of the queues comprising the retrieval system for the
             % given (0-indexed) arrival class, or [] if no retrieval system is set.
             if isKey(self.retrievalSystemQueueIndices, int32(jobinClassIdx))
-                q = self.retrievalSystemQueueIndices(int32(jobinClassIdx));
+                q = self.retrievalSystemQueueIndices{int32(jobinClassIdx)};
             else
                 q = [];
             end
@@ -182,6 +197,22 @@ classdef Cache < StatefulNode
             % progress in the retrieval system). Zero for caches without a
             % retrieval system.
             self.server.actualDelayedHitProb = actualDelayedHitProb;
+        end
+
+        function self = setResultDelayedHitQLen(self, d1, dfull)
+            % SETRESULTDELAYEDHITQLEN  Per-item delayed-hit queue length: the mean
+            % number of secondary requests waiting on the in-flight fetch of each
+            % item (d1), and the same count including the request that triggered
+            % the fetch (dfull).
+            self.server.actualDelayedHitQLen = d1;
+            self.server.actualDelayedHitQLenFull = dfull;
+        end
+
+        function [d1, dfull] = getDelayedHitQLen(self)
+            % GETDELAYEDHITQLEN  Per-item delayed-hit queue length; empty when the
+            % solver does not compute it.
+            d1 = full(self.server.actualDelayedHitQLen);
+            dfull = full(self.server.actualDelayedHitQLenFull);
         end
 
         function p = getHitRatio(self)
@@ -238,6 +269,21 @@ classdef Cache < StatefulNode
             end
         end
         
+        function self = setResultListCost(self, actualListCost)
+            % SETRESULTLISTCOST  Mean storage cost held by each list [1 x lists].
+            self.server.actualListCost = actualListCost;
+        end
+
+        function c = getListCost(self)
+            % GETLISTCOST  Mean storage cost held by each list [1 x lists];
+            % empty when the model carries no item sizes.
+            if isprop(self.server, 'actualListCost')
+                c = full(self.server.actualListCost);
+            else
+                c = [];
+            end
+        end
+
         function setHitClass(self, jobinclass, joboutclass)
             % SETHITCLASS(JOBINCLASS, JOBOUTCLASS)
             
@@ -300,6 +346,56 @@ classdef Cache < StatefulNode
             % SETACCESSCOSTS(R)
 
             self.accessProb = R;
+        end
+
+        function setItemSizes(self, sizes)
+            % SETITEMSIZES(SIZES)
+            % Storage cost (size) of each item, a positive integer vector with
+            % one entry per item. Used together with setCostCaps to bound the
+            % storage held by each cache list.
+            sizes = sizes(:).';
+            nitems = self.items.nitems;
+            if numel(sizes) == 1
+                sizes = sizes * ones(1,nitems);
+            end
+            if numel(sizes) ~= nitems
+                line_error(mfilename,sprintf('The item size vector of %s must have one entry per item (%d).',self.getName(),nitems));
+            end
+            if any(sizes<=0) || any(abs(sizes-round(sizes))>0)
+                line_error(mfilename,'Item sizes must be positive integers.');
+            end
+            self.itemSize = sizes;
+            if self.model.isJavaNative()
+                self.obj.setItemSizes(Matrix(sizes));
+            end
+        end
+
+        function setCostCaps(self, caps)
+            % SETCOSTCAPS(CAPS)
+            % Per-list cap on the total storage cost of the resident items. A
+            % scalar declares a single cap for the whole cache, which is
+            % modelled as the same cap on every list.
+            caps = caps(:).';
+            h = numel(self.itemLevelCap);
+            if numel(caps) == 1
+                self.costCapGlobal = true;
+                caps = caps * ones(1,h);
+            else
+                self.costCapGlobal = false;
+            end
+            if numel(caps) ~= h
+                line_error(mfilename,sprintf('The cost cap vector of %s must have one entry per cache list (%d).',self.getName(),h));
+            end
+            if any(caps<0) || any(abs(caps-round(caps))>0)
+                line_error(mfilename,'Storage cost caps must be non-negative integers.');
+            end
+            if self.replacestrategy == ReplacementStrategy.CLIMB
+                line_error(mfilename,'Storage cost caps are not supported with the CLIMB replacement strategy.');
+            end
+            self.costCap = caps;
+            if self.model.isJavaNative()
+                self.obj.setCostCaps(Matrix(caps));
+            end
         end
 
         function setAdmissionProb(self, q)
@@ -373,6 +469,147 @@ classdef Cache < StatefulNode
             self.setItemRoutingProbability(jobinClass, item, source, dest, probability);
         end
 
+        function setItemReadClasses(self, readClasses, hitClass)
+            % SETITEMREADCLASSES(READCLASSES, HITCLASS)
+            %
+            % Declare that READCLASSES{i} is the request stream for item i at this cache:
+            % each reads exactly its own item and reports a hit as HITCLASS. Use this at
+            % the cache the exogenous requests enter, where the per-item classes are the
+            % user's own; item popularity is then carried by the per-class arrival rates
+            % (or populations), not by a popularity distribution the cache draws from.
+            %
+            % This is what keeps a cache network free of arc-level class switching: no
+            % ClassSwitch node is inserted, so no class acquires a default route into the
+            % cache that the model never intended.
+
+            if iscell(readClasses)
+                clsArr = readClasses;
+            else
+                clsArr = num2cell(readClasses);
+            end
+            nItems = self.items.nitems;
+            if numel(clsArr) ~= nItems
+                line_error(mfilename, sprintf(['%s holds %d items but %d read classes were given; ' ...
+                    'pass exactly one class per item.'], self.name, nItems, numel(clsArr)));
+            end
+
+            hitArr = Cache.perItemClasses(hitClass, nItems, 'hit');
+            itemClassIdx = zeros(1, nItems);
+            for i = 1:nItems
+                cls = clsArr{i};
+                itemPopularity = zeros(1, nItems);
+                itemPopularity(i) = 1.0;
+                self.popularity{self.items.index, cls.index} = DiscreteSampler(itemPopularity);
+                self.setHitClass(cls, hitArr{i});
+                itemClassIdx(i) = cls.index;
+                self.itemOfClass(cls.index) = i;
+            end
+            % keyed by the first read class, which names the chain for the later hops
+            self.itemClasses{clsArr{1}.index} = itemClassIdx;
+        end
+
+        function itemClassIdx = setItemClasses(self, jobinClass, hitClass)
+            % ITEMCLASSIDX = SETITEMCLASSES(JOBINCLASS, HITCLASS)
+            %
+            % Mint one job class per item at a cache that is FED BY ANOTHER CACHE, so
+            % item identity survives the miss hop. Each minted class reads exactly its
+            % own item (one-hot popularity) and reports a hit as HITCLASS. The classes
+            % arrive by ordinary routing from the upstream cache, so no arc-level class
+            % switch is involved. At the cache the exogenous requests enter, the per-item
+            % classes are the user's own: use setItemReadClasses there instead.
+            %
+            % Idempotent: calling it twice for the same JOBINCLASS returns the existing
+            % classes and does not mint again.
+
+            r = jobinClass.index;
+            if numel(self.itemClasses) >= r && ~isempty(self.itemClasses{r})
+                itemClassIdx = self.itemClasses{r};
+                return
+            end
+
+            itemclass = self.items;
+            nItems = itemclass.nitems;
+            hitArr = Cache.perItemClasses(hitClass, nItems, 'hit');
+            itemClassIdx = zeros(1, nItems);
+            for i = 1:nItems
+                if isa(jobinClass, 'ClosedClass')
+                    itemCls = ClosedClass(self.model, [self.name '_item' num2str(i)], 0, jobinClass.refstat, 0);
+                else
+                    itemCls = OpenClass(self.model, [self.name '_item' num2str(i)], 0);
+                end
+                % A full-length one-hot pmf, never DiscreteSampler(1,i): DiscreteSampler
+                % takes its support from min/max of x, so a collapsed support would make
+                % refreshLocalVars read nitems = i.
+                itemPopularity = zeros(1, nItems);
+                itemPopularity(i) = 1.0;
+                self.popularity{itemclass.index, itemCls.index} = DiscreteSampler(itemPopularity);
+                self.setHitClass(itemCls, hitArr{i});
+                itemClassIdx(i) = itemCls.index;
+                self.itemOfClass(itemCls.index) = i;
+            end
+
+            self.itemClasses{r} = itemClassIdx;
+        end
+
+        function nextClasses = setMissCache(self, jobinClass, nextCache, hitClassAtNext)
+            % NEXTCLASSES = SETMISSCACHE(JOBINCLASS, NEXTCACHE, HITCLASSATNEXT)
+            %
+            % Send this cache's misses to NEXTCACHE preserving item identity: the miss
+            % class of this cache for item i IS the read class of NEXTCACHE for item i.
+            % Mints the per-item classes on NEXTCACHE, registers the cache-to-cache
+            % routing arc that link() injects into P, and returns the minted classes so
+            % the caller can route them onward from NEXTCACHE.
+
+            if ~isa(nextCache, 'Cache')
+                line_error(mfilename,'setMissCache requires a Cache node as the next hop.');
+            end
+            if nextCache.items.nitems ~= self.items.nitems
+                line_error(mfilename, sprintf(['Cache "%s" holds %d items but "%s" holds %d; ' ...
+                    'a cache network requires one common item set.'], ...
+                    self.name, self.items.nitems, nextCache.name, nextCache.items.nitems));
+            end
+            r = jobinClass.index;
+            if numel(self.server.missClass) >= r && self.server.missClass(r) > 0
+                line_error(mfilename, sprintf(['Class "%s" already has a miss class at %s; ' ...
+                    'setMissCache and setMissClass/setRetrievalSystem cannot both apply to it.'], ...
+                    jobinClass.name, self.name));
+            end
+            if numel(self.itemClasses) < r || isempty(self.itemClasses{r})
+                line_error(mfilename, sprintf(['No per-item classes at %s for class "%s"; ' ...
+                    'call setItemClasses before setMissCache.'], self.name, jobinClass.name));
+            end
+
+            nextIdx = nextCache.setItemClasses(jobinClass, hitClassAtNext);
+            selfIdx = self.itemClasses{r};
+            allClasses = self.model.getClasses();
+            nextClasses = cell(1, self.items.nitems);
+            for i = 1:self.items.nitems
+                % the miss of item i here becomes the read of item i at the next cache
+                self.server.missClass(selfIdx(i)) = nextIdx(i);
+                self.addRetrievalRoutingEntry(nextIdx(i), nextIdx(i), self.index, nextCache.index, 1.0);
+                nextClasses{i} = allClasses{nextIdx(i)};
+            end
+        end
+
+        function setItemMissClass(self, jobinClass, missClass)
+            % SETITEMMISSCLASS(JOBINCLASS, MISSCLASS)
+            %
+            % Terminate a cache network: every per-item class of this cache reports a
+            % miss as MISSCLASS, which the user routes onward (typically to the origin
+            % server). Required on the root cache, whose misses leave the network.
+
+            r = jobinClass.index;
+            if numel(self.itemClasses) < r || isempty(self.itemClasses{r})
+                line_error(mfilename, sprintf(['No per-item classes at %s for class "%s"; ' ...
+                    'call setItemClasses before setItemMissClass.'], self.name, jobinClass.name));
+            end
+            selfIdx = self.itemClasses{r};
+            missArr = Cache.perItemClasses(missClass, numel(selfIdx), 'miss');
+            for i = 1:numel(selfIdx)
+                self.server.missClass(selfIdx(i)) = missArr{i}.index;
+            end
+        end
+
         function setRetrievalSystem(self, jobinClass, missClass, queues)
             % SETRETRIEVALSYSTEM(jobinClass, missClass, queues)
             %
@@ -430,7 +667,7 @@ classdef Cache < StatefulNode
             for q = 1:nQueues
                 queueIdxs(q) = queueArr{q}.index;
             end
-            self.retrievalSystemQueueIndices(int32(jobinClass.index-1)) = queueIdxs;
+            self.retrievalSystemQueueIndices{int32(jobinClass.index-1)} = queueIdxs;
 
             % --- create one retrieval class per item ---
             retrievalList = cell(1, nItems);
@@ -474,6 +711,30 @@ classdef Cache < StatefulNode
                         sourceQueue.classCap((length(sourceQueue.classCap)+1):rClass.index) = Inf;
                     end
                     sourceQueue.classCap(rClass.index) = 1;
+                end
+            end
+        end
+    end
+
+    methods (Static)
+        function out = perItemClasses(spec, nItems, what)
+            % OUT = PERITEMCLASSES(SPEC, NITEMS, WHAT)
+            % Normalise a hit/miss class argument for the cache network helpers: a
+            % single class is shared by every item, a cell of NITEMS classes is taken
+            % one per item. A closed model typically needs the per-item form, because
+            % the job must leave the cache as the class that identifies its own item;
+            % an open model whose hits all go to the same place can share one class.
+            if iscell(spec)
+                if numel(spec) ~= nItems
+                    line_error(mfilename, sprintf(['%d %s classes were given for %d items; ' ...
+                        'pass one class per item or a single class shared by all.'], ...
+                        numel(spec), what, nItems));
+                end
+                out = spec;
+            else
+                out = cell(1, nItems);
+                for i = 1:nItems
+                    out{i} = spec;
                 end
             end
         end

@@ -70,7 +70,7 @@ def main():
     # ENV requires a solver factory that creates solvers for each stage
     # We use the Fluid solver (FLD) with transient analysis
     env_solver = ENV(env, lambda m: FLD(m))
-    Q, U, T = env_solver.getAvg()
+    Q, U, _, T, _, _ = env_solver.getAvg()
 
     # Display average results weighted by environment probabilities
     print('\n--- Environment-Averaged Results ---')

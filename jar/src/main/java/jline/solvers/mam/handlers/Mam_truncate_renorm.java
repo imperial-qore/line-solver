@@ -7,7 +7,6 @@ package jline.solvers.mam.handlers;
 import java.util.HashMap;
 import java.util.Map;
 
-import jline.api.mc.Ctmc_solve;
 import jline.lib.butools.MMAPPH1FCFS;
 import jline.util.matrix.Matrix;
 import jline.util.matrix.MatrixCell;
@@ -61,56 +60,15 @@ public final class Mam_truncate_renorm {
 
         if (nClasses > 1) {
             // see _kb/06-solver-catalog.md for rationale
-            Matrix D0 = D_arr.get(0);
-            Matrix Dsum = new Matrix(D0.getNumRows(), D0.getNumCols());
-            for (int k = 0; k < nClasses; k++) {
-                Dsum = Dsum.add(1.0, D_arr.get(k + 1));
-            }
-            Matrix e_arr = Matrix.ones(D0.getNumRows(), 1);
-            Matrix theta = Ctmc_solve.ctmc_solve(D0.add(1.0, Dsum));
-
-            double[] lambda_k = new double[nClasses];
-            double sumL = 0.0;
-            for (int k = 0; k < nClasses; k++) {
-                Matrix v = theta.mult(D_arr.get(k + 1)).mult(e_arr);
-                lambda_k[k] = v.get(0, 0);
-                sumL += lambda_k[k];
-            }
-            double[] w = new double[nClasses];
-            for (int k = 0; k < nClasses; k++) {
-                w[k] = (sumL > 0) ? lambda_k[k] / sumL : 1.0 / nClasses;
-            }
-
-            int n_total = 0;
-            int[] n_k = new int[nClasses];
-            for (int k = 0; k < nClasses; k++) {
-                n_k[k] = pie_cell.get(k).length();
-                n_total += n_k[k];
-            }
-            Matrix alpha_mix = new Matrix(1, n_total);
-            Matrix T_mix = new Matrix(n_total, n_total);
-            int offset = 0;
-            for (int k = 0; k < nClasses; k++) {
-                Matrix pk = pie_cell.get(k);
-                for (int i = 0; i < n_k[k]; i++) {
-                    alpha_mix.set(0, offset + i, w[k] * pk.get(i));
-                }
-                Matrix Tk = D0_cell.get(k);
-                for (int i = 0; i < n_k[k]; i++) {
-                    for (int j = 0; j < n_k[k]; j++) {
-                        T_mix.set(offset + i, offset + j, Tk.get(i, j));
-                    }
-                }
-                offset += n_k[k];
-            }
-
+            Mam_svc_mixture.Result mix =
+                    Mam_svc_mixture.mam_svc_mixture(D_arr, pie_cell, D0_cell);
             D_call = new MatrixCell(2);
-            D_call.set(0, D0);
-            D_call.set(1, Dsum);
+            D_call.set(0, D_arr.get(0));
+            D_call.set(1, mix.Dsum);
             pie_call = new HashMap<Integer, Matrix>();
-            pie_call.put(0, alpha_mix);
+            pie_call.put(0, mix.alpha);
             D0_call = new HashMap<Integer, Matrix>();
-            D0_call.put(0, T_mix);
+            D0_call.put(0, mix.T);
         } else {
             D_call = D_arr;
             pie_call = pie_cell;

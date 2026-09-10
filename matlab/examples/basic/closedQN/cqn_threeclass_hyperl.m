@@ -37,7 +37,7 @@ P{3,3} = circul(M);
 model.link(P);
 %%
 % This part illustrates the execution of different solvers
-solver{1} = CTMC(model);
+solver{1} = CTMC(model,'exact');
 solver{end+1} = JMT(model,'seed',23000,'samples',5e3,'verbose',true);
 solver{end+1} = SSA(model,'seed',23000,'samples',5e3,'verbose',true);
 solver{end+1} = FLD(model);

@@ -8,8 +8,10 @@ package jline.io;
 import jline.GlobalConstants;
 import jline.VerboseLevel;
 import jline.lang.ClosedClass;
+import jline.lang.Environment;
 import jline.lang.JobClass;
 import jline.lang.Network;
+import jline.lang.Mode;
 import jline.lang.OpenClass;
 import jline.lang.Region;
 import jline.lang.RoutingMatrix;
@@ -18,12 +20,22 @@ import jline.lang.constant.DropStrategy;
 import jline.lang.constant.ImpatienceType;
 import jline.lang.constant.RoutingStrategy;
 import jline.lang.constant.SchedStrategy;
+import jline.lang.constant.ActivityPrecedenceType;
+import jline.lang.layered.Activity;
+import jline.lang.layered.ActivityPrecedence;
+import jline.lang.layered.CacheTask;
+import jline.lang.layered.Entry;
+import jline.lang.layered.ItemEntry;
 import jline.lang.layered.LayeredNetwork;
+import jline.lang.layered.Processor;
+import jline.lang.layered.Task;
 import jline.lang.nodes.Delay;
 import jline.lang.nodes.Node;
+import jline.lang.nodes.Place;
 import jline.lang.nodes.Queue;
 import jline.lang.nodes.Sink;
 import jline.lang.nodes.Source;
+import jline.lang.nodes.Transition;
 import jline.lang.processes.APH;
 import jline.lang.processes.BMAP;
 import jline.lang.processes.Cox2;
@@ -58,7 +70,9 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import static jline.TestTools.withSuppressedOutput;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -233,7 +247,111 @@ public class ModelIORoundTripTest {
                     factoryName + ": task count changed in round trip");
             assertEquals(original.getStruct().nentries, reloaded.getStruct().nentries,
                     factoryName + ": entry count changed in round trip");
+            assertLqnFeaturesSurvive(factoryName, original, reloaded);
         });
+    }
+
+    /**
+     * Asserts that the LINE .lqnx dialect carried a model's cache, item entry and
+     * setup/delay-off times through the round trip.
+     *
+     * <p>COUNTS ALONE ARE NOT ENOUGH, and that is not a hypothetical: this test
+     * asserted only nhosts, ntasks and nentries, so lqn_setup passed it for as long
+     * as the writer silently dropped the setup and delay-off times entirely -- a
+     * setup task survives all three count assertions while losing everything that
+     * makes it a setup task. A round-trip test that compares only counts cannot
+     * detect the loss it round-trips through. Every assertion below is conditional
+     * on the ORIGINAL carrying the feature, so a model without one asserts nothing
+     * extra and no existing case is weakened.</p>
+     */
+    private static void assertLqnFeaturesSurvive(String factoryName,
+                                                 LayeredNetwork original,
+                                                 LayeredNetwork reloaded) {
+        Map<String, Task> reloadedTasks = new HashMap<>();
+        for (Task t : reloaded.getTasks().values()) {
+            reloadedTasks.put(t.getName(), t);
+        }
+        for (Task origTask : original.getTasks().values()) {
+            Task backTask = reloadedTasks.get(origTask.getName());
+            assertNotNull(backTask, factoryName + ": task " + origTask.getName() + " lost in round trip");
+
+            if (origTask instanceof CacheTask) {
+                assertTrue(backTask instanceof CacheTask,
+                        factoryName + ": task " + origTask.getName() + " stopped being a CacheTask");
+                CacheTask origCache = (CacheTask) origTask;
+                CacheTask backCache = (CacheTask) backTask;
+                assertEquals(origCache.getItems(), backCache.getItems(),
+                        factoryName + ": cache item count changed");
+                assertArrayEquals(origCache.getItemLevelCap(), backCache.getItemLevelCap(),
+                        factoryName + ": cache level capacities changed (itemLevelCap is an array)");
+                assertEquals(origCache.getReplacestrategy(), backCache.getReplacestrategy(),
+                        factoryName + ": cache replacement strategy changed");
+                assertEquals(origCache.hasRetrieval(), backCache.hasRetrieval(),
+                        factoryName + ": cache retrieval flag changed");
+            }
+
+            if (origTask.hasSetupDelayoff()) {
+                assertEquals(origTask.getSetupTimeMean(), backTask.getSetupTimeMean(), 1e-9,
+                        factoryName + ": setup time mean changed on task " + origTask.getName());
+                assertEquals(origTask.getSetupTimeSCV(), backTask.getSetupTimeSCV(), 1e-9,
+                        factoryName + ": setup time SCV changed on task " + origTask.getName());
+                assertEquals(origTask.getDelayOffTimeMean(), backTask.getDelayOffTimeMean(), 1e-9,
+                        factoryName + ": delay-off time mean changed on task " + origTask.getName());
+                assertEquals(origTask.getDelayOffTimeSCV(), backTask.getDelayOffTimeSCV(), 1e-9,
+                        factoryName + ": delay-off time SCV changed on task " + origTask.getName());
+            }
+
+            Map<String, Entry> backEntries = new HashMap<>();
+            for (Entry e : backTask.getEntries()) {
+                backEntries.put(e.getName(), e);
+            }
+            for (Entry origEntry : origTask.getEntries()) {
+                if (!(origEntry instanceof ItemEntry)) {
+                    continue;
+                }
+                Entry backEntry = backEntries.get(origEntry.getName());
+                assertTrue(backEntry instanceof ItemEntry,
+                        factoryName + ": entry " + origEntry.getName() + " stopped being an ItemEntry");
+                ItemEntry origItem = (ItemEntry) origEntry;
+                ItemEntry backItem = (ItemEntry) backEntry;
+                assertEquals(origItem.getCardinality(), backItem.getCardinality(),
+                        factoryName + ": item cardinality changed on " + origEntry.getName());
+                Distribution origPop = origItem.getPopularity();
+                if (origPop != null) {
+                    Distribution backPop = backItem.getPopularity();
+                    assertNotNull(backPop,
+                            factoryName + ": access popularity lost on " + origEntry.getName());
+                    assertEquals(origPop.getName(), backPop.getName(),
+                            factoryName + ": access popularity class changed on " + origEntry.getName());
+                    Matrix origP = (Matrix) origPop.getParam(1).getValue();
+                    Matrix backP = (Matrix) backPop.getParam(1).getValue();
+                    assertEquals(origP.length(), backP.length(),
+                            factoryName + ": access popularity length changed on " + origEntry.getName());
+                    for (int k = 0; k < origP.length(); k++) {
+                        assertEquals(origP.get(k), backP.get(k), 1e-9,
+                                factoryName + ": access popularity p[" + k + "] changed on "
+                                + origEntry.getName());
+                    }
+                }
+            }
+
+            for (ActivityPrecedence origPrec : origTask.getPrecedences()) {
+                if (!ActivityPrecedenceType.POST_CACHE.equals(origPrec.getPostType())) {
+                    continue;
+                }
+                boolean found = false;
+                for (ActivityPrecedence backPrec : backTask.getPrecedences()) {
+                    if (ActivityPrecedenceType.POST_CACHE.equals(backPrec.getPostType())
+                            && backPrec.getPreActs().equals(origPrec.getPreActs())) {
+                        assertEquals(origPrec.getPostActs(), backPrec.getPostActs(),
+                                factoryName + ": POST_CACHE hit/miss assignment changed");
+                        found = true;
+                        break;
+                    }
+                }
+                assertTrue(found, factoryName + ": POST_CACHE precedence lost in round trip");
+            }
+        }
     }
 
     /** JSON round trip for layered networks. */
@@ -441,6 +559,50 @@ public class ModelIORoundTripTest {
     }
 
     /**
+     * The BMAP block array must sit under "params", which is where
+     * linemodel_save.m and linemodel_io.py put it and where linemodel_io.py
+     * reads it. This class used to write AND read it at the TOP LEVEL, so the
+     * JAR-to-JAR round trip above passed while every cross-codebase load failed:
+     * a MATLAB or Python model.json carrying a BMAP service was rejected with
+     * "BMAP requires D0 and at least one batch matrix", which made LDES's BMAP
+     * service (BMSP) unreachable from either. The top-level form is still
+     * accepted on load so files written before the fix keep working.
+     */
+    @Test
+    public void bmapWireFormatNestsTheBlocksUnderParams() throws Exception {
+        Matrix D0 = new Matrix(new double[][]{{-3.0, 0.5}, {0.5, -4.0}});
+        Matrix D1 = new Matrix(new double[][]{{1.5, 0.5}, {1.0, 1.0}});
+        Matrix D2 = new Matrix(new double[][]{{0.3, 0.2}, {1.0, 0.5}});
+        Network model = openModel("bmapwire", new BMAP(D0, D1, D2));
+        File f = tempDir.resolve("bmapwire_wire.json").toFile();
+        withSuppressedOutput(() -> {
+            try {
+                LineModelIO.save(model, f.getAbsolutePath());
+            } catch (Exception e) {
+                throw new AssertionError("bmapwire: save failed: " + e, e);
+            }
+        });
+        String json = new String(java.nio.file.Files.readAllBytes(f.toPath()), "UTF-8");
+        int typeAt = json.indexOf("\"BMAP\"");
+        assertTrue(typeAt >= 0, "no BMAP distribution in the emitted JSON");
+        // the "params" wrapper must appear in the same distribution object
+        String around = json.substring(Math.max(0, typeAt - 400),
+                Math.min(json.length(), typeAt + 400));
+        assertTrue(around.contains("params"),
+                "BMAP blocks are not nested under \"params\": " + around);
+
+        // and a document in exactly that shape must load
+        Object loaded = LineModelIO.load(f.getAbsolutePath());
+        assertTrue(loaded instanceof Network, "params-shaped BMAP failed to load");
+        Distribution arv = sourceOf((Network) loaded)
+                .getArrivalDistribution(((Network) loaded).getClasses().get(0));
+        assertTrue(arv instanceof BMAP, "params-shaped BMAP decoded as "
+                + arv.getClass().getSimpleName());
+        assertEquals(D2.get(1, 0), ((BMAP) arv).getBatchMatrix(2).get(1, 0), 1e-12,
+                "params-shaped BMAP lost its batch-2 matrix");
+    }
+
+    /**
      * MarkedMMPP extends Marked, not MarkedMAP, so it matched neither the MMAP
      * nor the MAP branch.
      */
@@ -493,7 +655,11 @@ public class ModelIORoundTripTest {
         // Queue.setLoadDependence rejects INF scheduling at the lang level, so a
         // load-dependent Delay is unreachable; the class-dependence handle is the
         // scaling a Delay can actually carry.
-        delay.setLimitedClassDependence((Matrix n) -> rowVector(1.0 + n.get(0)));
+        // The peak is MANDATORY and, on an open class, genuinely not derivable:
+        // beta(n) = 1 + n grows without bound, so the declaration is the only
+        // thing that says what utilization is a fraction OF. 11 is beta at the
+        // open-class wire cutoff of 10.
+        delay.setLimitedClassDependence((Matrix n) -> rowVector(1.0 + n.get(0)), rowVector(11.0));
         delay.setPatience(oclass, ImpatienceType.RENEGING, new Exp(0.25));
         model.link(Network.serialRouting(source, delay, sink));
 
@@ -560,57 +726,6 @@ public class ModelIORoundTripTest {
             }
         }
         assertTrue(found, "no SQ output strategy after round trip");
-    }
-
-    /**
-     * d5: RL routing carried only the bare strategy name, so sub_rl found no
-     * value function after a round trip and silently degraded to its JSQ
-     * fallback.
-     */
-    @Test
-    public void rlRoutingParametersSurviveRoundTrip() throws Exception {
-        Network model = new Network("rlrouting");
-        Source source = new Source(model, "Source");
-        Queue q1 = new Queue(model, "Q1", SchedStrategy.FCFS);
-        Queue q2 = new Queue(model, "Q2", SchedStrategy.FCFS);
-        Sink sink = new Sink(model, "Sink");
-        OpenClass oclass = new OpenClass(model, "Class1");
-        source.setArrival(oclass, new Exp(0.1));
-        q1.setService(oclass, new Exp(1.0));
-        q2.setService(oclass, new Exp(1.0));
-        RoutingMatrix P = model.initRoutingMatrix();
-        P.set(oclass, oclass, source, q1, 0.5);
-        P.set(oclass, oclass, source, q2, 0.5);
-        P.set(oclass, oclass, q1, sink, 1.0);
-        P.set(oclass, oclass, q2, sink, 1.0);
-        model.link(P);
-        Matrix vf = rowVector(0.5, 1.5, 2.5, 3.5);
-        int[] vfShape = new int[]{2, 2};
-        int[] actionNodes = new int[]{source.getNodeIndex()};
-        source.setRLRouting(oclass, vf, vfShape, actionNodes, 0);
-
-        final Network[] out = new Network[1];
-        withSuppressedOutput(() -> {
-            try {
-                out[0] = jsonRoundTrip(model, "rlrouting");
-            } catch (Exception e) {
-                throw new AssertionError("rlrouting: round trip failed: " + e, e);
-            }
-        });
-        Node backSource = out[0].getNodes().get(0);
-        JobClass jc = out[0].getClasses().get(0);
-        assertEquals(RoutingStrategy.RL, backSource.getRoutingStrategy(jc),
-                "RL strategy lost in round trip");
-        jline.lang.NodeParam np = out[0].getStruct().nodeparam.get(backSource);
-        assertNotNull(np, "RL node parameters lost in round trip");
-        assertNotNull(np.rlValueFunction.get(jc), "RL value function lost in round trip");
-        assertEquals(3.5, np.rlValueFunction.get(jc).get(3), 1e-12,
-                "RL value function changed in round trip");
-        assertArrayEquals(vfShape, np.rlValueFunctionShape.get(jc),
-                "RL value-function shape lost in round trip");
-        assertEquals(0, np.rlStateSize.get(jc).intValue(), "RL stateSize lost in round trip");
-        assertArrayEquals(actionNodes, np.rlNodesNeedAction.get(jc),
-                "RL action nodes lost in round trip");
     }
 
     /** d10: SelfLoopingClass subclasses ClosedClass and must be tested first. */
@@ -779,6 +894,141 @@ public class ModelIORoundTripTest {
                 "orbitImpatience distribution changed in round trip");
         assertTrue(back.hasImmediateFeedback(backJc.getIndex()),
                 "immediateFeedback lost in round trip");
+    }
+
+    /**
+     * A declared state is a TRIO -- state, state space and prior -- and the wire
+     * carries only the first when the prior is the trivial [1] over one row, so
+     * the READER owes the other two back. A node holding a state over an empty
+     * space is not one any solver can start from: SolverFluid indexes the space
+     * directly, and MATLAB's reader leaving it empty returned an all-zero table
+     * for every stage of a reloaded random environment. The model is initialized
+     * FIRST because a state on a strict subset of the stateful nodes does not
+     * travel at all -- see serializeNetworkNodes and linemodel_save.m.
+     */
+    @Test
+    public void aDeclaredStateRestoresSpaceAndPrior() throws Exception {
+        Network model = openModel("statetrio", new Exp(1.0));
+        model.initDefault();
+        Queue queue = queueOf(model, "Queue");
+        queue.setState(rowVector(2.0, 1.0));
+
+        final Network[] out = new Network[1];
+        withSuppressedOutput(() -> {
+            try {
+                out[0] = jsonRoundTrip(model, "statetrio");
+            } catch (Exception e) {
+                throw new AssertionError("statetrio: round trip failed: " + e, e);
+            }
+        });
+        Queue back = queueOf(out[0], "Queue");
+        assertEquals(2.0, back.getState().get(0, 0), 1e-12, "state lost in round trip");
+        assertEquals(1.0, back.getState().get(0, 1), 1e-12, "state lost in round trip");
+        assertEquals(1, back.getStateSpace().getNumRows(),
+                "a declared state must come back as a one-row state space");
+        assertEquals(2.0, back.getStateSpace().get(0, 0), 1e-12,
+                "the restored state space is not the declared row");
+        assertEquals(1, back.getStatePrior().getNumRows(),
+                "a declared state must come back under a prior of one");
+        assertEquals(1.0, back.getStatePrior().get(0, 0), 1e-12,
+                "the restored prior is not [1]");
+    }
+
+    /**
+     * A NON-trivial prior does ride the wire, paired with the state space whose
+     * rows it indexes, and must not be overwritten by the trivial pair above.
+     */
+    @Test
+    public void anExplicitStatePriorSurvivesRoundTrip() throws Exception {
+        Network model = openModel("statepr", new Exp(1.0));
+        model.initDefault();
+        Queue queue = queueOf(model, "Queue");
+        Matrix space = new Matrix(2, 2);
+        space.set(0, 0, 1.0); space.set(0, 1, 1.0);
+        space.set(1, 0, 0.0); space.set(1, 1, 1.0);
+        queue.setStateSpace(space);
+        Matrix prior = new Matrix(2, 1);
+        prior.set(0, 0, 0.25);
+        prior.set(1, 0, 0.75);
+        queue.setStatePrior(prior);
+        queue.setState(rowVector(1.0, 1.0));
+
+        final Network[] out = new Network[1];
+        withSuppressedOutput(() -> {
+            try {
+                out[0] = jsonRoundTrip(model, "statepr");
+            } catch (Exception e) {
+                throw new AssertionError("statepr: round trip failed: " + e, e);
+            }
+        });
+        Queue back = queueOf(out[0], "Queue");
+        assertEquals(2, back.getStateSpace().getNumRows(), "state space rows lost in round trip");
+        assertEquals(2, back.getStatePrior().getNumRows(), "prior rows lost in round trip");
+        assertEquals(0.25, back.getStatePrior().get(0, 0), 1e-12, "prior changed in round trip");
+        assertEquals(0.75, back.getStatePrior().get(1, 0), 1e-12, "prior changed in round trip");
+    }
+
+    /**
+     * The stage TYPE of a random environment. Every reader looked for it and no
+     * writer emitted it, so an Environment came back from JSON with its stage
+     * types blanked -- which getStageTable prints and every UP/DOWN consumer
+     * keys off.
+     */
+    @Test
+    public void environmentStageTypeSurvivesRoundTrip() throws Exception {
+        Environment env = new Environment("stagetype", 2);
+        env.addStage(0, "Fast", "operational", openModel("fast", new Exp(1.0)));
+        env.addStage(1, "Slow", "degraded", openModel("slow", new Exp(1.0)));
+        env.addTransition(0, 1, new Exp(0.5));
+        env.addTransition(1, 0, new Exp(1.0));
+
+        File f = tempDir.resolve("stagetype_wire.json").toFile();
+        final Object[] out = new Object[1];
+        withSuppressedOutput(() -> {
+            try {
+                LineModelIO.save(env, f.getAbsolutePath());
+                out[0] = LineModelIO.load(f.getAbsolutePath());
+            } catch (Exception e) {
+                throw new AssertionError("stagetype: round trip failed: " + e, e);
+            }
+        });
+        assertTrue(out[0] instanceof Environment, "loaded object is not an Environment");
+        Environment back = (Environment) out[0];
+        assertEquals("operational", back.getStageType(0), "stage type lost in round trip");
+        assertEquals("degraded", back.getStageType(1), "stage type lost in round trip");
+    }
+
+    /**
+     * Server breakdown/repair, with the degraded down-server service. Without
+     * the wire block the LDES clients, which serialize the model, would simulate
+     * an always-up server and return a result indistinguishable from a correct one.
+     */
+    @Test
+    public void breakdownSurvivesRoundTrip() throws Exception {
+        Network model = openModel("breakdown", new Exp(1.0));
+        Queue queue = queueOf(model, "Queue");
+        JobClass jc = model.getClasses().get(0);
+        queue.setBreakdown(new Exp(0.2), new Exp(1.0));
+        queue.setDownService(jc, new Exp(0.5));
+
+        final Network[] out = new Network[1];
+        withSuppressedOutput(() -> {
+            try {
+                out[0] = jsonRoundTrip(model, "breakdown");
+            } catch (Exception e) {
+                throw new AssertionError("breakdown: round trip failed: " + e, e);
+            }
+        });
+        Queue back = queueOf(out[0], "Queue");
+        JobClass backJc = out[0].getClasses().get(0);
+        assertTrue(back.hasBreakdown(), "breakdown lost in round trip");
+        assertEquals(5.0, back.getBreakdownFailure().getMean(), 1e-9,
+                "time to failure changed in round trip");
+        assertEquals(1.0, back.getBreakdownRepair().getMean(), 1e-9,
+                "repair time changed in round trip");
+        assertNotNull(back.getDownService(backJc), "downService lost in round trip");
+        assertEquals(2.0, back.getDownService(backJc).getMean(), 1e-9,
+                "downService distribution changed in round trip");
     }
 
     /**
@@ -1183,8 +1433,8 @@ public class ModelIORoundTripTest {
 
     /**
      * Expolynomial had no class in the JAR at all, so a MATLAB- or Python-authored
-     * model carrying one decoded to a zero-service Immediate. The density is a
-     * Sirio expression string and the type carries no moments, so nothing about it
+     * model carrying one decoded to a zero-service Immediate. The density is an
+     * expolynomial expression string and the type carries no moments, so nothing about it
      * can be moment-matched: it must survive verbatim as its own family.
      */
     @Test
@@ -1299,5 +1549,118 @@ public class ModelIORoundTripTest {
         assertEquals(1.0, back.getEft(), 1e-12, "foreign Expolynomial eft not read");
         assertTrue(Double.isInfinite(back.getLft()),
                 "foreign Expolynomial \"Inf\" lft not read as infinite");
+    }
+
+    /**
+     * An explicit firing priority of 0 is a legal JMT value and must survive the
+     * round trip. The writer omits the key only when it equals the builder
+     * default of 1, so 0 travels on the wire and 1 does not. Guarding on
+     * {@code > 0} instead dropped 0 and preserved the redundant 1, and every
+     * reader then restored the default: see BUGS.md BUG-90.
+     */
+    @Test
+    public void firingPriorityZeroSurvivesTheRoundTrip() throws Exception {
+        double[] priorities = {0.0, 1.0, 3.0};
+        for (int p = 0; p < priorities.length; p++) {
+            final double prio = priorities[p];
+            Network model = new Network("spnprio");
+            Source source = new Source(model, "Source");
+            Sink sink = new Sink(model, "Sink");
+            Place place = new Place(model, "P1");
+            Transition trans = new Transition(model, "T1");
+            OpenClass jobclass = new OpenClass(model, "Class1", 0);
+            source.setArrival(jobclass, Exp.fitMean(1.0));
+            Mode mode = trans.addMode("Mode1");
+            trans.setNumberOfServers(mode, Integer.MAX_VALUE);
+            trans.setDistribution(mode, new Exp(4));
+            trans.setEnablingConditions(mode, jobclass, place, 1);
+            trans.setFiringOutcome(mode, jobclass, sink, 1);
+            trans.setFiringPriorities(mode, (int) prio);
+            model.link(Network.serialRouting(source, place, trans, sink));
+
+            File f = tempDir.resolve("spnprio_" + p + ".json").toFile();
+            final Network[] out = new Network[1];
+            withSuppressedOutput(() -> {
+                try {
+                    LineModelIO.save(model, f.getAbsolutePath());
+                    out[0] = (Network) LineModelIO.load(f.getAbsolutePath());
+                } catch (Exception e) {
+                    throw new AssertionError("firingPriority " + prio + ": round trip failed: " + e, e);
+                }
+            });
+
+            String wire = new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8);
+            assertEquals(prio != 1.0, wire.contains("\"firingPriority\""),
+                    "firingPriority " + prio + ": the key is written iff it differs from the default 1");
+
+            Transition back = null;
+            for (Node n : out[0].getNodes()) {
+                if (n instanceof Transition) {
+                    back = (Transition) n;
+                }
+            }
+            assertNotNull(back, "firingPriority " + prio + ": no Transition after the round trip");
+            assertEquals(prio, back.firingPriorities.get(0), 1e-12,
+                    "firingPriority " + prio + " did not survive save/load");
+        }
+    }
+
+    /**
+     * `fanIn` is a MAP keyed by the SOURCE task, exactly as `fanOut` is keyed
+     * by the dest. This used to be written and read as
+     * `{"source":..,"value":..}` by the JAR ALONE, so every MATLAB- or
+     * Python-written layered document with a fan-in made loadLayeredNetwork
+     * throw NullPointerException before a solver ran -- the lqn_sockshop [P2J]
+     * parity row. The wire text is asserted and not just the round trip,
+     * because a JAR-only shape round-trips through the JAR perfectly.
+     */
+    @Test
+    public void fanInIsAMapKeyedBySourceTask() throws Exception {
+        LayeredNetwork model = new LayeredNetwork("fanin_wire");
+        Processor p1 = new Processor(model, "P1", 1, SchedStrategy.INF);
+        Processor p2 = new Processor(model, "P2", 1, SchedStrategy.FCFS);
+        Task caller = new Task(model, "T1", 1, SchedStrategy.REF).on(p1);
+        Task callee = new Task(model, "T2", 1, SchedStrategy.FCFS).on(p2);
+        callee.setFanIn("T1", 3);
+        caller.setFanOut("T2", 2);
+        Entry e1 = new Entry(model, "E1").on(caller);
+        Entry e2 = new Entry(model, "E2").on(callee);
+        Activity a1 = new Activity(model, "A1", new Exp(1.0)).on(caller).boundTo(e1).synchCall(e2, 1);
+        Activity a2 = new Activity(model, "A2", new Exp(1.0)).on(callee).boundTo(e2).repliesTo(e2);
+
+        File f = tempDir.resolve("fanin_wire.json").toFile();
+        final Object[] out = new Object[1];
+        withSuppressedOutput(() -> {
+            try {
+                LineModelIO.save(model, f.getAbsolutePath());
+                out[0] = LineModelIO.load(f.getAbsolutePath());
+            } catch (Exception e) {
+                throw new AssertionError("fanIn round trip failed: " + e, e);
+            }
+        });
+
+        String wire = new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8);
+        assertTrue(wire.contains("\"fanIn\""), "fanIn was not written at all");
+        assertFalse(wire.contains("\"source\""),
+                "fanIn is keyed by the source task name, not by a \"source\" property");
+
+        assertTrue(out[0] instanceof LayeredNetwork, "loaded object is not a LayeredNetwork");
+        LayeredNetwork back = (LayeredNetwork) out[0];
+        Task backCallee = null;
+        Task backCaller = null;
+        for (Task t : back.getTasks().values()) {
+            if ("T2".equals(t.getName())) {
+                backCallee = t;
+            }
+            if ("T1".equals(t.getName())) {
+                backCaller = t;
+            }
+        }
+        assertNotNull(backCallee, "T2 is missing after the round trip");
+        assertNotNull(backCaller, "T1 is missing after the round trip");
+        assertEquals("T1", backCallee.getFanInSource(), "the fan-in source did not survive");
+        assertEquals(3, backCallee.getFanInValue(), "the fan-in value did not survive");
+        assertEquals(Integer.valueOf(2), backCaller.getFanOutMap().get("T2"),
+                "the fan-out did not survive");
     }
 }

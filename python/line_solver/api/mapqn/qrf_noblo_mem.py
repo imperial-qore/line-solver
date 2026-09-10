@@ -9,7 +9,6 @@ Port of MATLAB qrf_noblo_mem.m.
 """
 
 import numpy as np
-from scipy.optimize import minimize
 
 from .qrf_noblo_common import (
     sub_qrfvar,
@@ -22,6 +21,9 @@ from .qrf_noblo_common import (
     affine_constraint_matrices,
     reduce_equalities,
     feasible_start,
+    qrf_index_map,
+    solve_qrf_nlp,
+    mem_gradient,
 )
 
 
@@ -69,20 +71,13 @@ def qrf_noblo_mem(MAPs, N, rt):
     # see _kb/03-api-layer.md for rationale
     x0 = feasible_start(Aeq, beq, Aub, bub, num_vars)
 
-    constraints = [{'type': 'eq', 'fun': lambda x: Aeq @ x - beq}]
-    if Aub.shape[0] > 0:
-        constraints.append({'type': 'ineq', 'fun': lambda x: -(Aub @ x - bub)})
-
-    result = minimize(
+    idx = qrf_index_map(M, N, K, MR)
+    xopt = solve_qrf_nlp(
         lambda x: mem_objective(x, M, N, K, F, MR),
-        x0,
-        method='SLSQP',
-        bounds=bounds,
-        constraints=constraints,
-        options={'maxiter': 100, 'disp': False, 'ftol': 1e-8},
-    )
+        lambda x: mem_gradient(x, M, N, K, F, MR, idx),
+        x0, Aeq, beq, Aub, bub, 'qrf_noblo_mem')
 
-    p2opt, _ = sub_qrfvar(result.x, M, N, K, MR)
+    p2opt, _ = sub_qrfvar(xopt, M, N, K, MR)
     UN, QN = extract_results(p2opt, M, K, F, MR)
 
     return UN, QN

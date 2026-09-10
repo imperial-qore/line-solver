@@ -1,0 +1,65 @@
+{
+  "_readme": [
+    "FACTS ABOUT THE CORPUS that more than one suite has to agree on. This is",
+    "DATA for the same reason tolerance_policy.json is: a list transcribed into",
+    "python, MATLAB and the standalone scraper is three lists that drift apart,",
+    "and a name in one of them changes what an existing golden MEANS.",
+    "",
+    "multiModelExamples: examples that build SEVERAL models and produce one",
+    "table per model, rather than solving one model twice. Their goldens hold",
+    "the FIRST table, because that is the model every row can reproduce. Keep",
+    "the list SHORT and justified -- adding a name here silently re-points a",
+    "golden at a different network.",
+    "",
+    "pythonScriptAliases: the canonical (MATLAB) example name -> the file stem",
+    "the Python edition ships it under, for the few examples whose Python twin",
+    "was written with another spelling. Consulted by the parity suite when it",
+    "looks for the twin and by doc/latex/exdoc.py when it lifts the code into",
+    "the manual: WITHOUT it the twin is invisible, and an invisible twin is a",
+    "silent skip in the suite and a missing listing in the manual, not an error."
+  ],
+  "multiModelExamples": [
+    "renv_basic",
+    "tut12_random_env",
+    "fes_single_class",
+    "fes_aggregation",
+    "ld_multiserver_fcfs",
+    "ld_multiserver_ps",
+    "ld_multiserver_ps_twoclasses",
+    "fcr_mm1kdrop",
+    "fcr_mm1waitq",
+    "cqn_repairmen_multi",
+    "cqn_threeclass_hyperl",
+    "lcq_threehosts",
+    "oqn_vsinks",
+    "tut13_posterior_analysis"
+  ],
+  "multiModelWhy": {
+    "renv_basic": "'Compare with individual stage analysis' solves one model per environment stage, Fast then Slow. Two models, not one model twice.",
+    "tut12_random_env": "as renv_basic: one model per environment stage, solved standalone after the coupled run.",
+    "fes_single_class": "original model, then a flow-equivalent server built from it: a different network.",
+    "fes_aggregation": "original model, then its flow-equivalent aggregate.",
+    "ld_multiserver_fcfs": "original model, then the load-dependent aggregate derived from it.",
+    "ld_multiserver_ps": "original model, then the load-dependent aggregate derived from it.",
+    "ld_multiserver_ps_twoclasses": "original model, then the load-dependent aggregate derived from it.",
+    "fcr_mm1kdrop": "original model, then the finite-capacity-region twin of it.",
+    "fcr_mm1waitq": "original model, then the finite-capacity-region twin of it.",
+    "cqn_repairmen_multi": "original model, then a derived model built from it.",
+    "cqn_threeclass_hyperl": "original model, then a derived model built from it.",
+    "lcq_threehosts": "original model, then a derived model built from it.",
+    "oqn_vsinks": "original model, then a derived model built from it.",
+    "tut13_posterior_analysis": "one model per service-rate alternative of the posterior sweep, each with its own solve; the golden holds the first."
+  },
+  "pythonScriptAliases": {
+    "rewardModel_mm1k": "reward_model_mm1k",
+    "rewardModel_multiclass": "reward_model_multiclass",
+    "rewardModel_aggregation": "reward_model_aggregation",
+    "rewardModel_templates": "reward_model_templates"
+  },
+  "pythonScriptAliasWhy": {
+    "rewardModel_mm1k": "python/examples/advanced/rewardModel/ uses snake_case file stems; the MATLAB reference does not.",
+    "rewardModel_multiclass": "as rewardModel_mm1k: snake_case stem in the Python tree.",
+    "rewardModel_aggregation": "as rewardModel_mm1k: snake_case stem in the Python tree.",
+    "rewardModel_templates": "as rewardModel_mm1k: snake_case stem in the Python tree."
+  }
+}

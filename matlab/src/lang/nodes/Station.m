@@ -37,6 +37,7 @@ classdef Station < StatefulNode
             % alpha(ni) is the service rate scaling when there are ni>=1
             % jobs in the system
             self.lldScaling = alpha;
+            self.invalidateStruct();
         end
 
         % don't expose to avoid accidental call without checking the queue
@@ -63,6 +64,7 @@ classdef Station < StatefulNode
             end
             self.lcdScaling = gamma;
             self.lcdScalingPeak = peakRatePerClass(:)';
+            self.invalidateStruct();
         end
 
         % don't expose to avoid accidental call without checking the queue
@@ -91,13 +93,19 @@ classdef Station < StatefulNode
             end
             self.ljdScaling = eta;
             self.ljdScalingPeak = peakRatePerClass(:)';
+            self.invalidateStruct();
         end
 
-        % don't expose to avoid accidental call without checking the queue
-
-
-        % don't expose to avoid accidental call without checking the queue
-
+        function invalidateStruct(self)
+            % INVALIDATESTRUCT(self)
+            % Discard any cached NetworkStruct after a rate-scaling change.
+            % Without this a setter called AFTER the first getStruct() is
+            % silently dropped: the solver reads the stale sn and solves the
+            % model unscaled, with no error.
+            if ~isempty(self.model) && ismethod(self.model,'resetStruct')
+                self.model.resetStruct();
+            end
+        end
 
     end
 
@@ -127,6 +135,7 @@ classdef Station < StatefulNode
             % SELF = SETDROPRULE(CLASS, DROPRULE)
 
             self.dropRule(class) = drop;
+            self.invalidateStruct();
         end
 
 
@@ -134,12 +143,14 @@ classdef Station < StatefulNode
             % SETNUMSERVERS(VALUE)
 
             self.numberOfServers = value;
+            self.invalidateStruct();
         end
 
         function setNumberOfServers(self, value)
             % SETNUMBEROFSERVERS(VALUE)
 
             self.numberOfServers = value;
+            self.invalidateStruct();
         end
 
         function value = getNumServers(self)
@@ -156,8 +167,20 @@ classdef Station < StatefulNode
 
         function setCapacity(self, value)
             % SETCAPACITY(VALUE)
+            %
+            % INVALIDATESTRUCT IS PART OF THE SETTER, not an optimization the
+            % caller may skip: sn.cap and sn.classcap are DERIVED (refreshCapacity
+            % folds this value together with classCap and the chain population),
+            % so a cached struct does not see the new buffer. Without it, a
+            % setCapacity called after the first getStruct() -- the ordinary
+            % order when a model is built, inspected, then capped -- was silently
+            % dropped and every sn-reading solver answered the UNBOUNDED model:
+            % SolverCTMC returned the product-form 1.1475 jobs for a buffer of 1
+            % while SolverFLD, whose gate reads the node objects instead, refused
+            % the very same model as capacity-bound. see _kb/11-conventions-and-gotchas.md
 
             self.cap = value;
+            self.invalidateStruct();
         end
 
         function setCap(self, value)
@@ -165,6 +188,37 @@ classdef Station < StatefulNode
             % Alias for setCapacity() for backwards compatibility
 
             self.setCapacity(value);
+        end
+
+        function setClassCapacity(self, class, capacity)
+            % SETCLASSCAPACITY(CLASS, CAPACITY)
+            % Per-class buffer at this station, the station-level twin of
+            % SETCHAINCAPACITY. Native Python (Station.set_class_capacity), C++
+            % (network_builder set_class_capacity) and the JAR (setClassCap)
+            % all carry it; MATLAB had it on Place only, so JSIM2LINE's import
+            % of a per-class JSIMgraph capacity and every model that declares
+            % one on a Queue died on an unrecognized method.
+            %
+            % SELF.CAP IS LEFT ALONE, unlike setChainCapacity, which sets EVERY
+            % class in one call and can therefore total them. Setting one class
+            % says nothing about the others, and REFRESHCAPACITY already reads
+            % classCap(r) beside cap and takes the tighter of the two.
+
+            % Resolve a JobClass object to its column index (mirrors Place.m);
+            % indexing classCap by the object itself silently fails to store the
+            % capacity, so the station stays unbounded and this is a no-op.
+            if isa(class, 'JobClass')
+                r = class.index;
+            else
+                r = class;
+            end
+            if ~(capacity > 0)
+                line_error(mfilename, sprintf(['Class capacity must be positive (Inf for unbounded), got %g. ' ...
+                    'A zero capacity is how refreshCapacity encodes a class the station does not serve, ' ...
+                    'so it cannot also mean a buffer of size zero.'], capacity));
+            end
+            self.classCap(r) = capacity;
+            self.invalidateStruct();
         end
 
         function setChainCapacity(self, values)
@@ -185,6 +239,9 @@ classdef Station < StatefulNode
                 end
             end
             self.cap = min(sum(self.classCap(self.classCap>0)), self.cap);
+            % This one MATERIALIZES the struct itself (getStruct above) before
+            % mutating classCap/cap, so the cache is guaranteed stale on return.
+            self.invalidateStruct();
         end
 
 
@@ -298,6 +355,16 @@ classdef Station < StatefulNode
                             map{r}  = self.input.sourceClasses{r}{end}.getProcess();
                             mu{r}  = [self.input.sourceClasses{r}{end}.getRate];
                             phi{r}  = [1];
+                        case 'DMAP'
+                            % Discrete-time (D0,D1): the pair already has MAP
+                            % shape, so it reaches sn.proc verbatim. Without
+                            % this arm the switch fell through and a DMAP
+                            % source arrived with an EMPTY representation.
+                            % mu/phi carry the per-slot event rate, which is
+                            % all a non-slotted consumer can read from it.
+                            map{r} = self.input.sourceClasses{r}{end}.getProcess();
+                            mu{r} = 1 / self.input.sourceClasses{r}{end}.getMean;
+                            phi{r} = 1;
                         case 'MMPP2'
                             map{r} = self.input.sourceClasses{r}{end}.getProcess();
                             mu{r} = self.input.sourceClasses{r}{end}.getMu;
@@ -310,6 +377,18 @@ classdef Station < StatefulNode
                             map{r} = self.input.sourceClasses{r}{end}.getProcess();
                             mu{r} = self.input.sourceClasses{r}{end}.getTimeAverageRate();
                             phi{r} = 1;
+                        case {'MAPt','PHt'}
+                            % The schedule is the parameterisation; mu/phi carry
+                            % the time-averaged nominal so the phase count is
+                            % preserved, unlike NHPP which collapses to one phase.
+                            map{r} = self.input.sourceClasses{r}{end}.getProcess();
+                            if strcmp(class(self.input.sourceClasses{r}{end}), 'MAPt')
+                                [D0bar, D1bar] = self.input.sourceClasses{r}{end}.getTimeAverageProcess();
+                            else
+                                [D0bar, D1bar] = self.input.sourceClasses{r}{end}.getTimeAverageProcessMAP();
+                            end
+                            mu{r} = -diag(D0bar);
+                            phi{r} = sum(D1bar, 2) ./ mu{r};
                         case 'BMAP'
                             % {D0, D1, D_batch1, ..., D_batchK}: same layout
                             % as the JAR MatrixCell for batch arrivals
@@ -336,12 +415,26 @@ classdef Station < StatefulNode
         function [map,mu,phi] = getServiceRates(self)
             % [PH,MU,PHI] = GETSERVICERATES()
             
+            % SIZED BY THE MODEL'S CLASS COUNT, NOT BY THE CELL. Sizing it from
+            % the cell returns SHORT output whenever a station's per-class slots
+            % were never padded to nclasses, and every caller then walks r=1:K
+            % over it and throws MATLAB's own "Index exceeds the number of array
+            % elements" -- naming neither the station nor the class, and burying
+            % the real fault (a class with no service configured there). The
+            % absent slots fall into the isempty arm below, which is what the
+            % padding would have produced anyway.
             nclasses = size(self.server.serviceProcess,2);
+            if ~isempty(self.model) && ismethod(self.model,'getNumberOfClasses')
+                nclasses = max(nclasses, self.model.getNumberOfClasses());
+            end
             map = cell(1,nclasses);
             mu = cell(1,nclasses);
             phi = cell(1,nclasses);
             for r=1:nclasses
-                serviceProcess_r = self.server.serviceProcess{r};
+                serviceProcess_r = [];
+                if r <= numel(self.server.serviceProcess)
+                    serviceProcess_r = self.server.serviceProcess{r};
+                end
                 if isempty(serviceProcess_r)
                     serviceProcess_r = {[],ServiceStrategy.LI,Disabled.getInstance()};
                     map{r}  = {[NaN],[NaN]};
@@ -386,10 +479,28 @@ classdef Station < StatefulNode
                             map{r} = serviceProcess_r{end}.getProcess();
                             mu{r} = serviceProcess_r{end}.getTimeAverageRate();
                             phi{r} = 1;
+                        case {'MAPt','PHt'}
+                            % Mirrors the Source arm: the nominal preserves the
+                            % phase count that the schedule modulates.
+                            map{r} = serviceProcess_r{end}.getProcess();
+                            if strcmp(class(serviceProcess_r{end}), 'MAPt')
+                                [D0bar, D1bar] = serviceProcess_r{end}.getTimeAverageProcess();
+                            else
+                                [D0bar, D1bar] = serviceProcess_r{end}.getTimeAverageProcessMAP();
+                            end
+                            mu{r} = -diag(D0bar);
+                            phi{r} = sum(D1bar, 2) ./ mu{r};
                         case 'MMPP2'
                             map{r} = serviceProcess_r{end}.getProcess();
                             mu{r} = serviceProcess_r{end}.getMu;
                             phi{r} = serviceProcess_r{end}.getPhi;
+                        case 'DMAP'
+                            % Mirrors the Source arm: the discrete (D0,D1)
+                            % reaches sn.proc verbatim, mu/phi hold the
+                            % per-slot event rate.
+                            map{r} = serviceProcess_r{end}.getProcess();
+                            mu{r} = 1 / serviceProcess_r{end}.getMean;
+                            phi{r} = 1;
                     end
                 else
                     map{r}  = {[NaN],[NaN]};

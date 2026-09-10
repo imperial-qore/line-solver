@@ -15,7 +15,7 @@ import numpy as np
 from typing import Any, Dict, Optional, Union
 
 
-# infinite-multiplicity sentinel is Integer.MAX_VALUE as a literal, not GlobalConstants.MaxInt; see _kb/12-interfaces-and-docs.md linemodel_io.py section.
+# infinite-multiplicity sentinel is literal Integer.MAX_VALUE, not GlobalConstants.MaxInt; _kb/12-interfaces-and-docs.md linemodel_io.py section.
 INF_MULTIPLICITY = 2 ** 31 - 1
 
 
@@ -51,7 +51,7 @@ def _dist_to_json(dist) -> Optional[Dict[str, Any]]:
 
     from ..distributions.continuous import (
         Exp, Det, Erlang, HyperExp, Gamma, Lognormal, Uniform, Immediate, Disabled, Pareto,
-        Weibull, Normal, Expolynomial, NHPP
+        Weibull, Normal, Expolynomial, NHPP, MAPt, PHt
     )
     from ..distributions.discrete import (
         Zipf, DiscreteSampler, Replayer, Geometric, Binomial, Poisson, Bernoulli,
@@ -65,6 +65,20 @@ def _dist_to_json(dist) -> Optional[Dict[str, Any]]:
         return {"type": "NHPP", "params": {
             "breakpoints": _to_list(dist.breakpoints),
             "rates": _to_list(dist.rates),
+            "cyclic": bool(dist.cyclic)
+        }}
+    if isinstance(dist, MAPt):
+        return {"type": "MAPt", "params": {
+            "breakpoints": _to_list(dist.breakpoints),
+            "D0": [_matrix_to_list(M) for M in dist.D0],
+            "D1": [_matrix_to_list(M) for M in dist.D1],
+            "cyclic": bool(dist.cyclic)
+        }}
+    if isinstance(dist, PHt):
+        return {"type": "PHt", "params": {
+            "breakpoints": _to_list(dist.breakpoints),
+            "alpha": [_to_list(a) for a in dist.alpha],
+            "S": [_matrix_to_list(M) for M in dist.S],
             "cyclic": bool(dist.cyclic)
         }}
     if isinstance(dist, Expolynomial):
@@ -216,7 +230,7 @@ def _dist_to_json(dist) -> Optional[Dict[str, Any]]:
             "T": _matrix_to_list(dist._T)
         }}
 
-    # layered-network synthesized service (bare mean/scv holder) must be handled before the getMean() fallback; see _kb/12-interfaces-and-docs.md linemodel_io.py section.
+    # layered-network synthesized service (bare mean/scv holder) precedes getMean() fallback; _kb/12-interfaces-and-docs.md linemodel_io.py section.
     from ..layered import Distribution as _LayeredDistribution
     if isinstance(dist, _LayeredDistribution):
         mean = float(dist.mean) if dist.mean is not None else 0.0
@@ -235,10 +249,10 @@ def _dist_to_json(dist) -> Optional[Dict[str, Any]]:
             alt_json = _dist_to_json(dist.getAlternative(i))
             if alt_json is not None:
                 alts.append(alt_json)
-        return {"type": "Prior", "distributions": alts,
+        return {"type": "Prior", "kind": "discrete", "distributions": alts,
                 "probabilities": _to_list(dist.getProbabilities())}
 
-    # unhandled distribution type emits its type name plus first two moments (never silently collapsed to Exp); see _kb/12-interfaces-and-docs.md linemodel_io.py section.
+    # unhandled distribution emits type name + first two moments (never collapsed to Exp); _kb/12-interfaces-and-docs.md linemodel_io.py section.
     from ..api.io.logging import line_warning
     real_name = getattr(dist, '_name', None) or type(dist).__name__
     try:
@@ -275,7 +289,7 @@ def _json_to_dist(d: Dict[str, Any]):
     """Convert a JSON dist dict back to a LINE distribution object."""
     from ..distributions.continuous import (
         Exp, Det, Erlang, HyperExp, Gamma, Lognormal, Uniform, Immediate, Disabled, Pareto,
-        Weibull, Normal, Expolynomial, NHPP
+        Weibull, Normal, Expolynomial, NHPP, MAPt, PHt
     )
     from ..distributions.discrete import (
         Zipf, DiscreteSampler, Replayer, Geometric, Binomial, Poisson, Bernoulli,
@@ -323,6 +337,14 @@ def _json_to_dist(d: Dict[str, Any]):
             # Absent 'cyclic' means cyclic, matching the constructor default.
             return NHPP(params["breakpoints"], params["rates"],
                         params.get("cyclic", True))
+        if dtype == "MAPt":
+            # Absent 'cyclic' means cyclic, matching the constructor default.
+            return MAPt(params["breakpoints"], params["D0"], params["D1"],
+                        params.get("cyclic", True))
+        if dtype == "PHt":
+            # Absent 'cyclic' means cyclic, matching the constructor default.
+            return PHt(params["breakpoints"], params["alpha"], params["S"],
+                       params.get("cyclic", True))
         if dtype == "Exp":
             rate = params.get("lambda", params.get("rate"))
             return Exp(rate)
@@ -388,6 +410,14 @@ def _json_to_dist(d: Dict[str, Any]):
     # Prior distribution (mixture of alternatives with prior probabilities)
     if dtype == "Prior":
         from ..distributions.continuous import Prior
+        # The continuous form (parameter density plus factory template) is
+        # MATLAB/C++ only; the native Prior has no such constructor, and reading
+        # its keys as a discrete set would build an EMPTY alternative set
+        if d.get("kind", "discrete") == "continuous":
+            raise NotImplementedError(
+                "a continuous Prior (paramDist plus a factory template) is carried by the MATLAB "
+                "and C++ codebases only; the native Prior is discrete. Re-save the model with the "
+                "Prior expanded by Prior.discretize, or solve it with lang='matlab'/'cpp'")
         dist_list = d.get("distributions", [])
         prob_list = d.get("probabilities", [])
         alternatives = [_json_to_dist(dd) for dd in dist_list]
@@ -486,10 +516,38 @@ def _network_to_json(model) -> Dict[str, Any]:
         OpenClass, ClosedClass, SelfLoopingClass, OpenSignal, ClosedSignal,
         Signal, SignalType, RemovalPolicy
     )
-    from ..lang.base import SchedStrategy, NodeType, RoutingStrategy
+    from ..lang.base import SchedStrategy, NodeType, RoutingStrategy, StatefulNode
 
     nodes = model.get_nodes()
     classes = model.get_classes()
+
+    # A STATE ON A STRICT SUBSET OF THE STATEFUL NODES DOES NOT TRAVEL, because
+    # it is not an initialization: MATLAB reads sn.state through getState, which
+    # runs initDefault whenever hasInitState is false, so the rows that are there
+    # are dropped rather than combined with default markings for the rest. A
+    # document that carried only the named node made the reader mix the two: on
+    # Delay->PS with 2 jobs and Q1 alone set to 2, the C++ read (Think=2, Q1=2)
+    # and answered getProbSysAggr 0 for a joint state holding 4 of 2 jobs, where
+    # MATLAB answers 0.4 for the default marking.
+    # A PAS PLACEMENT IS THE EXCEPTION, and it is MATLAB's own: initDefault.m
+    # keeps the user row for a pass-and-swap station (its `hasUser` branch) while
+    # defaulting every other station, because the ordering is a required input
+    # there rather than a default. Dropped from the document, it reaches the
+    # reader as the refusal that placement exists to answer.
+    fully_initialized = model.has_init_state() if hasattr(model, 'has_init_state') else True
+
+    # AN SPN PLACE IS THE OTHER EXCEPTION, for the same reason as PAS: its
+    # INITIAL MARKING is the model, not a default any reader can reconstruct.
+    # Dropped from the document, `spn_open_sevenplaces` exported a net whose
+    # places all start empty -- the C++ row's JMT reported P1 throughput 1.0111
+    # against 2.8376 and lost P5, P6 and P7 from the table entirely.
+    def _state_travels(node):
+        if fully_initialized:
+            return True
+        if type(node).__name__ == 'Place':
+            return True
+        sched = node.get_sched_strategy() if hasattr(node, 'get_sched_strategy') else None
+        return sched is not None and str(getattr(sched, 'name', sched)) == 'PAS'
 
     # Build nodes array
     nodes_json = []
@@ -499,6 +557,12 @@ def _network_to_json(model) -> Dict[str, Any]:
             continue
 
         nj = {"name": node.name, "type": _node_type_str(node)}
+
+        # A Logger is defined by the file it writes: without the name it
+        # reloads as a tunnel that logs nowhere, so the solver runs and the
+        # trace the user asked for is silently absent.
+        if _node_type_str(node) == "Logger" and getattr(node, '_file_name', None):
+            nj["fileName"] = node._file_name
 
         # Queue scheduling always recorded, including INF (else load() defaults to FCFS); get_sched_strategy() output normalized to the enum name.
         if isinstance(node, (Queue, Delay)):
@@ -534,12 +598,20 @@ def _network_to_json(model) -> Dict[str, Any]:
         # drop rule is a real per-class map; broadcasting one station-wide value discards per-class differences.
         if isinstance(node, (Queue, Delay)):
             from ..lang.base import DropStrategy
-            dr = getattr(node, '_drop_rule', DropStrategy.DROP)
+            # None is the unset state (Station.__init__), so a station nobody
+            # configured writes no dropRule at all -- MATLAB linemodel_save.m
+            # gates the same key on `~isempty(node.dropRule)`. An explicitly set
+            # rule is written whatever it is: the old `!= "drop"` filter existed
+            # because every station used to arrive here preset to DROP, and it
+            # silently dropped a user's own setDropRule(DROP).
+            dr = getattr(node, '_drop_rule', None)
             dr_json = {}
             for jc in classes:
-                rule = dr.get(jc, DropStrategy.DROP) if isinstance(dr, dict) else dr
+                rule = dr.get(jc, None) if isinstance(dr, dict) else dr
+                if rule is None:
+                    continue
                 dr_str = _drop_strategy_to_str(rule)
-                if dr_str and dr_str != "drop":
+                if dr_str:
                     dr_json[jc.name] = dr_str
             if dr_json:
                 nj["dropRule"] = dr_json
@@ -548,12 +620,16 @@ def _network_to_json(model) -> Dict[str, Any]:
         if isinstance(node, (Queue, Delay)):
             lld = getattr(node, '_load_depend_scaling', None)
             if lld is not None:
+                # Reduced exactly as Network._refresh_load_dependence reduces it:
+                # a (n, R) table written out column by column would not even be
+                # a scaling vector on the far side.
+                from ..lang.network import lld_scaling_as_1d
                 nj["loadDependence"] = {
                     "type": "loadDependent",
-                    "scaling": [float(x) for x in lld]
+                    "scaling": [float(x) for x in lld_scaling_as_1d(lld)]
                 }
 
-        # class-dependent scaling materialized over the per-class box lattice since the callable cannot cross JSON; mirrors MATLAB cd_scaling_table/JAR LineModelIO.
+        # class-dependent scaling materialized over per-class box lattice since callable cannot cross JSON; mirrors MATLAB cd_scaling_table/JAR LineModelIO.
         if isinstance(node, (Queue, Delay)):
             lcd = getattr(node, '_class_depend_scaling', None)
             if lcd is not None:
@@ -625,7 +701,7 @@ def _network_to_json(model) -> Dict[str, Any]:
             if svc:
                 nj["service"] = svc
 
-        # queueing place (QPN): serialize embedded-queue scheduling, server count, per-class service and departure discipline so LDES reconstructs a real queueing place.
+        # queueing place (QPN): serialize embedded-queue scheduling, server count, per-class service and departure discipline so LDES rebuilds a real QPN.
         if isinstance(node, Place) and node.is_queueing():
             psched = getattr(node, '_sched_strategy', None)
             if psched is not None:
@@ -777,7 +853,7 @@ def _network_to_json(model) -> Dict[str, Any]:
                     nj["joinQuorum"] = int(req)
                     break
 
-        # Cache config emitted with flat top-level JAR-compatible keys (native LDES bridge reads this format); see _kb/12-interfaces-and-docs.md linemodel_io.py section.
+        # Cache config uses flat top-level JAR-compatible keys (native LDES bridge reads this format); _kb/12-interfaces-and-docs.md linemodel_io.py section.
         if isinstance(node, Cache):
             nj["numItems"] = int(node._num_items)
             cap = node._item_level_cap
@@ -793,6 +869,17 @@ def _network_to_json(model) -> Dict[str, Any]:
             nj["itemLevelCap"] = cap_list
             nj["replacementStrategy"] = rs_name
             nj["admissionProb"] = float(getattr(node, '_admission_prob', 1.0))
+            # per-item storage costs and per-list cost caps (ton21cache Sec. IX)
+            isz = getattr(node, '_item_size', None)
+            if isz is not None:
+                nj["itemSizes"] = [int(x) for x in np.asarray(isz).ravel()]
+            ccap = getattr(node, '_cost_cap', None)
+            if ccap is not None:
+                ccap = np.asarray(ccap).ravel()
+                if getattr(node, '_cost_cap_global', False):
+                    nj["costCaps"] = int(ccap[0])
+                else:
+                    nj["costCaps"] = [int(x) for x in ccap]
 
             # Hit/miss class mappings (full: includes retrieval classes)
             if node._hit_class:
@@ -807,6 +894,14 @@ def _network_to_json(model) -> Dict[str, Any]:
                     miss_map[in_cls.name] = out_cls.name
                 if miss_map:
                     nj["missClass"] = miss_map
+
+            if getattr(node, "_item_of_class", None):
+                item_map = {}
+                for jc, item in node._item_of_class.items():
+                    if item:
+                        item_map[jc.name] = int(item)
+                if item_map:
+                    nj["itemClass"] = item_map
 
             # Read popularity distributions (set_read), one per class
             if node._read_process:
@@ -867,6 +962,34 @@ def _network_to_json(model) -> Dict[str, Any]:
                 if su_json:
                     nj["setupTime"] = su_json
                     nj["delayOffTime"] = doff_json
+
+        # Server breakdown/repair. The degraded down-server service is written
+        # per class, which flattens the class-independent form set_breakdown
+        # also accepts: both rebuild the same sn.downServiceRates row.
+        if isinstance(node, Queue) and not isinstance(node, Delay) and node.has_breakdown():
+            fdist, rdist, dsvc_list = node.get_breakdown()
+            fj = _dist_to_json(fdist)
+            rj = _dist_to_json(rdist)
+            if fj is None or rj is None:
+                raise ValueError(
+                    'Station "%s" has a breakdown whose failure or repair distribution '
+                    'cannot be serialized.' % node.get_name())
+            bd = {"failure": fj, "repair": rj}
+            down_json = {}
+            for r, jobclass in enumerate(classes):
+                dsvc = None
+                if len(dsvc_list) == 1:
+                    dsvc = dsvc_list[0]
+                elif len(dsvc_list) > r:
+                    dsvc = dsvc_list[r]
+                if dsvc is None or type(dsvc).__name__ == 'Disabled':
+                    continue
+                dj = _dist_to_json(dsvc)
+                if dj is not None:
+                    down_json[jobclass.name] = dj
+            if down_json:
+                bd["downService"] = down_json
+            nj["breakdown"] = bd
 
         # polling type/switchover keys written by NAME (python auto()-assigns ids differently from MATLAB/JAR).
         if isinstance(node, Queue) and not isinstance(node, Delay):
@@ -1001,6 +1124,16 @@ def _network_to_json(model) -> Dict[str, Any]:
             if brp_json:
                 nj["batchRejectProb"] = brp_json
 
+        # Job parallelism: servers seized at once by a job, per class
+        if isinstance(node, Queue):
+            par_json = {}
+            for jc in classes:
+                npar = node.get_server_parallelism(jc)
+                if npar > 1:
+                    par_json[jc.name] = int(npar)
+            if par_json:
+                nj["serverParallelism"] = par_json
+
         # Immediate feedback, per class (node-level; the class-level flag is
         # carried separately on the class object)
         if isinstance(node, Queue):
@@ -1012,24 +1145,35 @@ def _network_to_json(model) -> Dict[str, Any]:
                 nj["immediateFeedback"] = imf_json
 
         # prior probability is meaningless without the matching state space; emit the pair or neither, as the JAR writer does.
+        #
+        # A trivial [1] prior over one row is NOT emitted here, and does not need
+        # to be: `initialState` below already carries that row for every stateful
+        # node, and the C++ reader spells it as exactly this pair. What this block
+        # is for is a prior over SEVERAL rows, which `initialState` cannot
+        # express.
         prior = getattr(node, '_state_prior', None)
-        if prior is not None and np.asarray(prior).size > 0:
+        space = getattr(node, '_state_space', None)
+        # A NEGATIVE ENTRY IS THE "IGNORE THIS STATION" FLAG of the getProb*
+        # family, not a state: the reference sets [-1, ...] on the stations whose
+        # marginal it is not asking about, and solver_nc_margaggr reports NaN for
+        # them. Read as a state space it would START THE CHAIN there.
+        if space is not None and np.asarray(space).size and np.min(np.asarray(space)) < 0:
+            space, prior = None, None
+        if not _state_travels(node):
+            space, prior = None, None
+        if prior is not None and np.asarray(prior).size > 1:
             prior = np.asarray(prior, dtype=float).ravel()
-            # a trivial [1] prior over one state is exactly what initDefault rebuilds, so it is not emitted.
-            trivial_prior = prior.size == 1 and abs(prior[0] - 1.0) < 1e-12
-            if not trivial_prior:
-                space = getattr(node, '_state_space', None)
-                space = None if space is None else np.atleast_2d(np.asarray(space, dtype=float))
-                if space is None or space.shape[0] != prior.size:
-                    from ..api.io.logging import line_warning
-                    line_warning(
-                        "linemodel_save",
-                        "Node %s carries a state prior over %d states but a state space of "
-                        "%d rows; the prior is not saved."
-                        % (node.name, prior.size, 0 if space is None else space.shape[0]))
-                else:
-                    nj["stateSpace"] = [[float(x) for x in row] for row in space]
-                    nj["statePrior"] = [float(x) for x in prior]
+            space = None if space is None else np.atleast_2d(np.asarray(space, dtype=float))
+            if space is None or space.shape[0] != prior.size:
+                from ..api.io.logging import line_warning
+                line_warning(
+                    "linemodel_save",
+                    "Node %s carries a state prior over %d states but a state space of "
+                    "%d rows; the prior is not saved."
+                    % (node.name, prior.size, 0 if space is None else space.shape[0]))
+            else:
+                nj["stateSpace"] = [[float(x) for x in row] for row in space]
+                nj["statePrior"] = [float(x) for x in prior]
 
         # Fork tasksPerLink
         if isinstance(node, Fork):
@@ -1074,7 +1218,9 @@ def _network_to_json(model) -> Dict[str, Any]:
                     else:
                         mj["numServers"] = int(ns_val)
                 # Firing priority
-                if mi_idx < len(node._firing_priorities) and node._firing_priorities[mi_idx] > 0:
+                # Omit only when it equals the builder default of 1: an explicit 0 is
+                # a legal JMT firing priority and has to survive the round trip (BUG-90).
+                if mi_idx < len(node._firing_priorities) and node._firing_priorities[mi_idx] != 1:
                     mj["firingPriority"] = float(node._firing_priorities[mi_idx])
                 # Firing weight
                 if mi_idx < len(node._firing_weights) and node._firing_weights[mi_idx] != 1.0:
@@ -1172,19 +1318,24 @@ def _network_to_json(model) -> Dict[str, Any]:
             if modes_json:
                 nj["modes"] = modes_json
 
-        # Initial state for Place nodes (token counts)
-        if isinstance(node, Place):
-            state = getattr(node, '_state', None)
-            if state is not None:
-                nj["initialState"] = [float(x) for x in np.atleast_1d(state)]
-
-        # Initial job placement for a closed pass-and-swap (PAS) station: the
-        # ordered class list (oldest first) selecting the recurrent component.
-        if isinstance(node, Queue) and not isinstance(node, Delay) \
-                and getattr(node, '_svc_rate_fun', None) is not None:
-            state = getattr(node, '_state', None)
-            if state is not None:
-                nj["initialState"] = [float(x) for x in np.atleast_1d(state)]
+        # THE INITIAL STATE OF EVERY STATEFUL NODE, not only a Place's token
+        # counts and a closed pass-and-swap station's ordered job placement.
+        # A reader decides whether the model is initialized by testing EVERY
+        # stateful node (`hasInitState`), so a document that names the one node
+        # the caller moved and stays silent about the rest reads as
+        # uninitialized: the JAR then ran initDefault() and discarded the very
+        # state, state space and prior this file carries. init_state_fcfs_nonexp
+        # came back over the bridge reporting Prior 1's numbers for all three
+        # priors, with nothing in the output saying the priors had been dropped.
+        # Emitted only when the node HAS a state, so a model saved before any
+        # initDefault() still travels without one and the reader builds its own.
+        state = getattr(node, '_state', None)
+        # The same "ignore this station" flag is filtered here for the same
+        # reason: it is a query argument of getProb*, not a state, and a reader
+        # that takes it for one starts the chain in a state the model has not.
+        if isinstance(node, StatefulNode) and state is not None and _state_travels(node) \
+                and np.asarray(state).size > 0 and np.min(np.asarray(state)) >= 0:
+            nj["initialState"] = [float(x) for x in np.atleast_1d(np.asarray(state)).ravel()]
 
         nodes_json.append(nj)
 
@@ -1311,15 +1462,56 @@ def _network_to_json(model) -> Dict[str, Any]:
     # Build routing matrix
     routing_json = _build_routing_json(model, nodes, classes)
 
-    # Build routing strategies (per-node, per-class)
+    # Build routing strategies (per-node, per-class).
+    #
+    # THE SOURCE IS THE REFRESHED STRUCT, NOT THE PER-NODE DECLARATION, exactly
+    # as in MATLAB's writer (linemodel_save.m reads sn2.routing(i,r)). RAND is
+    # the DEFAULT, so a node that never had setRouting called on it carries an
+    # EMPTY `_routing_strategies` and reading that dict wrote no entry at all --
+    # the strategy exists only once `_refresh_routing` materializes it into
+    # sn.routing. A reader then had nothing but the probability matrix and wrote
+    # JMT's EmpiricalStrategy where the model asks for RandomStrategy; the two
+    # consume JMT's routing stream differently, so the sample path diverges
+    # (sdroute_jsq: one queue 6.6% out with every other cell matching).
+    #
+    # The name map is MATLAB's `stratNames`, and PROB and DISABLED are absent
+    # from it for two different reasons. PROB is already carried by the
+    # probability matrix. DISABLED is DERIVED: `_refresh_routing` marks a
+    # (node, class) pair the class never visits, every loader skips it on read,
+    # and the pairs it lands on include the AUTO-ADDED class-switch nodes the
+    # node loop deliberately does not emit -- so writing it produced a
+    # strategies entry naming a node absent from "nodes", a dangling reference
+    # in every re-entrant and cache model.
+    _ROUTING_WIRE_NAMES = (RoutingStrategy.RAND, RoutingStrategy.RROBIN,
+                           RoutingStrategy.WRROBIN, RoutingStrategy.JSQ,
+                           RoutingStrategy.SQ, RoutingStrategy.FIRING)
     routing_strategies_json = {}
-    for node in nodes:
-        strats = getattr(node, '_routing_strategies', {})
-        if strats:
+    try:
+        sn_routing = np.asarray(model.getStruct().routing)
+    except Exception:
+        sn_routing = None
+    if sn_routing is not None and sn_routing.size:
+        wire = dict((int(s.value), s.name) for s in _ROUTING_WIRE_NAMES)
+        node_names = [str(n) for n in model.getStruct().nodenames]
+        for i, node_name in enumerate(node_names):
+            if i >= sn_routing.shape[0]:
+                break
             node_strats = {}
-            for jc, strat in strats.items():
-                if strat is not None and strat != RoutingStrategy.PROB and strat != RoutingStrategy.RAND:
-                    node_strats[jc.name] = strat.name
+            for r, cls in enumerate(classes):
+                if r >= sn_routing.shape[1]:
+                    break
+                name = wire.get(int(sn_routing[i, r]))
+                if name is not None:
+                    node_strats[cls.name] = name
+            if node_strats:
+                routing_strategies_json[node_name] = node_strats
+    else:
+        # No refreshed struct (an unlinked model): fall back to what the nodes
+        # themselves declare, which is all there is to report.
+        for node in nodes:
+            strats = getattr(node, '_routing_strategies', {}) or {}
+            node_strats = dict((jc.name, strat.name) for jc, strat in strats.items()
+                               if strat in _ROUTING_WIRE_NAMES)
             if node_strats:
                 routing_strategies_json[node.name] = node_strats
     # Routing weights (for WRROBIN)
@@ -1338,7 +1530,7 @@ def _network_to_json(model) -> Dict[str, Any]:
                         node_weights[jc.name] = cls_weights
             if node_weights:
                 routing_weights_json[node.name] = node_weights
-    # routing-strategy parameters (SQ k, RL value function) must be serialized alongside the strategy name; see _kb/12-interfaces-and-docs.md linemodel_io.py section.
+    # routing-strategy parameters (SQ k) must be serialized alongside the strategy name; see _kb/12-interfaces-and-docs.md linemodel_io.py section.
     routing_params_json = {}
     for node in nodes:
         strats = getattr(node, '_routing_strategies', {})
@@ -1358,33 +1550,6 @@ def _network_to_json(model) -> Dict[str, Any]:
                     rp["d"] = int(params[0])
                 if rp:
                     node_params[jc.name] = rp
-            elif sv == RoutingStrategy.RL.value:
-                if not params or params[0] is None:
-                    from ..api.io.logging import line_warning
-                    line_warning('linemodel_io',
-                                 'Node "%s" routes class "%s" by RL but carries '
-                                 'no value function; the reloaded model will '
-                                 'fall back to JSQ.' % (node.name, jc.name))
-                    continue
-                vf = np.asarray(params[0], dtype=float)
-                rp = {"valueFunction": [float(x) for x in np.ravel(vf)],
-                      "vfShape": [int(d) for d in vf.shape]}
-                if len(params) >= 2 and params[1] is not None:
-                    nna = params[1]
-                    if not isinstance(nna, (list, tuple)):
-                        nna = [nna]
-                    act = []
-                    for x in nna:
-                        if hasattr(x, 'name'):
-                            act.append(x.name)
-                        else:
-                            xi = int(x)
-                            if 0 <= xi < len(nodes):
-                                act.append(nodes[xi].name)
-                    rp["actionNodes"] = act
-                if len(params) >= 3 and params[2] is not None:
-                    rp["stateSize"] = int(params[2])
-                node_params[jc.name] = rp
         if node_params:
             routing_params_json[node.name] = node_params
 
@@ -1471,14 +1636,72 @@ def _network_to_json(model) -> Dict[str, Any]:
         "classes": classes_json,
         "routing": routing_json
     }
+    # NO SIDE TABLE MAY NAME A NODE THE "nodes" ARRAY OMITS. The loop above drops
+    # the auto-added ClassSwitch nodes -- link() recreates them on load -- so any
+    # per-node table keyed on their names is a dangling reference, and every
+    # reader is entitled to trust the key. line-cli builds a stub ClassSwitch for
+    # the unknown name and then rejects the model outright ("the class-switch
+    # matrix of node 'CS_Fork1_to_Queue1' is not (nclasses x nclasses)"), which is
+    # how fj_cs_postfork, fj_cs_prefork and fj_cs_multi_visits lost their whole
+    # C++ row. Filtering per TABLE rather than per VALUE is what makes this hold
+    # for any marker a future refresh writes onto those nodes, not just DISABLED.
+    emitted = set(nj["name"] for nj in nodes_json)
+    routing_strategies_json = dict((k, v) for k, v in routing_strategies_json.items()
+                                   if k in emitted)
+    routing_weights_json = dict((k, v) for k, v in routing_weights_json.items()
+                                if k in emitted)
+    routing_params_json = dict((k, v) for k, v in routing_params_json.items()
+                               if k in emitted)
     if routing_strategies_json:
         result["routingStrategies"] = routing_strategies_json
     if routing_weights_json:
         result["routingWeights"] = routing_weights_json
     if routing_params_json:
         result["routingParams"] = routing_params_json
+    # Krzesinski state-dependent routing, carried by NODE NAME so the block is
+    # language independent. Branch index 1 is the complement M-V and is written
+    # as an empty list, keeping the paper's own numbering.
+    # See _kb/16-state-dependent-routing.md
+    from ..lang.base import RoutingStrategy as _RS
+    for _nd in model._nodes:
+        _strats = getattr(_nd, "_routing_strategies", None)
+        if not _strats:
+            continue
+        _done = False
+        for _jc, _st in _strats.items():
+            _sv = _st.value if hasattr(_st, "value") else int(_st)
+            if _sv != int(_RS.SDR):
+                continue
+            _decl = getattr(_nd, "_routing_params", {}).get(_jc, ())
+            if not _decl or not isinstance(_decl[0], dict):
+                continue
+            _decl = _decl[0]
+            _br = [[]]
+            for _b in range(1, len(_decl["branch"])):
+                _br.append([x.get_name() for x in _decl["branch"][_b]])
+            result["stateDepRouting"] = {
+                "entry": _nd.get_name(),
+                "departure": _decl["departure"].get_name(),
+                "class": _jc.get_name(),
+                "branches": _br,
+                "level": [int(v) for v in _decl["level"]],
+                "C": [float(v) for v in _decl["C"]],
+                "d": np.asarray(_decl["d"], dtype=float).tolist(),
+            }
+            _done = True
+            break
+        if _done:
+            break
     if fcr_json:
         result["finiteCapacityRegions"] = fcr_json
+
+    # Global (Whittle) dependence phi(n): materialized over the lattice of the
+    # WHOLE network state, unlike the per-station classDependence/jointDependence
+    # blocks. Only the (station,class) slots a class can actually occupy carry a
+    # coordinate, which is what keeps the lattice finite.
+    if getattr(model, 'get_global_dependence', None) is not None \
+            and model.get_global_dependence() is not None:
+        result["globalDependence"] = _gd_block(model)
 
     rewards_json = _rewards_to_json(model)
     if rewards_json:
@@ -1611,7 +1834,7 @@ def _build_routing_json(model, nodes, classes) -> Dict[str, Any]:
                             if r_idx >= 0 and s_idx >= 0:
                                 cache_internal_cs.add((ci, r_idx, s_idx))
 
-            # non-visiting (node,class) pairs require BOTH zero nodevisits AND DISABLED procid; nodevisits alone is unreliable on fork-join class-switching models.
+            # non-visiting (node,class) pairs require BOTH zero nodevisits AND DISABLED procid; nodevisits alone unreliable on fork-join class-switching models.
             import numpy as np
             from ..constants import ProcessType
             non_visiting = set()  # (node_idx, class_idx)
@@ -1719,7 +1942,7 @@ def _build_routing_json(model, nodes, classes) -> Dict[str, Any]:
                             key = f"{classes[r].name},{classes[s].name}"
                             matrix[key] = from_to
             else:
-                # explicit ClassSwitch nodes: undo the Pcs-applied cross-class routing before writing so the JSON stores same-class routing (Pcs already captures the switching).
+                # explicit ClassSwitch nodes: undo Pcs-applied cross-class routing before writing so JSON stores same-class routing (Pcs already captures switching).
                 import numpy as np
                 explicit_cs_indices = set()
                 explicit_cs_pcs = {}  # cs_idx -> Pcs matrix (K x K)
@@ -1768,7 +1991,7 @@ def _build_routing_json(model, nodes, classes) -> Dict[str, Any]:
                             # handles class-switching internally via hitClass/missClass)
                             if r != s and i in cache_indices:
                                 continue
-                            # with explicit CS nodes present, non-CS nodes store only same-class entries (cross-class ones are CS-propagated and would trigger spurious auto-CS insertion).
+                            # with explicit CS nodes, non-CS nodes store only same-class entries (cross-class ones are CS-propagated, would trigger spurious auto-CS insertion).
                             if r != s and explicit_cs_indices:
                                 continue
                             # Skip entries where source class r has zero
@@ -1875,7 +2098,7 @@ def _json_to_network(data: Dict[str, Any]):
             prio = cd.get("priority", 0)
             sig_type_str = cd.get("signalType", "negative")
             sig_type = SignalType(sig_type_str)
-            # a bare Signal placeholder is resolved open/closed exactly as MATLAB resolveSignals: closed absent a Source node, open otherwise; explicit openOrClosed is honored.
+            # bare Signal placeholder resolved open/closed as MATLAB resolveSignals: closed absent a Source node, open otherwise; explicit openOrClosed honored.
             open_or_closed = cd.get("openOrClosed")
             if open_or_closed is None:
                 has_source = any(isinstance(n, Source) for n in node_map.values())
@@ -1884,7 +2107,7 @@ def _json_to_network(data: Dict[str, Any]):
                 ref_name = cd.get("refNode")
                 ref_node = node_map.get(ref_name) if ref_name else None
                 if ref_node is None:
-                    # placeholder without a refNode falls back to the first non-Source station (zero signal population makes any valid closed reference station admissible).
+                    # placeholder without a refNode falls back to first non-Source station (zero signal population makes any valid closed reference station admissible).
                     from ..lang.base import Station
                     for n in node_map.values():
                         if isinstance(n, Station) and not isinstance(n, Source):
@@ -1996,7 +2219,7 @@ def _json_to_network(data: Dict[str, Any]):
                 if isinstance(first, _MarkedMAP):
                     node.set_marked_arrival(first, marked_classes)
 
-        # PAS/OI queue: rebuild mu(c) from the serialized rate table and swap graph, overriding the per-class representative fallback; see _kb/12-interfaces-and-docs.md linemodel_io.py section.
+        # PAS/OI: rebuild mu(c) from rate table + swap graph, not per-class representative fallback; _kb/12-interfaces-and-docs.md linemodel_io.py section.
         if "oiServiceRate" in nd and isinstance(node, Queue) \
                 and not isinstance(node, Delay) \
                 and node.get_sched_strategy() in (SchedStrategy.PAS, SchedStrategy.OI):
@@ -2194,6 +2417,15 @@ def _json_to_network(data: Dict[str, Any]):
                     continue
                 node.set_batch_reject_probability(jc, float(p))
 
+        # Job parallelism: servers seized at once by a job, per class
+        par_data = nd.get("serverParallelism")
+        if par_data and isinstance(node, Queue):
+            for cname, npar in par_data.items():
+                jc = class_map.get(cname)
+                if jc is None:
+                    continue
+                node.set_server_parallelism(jc, int(npar))
+
         # Immediate feedback, per class
         imf_data = nd.get("immediateFeedback")
         if imf_data and isinstance(node, Queue):
@@ -2259,7 +2491,26 @@ def _json_to_network(data: Dict[str, Any]):
         # cache hit/miss mappings support both python's nested 'cache' key and the JAR's flat top-level keys.
         if isinstance(node, Cache):
             cc = nd.get("cache", {})
-            cache_src = cc if cc else nd
+
+            # PER KEY, NOT PER NODE. MATLAB's linemodel_save writes SOME cache
+            # keys nested under 'cache' (hitClass, missClass, popularity) and
+            # others flat on the node (retrievalSystem), so choosing one source
+            # wholesale drops whatever the other one holds -- silently, since a
+            # cache with no retrieval system is a legal model. That is how a
+            # MATLAB-exported delayed-hit model arrived here as a PLAIN cache:
+            # hit + miss summed to 1, the delayed-hit column was zero, and both
+            # lang='python' and lang='cpp' reported it without complaint.
+            class _CacheSrc(object):
+                def __init__(self, nested, flat):
+                    self._nested, self._flat = nested, flat
+
+                def get(self, key, default=None):
+                    v = self._nested.get(key)
+                    if v is None:
+                        v = self._flat.get(key)
+                    return default if v is None else v
+
+            cache_src = _CacheSrc(cc, nd)
             # Hit class mapping
             hc = cache_src.get("hitClass", {})
             for in_name, out_name in hc.items():
@@ -2274,6 +2525,15 @@ def _json_to_network(data: Dict[str, Any]):
                 out_cls = class_map.get(out_name)
                 if in_cls is not None and out_cls is not None:
                     node.set_miss_class(in_cls, out_cls)
+            # itemClass: for a cache network, the item each per-item class reads
+            # (Cache.set_item_read_classes). Recorded directly, since popularity and the
+            # hit/miss switches come from their own keys; inferring it from a one-hot
+            # popularity would be ambiguous against a genuine single-item popularity.
+            ic = cache_src.get("itemClass", {})
+            for cname, item in ic.items():
+                jc = class_map.get(cname)
+                if jc is not None:
+                    node.set_item_of_class(jc, int(item))
             # Popularity distributions (set_read)
             pop = cache_src.get("popularity", {})
             for cname, dist_json in pop.items():
@@ -2448,8 +2708,8 @@ def _json_to_network(data: Dict[str, Any]):
                 if cls is None:
                     continue
                 strat = getattr(RoutingStrategy, strat_name, None)
-                # Skip RAND and PROB: already handled by routing matrix
-                if strat is None or strat == RoutingStrategy.RAND or strat == RoutingStrategy.PROB:
+                # PROB is matrix link(P) already applied; RAND is DECLARED not derived, dropping it wrote JMT Empirical where the model asks for Random.
+                if strat is None or strat == RoutingStrategy.PROB:
                     continue
                 # RoutingStrategy.DISABLED is a derived marker, skipped on load; see _kb/07-cross-language-parity.md RoutingStrategy.DISABLED is derived section.
                 if strat == RoutingStrategy.DISABLED:
@@ -2466,29 +2726,35 @@ def _json_to_network(data: Dict[str, Any]):
                         node.set_routing(cls, strat)
                     else:
                         node.set_routing(cls, strat, int(rp["d"]))
-                elif strat == RoutingStrategy.RL:
-                    if not rp or not rp.get("valueFunction"):
-                        from ..api.io.logging import line_warning
-                        line_warning('linemodel_io',
-                                     'Node "%s" routes class "%s" by RL but the '
-                                     'model carries no routingParams.'
-                                     'valueFunction; routing degrades to the '
-                                     'JSQ fallback.' % (node_name, cls_name))
-                        node.set_routing(cls, strat)
-                    else:
-                        vf = np.asarray(rp["valueFunction"], dtype=float)
-                        shape = rp.get("vfShape")
-                        if shape:
-                            vf = vf.reshape([int(d) for d in shape])
-                        act = []
-                        for dn in rp.get("actionNodes", []):
-                            dnode = node_map.get(dn)
-                            if dnode is not None:
-                                act.append(dnode)
-                        node.set_routing(cls, strat, vf, act,
-                                         int(rp.get("stateSize", 0)))
                 else:
                     node.set_routing(cls, strat)
+
+    # Restore the global (Whittle) dependence phi(n) from the materialized slot
+    # lattice. Slots are matched by NAME so a station or class reordering on the
+    # writing side cannot silently shift a coordinate.
+    gdep = data.get("globalDependence")
+    if gdep and gdep.get("type", "globalDependent") == "globalDependent" and "scaling" in gdep:
+        gd_callable, gd_peak, gd_cut = _gd_block_to_callable(gdep, node_map, class_map, model)
+        if gd_callable is not None:
+            model.set_global_dependence(gd_callable, gd_peak, gd_cut)
+
+    # Restore Krzesinski state-dependent routing. Written by NODE NAME, so it is
+    # restored after every node exists and after link(P), whose uniform
+    # placeholder in the entry row this block supersedes.
+    sdr_data = data.get("stateDepRouting")
+    if sdr_data:
+        _entry = node_map.get(sdr_data["entry"])
+        _dep = node_map.get(sdr_data["departure"])
+        _cls = class_map.get(sdr_data["class"])
+        if _entry is not None and _dep is not None and _cls is not None:
+            _branches = [[]]
+            for _b in range(1, len(sdr_data["branches"])):
+                _branches.append([node_map[n] for n in sdr_data["branches"][_b]])
+            _entry.set_state_dep_routing(
+                _cls, _dep, _branches,
+                [int(v) for v in sdr_data["level"]],
+                [float(v) for v in sdr_data["C"]],
+                np.asarray(sdr_data["d"], dtype=float))
 
     # Restore routing weights (for WRROBIN)
     routing_weights = data.get("routingWeights", {})
@@ -2525,6 +2791,24 @@ def _json_to_network(data: Dict[str, Any]):
                 doff_dist = _json_to_dist(doff_json[cname])
                 if su_dist is not None and doff_dist is not None:
                     node.set_delay_off(jobclass, su_dist, doff_dist)
+
+        # Server breakdown/repair, with the optional per-class degraded
+        # down-server service.
+        bd_json = nd_data.get("breakdown")
+        if bd_json:
+            if "failure" not in bd_json or "repair" not in bd_json:
+                raise ValueError('Node "%s": "breakdown" requires both a "failure" and a '
+                                 '"repair" distribution.' % nd_data["name"])
+            fdist = _json_to_dist(bd_json["failure"])
+            rdist = _json_to_dist(bd_json["repair"])
+            down_list = []
+            down_json = bd_json.get("downService") or {}
+            if down_json:
+                # Indexed by class, in the order the classes were declared.
+                order = [cd["name"] for cd in data.get("classes", [])]
+                down_list = [_json_to_dist(down_json[cn]) if cn in down_json else None
+                             for cn in order]
+            node.set_breakdown(fdist, rdist, down_list if down_list else None)
 
         # Polling type, restored by name. This must precede the switchover
         # restore: set_polling_type resets every class to Immediate.
@@ -2576,7 +2860,7 @@ def _json_to_network(data: Dict[str, Any]):
                     region_nodes.append(n)
         max_jobs = rj.get("globalMaxJobs", -1)
         if region_nodes:
-            # region-load failures must surface, not be swallowed; add_region takes (name,*nodes) with a separate job-cap setter (positional max_jobs would silently become a bogus node).
+            # region-load failures must surface, not be swallowed; add_region takes (name,*nodes), separate job-cap setter (positional max_jobs -> bogus node).
             region = model.addRegion(rj.get("name", "FCR"), *region_nodes)
             if max_jobs is not None and max_jobs > 0:
                 region.set_global_max_jobs(int(max_jobs))
@@ -2616,19 +2900,40 @@ def _json_to_network(data: Dict[str, Any]):
                     np.atleast_2d(np.asarray(rj["constraintA"], dtype=float)),
                     np.asarray(rj["constraintB"], dtype=float))
 
-    # per-node initial state restored: Place token counts and the ordered class list (oldest first) for a closed PAS station's recurrent component.
+    # per-node initial state restored for EVERY stateful node: a Place's token
+    # counts and a closed PAS station's ordered job placement are two readings
+    # of the same field, and a station whose state the document names is
+    # initialized whether or not it is one of those two. Restoring only those
+    # left the model reading as uninitialized, so the first solve rebuilt the
+    # default state and the document's own was discarded.
+    from ..lang.base import StatefulNode as _StatefulNode
     for nd_data in data.get("nodes", []):
         init_st = nd_data.get("initialState")
         if init_st is None:
             continue
         node = node_map.get(nd_data.get("name"))
-        if node is None:
+        if node is None or not isinstance(node, _StatefulNode):
             continue
         if isinstance(node, Place):
             node.set_state(init_st)
-        elif isinstance(node, Queue) and not isinstance(node, Delay) \
-                and getattr(node, '_svc_rate_fun', None) is not None:
-            node.set_state(np.asarray(init_st, dtype=float))
+            continue
+        setter = getattr(node, 'set_state', None) or getattr(node, 'setState', None)
+        if setter is not None:
+            state_row = np.atleast_1d(np.asarray(init_st, dtype=float))
+            setter(state_row)
+            # AND ITS ONE-ROW STATE SPACE AND TRIVIAL PRIOR. The writer omits a
+            # [1] prior over one row because `initialState` already carries that
+            # row, so restoring the row alone leaves a node whose state, space
+            # and prior disagree -- which is not what init_default or any
+            # init_from_marginal* builds: all of them set the TRIO together, and
+            # a solver that indexes the state space finds it empty. A space or
+            # prior the document DID carry was installed earlier and is kept.
+            space = node.get_state_space() if hasattr(node, 'get_state_space') else None
+            if space is None or np.asarray(space, dtype=object).size == 0:
+                if hasattr(node, 'set_state_space'):
+                    node.set_state_space(np.atleast_2d(state_row))
+                if hasattr(node, 'setStatePrior'):
+                    node.setStatePrior(np.array([1.0]))
 
     _json_to_rewards(model, data, node_map, class_map)
 
@@ -2672,20 +2977,29 @@ def _create_node(model, nd: Dict[str, Any]):
         return node
     elif ntype == "Router":
         return Router(model, name)
+    elif ntype == "Logger":
+        # The wire carries the base file name only; the directory is the
+        # model's log path, defaulted here so a round-trip does not fail on a
+        # model that saved cleanly.
+        from ..lang.nodes import Logger
+        if not model.get_log_path():
+            import os
+            model.set_log_path(os.getcwd())
+        return Logger(model, name, nd.get("fileName", "default.csv"))
     elif ntype == "ClassSwitch":
         return ClassSwitch(model, name)
     elif ntype == "Cache":
         # Support both Python format (nested "cache" key) and JAR format
         # (flat top-level with JAR key names)
         cc = nd.get("cache", {})
-        if cc:
-            nitems = cc.get("items", 10)
-            cap = cc.get("capacity", 1)
-            repl_str = cc.get("replacement", "LRU")
-        else:
-            nitems = nd.get("numItems", nd.get("items", 10))
-            cap = nd.get("itemLevelCap", nd.get("capacity", 1))
-            repl_str = nd.get("replacementStrategy", nd.get("replacement", "LRU"))
+        # read per KEY, nested first: a nested block that carries only some of
+        # the keys (MATLAB nests hitClass/missClass/popularity) must not shadow
+        # the flat siblings, or the cache silently reloads at the 10-item,
+        # capacity-1, LRU defaults.
+        nitems = cc.get("items", nd.get("numItems", nd.get("items", 10)))
+        cap = cc.get("capacity", nd.get("itemLevelCap", nd.get("capacity", 1)))
+        repl_str = cc.get("replacement",
+                          nd.get("replacementStrategy", nd.get("replacement", "LRU")))
         # admissionProb read from the flat key first (MATLAB/JAR emit flat), since nested-vs-flat if/else would miss a flat key alongside a nested block.
         qadm = cc.get("admissionProb", nd.get("admissionProb", 1.0))
         if isinstance(cap, list):
@@ -2694,6 +3008,12 @@ def _create_node(model, nd: Dict[str, Any]):
         cache = Cache(model, name, nitems, cap, repl)
         if qadm != 1.0:
             cache.set_admission_prob(float(qadm))
+        isz = cc.get("itemSizes", nd.get("itemSizes"))
+        if isz is not None:
+            cache.set_item_sizes(np.asarray(isz, dtype=float).ravel())
+        ccap = cc.get("costCaps", nd.get("costCaps"))
+        if ccap is not None:
+            cache.set_cost_caps(np.asarray(ccap, dtype=float).ravel())
         return cache
     elif ntype == "Place":
         # a queueing Place's embedded scheduling strategy must be restored, or it reloads at the INF default and silently becomes a delay.
@@ -2776,7 +3096,8 @@ def _str_to_drop_strategy(s: str):
 
 def _node_type_str(node) -> str:
     """Get the schema node type string for a node object."""
-    from ..lang.nodes import Queue, Delay, Source, Sink, Fork, Join, Router, ClassSwitch, Cache, Place, Transition
+    from ..lang.nodes import (Queue, Delay, Source, Sink, Fork, Join, Router, ClassSwitch, Cache,
+                              Place, Transition, Logger)
     if isinstance(node, Source):
         return "Source"
     if isinstance(node, Sink):
@@ -2799,12 +3120,65 @@ def _node_type_str(node) -> str:
         return "Router"
     if isinstance(node, ClassSwitch):
         return "ClassSwitch"
-    return "Queue"
+    if isinstance(node, Logger):
+        return "Logger"
+    # No silent default: a node type this writer does not know was saved as an
+    # FCFS Queue, which reloads with a station and a service process the model
+    # never declared and shifts every station index after it.
+    raise TypeError('Node "%s" is of class %s, which has no model.json node type; add it to '
+                    '_node_type_str rather than letting it default.'
+                    % (node.get_name(), type(node).__name__))
 
 
 # ---------------------------------------------------------------------------
 # LayeredNetwork serialization
 # ---------------------------------------------------------------------------
+
+def _lincon_to_json(elem, col_names):
+    """
+    Admission constraint rows of a Task or Processor on the wire.
+
+    Both declaration forms are normalised to the named form, so the wire is
+    order-independent: a positional setConstraint(A, b) matrix is resolved
+    against COL_NAMES (the element's entries, or its tasks) at write time.
+    COL_NAMES must be in the same declaration order the positional columns
+    assume.
+    """
+    if not hasattr(elem, 'hasLinearConstraints') or not elem.hasLinearConstraints():
+        return []
+    rows_json = []
+    A, b = elem.getLinearConstraints()
+    if A is not None and b is not None:
+        for r in range(A.shape[0]):
+            nz = np.flatnonzero(A[r, :])
+            if nz.size == 0:
+                continue
+            if nz.max() >= len(col_names):
+                raise ValueError(f"Admission constraint on {elem.name} references column "
+                                 f"{int(nz.max()) + 1} but the element has only "
+                                 f"{len(col_names)} operands.")
+            rows_json.append({"operands": [col_names[j] for j in nz],
+                              "coeffs": [float(A[r, j]) for j in nz],
+                              "cap": float(b[r])})
+    for names, coeffs, cap in elem.lincon_rows:
+        rows_json.append({"operands": list(names),
+                          "coeffs": [float(c) for c in coeffs],
+                          "cap": float(cap)})
+    return rows_json
+
+
+def _apply_lincon(elem, rows):
+    """
+    Replay admission constraint rows from the wire onto a Task or Processor.
+    Rows name their operands, so no column order is assumed and the referenced
+    entries or tasks need not exist yet.
+    """
+    for row in rows or []:
+        ops = row.get("operands")
+        if isinstance(ops, str):
+            ops = [ops]
+        elem.addConstraint(list(ops), row.get("coeffs"), row.get("cap"))
+
 
 def _layered_to_json(model) -> Dict[str, Any]:
     """Convert a LayeredNetwork to JSON-compatible dict."""
@@ -2819,7 +3193,7 @@ def _layered_to_json(model) -> Dict[str, Any]:
         "name": model.name,
     }
 
-    # LQN hosts schema always carries multiplicity/scheduling/quantum/speedFactor explicitly (no default omission), since the JAR/native INF-vs-PS defaults differ.
+    # LQN hosts schema always carries multiplicity/scheduling/quantum/speedFactor explicitly (never omitted), since JAR/native INF-vs-PS defaults differ.
     procs = []
     for p in model.processors:
         pj = {"name": p.name}
@@ -2832,6 +3206,10 @@ def _layered_to_json(model) -> Dict[str, Any]:
         repl = p.getReplication()
         if repl > 1:
             pj["replication"] = repl
+        # Admission constraints: columns of a host constraint are its tasks
+        rows_json = _lincon_to_json(p, [t.name for t in getattr(p, 'tasks', [])])
+        if rows_json:
+            pj["admissionConstraints"] = rows_json
         procs.append(pj)
     result["hosts"] = procs
 
@@ -2868,10 +3246,10 @@ def _layered_to_json(model) -> Dict[str, Any]:
         repl = t.getReplication()
         if repl > 1:
             tj["replication"] = repl
-        # FunctionTask detection
-        from ..layered import FunctionTask as _FunctionTask
-        if isinstance(t, _FunctionTask) or getattr(t, '_is_function_task', False):
-            tj["taskType"] = "FunctionTask"
+        # SetupTask detection
+        from ..layered import SetupTask as _SetupTask
+        if isinstance(t, _SetupTask) or getattr(t, '_is_setup_task', False):
+            tj["taskType"] = "SetupTask"
         # Setup time / delay-off time (on any Task)
         if t.setup_time is not None:
             st_mean = _get_dist_mean_safe(t.setup_time)
@@ -2889,6 +3267,10 @@ def _layered_to_json(model) -> Dict[str, Any]:
             tj["cacheCapacity"] = t.cache_capacity
             rs = t.replacement_strategy
             tj["replacementStrategy"] = rs.name if hasattr(rs, 'name') else str(rs)
+        # Admission constraints: columns of a task constraint are its entries
+        rows_json = _lincon_to_json(t, [e.name for e in getattr(t, 'entries', [])])
+        if rows_json:
+            tj["admissionConstraints"] = rows_json
         tasks.append(tj)
     result["tasks"] = tasks
 
@@ -3009,7 +3391,7 @@ def _json_to_layered(data: Dict[str, Any]):
     from ..layered import (
         LayeredNetwork, Processor, Task, Entry, Activity,
         ActivityPrecedence, PrecedenceType, CallType, Distribution as LDist,
-        FunctionTask, CacheTask, ItemEntry
+        SetupTask, CacheTask, ItemEntry
     )
     from ..constants import SchedStrategy
     from ..lang.base import ReplacementStrategy
@@ -3034,6 +3416,7 @@ def _json_to_layered(data: Dict[str, Any]):
         repl = pd.get("replication")
         if repl is not None and repl > 1:
             proc.setReplication(repl)
+        _apply_lincon(proc, pd.get("admissionConstraints"))
         proc_map[name] = proc
 
     # Create tasks
@@ -3046,8 +3429,9 @@ def _json_to_layered(data: Dict[str, Any]):
         proc_name = td.get("processor", td.get("host"))
         proc = proc_map.get(proc_name) if proc_name else None
         task_type = td.get("taskType", "Task")
-        if task_type == "FunctionTask":
-            task = FunctionTask(model, name, mult, sched)
+        if task_type in ("SetupTask", "FunctionTask"):
+            # FunctionTask is the legacy name of SetupTask on the wire
+            task = SetupTask(model, name, mult, sched)
         elif task_type == "CacheTask":
             total_items = td.get("totalItems", 1)
             cache_cap = td.get("cacheCapacity", 1)
@@ -3096,6 +3480,7 @@ def _json_to_layered(data: Dict[str, Any]):
         repl = td.get("replication")
         if repl is not None and repl > 1:
             task.setReplication(repl)
+        _apply_lincon(task, td.get("admissionConstraints"))
         task_map[name] = task
 
     # Create entries
@@ -3295,6 +3680,139 @@ def _get_dist_mean_safe(dist) -> float:
 # Helpers
 # ---------------------------------------------------------------------------
 
+_GD_MAX_LATTICE = 200000
+
+
+def _gd_slots(sn, wcut):
+    """
+    Varying (station, class) coordinates of the global-dependence lattice, with
+    their cutoffs. A Source holds no jobs and a class with zero per-class capacity
+    at a station never appears there, so those entries are pinned to 0 and carry no
+    coordinate. That restriction is lossless: no DEP or PHASE event ever fires at a
+    slot the class cannot occupy, so phi is never read there.
+    """
+    from ..lang.base import NodeType
+    M, K = int(sn.nstations), int(sn.nclasses)
+    slot_st, slot_cl, cuts = [], [], []
+    for i in range(M):
+        if sn.nodetype[int(sn.stationToNode[i])] == NodeType.SOURCE:
+            continue
+        for r in range(K):
+            cap = float(sn.classcap[i, r])
+            if not cap > 0:
+                continue
+            nj = float(sn.njobs[r])
+            c = int(round(nj)) if math.isfinite(nj) else int(wcut)
+            if math.isfinite(cap):
+                c = min(c, int(round(cap)))
+            slot_st.append(i)
+            slot_cl.append(r)
+            cuts.append(max(c, 0))
+    return slot_st, slot_cl, cuts
+
+
+def _gd_block(model) -> Dict[str, Any]:
+    """Materialize the network-level global (Whittle) dependence onto the wire."""
+    sn = model.getStruct()
+    M, K = int(sn.nstations), int(sn.nclasses)
+    phi = model.get_global_dependence()
+    peak = np.asarray(model.get_global_dependence_peak(), dtype=float).reshape(M, K)
+    wcut = int(model.get_global_dependence_cutoff())
+    slot_st, slot_cl, cuts = _gd_slots(sn, wcut)
+
+    total = 1
+    for c in cuts:
+        total *= (c + 1)
+    if total > _GD_MAX_LATTICE:
+        raise ValueError(
+            "The global dependence lattice has %d points (%d varying station-class "
+            "slots with cutoffs %s), above the wire limit of %d. Lower the cutoff "
+            "argument of set_global_dependence, or solve the model natively."
+            % (total, len(cuts), cuts, _GD_MAX_LATTICE))
+
+    stations = [model.getNodes()[int(sn.stationToNode[i])].getName() for i in range(M)]
+    classes = [jc.getName() for jc in model.getClasses()]
+    return {
+        "type": "globalDependent",
+        "stations": stations,
+        "classes": classes,
+        "slots": [{"station": stations[slot_st[s]], "class": classes[slot_cl[s]]}
+                  for s in range(len(cuts))],
+        "cutoffs": [int(c) for c in cuts],
+        "cutoff": wcut,
+        "scaling": _gd_scaling_table(phi, slot_st, slot_cl, cuts, M, K),
+        "peak": [float(x) for x in peak.reshape(-1)],
+    }
+
+
+def _gd_scaling_table(phi, slot_st, slot_cl, cuts, M, K) -> Dict[str, list]:
+    """
+    Tabulate phi over the slot box lattice. Key: comma-joined 0-based slot counts
+    in slot order. Value: the FULL (M, K) scaling flattened row-major, so the
+    reader restores the matrix without re-deriving which return form was used.
+    """
+    tbl = {}
+    P = len(cuts)
+    shp = [c + 1 for c in cuts]
+    total = 1
+    for x in shp:
+        total *= x
+    for i in range(total):
+        li, c = i, [0] * P
+        for d in range(P):
+            c[d] = li % shp[d]
+            li //= shp[d]
+        n = np.zeros((M, K))
+        for d in range(P):
+            n[slot_st[d], slot_cl[d]] = c[d]
+        v = np.asarray(phi(n), dtype=float)
+        if v.size == 1:
+            v = np.full((M, K), float(v.reshape(-1)[0]))
+        elif v.shape == (M,) or v.shape == (M, 1):
+            v = np.repeat(v.reshape(M, 1), K, axis=1)
+        v = np.where(np.isfinite(v), v, 0.0)
+        key = ",".join(str(x) for x in c) if P else "0"
+        tbl[key] = [float(x) for x in v.reshape(-1)]
+    return tbl
+
+
+def _gd_block_to_callable(gdep, node_map, class_map, model):
+    """
+    Rebuild the global (Whittle) dependence from the slot lattice. Slots carry
+    station and class names, resolved through the model's own index spaces. The
+    population is clamped to the tabulated cutoffs, which is the same saturation
+    the writer's box lattice declares.
+    """
+    sn = model.getStruct()
+    M, K = int(sn.nstations), int(sn.nclasses)
+    slot_st, slot_cl = [], []
+    for sm in gdep.get("slots", []):
+        node = node_map.get(sm["station"])
+        cls = class_map.get(sm["class"])
+        if node is None or cls is None:
+            return None, None, 10
+        slot_st.append(int(sn.nodeToStation[node._index]))
+        slot_cl.append(int(cls._index))
+    cuts = [int(c) for c in gdep.get("cutoffs", [])]
+    wcut = int(gdep.get("cutoff", 10) or 10)
+
+    tbl = {}
+    for key, vals in gdep["scaling"].items():
+        tbl[key] = np.asarray(vals, dtype=float).reshape(M, K)
+    peak = gdep.get("peak")
+    peak = np.asarray(peak, dtype=float).reshape(M, K) if peak else np.ones((M, K))
+    ones = np.ones((M, K))
+    P = len(cuts)
+
+    def _phi(n):
+        if P == 0:
+            return tbl.get("0", ones)
+        c = [min(max(int(round(n[slot_st[s], slot_cl[s]])), 0), cuts[s]) for s in range(P)]
+        return tbl.get(",".join(str(x) for x in c), ones)
+
+    return _phi, peak, wcut
+
+
 def _class_dependence_cutoffs(classes) -> list:
     """
     Per-class cutoffs for materializing a class-dependence callable onto a
@@ -3438,6 +3956,38 @@ class _JSONEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
+def _wire_nonfinite(doc):
+    """Rewrite every non-finite number into the wire's own spelling.
+
+    JSON HAS NO INFINITY LITERAL. `json.dump` writes a bare `Infinity` /
+    `NaN` anyway, which is a Python extension no strict parser takes:
+    `linemodel_save` (the reference) writes an infinite scalar as the STRING
+    "Infinity" / "-Infinity" and a NaN as `null`, for every numeric field
+    rather than a named few, and the C++ reader `num_from_json` decodes
+    exactly that pair. So a model whose Source carries its declared state --
+    an open class holds an infinite population, so `initialState` and
+    `stateSpace` carry the sentinel the moment the model is initialized --
+    left here as a document nlohmann refuses at PARSE time. That is how
+    fcr_oqndrop[CROSS:Matlab->Python] failed: the native `common/ldes` engine
+    rejected the file, SolverLDES fell back to `ldes.jar` without saying so,
+    and the two sides of the row were then compared across two engines and
+    differed by 1.3e-2 with nothing in the output naming the cause.
+    """
+    if isinstance(doc, dict):
+        return dict((k, _wire_nonfinite(v)) for k, v in doc.items())
+    if isinstance(doc, (list, tuple)):
+        return [_wire_nonfinite(v) for v in doc]
+    if isinstance(doc, np.ndarray):
+        return _wire_nonfinite(doc.tolist())
+    if isinstance(doc, (float, np.floating)) and not isinstance(doc, bool):
+        v = float(doc)
+        if math.isnan(v):
+            return None
+        if math.isinf(v):
+            return "Infinity" if v > 0 else "-Infinity"
+    return doc
+
+
 # ---------------------------------------------------------------------------
 # Workflow serialization
 # ---------------------------------------------------------------------------
@@ -3543,6 +4093,13 @@ def _environment_to_json(model) -> Dict[str, Any]:
         if stage_name is None:
             continue
         stage_obj = {"name": stage_name}
+        # The stage TYPE, which every reader already looks for and no writer
+        # emitted: an Environment round-tripped through JSON came back with its
+        # stage types blanked, so getStageTable and any consumer keying off
+        # UP/DOWN read a different environment from the one that was saved.
+        stage_type = model._stage_types[i] if i < len(model._stage_types) else ''
+        if stage_type:
+            stage_obj["type"] = str(stage_type)
         stage_model = model.get_model(i)
         if stage_model is not None:
             stage_obj["model"] = _network_to_json(stage_model)
@@ -3562,7 +4119,7 @@ def _environment_to_json(model) -> Dict[str, Any]:
                 trans_json.append(trans_obj)
     result["transitions"] = trans_json
 
-    # node-failure declarative record additionally carries queue-length reset policies (callables), not recoverable from the stage/transition structure alone.
+    # node-failure declarative record also carries queue-length reset policies (callables), not recoverable from stage/transition structure alone.
     node_failures_json = _node_failures_to_json(model)
     if node_failures_json:
         result["nodeFailures"] = node_failures_json
@@ -3648,7 +4205,7 @@ def _json_to_environment(data: Dict[str, Any]):
     num_stages = data.get("numStages", 0)
     env = Environment(name, num_stages)
 
-    # nodeFailures block: expands the base model into UP/DOWN stages when absent, else only restores the callable reset policies; see _kb/12-interfaces-and-docs.md linemodel_io.py section.
+    # nodeFailures: expand model to UP/DOWN stages if absent, else restore callable reset policies; _kb/12-interfaces-and-docs.md linemodel_io.py section.
     nf_arr = data.get("nodeFailures", [])
     stages = data.get("stages", [])
     declared_names = [sd.get("name", "Stage" + str(i)) for i, sd in enumerate(stages)]
@@ -3750,7 +4307,10 @@ def save_model(model, filename: str) -> None:
     }
 
     with open(filename, 'w') as f:
-        json.dump(doc, f, indent=2, cls=_JSONEncoder)
+        # allow_nan=False so a non-finite that escapes the rewrite is reported
+        # here rather than written as a literal no other reader accepts.
+        json.dump(_wire_nonfinite(doc), f, indent=2, cls=_JSONEncoder,
+                  allow_nan=False)
 
 
 def load_model(filename: str):

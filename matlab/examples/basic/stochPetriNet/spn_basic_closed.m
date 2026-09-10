@@ -58,7 +58,7 @@ options.seed = 23000;
 % All stations must be initialised.
 % initial_state = [0;2;0;0;0;1;0;0];
 
-% solver = CTMC(model, options);
+% solver = CTMC(model, 'exact', options);
 % solver.getAvgTable();
 
 solver = {};

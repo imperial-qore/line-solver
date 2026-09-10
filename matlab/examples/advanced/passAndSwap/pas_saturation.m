@@ -30,7 +30,7 @@ muRank = @(c) sum(cap_s(any(comp(:, unique(c(c>0))), 2)));
 
 % (1) a large buffer approximates the unbounded queue; LDES matches CTMC ------
 CAP = 8;
-Qc = qlen(CTMC(build(muRank, CAP, I, S, lambda), 'cutoff', CAP), I);
+Qc = qlen(CTMC(build(muRank, CAP, I, S, lambda), 'exact', 'cutoff', CAP), I);
 Ql = qlen(LDES(build(muRank, CAP, I, S, lambda), 'samples', 3e5, 'seed', 23000), I);
 fprintf('open compatibility PAS, buffer=%d:\n', CAP);
 fprintf('  CTMC  QLen = %s\n', mat2str(round(Qc, 5)));

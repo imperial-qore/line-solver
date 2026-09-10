@@ -35,6 +35,10 @@ from ....api.mam import (
     mmap_super_safe,
     mmap_compress,
 )
+from ....api.solvers.mam.handler import (
+    solver_mam as handler_solver_mam,
+    SolverMAMOptions as HandlerOptions,
+)
 
 
 @dataclass
@@ -51,12 +55,18 @@ class DecMMAPAlgorithm(MAMAlgorithm):
 
     @staticmethod
     def supports_network(sn) -> Tuple[bool, Optional[str]]:
-        """Check if network can be solved by dec.mmap.
+        """Structural applicability of dec.mmap; there is none beyond the
+        feature set.
 
-        dec.mmap supports same class of networks as dec.source:
-        - Open and closed networks
-        - Multiple classes
-        - General service distributions
+        THE TWO RESTRICTIONS OF THIS ALGORITHM ARE DECLARED, NOT STRUCTURAL:
+        it solves OPEN models only and serves EXT/FCFS/HOL/FCFSPRPRIO/PS
+        stations only, and both are things the model HAS, so both are expressed
+        as SolverMAM.getMethodFeatureSet deltas for 'dec.mmap' (ClosedClass,
+        SelfLoopingClass and SchedStrategy_INF dropped) rather than here. This
+        predicate answers about topology and class mix, of which dec.mmap asks
+        nothing further, so it stays unconditionally true -- and it is not the
+        whole gate: supportsModelMethod falls through to the feature set after
+        asking it.
 
         Args:
             sn: NetworkStruct
@@ -68,136 +78,65 @@ class DecMMAPAlgorithm(MAMAlgorithm):
         return True, None
 
     def solve(self, sn, options=None) -> MAMResult:
-        """Solve using decomposition with MMAP departures.
+        """Solve using decomposition with ETAQA MMAP departures.
+
+        Delegates to the handler port of `solver_mam.m`, exactly as
+        DecSourceAlgorithm delegates to the port of `solver_mam_basic.m`. The
+        implementation that used to live here was an acknowledged approximation
+        -- it never built a departure process ("For now, approximate as
+        exponential"), so no ETAQA step ran under the dec.mmap name and the
+        reported utilizations were inflated by the visit ratio.
 
         Args:
             sn: NetworkStruct
-            options: DecMMAPOptions
+            options: DecMMAPOptions or SolverMAMOptions
 
         Returns:
             MAMResult
         """
-        if options is None:
-            options = DecMMAPOptions()
-
         start_time = time.time()
 
-        params = extract_mam_params(sn)
-        M = params['nstations']
-        K = params['nclasses']
-        rates = params['rates']
-        scv = params['scv']
-        nservers = params['nservers']
-        visits = extract_visit_counts(sn)
-        is_closed = check_closed_network(sn)
-        routing = build_routing_matrix(sn)
+        handler_opts = HandlerOptions()
+        handler_opts.method = 'dec.mmap'
+        if options is not None:
+            for src, dst in (('tol', 'tol'), ('max_iter', 'iter_max'),
+                             ('iter_max', 'iter_max'), ('iter_tol', 'iter_tol'),
+                             ('verbose', 'verbose'), ('space_max', 'space_max')):
+                if hasattr(options, src):
+                    value = getattr(options, src)
+                    if value is not None:
+                        setattr(handler_opts, dst, value)
+            # config carries etaqa_trunc and space_max, which the handler reads
+            # off the options object itself (MATLAB reads options.config.*)
+            cfg = getattr(options, 'config', None)
+            if isinstance(cfg, dict):
+                for key in ('etaqa_trunc', 'space_max'):
+                    if cfg.get(key) is not None:
+                        setattr(handler_opts, key, cfg[key])
 
-        # see _kb/06-solver-catalog.md (MAM: "dec.mmap/dec.source on Fork-Join,
-        # and excluding Source from the queue set")
-        is_ext = np.zeros(M, dtype=bool)
-        if getattr(sn, 'sched', None) is not None:
-            for m in range(M):
-                is_ext[m] = (int(sn.sched[m]) == int(SchedStrategy.EXT))
-
-        if options.verbose:
-            print(f"dec.mmap: M={M} stations, K={K} classes")
-
-        # Initialize result matrices
-        QN = np.zeros((M, K))
-        UN = np.zeros((M, K))
-        RN = np.zeros((M, K))
-        TN = np.zeros((1, K))
-        CN = np.zeros((1, K)) if is_closed else None
-        XN = np.zeros((1, K))
-
-        # Initialize lambda - ensure it's always a proper K-length array
-        lambda_k = np.zeros(K, dtype=np.float64)
-
-        if is_closed:
-            total_demand = np.sum(1.0 / np.maximum(rates, 1e-10))
-            lambda_init = float(np.mean(sn.njobs) / total_demand) if len(sn.njobs) > 0 else 1.0
-            for k in range(K):
-                lambda_k[k] = lambda_init
-        else:
-            # Extract from network lambda_arr (arrival specification)
-            if hasattr(sn, 'lambda_arr') and sn.lambda_arr is not None:
-                sn_lambda = np.asarray(sn.lambda_arr, dtype=np.float64).flatten()
-                for k in range(K):
-                    if k < len(sn_lambda) and sn_lambda[k] > 0:
-                        lambda_k[k] = sn_lambda[k]
-                    else:
-                        lambda_k[k] = 1.0
-            else:
-                for k in range(K):
-                    lambda_k[k] = 1.0
-
-        # Initialize departure processes (start with service distributions)
-        departures = _init_departures(M, K, rates, scv)
-
-        from ....api.da import da_fpi
-
-        # Main iteration: throughput fixed point, driven by the generic DA driver
-        def dec_sweep(TN_prev, itnum):
-            nonlocal lambda_k
-
-            if options.verbose and itnum <= 3:
-                print(f"  Iteration {itnum}: lambda_k = {lambda_k}")
-
-            # Update throughputs
-            for k in range(K):
-                TN[0, k] = lambda_k[k]
-
-            # Solve each station
-            for m in range(M):
-                if is_ext[m]:
-                    continue  # Source: no queueing, metrics stay zero
-                # Arrivals to station m come from routing matrix
-                arr_rates = np.zeros(K)
-                for n in range(M):
-                    arr_rates += routing[n, m] * lambda_k
-
-                QN[m, :], UN[m, :], RN[m, :], _ = _solve_station_mmap(
-                    m, M, K, arr_rates, rates[m, :], scv[m, :],
-                    nservers[m], options
-                )
-
-            # Update departures based on queue solutions
-            for m in range(M):
-                # Extract PH representation of response time
-                # For now, approximate as exponential
-                departures[m] = (
-                    np.array([[-1.0 / np.maximum(RN[m, :].mean(), 1e-10)]]),
-                    [np.array([[1.0 / np.maximum(RN[m, k], 1e-10)]] if RN[m, k] > 0 else [[0.0]])
-                     for k in range(K)]
-                )
-
-            # Stability check
-            max_util = np.max(UN)
-            if max_util >= 1.0 and not is_closed:
-                lambda_k = lambda_k / max_util
-            return TN.copy(), TN_prev
-
-        _, iteration, _ = da_fpi(dec_sweep, TN.copy(), options.max_iter, options.tol, nanstop=True)
-
-        # Compute cycle times
-        if is_closed and CN is not None:
-            for k in range(K):
-                if TN[0, k] > 1e-10:
-                    CN[0, k] = np.sum(RN[:, k]) / TN[0, k]
-
+        # The handler RAISES on a closed model and on a discipline its station
+        # ladder does not serve, as solver_mam.m now does. It used to return an
+        # empty result here, which this method turned into a MAMResult with no
+        # metrics -- and the caller then died unpacking it, which is how a
+        # refusal reached the user as "MAMResult.__init__() missing 4 required
+        # positional arguments".
+        res = handler_solver_mam(sn, handler_opts)
         runtime = time.time() - start_time
 
+        TN = res.T if res.T is not None else np.zeros_like(res.Q)
         return MAMResult(
-            QN=QN,
-            UN=UN,
-            RN=RN,
+            QN=res.Q,
+            UN=res.U,
+            RN=res.R,
             TN=TN,
-            CN=CN,
-            XN=XN,
-            totiter=iteration,
+            CN=res.C,
+            XN=res.X,
+            totiter=res.it,
             method="dec.mmap",
             runtime=runtime
         )
+
+
 
 
 def _init_departures(M: int, K: int, rates: np.ndarray, scv: np.ndarray) -> List:

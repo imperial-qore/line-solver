@@ -123,6 +123,8 @@ def cache_spm(gamma: np.ndarray, m: np.ndarray
             - lZ: Log of normalizing constant
             - xi: Xi terms vector
     """
+    from .erec import cache_erec
+
     gamma = np.asarray(gamma, dtype=np.float64)
     m = np.asarray(m, dtype=np.float64).ravel()
 
@@ -136,42 +138,58 @@ def cache_spm(gamma: np.ndarray, m: np.ndarray
     mt = np.sum(m)  # Total capacity
 
     if n == mt:
+        # Degenerate saddle: every item is cached, so the capacity equations force
+        # every multiplier to infinity and cache_xi_iter cannot converge. Take Z
+        # from the exact recursion and report the limit, rather than iterating.
         print("Warning: Number of items equals the cache capacity.")
+        Z = float(cache_erec(gamma, m))
+        return Z, float(np.log(Z)), np.full(h, np.inf)
+
+    # A list with no capacity has xi=0, which is a boundary of the Laplace integral
+    # rather than a direction of it, so it must leave the expansion: kept, its
+    # -sum_l log(sqrt(xi_l)) prefactor diverges and Z comes out far too large.
+    # Dropping it is exact, since setting z_l=0 in the generating function removes
+    # list l from E(m) and prod_l m_l! is unchanged because 0!=1.
+    keep = np.flatnonzero(m > 0)
+    hk = len(keep)
+    xi = np.zeros(h)  # dropped lists keep xi = 0
+    if hk == 0:
+        return 1.0, 0.0, xi  # E(0)=1 and prod_l m_l!=1
+
+    gk = gamma[:, keep]
+    mk = m[keep]
 
     # Compute xi terms
-    xi = cache_xi_iter(gamma, m)
+    xik = cache_xi_iter(gk, mk)
+    xi[keep] = xik
 
     # Compute S_k = sum_l gamma[k, l] * xi[l]
-    S = gamma @ xi  # Shape: (n,)
+    S = gk @ xik  # Shape: (n,)
 
     # Compute phi = sum_k log(1 + S_k) - sum_l m_l * log(xi_l)
-    phi = np.sum(np.log(1 + S)) - np.sum(m * np.log(xi))
+    phi = np.sum(np.log(1 + S)) - np.sum(mk * np.log(xik))
 
     # Compute matrix C for determinant
-    delta = np.eye(h)
-    C = np.zeros((h, h))
+    delta = np.eye(hk)
+    C = np.zeros((hk, hk))
 
-    for j in range(h):
-        for l in range(h):
+    for j in range(hk):
+        for l in range(hk):
             # C1 = sum_k gamma[k, j] / (1 + S_k)
-            C1 = np.sum(gamma[:, j] / (1 + S))
+            C1 = np.sum(gk[:, j] / (1 + S))
 
             # C2 = sum_k gamma[k, j] * gamma[k, l] / (1 + S_k)^2
-            C2 = np.sum(gamma[:, j] * gamma[:, l] / (1 + S)**2)
+            C2 = np.sum(gk[:, j] * gk[:, l] / (1 + S)**2)
 
-            C[j, l] = delta[j, l] * C1 - xi[j] * C2
+            C[j, l] = delta[j, l] * C1 - xik[j] * C2
 
     # Compute Z using the formula (matching MATLAB: lZ=real(lZ) to handle roundoff)
     det_C = np.linalg.det(C)
 
-    # m! (factorial of each element)
-    m_fact = special.factorial(m)
-    m_fact_prod = np.prod(m_fact)
-
     # Log of Z
-    lZ = (-h * np.log(np.sqrt(2 * np.pi)) + phi +
-          np.sum(special.gammaln(m + 1)) -  # log of m!
-          np.sum(0.5 * np.log(xi)) -
+    lZ = (-hk * np.log(np.sqrt(2 * np.pi)) + phi +
+          np.sum(special.gammaln(mk + 1)) -  # log of m!
+          np.sum(0.5 * np.log(xik)) -
           0.5 * np.log(det_C + 0j))  # +0j to handle negative det via complex log
     lZ = np.real(lZ)  # Remove small imaginary parts from roundoff (MATLAB: lZ=real(lZ))
 

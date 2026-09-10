@@ -21,12 +21,12 @@ env.addTransition('UP',   'DOWN', Exp(0.2));   % mean UP time = 5
 env.addTransition('DOWN', 'UP',   Exp(1.0));   % mean DOWN time = 1
 env.init();
 
-%% Solve with SolverENV over SolverLN(.,@SolverFluid)
+%% Solve with SolverENV over SolverLN(.,@SolverFLD)
 % The transient window is set on SolverLN (not the layer factory): the layered
 % fixed-point iteration solves each layer in steady state, and SolverLN applies
 % the timespan only to the per-layer transient getTranAvg call.
 T = 50;
-fldFactory = @(mm) SolverFluid(mm, 'verbose', false);
+fldFactory = @(mm) SolverFLD(mm, 'verbose', false);
 lnFactory  = @(m)  SolverLN(m, fldFactory, 'timespan', [0, T], 'verbose', false);
 
 options = SolverENV.defaultOptions;
@@ -114,7 +114,7 @@ end
 
 function X = envTputSum(env, T)
 % Solve an LQN-in-ENV and return the finite aggregate throughput sum.
-fldFactory = @(mm) SolverFluid(mm, 'verbose', false);
+fldFactory = @(mm) SolverFLD(mm, 'verbose', false);
 lnFactory  = @(m)  SolverLN(m, fldFactory, 'timespan', [0, T], 'verbose', false);
 opt = SolverENV.defaultOptions;
 opt.iter_max = 10; opt.iter_tol = 0.03; opt.verbose = false;

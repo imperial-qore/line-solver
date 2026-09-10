@@ -747,7 +747,24 @@ function [result, x, fval, exitflag] = qrf_rsrd(params, objective, sense)
         options = optimoptions('linprog', 'Display', 'off', 'Algorithm', lpAlgorithm);
     end
 
-    [x, fval, exitflag] = linprog(c, Aineq, bineq, Aeq, beq, lb, ub, options);
+    % interior-point-legacy is the default because it is about five orders more
+    % accurate on the reference instances, but it FAILS OUTRIGHT on some
+    % well-posed ones (exitflag -2, no feasible point, on a 3-station N=4
+    % no-blocking model that HiGHS and OSQP both solve). Retry with the modern
+    % interior point before giving up; the residual test below decides which
+    % point, if either, is a solution of this LP.
+    algorithms = {lpAlgorithm};
+    if ~strcmp(lpAlgorithm, 'interior-point')
+        algorithms{end+1} = 'interior-point';
+    end
+    for algIdx = 1:numel(algorithms)
+        options.Algorithm = algorithms{algIdx};
+        [x, fval, exitflag] = linprog(c, Aineq, bineq, Aeq, beq, lb, ub, options);
+        if ~isempty(x) && all(isfinite(x)) && ...
+                qrf_lp_residual(x, Aeq, beq, Aineq, bineq, lb, ub) <= 1e-6
+            break
+        end
+    end
 
     if strcmp(sense, 'max')
         fval = -fval;
@@ -770,6 +787,17 @@ function [result, x, fval, exitflag] = qrf_rsrd(params, objective, sense)
         warning('qrf_rsrd:nonFiniteSolution', ...
             'linprog returned a non-finite solution (exitflag %d); U and the other metric fields are left unpopulated.', ...
             exitflag);
+    end
+    % See qrf_bas: exitflag -2 returns a finite but INFEASIBLE point, whose
+    % utilizations exceed 1 and would be reported as a bound.
+    if hasSolution
+        residual = qrf_lp_residual(x, Aeq, beq, Aineq, bineq, lb, ub);
+        if residual > 1e-6
+            line_error(mfilename, ...
+                ['linprog returned an infeasible point (exitflag %d, max constraint ' ...
+                 'residual %.3e). The bound is not defined for this instance; check ' ...
+                 'params.F and params.alpha.'], exitflag, residual);
+        end
     end
 
     if hasSolution

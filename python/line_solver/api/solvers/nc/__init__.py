@@ -8,8 +8,11 @@ probability computation, and analyzers.
 Key handlers:
     solver_nc: Main NC solver handler
     solver_ncld: Load-dependent NC handler
+    solver_nc_marg: Detailed per-station marginal probability handler
     solver_nc_margaggr: Aggregated marginal probability handler
+    solver_nc_margaggr_state: The same law at one station, for a given occupancy
     solver_nc_jointaggr: Aggregated joint probability handler
+    solver_nc_jointmarg: Joint per-station total queue-length handler
 
 Analyzers:
     solver_nc_analyzer: Main analyzer with interpolation
@@ -25,8 +28,11 @@ from .handler import (
 )
 
 from .prob import (
+    solver_nc_marg,
     solver_nc_margaggr,
+    solver_nc_margaggr_state,
     solver_nc_jointaggr,
+    solver_nc_jointmarg,
     to_marginal_aggr,
     StateMarginalStatistics,
     SolverNCMargReturn,
@@ -37,6 +43,7 @@ from .analyzers import (
     solver_nc_analyzer,
     solver_ncld_analyzer,
     solver_nc_lossn_analyzer,
+    solver_nc_spn_analyzer,
     NCResult,
     NCResultProb,
 )
@@ -47,8 +54,11 @@ __all__ = [
     'SolverNCReturn',
     'SolverNCLDReturn',
     'SolverOptions',
+    'solver_nc_marg',
     'solver_nc_margaggr',
+    'solver_nc_margaggr_state',
     'solver_nc_jointaggr',
+    'solver_nc_jointmarg',
     'to_marginal_aggr',
     'StateMarginalStatistics',
     'SolverNCMargReturn',
@@ -56,6 +66,7 @@ __all__ = [
     'solver_nc_analyzer',
     'solver_ncld_analyzer',
     'solver_nc_lossn_analyzer',
+    'solver_nc_spn_analyzer',
     'NCResult',
     'NCResultProb',
 ]

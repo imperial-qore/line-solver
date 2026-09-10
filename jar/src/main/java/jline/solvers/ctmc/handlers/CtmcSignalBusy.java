@@ -47,8 +47,11 @@ public final class CtmcSignalBusy {
         double[] UNb = new double[K];
         boolean isPS = sched == SchedStrategy.PS || sched == SchedStrategy.DPS
                 || sched == SchedStrategy.GPS || sched == SchedStrategy.LPS;
+        // sn.space is keyed by STATEFUL index, not by station: read the width
+        // through stationToStateful (istSpaceShift is already station-indexed).
         int colStart = (int) istSpaceShift.get(ist);
-        int colEnd = colStart + sn.space.get(sn.stateful.get(ist)).getNumCols();
+        int colEnd = colStart
+                + sn.space.get(sn.stateful.get((int) sn.stationToStateful.get(ist))).getNumCols();
         for (int index = 0; index < wset.getNumCols(); index++) {
             int st = (int) wset.get(index);
             double pst = probSysState.get(st);

@@ -29,8 +29,24 @@ public final class QBD_pi {
         if (B1_diag.elementMin() < 0 || RAPComp == 1) { // continuous time
             double lamb = -B1_diag.elementMin();
 
-            // Simplified normalization for continuous time case
-            B1_work = B1_work.scale(1.0 / lamb).add(1.0, Matrix.eye(m));
+            if (Boundary_work != null) {
+                // The boundary carries [B2; A1+R*A0]: its lower block is a
+                // generator too, so the uniformization constant has to cover
+                // it as well, and only that lower block takes the +I shift.
+                int mbCt = B1_work.getNumRows();
+                Matrix lower = Matrix.extract(Boundary_work, mbCt, Boundary_work.getNumRows(),
+                        0, Boundary_work.getNumCols());
+                Matrix lowerDiag = new Matrix(m, 1, 0);
+                Matrix.extractDiag(lower, lowerDiag);
+                lamb = Math.max(lamb, -lowerDiag.elementMin());
+                Boundary_work = Boundary_work.scale(1.0 / lamb);
+                for (int i = 0; i < m; i++) {
+                    Boundary_work.set(mbCt + i, i, Boundary_work.get(mbCt + i, i) + 1.0);
+                }
+                B1_work = B1_work.scale(1.0 / lamb).add(1.0, Matrix.eye(mbCt));
+            } else {
+                B1_work = B1_work.scale(1.0 / lamb).add(1.0, Matrix.eye(m));
+            }
 
             B0_work.scaleEq(1.0 / lamb);
         }
@@ -51,16 +67,40 @@ public final class QBD_pi {
             throw new RuntimeException("The spectral radius of R is not below 1: QBD is not pos. recurrent");
         }
 
-        // Simplified implementation - in practice this would be more complex
-        Matrix pi0 = Stat.stat(B1_work.add(1.0, R.mult(B0_work)));
-        double normalizer = pi0.mult(temp).mult(Matrix.ones(m, 1)).get(0);
-        pi0.scaleEq(1.0 / normalizer);
-
         List<Matrix> pi_components = new ArrayList<Matrix>();
-        pi_components.add(pi0.copy());
-
-        double sumpi = pi0.elementSum();
+        double sumpi;
         int numit = 1;
+        Matrix level0 = null;
+
+        if (Boundary_work == null) {
+            Matrix pi0 = Stat.stat(B1_work.add(1.0, R.mult(B0_work)));
+            double normalizer = pi0.mult(temp).mult(Matrix.ones(m, 1)).get(0);
+            pi0.scaleEq(1.0 / normalizer);
+            pi_components.add(pi0.copy());
+            sumpi = pi0.elementSum();
+        } else {
+            // General boundary, QBD_pi.m else-branch: level 0 and level 1 are
+            // solved together on [[B1; B0] Boundary], because B0 and B2 need
+            // not be square and the level-0 block then differs in size from
+            // the repeating one. Before this branch existed the Boundary
+            // argument was accepted and DISCARDED, so every general-boundary
+            // caller silently got the default-boundary answer.
+            int mb = B1_work.getNumRows();
+            Matrix leftCol = Matrix.concatRows(B1_work, B0_work, null);
+            Matrix joint = Matrix.concatColumns(leftCol, Boundary_work, null);
+            Matrix pi01 = Stat.stat(joint);
+
+            Matrix pi0 = Matrix.extract(pi01, 0, 1, 0, mb);
+            Matrix pi1 = Matrix.extract(pi01, 0, 1, mb, mb + m);
+            double normalizer = pi0.elementSum()
+                    + pi1.mult(temp).mult(Matrix.ones(m, 1)).get(0);
+            pi0.scaleEq(1.0 / normalizer);
+            pi1.scaleEq(1.0 / normalizer);
+
+            level0 = pi0;
+            pi_components.add(pi1.copy());
+            sumpi = pi0.elementSum() + pi1.elementSum();
+        }
 
         while (sumpi < 1 - 1e-10 && numit < MaxNumComp) {
             Matrix pi_next = pi_components.get(pi_components.size() - 1).mult(R);
@@ -77,9 +117,10 @@ public final class QBD_pi {
             System.out.println("Maximum Number of Components " + numit + " reached");
         }
 
-        // Concatenate all components horizontally
-        Matrix result = pi_components.get(0).copy();
-        for (int i = 1; i < pi_components.size(); i++) {
+        // Concatenate all components horizontally, level 0 first
+        Matrix result = level0 == null ? pi_components.get(0).copy() : level0.copy();
+        int first = level0 == null ? 1 : 0;
+        for (int i = first; i < pi_components.size(); i++) {
             result = Matrix.concatColumns(result, pi_components.get(i), null);
         }
 

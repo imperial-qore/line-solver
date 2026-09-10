@@ -17,7 +17,11 @@ function [p,p_1,Qperm,eps,epsMAX,pcourt]=ctmc_kms(Q,MS,numSteps)
 % * No convergence stop criterion is currently implented
 
 %% INIT
-nMacroStates = size(MS,1); % Number of macro-states
+% NUMEL, NOT SIZE(MS,1). MS is a cell array of index sets and its ORIENTATION
+% carries no meaning, but size(MS,1) is 1 for the row form {a,b}, so a row
+% partition was silently analysed as its FIRST macro-state alone: p came back
+% shorter than the state space and eps described a partition nobody asked for.
+nMacroStates = numel(MS); % Number of macro-states
 nStates=size(Q,1);
 %% START FROM COURTOIS DECOMPOSITION SOLUTION
 [pcourt,Qperm,Qdec,eps,epsMAX,P,B,C]=ctmc_courtois(Q,MS);
@@ -25,7 +29,8 @@ nStates=size(Q,1);
 % see _kb/03-api-layer.md (CTMC aggregation-disaggregation) for the ordering rationale
 v=[];
 for n=1:nMacroStates
-    v=[v,MS{n}];
+    v=[v,MS{n}(:)'];   % force a row, as ctmc_courtois does: a column MS{n}
+                       % makes v a matrix and truncates the output p silently
 end
 pn=pcourt(v);
 p_1=pn(:); % defined even when numSteps==0
@@ -93,6 +98,12 @@ for n=1:numSteps
         [xg,gflag]=ctmc_gmres(M',rhs);
         if gflag==0
             pn=xg';
+        else
+            % Short-recurrence retry before the cubic factorization, as in ctmc_solve.
+            [xb,bflag]=ctmc_bicgstab(M',rhs);
+            if bflag==0
+                pn=xb';
+            end
         end
     end
     if isempty(pn)

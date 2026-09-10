@@ -2,7 +2,7 @@
 LayeredNetwork (LQN) support for line-opt.
 
 line-opt's core (problem/evaluator/variables/solver) was written for the flat
-``Network``: it copies the model, solves it with ``SolverAuto``, and reads a
+``Network``: it copies the model, solves it with ``SolverAUTO``, and reads a
 per-(station, class) average table. A ``LayeredNetwork`` cannot go through that
 path -- it is an ``Ensemble`` of per-layer ``Network`` submodels, solved by
 ``SolverLN`` into a per-LQN-node average table (Node, NodeType, QLen, Util,
@@ -112,6 +112,25 @@ def resolve_activity(model: Any, name: str) -> Optional[Any]:
     return _by_name(list(getattr(model, 'activities', [])), name)
 
 
+def activity_task_name(model: Any, activity_name: str) -> Optional[str]:
+    """Name of the task an activity is bound to (None if unbound).
+
+    THE LAYER CLASS AN ACTIVITY BELONGS TO DEPENDS ON THE LN METHOD, which is
+    why both names are needed to read the sensitivity table: 'srvn.cs' encodes
+    the activity graph as routing and names a host-layer class after the
+    ACTIVITY, while 'srvn.ph' (what the 'srvn' default resolves to whenever the
+    model admits it) collapses each caller into one phase-type class named after
+    the TASK. Keying only by activity silently missed every row under the
+    default method and left the partial-sensitivity gradient identically zero.
+    """
+    act = resolve_activity(model, activity_name)
+    if act is None:
+        return None
+    task = getattr(act, 'task', None) or (
+        act.getParent() if hasattr(act, 'getParent') else None)
+    return elem_name(task) if task is not None else None
+
+
 def activity_processor_name(model: Any, activity_name: str) -> Optional[str]:
     """Name of the processor an activity ultimately runs on.
 
@@ -119,7 +138,8 @@ def activity_processor_name(model: Any, activity_name: str) -> Optional[str]:
     incomplete (e.g. an activity not yet bound to a task). Used both to tag a
     HostDemand variable with the host layer it perturbs and to key its row in
     the per-layer sensitivity table, whose host-layer rows are
-    (Layer=processor, Station=processor, JobClass=activity).
+    (Layer=processor, Station=processor, JobClass=activity or caller task; see
+    `activity_task_name`).
     """
     act = resolve_activity(model, activity_name)
     if act is None:

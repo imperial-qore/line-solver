@@ -40,7 +40,7 @@ node{2}.setProbRouting(jobclass{2}, node{1}, 1.0)
 node{3}.setProbRouting(jobclass{2}, node{1}, 1.0)
 
 solver={};
-solver{end+1} = CTMC(model,'keep',false);
+solver{end+1} = CTMC(model, 'exact','keep',false);
 solver{end+1} = JMT(model,'samples',1e5,'seed',23000);
 solver{end+1} = SSA(model,'verbose',true,'samples',5e3,'seed',23000);
 

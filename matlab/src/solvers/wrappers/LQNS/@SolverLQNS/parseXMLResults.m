@@ -50,35 +50,39 @@ for i = 0:procList.getLength()-1
     if (procNode.getNodeType() == org.w3c.dom.Node.ELEMENT_NODE) %#ok<JAPIEXT161>
         procElement = procNode;
         procName = char(procElement.getAttribute('name'));
-        procPos = findstring(lqn.names,procName);
+        procPos = findlqnelem(lqn,procName,LayeredNetworkElement.HOST);
         procResult = procElement.getElementsByTagName('result-processor');
         uRes = str2double(procResult.item(0).getAttribute('utilization'));
-        Avg.Nodes.ProcUtilization(procPos) = uRes;
+        if procPos > 0
+            Avg.Nodes.ProcUtilization(procPos) = uRes;
+        end
 
         taskList = procElement.getElementsByTagName('task');
         for j = 0:taskList.getLength()-1
             %Element - Task
             taskElement = taskList.item(j);
             taskName = char(taskElement.getAttribute('name'));
-            taskPos = findstring(lqn.names,taskName);
+            taskPos = findlqnelem(lqn,taskName,LayeredNetworkElement.TASK);
             taskResult = taskElement.getElementsByTagName('result-task');
             uRes = str2double(taskResult.item(0).getAttribute('utilization'));
             p1uRes = str2double(taskResult.item(0).getAttribute('phase1-utilization'));
             p2uRes = str2double(taskResult.item(0).getAttribute('phase2-utilization'));
             tRes = str2double(taskResult.item(0).getAttribute('throughput'));
             puRes = str2double(taskResult.item(0).getAttribute('proc-utilization'));
-            Avg.Nodes.Utilization(taskPos) = uRes;
-            Avg.Nodes.Phase1Utilization(taskPos) = p1uRes;
-            Avg.Nodes.Phase2Utilization(taskPos) = ifthenelse(isempty(p2uRes),NaN,p2uRes);
-            Avg.Nodes.Throughput(taskPos) = tRes;
-            Avg.Nodes.ProcUtilization(taskPos) = puRes;
+            if taskPos > 0
+                Avg.Nodes.Utilization(taskPos) = uRes;
+                Avg.Nodes.Phase1Utilization(taskPos) = p1uRes;
+                Avg.Nodes.Phase2Utilization(taskPos) = ifthenelse(isempty(p2uRes),NaN,p2uRes);
+                Avg.Nodes.Throughput(taskPos) = tRes;
+                Avg.Nodes.ProcUtilization(taskPos) = puRes;
+            end
 
             entryList = taskElement.getElementsByTagName('entry');
             for k = 0:entryList.getLength()-1
                 %Element - Entry
                 entryElement = entryList.item(k);
                 entryName = char(entryElement.getAttribute('name'));
-                entryPos = findstring(lqn.names,entryName);
+                entryPos = findlqnelem(lqn,entryName,LayeredNetworkElement.ENTRY);
                 entryResult = entryElement.getElementsByTagName('result-entry');
                 uRes = str2double(entryResult.item(0).getAttribute('utilization'));
                 p1uRes = str2double(entryResult.item(0).getAttribute('phase1-utilization'));
@@ -87,13 +91,15 @@ for i = 0:procList.getLength()-1
                 p2stRes = str2double(entryResult.item(0).getAttribute('phase2-service-time'));
                 tRes = str2double(entryResult.item(0).getAttribute('throughput'));
                 puRes = str2double(entryResult.item(0).getAttribute('proc-utilization'));
-                Avg.Nodes.Utilization(entryPos) = uRes;
-                Avg.Nodes.Phase1Utilization(entryPos) = p1uRes;
-                Avg.Nodes.Phase2Utilization(entryPos) = ifthenelse(isempty(p2uRes),NaN,p2uRes);
-                Avg.Nodes.Phase1ServiceTime(entryPos) = p1stRes;
-                Avg.Nodes.Phase2ServiceTime(entryPos) = ifthenelse(isempty(p2stRes),NaN,p2stRes);
-                Avg.Nodes.Throughput(entryPos) = tRes;
-                Avg.Nodes.ProcUtilization(entryPos) = puRes;
+                if entryPos > 0
+                    Avg.Nodes.Utilization(entryPos) = uRes;
+                    Avg.Nodes.Phase1Utilization(entryPos) = p1uRes;
+                    Avg.Nodes.Phase2Utilization(entryPos) = ifthenelse(isempty(p2uRes),NaN,p2uRes);
+                    Avg.Nodes.Phase1ServiceTime(entryPos) = p1stRes;
+                    Avg.Nodes.Phase2ServiceTime(entryPos) = ifthenelse(isempty(p2stRes),NaN,p2stRes);
+                    Avg.Nodes.Throughput(entryPos) = tRes;
+                    Avg.Nodes.ProcUtilization(entryPos) = puRes;
+                end
 
                 %entry-phase-activities (PH1PH2 format): fill the phase
                 %activity rows, which are otherwise left NaN (JLINE parity)
@@ -104,7 +110,7 @@ for i = 0:procList.getLength()-1
                     for l = 0:phActList.getLength()-1
                         actElement = phActList.item(l);
                         actName = char(actElement.getAttribute('name'));
-                        actPos = findstring(lqn.names,actName);
+                        actPos = findlqnelem(lqn,actName,LayeredNetworkElement.ACTIVITY);
                         if actPos <= 0
                             continue;
                         end
@@ -142,7 +148,10 @@ for i = 0:procList.getLength()-1
                         for m = 0:synchCalls.getLength()-1
                             callElement = synchCalls.item(m);
                             destName = char(callElement.getAttribute('dest'));
-                            destPos = findstring(lqn.names,destName);
+                            destPos = findlqnelem(lqn,destName,LayeredNetworkElement.ENTRY);
+                            if destPos <= 0
+                                continue;
+                            end
                             destID = lqn.names{destPos};
                             callPos = findstring(lqn.callnames,[actID,'=>',destID]);
                             callResult = callElement.getElementsByTagName('result-call');
@@ -156,7 +165,10 @@ for i = 0:procList.getLength()-1
                         for m = 0:asynchCalls.getLength()-1
                             callElement = asynchCalls.item(m);
                             destName = char(callElement.getAttribute('dest'));
-                            destPos = findstring(lqn.names,destName);
+                            destPos = findlqnelem(lqn,destName,LayeredNetworkElement.ENTRY);
+                            if destPos <= 0
+                                continue;
+                            end
                             destID = lqn.names{destPos};
                             callPos = findstring(lqn.callnames,[actID,'->',destID]);
                             callResult = callElement.getElementsByTagName('result-call');
@@ -179,7 +191,10 @@ for i = 0:procList.getLength()-1
                     actElement = actList.item(l);
                     if strcmp(char(actElement.getParentNode().getNodeName()),'task-activities')
                         actName = char(actElement.getAttribute('name'));
-                        actPos = findstring(lqn.names,actName);
+                        actPos = findlqnelem(lqn,actName,LayeredNetworkElement.ACTIVITY);
+                        if actPos <= 0
+                            continue;
+                        end
                         actResult = actElement.getElementsByTagName('result-activity');
                         uRes = str2double(actResult.item(0).getAttribute('utilization'));
                         stRes = str2double(actResult.item(0).getAttribute('service-time'));
@@ -198,7 +213,10 @@ for i = 0:procList.getLength()-1
                         for m = 0:synchCalls.getLength()-1
                             callElement = synchCalls.item(m);
                             destName = char(callElement.getAttribute('dest'));
-                            destPos = findstring(lqn.names,destName);
+                            destPos = findlqnelem(lqn,destName,LayeredNetworkElement.ENTRY);
+                            if destPos <= 0
+                                continue;
+                            end
                             destID = lqn.names{destPos};
                             callPos = findstring(lqn.callnames,[actID,'=>',destID]);
                             callResult = callElement.getElementsByTagName('result-call');
@@ -210,7 +228,10 @@ for i = 0:procList.getLength()-1
                         for m = 0:asynchCalls.getLength()-1
                             callElement = asynchCalls.item(m);
                             destName = char(callElement.getAttribute('dest'));
-                            destPos = findstring(lqn.names,destName);
+                            destPos = findlqnelem(lqn,destName,LayeredNetworkElement.ENTRY);
+                            if destPos <= 0
+                                continue;
+                            end
                             destID = lqn.names{destPos};
                             callPos = findstring(lqn.callnames,[actID,'->',destID]);
                             callResult = callElement.getElementsByTagName('result-call');
@@ -221,6 +242,60 @@ for i = 0:procList.getLength()-1
                 end
             end
         end
+    end
+end
+
+% Processor utilization of an entry, aggregated from its activity graph.
+% lqns credits host work to whichever level carries the host demand: in the
+% activity-graph form -- the only form writeXML emits -- an entry declares
+% none, so lqns reports result-entry proc-utilization as a literal 0 and the
+% work sits on the result-activity rows. The entry value is then the sum over
+% the activities reachable from the entry within its own task, which is what
+% lqn.actsof holds. In PH1PH2 form the same sum runs over the phase activities
+% and reproduces the value lqns reports there, so no form test is needed. An
+% entry with no activities, or any activity lqns left unreported, keeps the
+% raw attribute rather than a partial sum.
+for eoff = 1:lqn.nentries
+    eidx = lqn.eshift + eoff;
+    acts = lqn.actsof{eidx};
+    if isempty(acts)
+        continue
+    end
+    puActs = Avg.Nodes.ProcUtilization(acts);
+    if ~any(isnan(puActs))
+        Avg.Nodes.ProcUtilization(eidx) = sum(puActs);
+    end
+end
+
+% Phase-1 service time of an entry lqns never invoked.
+% lqns omits phase1-service-time from result-entry exactly when the entry's
+% throughput is zero: nothing was served, so there is no per-invocation mean to
+% report. LINE then carried a NaN where the table says an entry HAS a response
+% time and every other solver reports one, breaking the NaN mask -- see
+% _kb/06-solver-catalog.md. The value is taken from the activity rows, and ONLY
+% where they are unanimous: if every activity reachable from the entry reports a
+% zero service time then every aggregation law agrees on zero -- the serial sum,
+% the branch-weighted mean of an OrFork, the order statistic of an AndFork -- so
+% the derivation does not depend on which one applies.
+% It is deliberately NOT generalised the way ProcUtilization is above.
+% Utilizations add over an activity graph; response times do not. Measured over
+% the example corpus, sum(actsof) reproduces phase1-service-time on serial
+% chains only and misses it wherever the graph branches (lqn_workflows `Entry`:
+% 12.5667 reported against 8.5667 summed, lqn_fork_open_arrival `SE`: 0.841667
+% against 1.0), so a summed fallback would answer with a number lqns contradicts.
+% An entry whose activities are unreported, absent, or not all zero keeps NaN.
+for eoff = 1:lqn.nentries
+    eidx = lqn.eshift + eoff;
+    if ~isnan(Avg.Nodes.Phase1ServiceTime(eidx))
+        continue
+    end
+    acts = lqn.actsof{eidx};
+    if isempty(acts)
+        continue
+    end
+    stActs = Avg.Nodes.Phase1ServiceTime(acts);
+    if ~any(isnan(stActs)) && all(stActs == 0)
+        Avg.Nodes.Phase1ServiceTime(eidx) = 0;
     end
 end
 

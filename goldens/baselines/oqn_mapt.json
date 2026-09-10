@@ -1,0 +1,30 @@
+{
+  "class": {
+    "FLD": "deterministic"
+  },
+  "example": "oqn_mapt",
+  "solvers": {
+    "FLD": [
+      {
+        "ArvR": 0.0,
+        "JobClass": "OpenClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 5.4301,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 5.4301,
+        "JobClass": "OpenClass",
+        "QLen": 2.7151,
+        "ResidT": 0.5,
+        "RespT": 0.5,
+        "Station": "Delay",
+        "Tput": 5.4301,
+        "Util": 2.7151
+      }
+    ]
+  }
+}

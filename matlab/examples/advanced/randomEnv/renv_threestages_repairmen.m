@@ -42,7 +42,7 @@ soptions = CTMC.defaultOptions;
 soptions.timespan = [0,Inf];
 soptions.verbose = 0;
 soptions.stiff = false;
-envSolver = ENV(envModel, @(model) CTMC(model, soptions), options);
+envSolver = ENV(envModel, @(model) CTMC(model, 'exact', soptions), options);
 [infGen,stageInfGen] = envSolver.getGenerator()
 
 envSolver.getAvgTable()

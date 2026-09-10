@@ -66,15 +66,31 @@ class Exp(ContinuousDistribution, Markovian):
         """
         Create an exponential distribution with the given mean.
 
+        THE RATE IS CLAMPED to [GlobalConstants.Zero, GlobalConstants.Immediate],
+        which is what MATLAB `Exp.fitMean` and the JAR twin both do
+        (`min(Immediate, max(Zero, 1/MEAN))`) and what `fitRate` below already
+        did here. Without it a mean BELOW FineTol (1e-8) built a different model
+        in each codebase from the same script: `Exp.fit_mean(5e-10)` gave a rate
+        of 2e9 where MATLAB gave 1e8, so `lqn_sockshop`, whose bookkeeping
+        activities are written `Exp.fitMean(0.0000000005)`, round-tripped
+        Python -> MATLAB into a model with 20x smaller demands at those
+        activities. It disagreed only where the answer is near zero, which is
+        exactly where a RELATIVE comparison is most severe: the JSON parity row
+        reported maxrel=1 on QLen.
+
         Args:
             mean: Target mean.
 
         Returns:
-            Exp distribution with rate = 1/mean.
+            Exp distribution with the clamped rate.
         """
-        if mean <= 0:
+        if mean < 0:
             raise ValueError("Mean must be positive")
-        return cls(rate=1.0 / mean)
+        from ..constants import GlobalConstants
+        # A zero mean is the immediate activity, not a malformed one; MATLAB
+        # takes 1/0 = Inf through the same min() and lands on Immediate.
+        rate = GlobalConstants.Immediate if mean == 0 else 1.0 / mean
+        return cls.fitRate(rate)
 
     # CamelCase alias
     fitMean = fit_mean
@@ -156,13 +172,24 @@ class Exp(ContinuousDistribution, Markovian):
         """
         Create an exponential distribution with the given rate.
 
+        THE RATE IS CLAMPED TO [GlobalConstants.Zero, GlobalConstants.Immediate],
+        exactly as MATLAB Exp.fitRate, the JAR twin and the C++ `exp_rate` do. A
+        fitter is fed a COMPUTED rate -- an iterate of SolverLN, a refreshed
+        arrival rate -- and a rate of zero is a starved element rather than a
+        malformed model: raising here aborted the whole layered solve of
+        lqn_ofbiz on an activity whose throughput was still zero. A rate the
+        caller writes itself still goes through the constructor, which refuses a
+        non-positive one.
+
         Args:
             rate: The rate parameter (lambda).
 
         Returns:
-            Exp distribution with specified rate.
+            Exp distribution with the clamped rate.
         """
-        return cls(rate=rate)
+        from ..constants import GlobalConstants
+        return cls(rate=min(GlobalConstants.Immediate,
+                            max(GlobalConstants.Zero, float(rate))))
 
     # Snake_case alias
     fit_rate = fitRate
@@ -226,10 +253,12 @@ class Det(ContinuousDistribution):
         """Evaluate the PDF at point x (delta function, return inf at value)."""
         return float('inf') if x == self._value else 0.0
 
-    def evalLST(self, s: float) -> float:
-        """LST of a deterministic time: exp(-s*t). Matches MATLAB Det.evalLST."""
-        import math
-        return math.exp(-s * self._value)
+    def evalLST(self, s):
+        """LST of a deterministic time: exp(-s*t). Matches MATLAB Det.evalLST.
+        numpy rather than math, so a COMPLEX argument is admissible: transform
+        inversion and root location both need one."""
+        val = np.exp(-s * self._value)
+        return complex(val) if isinstance(s, complex) else float(np.real(val))
 
     def sample(self, n: int = 1, rng: Optional[np.random.Generator] = None) -> np.ndarray:
         """Generate random samples (all equal to value)."""
@@ -281,6 +310,12 @@ class Immediate(Det):
     # snake_case alias
     get_instance = getInstance
 
+    def getSCV(self) -> float:
+        """SCV of an immediate service, 1 as in MATLAB and the JAR. The variance
+        over a zero mean is undefined, and the deterministic 0 that Det returns
+        made an Immediate look like a Det service to any SCV-driven fit."""
+        return 1.0
+
     def isImmediate(self) -> bool:
         """Check if this is immediate service."""
         return True
@@ -311,12 +346,41 @@ class Disabled(ContinuousDistribution):
     get_instance = getInstance
 
     def getMean(self) -> float:
-        """Get the mean (infinity for disabled)."""
-        return float('inf')
+        """Get the mean (NaN: a disabled class has no service law at all).
+
+        NaN and not infinity, matching MATLAB `Disabled.getMean` and the JAR's
+        `Disabled.getMean`. The difference is load bearing wherever a caller
+        selects the served classes with a `getMean() > tol` test: NaN fails that
+        test, infinity passes it and admits every disabled class."""
+        return float('nan')
 
     def getVar(self) -> float:
-        """Get the variance."""
-        return float('inf')
+        """Get the variance (NaN, as in MATLAB and the JAR)."""
+        return float('nan')
+
+    def getSCV(self) -> float:
+        """Get the SCV (NaN, as in MATLAB and the JAR)."""
+        return float('nan')
+
+    def getRate(self) -> float:
+        """Get the rate (NaN, as in the JAR; not 1/inf = 0)."""
+        return float('nan')
+
+    def getSkew(self) -> float:
+        """Get the skewness (NaN, as in the JAR)."""
+        return float('nan')
+
+    def evalCDF(self, x: float) -> float:
+        """Evaluate the CDF (NaN, as in MATLAB and the JAR)."""
+        return float('nan')
+
+    def evalLST(self, s: float) -> float:
+        """Evaluate the Laplace-Stieltjes transform (NaN, as in the JAR)."""
+        return float('nan')
+
+    def sample(self, n: int = 1, rng=None) -> np.ndarray:
+        """Draw n samples, all NaN, as in MATLAB and the JAR."""
+        return np.full(int(n), float('nan'))
 
     def isDisabled(self) -> bool:
         """Check if this distribution is disabled."""
@@ -364,21 +428,31 @@ class Erlang(ContinuousDistribution, Markovian):
         """
         Create an Erlang distribution from mean and SCV.
 
-        For Erlang, SCV = 1/k where k is number of phases.
-        So phases = round(1/SCV), constrained to be >= 1.
+        For Erlang, SCV = 1/k where k is the number of phases, so the order is
+        k = ceil(1/SCV): the achievable SCVs are 1, 1/2, 1/3, ... and the fit
+        takes the first one AT OR BELOW the request. Rounding instead would
+        return a different law -- at SCV=0.4, ceil gives 3 phases and round
+        gives 2 -- and every solver downstream would answer a different model
+        with no error raised. MATLAB `Erlang.fitMeanAndSCV`, the JAR and the
+        C++ port all use ceil.
 
         Args:
             mean: Target mean.
-            scv: Target squared coefficient of variation.
+            scv: Target squared coefficient of variation, which must be <= 1.
 
         Returns:
-            Erlang distribution with given mean and closest achievable SCV.
+            Erlang distribution with the given mean and the closest achievable
+            SCV at or below the requested one.
         """
         if scv <= 0:
             raise ValueError("SCV must be positive")
         if mean <= 0:
             raise ValueError("Mean must be positive")
-        phases = max(1, round(1.0 / scv))
+        if scv > 1:
+            raise ValueError(
+                "The Erlang distribution requires squared coefficient of variation <= 1")
+        import math
+        phases = int(math.ceil(1.0 / scv))
         phase_rate = phases / mean
         return cls(phase_rate=phase_rate, nphases=phases)
 
@@ -537,7 +611,7 @@ class HyperExp(ContinuousDistribution, Markovian):
         self._means = 1.0 / self._rates
 
     @classmethod
-    def fit(cls, mean: float, scv: float, skew: float = None) -> 'HyperExp':
+    def fit(cls, mean, scv: float = None, skew: float = None, **kwargs) -> 'HyperExp':
         """Fit a two-phase hyperexponential to three moments (MATLAB
         HyperExp.fit).
 
@@ -545,7 +619,28 @@ class HyperExp(ContinuousDistribution, Markovian):
         the two-moment fit when it is infeasible. The fallback is used here,
         which is what MATLAB itself returns whenever the triple is not
         hyperexponential-feasible.
+
+        ``HyperExp.fit(dist, method='feldmannwhitt', ...)`` instead fits the
+        ccdf of the distribution ``dist`` ITSELF at points spread over decades
+        of time scale, rather than matching moments (hyperexp_fit_longtail,
+        Feldmann and Whitt 1998). That is the only form available for a
+        long-tail law: a Pareto with tail index below 2 has no finite variance,
+        so the moment fit above does not exist at all, and even where the
+        moments are finite they say nothing about the orders of magnitude over
+        which such a law acts. Any further keyword arguments (``k``, ``c1``,
+        ``b``, ``decade``, ``points``) are passed through.
         """
+        if hasattr(mean, 'evalCDF') or hasattr(mean, 'eval_cdf'):
+            dist = mean
+            method = str(kwargs.pop('method', 'feldmannwhitt')).lower()
+            if method != 'feldmannwhitt':
+                raise ValueError("HyperExp.fit on a distribution supports method "
+                                 "'feldmannwhitt' only; '%s' was requested." % method)
+            from ..api.mam.hyperexp_longtail import hyperexp_fit_longtail
+            cdf = getattr(dist, 'evalCDF', None) or getattr(dist, 'eval_cdf')
+            res = hyperexp_fit_longtail(lambda t: 1.0 - float(cdf(t)), **kwargs)
+            return cls(np.asarray(res['p'], dtype=float).ravel(),
+                       np.asarray(res['lambda'], dtype=float).ravel())
         return cls.fit_mean_and_scv(mean, scv)
 
     @classmethod
@@ -842,6 +937,21 @@ class Gamma(ContinuousDistribution):
             return 0.0
         return stats.gamma.pdf(x, a=self._shape, scale=self._scale)
 
+    def evalLST(self, s):
+        """
+        LST of the Gamma law, (beta/(s+beta))^shape with beta = 1/scale.
+
+        MATLAB, the JAR and the cpp port all carry this closed form; without it
+        the base rectangle rule answered here, which is both approximate (3.3e-4
+        relative at s = 0.5+1i) and real-only. Being analytic it also serves the
+        complex arguments transform inversion needs.
+        """
+        shape = self._shape
+        scale = self._scale
+        beta = 1.0 / scale
+        val = (beta / (s + beta)) ** shape
+        return complex(val) if isinstance(s, complex) else float(np.real(val))
+
     def sample(self, n: int = 1, rng: Optional[np.random.Generator] = None) -> np.ndarray:
         """Generate random samples."""
         if rng is None:
@@ -928,21 +1038,27 @@ class Lognormal(ContinuousDistribution):
             return 0.0
         return stats.lognorm.pdf(x, s=self._sigma, scale=np.exp(self._mu))
 
-    def evalLST(self, s: float) -> float:
-        """Numerical LST (rectangle rule, n=1000) matching MATLAB Lognormal.evalLST."""
+    def evalLST(self, s):
+        """Numerical LST (rectangle rule, n=1000) matching MATLAB Lognormal.evalLST.
+
+        numpy rather than math for the kernel, so a COMPLEX argument is
+        admissible: transform inversion and root location both need one, and
+        MATLAB's own quadrature extends to the complex plane unchanged.
+        """
         import math
         mu = self._mu
         sigma = self._sigma
         upper = math.exp(mu + 5.0 * sigma)
         n = 1000
         dx = upper / n
-        total = 0.0
+        cplx = isinstance(s, complex)
+        total = 0.0 + 0.0j if cplx else 0.0
         for i in range(1, n + 1):
             x = i * dx
             logx = math.log(x)
             pdf = math.exp(-(logx - mu) ** 2 / (2.0 * sigma ** 2)) / (x * sigma * math.sqrt(2.0 * math.pi))
-            total += math.exp(-s * x) * pdf
-        return total * dx
+            total += np.exp(-s * x) * pdf
+        return complex(total * dx) if cplx else float(np.real(total * dx))
 
     def sample(self, n: int = 1, rng: Optional[np.random.Generator] = None) -> np.ndarray:
         """Generate random samples."""
@@ -1071,7 +1187,6 @@ class Pareto(ContinuousDistribution):
         biased the transform low by ~3.1% at alpha=2.0078 (it returned
         ``A*(0)=0.96914``, not 1).
         """
-        import math
         from scipy.integrate import quad
         alpha = self._alpha
         k = self._scale
@@ -1083,9 +1198,17 @@ class Pareto(ContinuousDistribution):
             # derivatives vanish there), so the guard only avoids 0/0.
             if u <= 0.0:
                 return 0.0
-            return (u ** (alpha - 1.0)) * math.exp(-s * k / u)
+            return (u ** (alpha - 1.0)) * np.exp(-s * k / u)
 
         # see _kb/11-conventions-and-gotchas.md (Python long-tail low-hit gotchas) for rationale
+        if isinstance(s, complex):
+            # quad integrates a REAL integrand, so the two parts are taken
+            # separately; the interval and the rule are otherwise unchanged.
+            re, _ = quad(lambda u: float(np.real(integrand(u))), 0.0, 1.0,
+                         epsabs=0.0, epsrel=1e-12, limit=200)
+            im, _ = quad(lambda u: float(np.imag(integrand(u))), 0.0, 1.0,
+                         epsabs=0.0, epsrel=1e-12, limit=200)
+            return alpha * complex(re, im)
         val, _ = quad(integrand, 0.0, 1.0, epsabs=0.0, epsrel=1e-12, limit=200)
         return alpha * val
 
@@ -1193,11 +1316,12 @@ class Uniform(ContinuousDistribution):
         return 1.0 / (self._max - self._min)
 
     def evalLST(self, s: float) -> float:
-        """LST of Uniform[min,max]: (e^{-s*min}-e^{-s*max})/(s*(max-min)). Matches MATLAB."""
-        import math
+        """LST of Uniform[min,max]: (e^{-s*min}-e^{-s*max})/(s*(max-min)). Matches
+        MATLAB. numpy rather than math, so a COMPLEX argument is admissible."""
         if abs(s) < 1e-14:
             return 1.0
-        return (math.exp(-s * self._min) - math.exp(-s * self._max)) / (s * (self._max - self._min))
+        val = (np.exp(-s * self._min) - np.exp(-s * self._max)) / (s * (self._max - self._min))
+        return complex(val) if isinstance(s, complex) else float(np.real(val))
 
     def sample(self, n: int = 1, rng: Optional[np.random.Generator] = None) -> np.ndarray:
         """Generate random samples."""
@@ -1308,20 +1432,25 @@ class Weibull(ContinuousDistribution):
         return (self._shape / self._scale) * (x / self._scale) ** (self._shape - 1) * \
                np.exp(-(x / self._scale) ** self._shape)
 
-    def evalLST(self, s: float) -> float:
-        """Numerical LST (rectangle rule, n=1000) matching MATLAB Weibull.evalLST."""
+    def evalLST(self, s):
+        """Numerical LST (rectangle rule, n=1000) matching MATLAB Weibull.evalLST.
+
+        numpy rather than math for the kernel, so a COMPLEX argument is
+        admissible, as in MATLAB.
+        """
         import math
         alpha = self._scale  # MATLAB scale param
         r = self._shape      # MATLAB shape param
         upper = alpha * ((-math.log(1e-10)) ** (1.0 / r))
         n = 1000
         dx = upper / n
-        total = 0.0
+        cplx = isinstance(s, complex)
+        total = 0.0 + 0.0j if cplx else 0.0
         for i in range(1, n + 1):
             x = i * dx
             pdf = (r / alpha) * ((x / alpha) ** (r - 1.0)) * math.exp(-((x / alpha) ** r))
-            total += math.exp(-s * x) * pdf
-        return total * dx
+            total += np.exp(-s * x) * pdf
+        return complex(total * dx) if cplx else float(np.real(total * dx))
 
     def sample(self, n: int = 1, rng: Optional[np.random.Generator] = None) -> np.ndarray:
         """Generate random samples."""
@@ -1698,6 +1827,49 @@ class Prior(ContinuousDistribution):
             raise IndexError("Index out of bounds")
         return float(self._probabilities[idx])
 
+    def discretize(self, n: int = 11, method: str = 'quadrature', rng=None):
+        """Reduce the prior to n weighted alternatives.
+
+        The method is honoured, which is what makes SolverUQ's own
+        'quadrature'/'montecarlo' methods mean anything:
+
+          'quadrature'  the alternatives and their probabilities unchanged, and
+                        n is ignored: a discrete set is already exact.
+          'montecarlo'  n i.i.d. draws of the ALTERNATIVE INDEX against its
+                        probabilities, weights 1/n. Returning the alternatives
+                        unweighted here would silently drop the prior.
+
+        Mirrors Prior.discretize in MATLAB. The continuous form of the prior --
+        a parameter density plus a distribution factory -- is not representable
+        by this class, which holds an explicit alternative list, so a continuous
+        request has nothing to discretize and is refused rather than answered
+        from the discrete branch.
+
+        Args:
+            n: number of alternatives (ignored by 'quadrature')
+            method: 'quadrature' (default) or 'montecarlo'
+            rng: optional numpy Generator, for a reproducible draw
+
+        Returns:
+            (dists, weights) with weights summing to 1
+        """
+        if method not in ('quadrature', 'montecarlo'):
+            raise ValueError("Unknown discretization method: %s" % method)
+        if method == 'quadrature':
+            return list(self._distributions), self._probabilities.copy()
+        n = int(n) if n else 11
+        if n < 1:
+            raise ValueError("montecarlo needs at least one draw")
+        draws = rng if rng is not None else np.random.default_rng()
+        cumprob = np.cumsum(self._probabilities)
+        dists = []
+        for _ in range(n):
+            u = float(draws.random())
+            idx = int(np.searchsorted(cumprob, u, side='left'))
+            idx = min(idx, len(self._distributions) - 1)
+            dists.append(self._distributions[idx])
+        return dists, np.full(n, 1.0 / n)
+
     def getMean(self) -> float:
         """Get prior-weighted mean (expected mean over alternatives)."""
         mean = 0.0
@@ -1776,10 +1948,10 @@ class Expolynomial(ContinuousDistribution):
     Expolynomial distribution with density f(x) = sum ci * x^ai * exp(-li*x).
 
     Represents an expolynomial density over a bounded domain [eft, lft],
-    matching the Sirio/ORIS GEN expolynomial format.
+    matching the GEN expolynomial format of external stochastic Petri net tools.
 
     Args:
-        density: Density expression string in Sirio format.
+        density: Density expression string in expolynomial (GEN) format.
         eft: Earliest firing time (lower bound of support).
         lft: Latest firing time (upper bound of support, use math.inf for unbounded).
     """
@@ -2068,3 +2240,719 @@ class NHPP(ContinuousDistribution):
                     return 0.0
                 idx = 0
             pos = self._breakpoints[idx]
+
+
+def _schedule_support(M: np.ndarray, ignore_diagonal: bool) -> np.ndarray:
+    """Boolean support pattern of M, optionally excluding the diagonal."""
+    pattern = M != 0.0
+    if ignore_diagonal:
+        pattern = pattern.copy()
+        np.fill_diagonal(pattern, False)
+    return pattern
+
+
+def _check_common_support(mats: List[np.ndarray], ignore_diagonal: bool,
+                          cls: str, label: str) -> None:
+    """Reject a schedule whose matrices do not share one sparsity pattern.
+
+    The fluid solver expresses a time-varying process as a per-entry multiplier
+    on a nominal (time-averaged) matrix, and that multiplier is undefined where
+    the nominal entry is zero. Requiring one support pattern across segments is
+    what makes the nominal nonzero wherever any segment is. A process whose
+    phase-transition topology changes in time is therefore refused outright
+    rather than silently losing the transitions absent from the nominal.
+    """
+    ref = _schedule_support(mats[0], ignore_diagonal)
+    for k in range(1, len(mats)):
+        if not np.array_equal(_schedule_support(mats[k], ignore_diagonal), ref):
+            raise ValueError(
+                "%s: the %s sparsity pattern must be identical across segments; "
+                "segment %d differs from segment 1. A schedule that switches a "
+                "transition on or off cannot be expressed as a per-entry "
+                "multiplier on the time-averaged process. Keep the entry present "
+                "with a small positive rate instead." % (cls, label, k + 1))
+
+
+class MAPt(ContinuousDistribution):
+    """
+    Time-inhomogeneous Markovian arrival process (MAP_t).
+
+    Following Ko and Pender (Oper. Res. Lett. 45, 2017), a MAP_t is an ordinary
+    MAP whose two matrices are functions of the wall clock, D0(t) and D1(t),
+    required only to be locally integrable. This class realises that definition
+    with a piecewise-constant schedule, which is dense in L1_loc and is the form
+    that serialises: segment k covers [breakpoints[k], breakpoints[k+1]) and
+    carries the pair (D0[k], D1[k]), so breakpoints has one more entry than the
+    matrix lists. D0 holds transition rates without an arrival, D1 the rates
+    that generate one, and D0+D1 is a generator in every segment.
+
+    Two horizon conventions, as for NHPP:
+      cyclic     : the schedule repeats with period
+                   T = breakpoints[-1] - breakpoints[0].
+      non-cyclic : outside [breakpoints[0], breakpoints[-1]) the process is
+                   frozen in its last phase and emits nothing, so a non-cyclic
+                   MAP_t is a transient construct.
+
+    Setting h = 1 with D0 = [[-lambda_k]], D1 = [[lambda_k]] recovers exactly
+    the NHPP with the same breakpoints and rates.
+
+    This is neither a renewal process nor a time-homogeneous one, so the scalar
+    summaries that presuppose an i.i.d. interval distribution -- getSCV, getVar,
+    getSkew, evalCDF, evalLST -- are undefined and return NaN rather than a
+    representative value that would misreport the process as stationary. The
+    schedule is the parameterisation: read it with getRateSchedule.
+
+    The class deliberately does NOT extend Markovian. Code gated on
+    isMarkovian() reads getProcess() as a single stationary (D0, D1) pair and
+    would silently drop the schedule; NHPP avoids the base class for the same
+    reason.
+
+    Nominal process. getTimeAverageProcess returns the width-weighted average
+    pair (D0bar, D1bar), which is what the fluid solver substitutes as the
+    stationary carrier of the phase structure and what sn.rates summarises via
+    its MAP arrival rate. For h = 1 that rate coincides with the NHPP
+    time-average rate.
+
+    Args:
+        breakpoints: strictly increasing segment boundaries, length n+1.
+        D0: list of n square matrices of no-arrival transition rates.
+        D1: list of n square matrices of arrival-generating rates.
+        cyclic: whether the schedule repeats with the horizon as period.
+    """
+
+    def __init__(self, breakpoints, D0, D1, cyclic: bool = True):
+        super().__init__()
+        self._name = 'MAPt'
+        breakpoints = np.asarray(breakpoints, dtype=float).ravel()
+        if isinstance(D0, np.ndarray) and D0.ndim == 2:
+            D0 = [D0]
+        if isinstance(D1, np.ndarray) and D1.ndim == 2:
+            D1 = [D1]
+        D0 = [np.atleast_2d(np.asarray(M, dtype=float)) for M in D0]
+        D1 = [np.atleast_2d(np.asarray(M, dtype=float)) for M in D1]
+        n = len(D0)
+        if n == 0 or len(D1) != n:
+            raise ValueError("MAPt: D0 and D1 must be non-empty lists of equal length")
+        if breakpoints.size != n + 1:
+            raise ValueError(
+                "MAPt: breakpoints must have one more entry than the number of segments")
+        if np.any(np.diff(breakpoints) <= 0):
+            raise ValueError("MAPt: breakpoints must be strictly increasing")
+        h = D0[0].shape[0]
+        for k in range(n):
+            if D0[k].shape != (h, h) or D1[k].shape != (h, h):
+                raise ValueError(
+                    "MAPt: every D0 and D1 must be square of the same order; "
+                    "segment %d has shapes %s and %s against order %d"
+                    % (k + 1, D0[k].shape, D1[k].shape, h))
+            if np.any(D1[k] < 0.0):
+                raise ValueError("MAPt: D1 must be non-negative in segment %d" % (k + 1))
+            off = D0[k] - np.diag(np.diag(D0[k]))
+            if np.any(off < 0.0):
+                raise ValueError(
+                    "MAPt: off-diagonal D0 entries must be non-negative in segment %d"
+                    % (k + 1))
+            if not np.allclose((D0[k] + D1[k]).sum(axis=1), 0.0, atol=1e-10):
+                raise ValueError(
+                    "MAPt: D0+D1 must have zero row sums (generator) in segment %d"
+                    % (k + 1))
+        _check_common_support(D0, True, 'MAPt', 'off-diagonal D0')
+        _check_common_support(D1, False, 'MAPt', 'D1')
+        if all(float(np.sum(D1[k])) <= 0.0 for k in range(n)):
+            raise ValueError(
+                "MAPt: every segment has zero arrival intensity, so no event can ever occur")
+        self._breakpoints = breakpoints
+        self._D0 = D0
+        self._D1 = D1
+        self._cyclic = bool(cyclic)
+        # Wall-clock position and phase of the next sample; see sample().
+        self._sample_clock = float(breakpoints[0])
+        self._sample_phase = 0
+
+    @property
+    def breakpoints(self) -> np.ndarray:
+        """Segment boundaries, length n+1."""
+        return self._breakpoints
+
+    @property
+    def D0(self) -> List[np.ndarray]:
+        """Per-segment no-arrival rate matrices."""
+        return [M.copy() for M in self._D0]
+
+    @property
+    def D1(self) -> List[np.ndarray]:
+        """Per-segment arrival-generating rate matrices."""
+        return [M.copy() for M in self._D1]
+
+    @property
+    def cyclic(self) -> bool:
+        """Whether the schedule repeats."""
+        return self._cyclic
+
+    def getBreakpoints(self) -> np.ndarray:
+        """Segment boundaries, length n+1 (MATLAB/JAR accessor name)."""
+        return self._breakpoints
+
+    def getD0Segments(self) -> List[np.ndarray]:
+        """Per-segment D0 matrices (MATLAB/JAR accessor name)."""
+        return [M.copy() for M in self._D0]
+
+    def getD1Segments(self) -> List[np.ndarray]:
+        """Per-segment D1 matrices (MATLAB/JAR accessor name)."""
+        return [M.copy() for M in self._D1]
+
+    def isCyclic(self) -> bool:
+        """Whether the schedule repeats (MATLAB/JAR accessor name)."""
+        return self._cyclic
+
+    def getNumSegments(self) -> int:
+        return len(self._D0)
+
+    def getNumberOfPhases(self) -> int:
+        return int(self._D0[0].shape[0])
+
+    def getPeriod(self) -> float:
+        """Horizon length, which is the period when cyclic."""
+        return float(self._breakpoints[-1] - self._breakpoints[0])
+
+    def getSegmentIndexAt(self, t: float) -> int:
+        """Index of the segment in force at t, or -1 past a non-cyclic horizon."""
+        period = self.getPeriod()
+        offset = float(t) - self._breakpoints[0]
+        if self._cyclic:
+            offset = offset % period
+        elif offset < 0.0 or offset >= period:
+            return -1
+        pos = self._breakpoints[0] + offset
+        idx = int(np.searchsorted(self._breakpoints[1:], pos, side='right'))
+        return min(idx, len(self._D0) - 1)
+
+    def getD0At(self, t: float) -> np.ndarray:
+        """D0 in force at t; the zero matrix past a non-cyclic horizon."""
+        idx = self.getSegmentIndexAt(t)
+        if idx < 0:
+            return np.zeros_like(self._D0[0])
+        return self._D0[idx].copy()
+
+    def getD1At(self, t: float) -> np.ndarray:
+        """D1 in force at t; the zero matrix past a non-cyclic horizon."""
+        idx = self.getSegmentIndexAt(t)
+        if idx < 0:
+            return np.zeros_like(self._D1[0])
+        return self._D1[idx].copy()
+
+    def getTimeAverageProcess(self) -> Tuple[np.ndarray, np.ndarray]:
+        """Width-weighted average (D0bar, D1bar) over the horizon.
+
+        This is the nominal stationary MAP that carries the phase structure
+        where a solver needs a time-homogeneous carrier. It is a valid MAP: a
+        convex combination of generators is a generator, and non-negativity is
+        preserved entrywise.
+        """
+        widths = np.diff(self._breakpoints)
+        total = float(np.sum(widths))
+        D0bar = sum(w * M for w, M in zip(widths, self._D0)) / total
+        D1bar = sum(w * M for w, M in zip(widths, self._D1)) / total
+        return D0bar, D1bar
+
+    def getTimeAverageRate(self) -> float:
+        """Arrival rate of the time-averaged MAP, i.e. pi*D1bar*e.
+
+        For h = 1 this is exactly the NHPP width-weighted average intensity.
+        """
+        from ..api.mam import map_lambda
+        D0bar, D1bar = self.getTimeAverageProcess()
+        return float(map_lambda(D0bar, D1bar))
+
+    def getRateAt(self, t: float) -> float:
+        """Arrival rate of the MAP in force at t; zero past a non-cyclic horizon.
+
+        This is the stationary rate of that segment's MAP, not the instantaneous
+        conditional intensity, which depends on the current phase.
+        """
+        from ..api.mam import map_lambda
+        idx = self.getSegmentIndexAt(t)
+        if idx < 0:
+            return 0.0
+        return float(map_lambda(self._D0[idx], self._D1[idx]))
+
+    def getRateSchedule(self) -> dict:
+        """The parameterisation of the process; the scalar summaries are not.
+
+        Model compilation recognises a schedule-bearing process by this method
+        rather than by class name.
+        """
+        return {'breakpoints': self._breakpoints,
+                'D0': [M.copy() for M in self._D0],
+                'D1': [M.copy() for M in self._D1],
+                'cyclic': self._cyclic}
+
+    def getMean(self) -> float:
+        """Arrival-stationary (Palm) mean interval of the time-averaged MAP."""
+        return 1.0 / self.getTimeAverageRate()
+
+    def getRate(self) -> float:
+        return self.getTimeAverageRate()
+
+    def getVar(self) -> float:
+        """NaN; see getSCV."""
+        return float('nan')
+
+    def getSCV(self) -> float:
+        """NaN: a MAP_t is neither renewal nor time-homogeneous, so there is no
+        i.i.d. interval distribution for an SCV to summarise. Returning the SCV
+        of the time-averaged MAP would report a time-varying process as a
+        stationary one to every consumer of sn.scv."""
+        return float('nan')
+
+    def getSkew(self) -> float:
+        """NaN; see getSCV."""
+        return float('nan')
+
+    def getSkewness(self) -> float:
+        """NaN; see getSCV (MATLAB/JAR accessor name)."""
+        return float('nan')
+
+    def evalCDF(self, x: float) -> float:
+        """NaN; see getSCV."""
+        return float('nan')
+
+    def evalLST(self, s: float) -> float:
+        """NaN: no i.i.d. interval distribution, so no Laplace-Stieltjes
+        transform. Overrides the base numerical quadrature, which would
+        integrate against an undefined CDF."""
+        return float('nan')
+
+    def __repr__(self) -> str:
+        return "line_solver.MAPt(%d segments, %d phases, %s, avgRate=%f)" % (
+            self.getNumSegments(), self.getNumberOfPhases(),
+            "cyclic" if self._cyclic else "non-cyclic",
+            self.getTimeAverageRate())
+
+    def getProcess(self):
+        return [self._breakpoints, [M.copy() for M in self._D0],
+                [M.copy() for M in self._D1], self._cyclic]
+
+    def resetSampleClock(self) -> None:
+        """Restart the sample path at the schedule start, in phase 1."""
+        self._sample_clock = float(self._breakpoints[0])
+        self._sample_phase = 0
+
+    def sample(self, n: int = 1, rng: Optional[np.random.Generator] = None) -> np.ndarray:
+        """Draw n successive interarrival times along ONE sample path.
+
+        Both the intensity and the phase depend on absolute time, so this
+        advances an internal clock and phase across calls: consecutive samples
+        form a realisation of the process starting at breakpoints[0] in phase 1,
+        not independent draws from a marginal. Use resetSampleClock() to
+        restart. A non-cyclic schedule that runs out returns 0 for every
+        remaining sample.
+        """
+        if rng is None:
+            rng = np.random.default_rng()
+        out = np.zeros(n, dtype=float)
+        for i in range(n):
+            interval, phase = self.nextArrival(self._sample_clock, self._sample_phase, rng)
+            out[i] = interval
+            if interval <= 0.0:
+                break  # horizon exhausted: no further event can occur
+            self._sample_clock += interval
+            self._sample_phase = phase
+        return out
+
+    def nextArrival(self, frm: float, phase: int,
+                    rng: Optional[np.random.Generator] = None) -> Tuple[float, int]:
+        """Time to the next arrival from wall clock frm in the given phase.
+
+        Returns (interval, phase after the arrival). Exact: within a segment the
+        phase process is a homogeneous CTMC, and by the memoryless property the
+        residual holding time may be redrawn at a breakpoint without biasing the
+        path, so the boundary is crossed by advancing the clock and resampling
+        under the new matrices. Returns (0, phase) when a non-cyclic horizon is
+        exhausted, which callers read as "no further arrival".
+        """
+        if rng is None:
+            rng = np.random.default_rng()
+        elapsed = 0.0
+        pos = float(frm)
+        while True:
+            idx = self.getSegmentIndexAt(pos)
+            if idx < 0:
+                return 0.0, phase
+            # Time left in the active segment, unrolling a cyclic schedule.
+            period = self.getPeriod()
+            offset = pos - self._breakpoints[0]
+            if self._cyclic:
+                offset = offset % period
+            seg_end_offset = self._breakpoints[idx + 1] - self._breakpoints[0]
+            to_boundary = seg_end_offset - offset
+            D0 = self._D0[idx]
+            D1 = self._D1[idx]
+            total = -float(D0[phase, phase])
+            if total <= 0.0:
+                # Absorbing phase in this segment: only a boundary can free it.
+                if not self._cyclic and idx == len(self._D0) - 1:
+                    return 0.0, phase
+                elapsed += to_boundary
+                pos += to_boundary
+                continue
+            holding = float(rng.exponential(1.0 / total))
+            if holding >= to_boundary:
+                if not self._cyclic and idx == len(self._D0) - 1:
+                    return 0.0, phase
+                elapsed += to_boundary
+                pos += to_boundary
+                continue
+            elapsed += holding
+            pos += holding
+            # Competing transitions out of the current phase, arrivals first.
+            h = D0.shape[0]
+            weights = np.concatenate([D1[phase, :], D0[phase, :].copy()])
+            weights[h + phase] = 0.0
+            u = float(rng.random()) * total
+            cum = 0.0
+            for j, wgt in enumerate(weights):
+                cum += wgt
+                if u < cum:
+                    if j < h:
+                        return elapsed, j
+                    phase = j - h
+                    break
+            else:
+                # Rounding shortfall: attribute the draw to the last positive entry.
+                j = int(np.max(np.nonzero(weights)[0]))
+                if j < h:
+                    return elapsed, j
+                phase = j - h
+
+
+class PHt(ContinuousDistribution):
+    """
+    Time-inhomogeneous phase-type distribution (Ph_t).
+
+    Following Ko and Pender (Oper. Res. Lett. 45, 2017), a Ph_t is an ordinary
+    phase-type distribution whose initial vector and sub-generator are functions
+    of the wall clock, alpha(t) and S(t), required only to be locally
+    integrable. This class realises that definition with a piecewise-constant
+    schedule: segment k covers [breakpoints[k], breakpoints[k+1]) and carries
+    the pair (alpha[k], S[k]), so breakpoints has one more entry than the lists.
+    The exit vector is s(t) = -S(t)e.
+
+    Because both the phase and the elapsed service depend on absolute time, a
+    Ph_t service time is a function of the epoch at which service starts:
+    sampleFrom(t0) is the operative sampler, and sample() walks one path.
+
+    Setting h = 1 with S = [[-mu_k]] recovers a time-varying exponential, whose
+    completion stream at a saturated server is the NHPP with rates mu_k.
+
+    Like MAPt this does NOT extend Markovian, so that isMarkovian()-gated code
+    cannot read it as a single stationary (alpha, S) pair; and the scalar
+    summaries getSCV, getVar, getSkew, evalCDF, evalLST return NaN, the
+    distribution of a service time being different at every start epoch.
+
+    Args:
+        breakpoints: strictly increasing segment boundaries, length n+1.
+        alpha: list of n initial probability row vectors, each summing to 1.
+        S: list of n sub-generator matrices with non-positive row sums.
+        cyclic: whether the schedule repeats with the horizon as period.
+    """
+
+    def __init__(self, breakpoints, alpha, S, cyclic: bool = True):
+        super().__init__()
+        self._name = 'PHt'
+        breakpoints = np.asarray(breakpoints, dtype=float).ravel()
+        if isinstance(S, np.ndarray) and S.ndim == 2:
+            S = [S]
+        if isinstance(alpha, np.ndarray) and alpha.ndim == 1:
+            alpha = [alpha]
+        alpha = [np.asarray(a, dtype=float).ravel() for a in alpha]
+        S = [np.atleast_2d(np.asarray(M, dtype=float)) for M in S]
+        n = len(S)
+        if n == 0 or len(alpha) != n:
+            raise ValueError("PHt: alpha and S must be non-empty lists of equal length")
+        if breakpoints.size != n + 1:
+            raise ValueError(
+                "PHt: breakpoints must have one more entry than the number of segments")
+        if np.any(np.diff(breakpoints) <= 0):
+            raise ValueError("PHt: breakpoints must be strictly increasing")
+        h = S[0].shape[0]
+        for k in range(n):
+            if S[k].shape != (h, h) or alpha[k].size != h:
+                raise ValueError(
+                    "PHt: every S must be square of order %d with a matching alpha; "
+                    "segment %d has shapes %s and %s" % (h, k + 1, S[k].shape, alpha[k].shape))
+            if np.any(alpha[k] < 0.0) or not np.isclose(float(np.sum(alpha[k])), 1.0, atol=1e-10):
+                raise ValueError(
+                    "PHt: alpha must be a probability vector in segment %d" % (k + 1))
+            off = S[k] - np.diag(np.diag(S[k]))
+            if np.any(off < 0.0):
+                raise ValueError(
+                    "PHt: off-diagonal S entries must be non-negative in segment %d" % (k + 1))
+            exit_rates = -S[k].sum(axis=1)
+            if np.any(exit_rates < -1e-10):
+                raise ValueError(
+                    "PHt: S must have non-positive row sums in segment %d" % (k + 1))
+        _check_common_support(S, True, 'PHt', 'off-diagonal S')
+        _check_common_support([(-M.sum(axis=1)).reshape(-1, 1) for M in S], False,
+                              'PHt', 'exit vector')
+        _check_common_support([a.reshape(1, -1) for a in alpha], False, 'PHt', 'alpha')
+        if all(float(np.sum(-S[k].sum(axis=1))) <= 0.0 for k in range(n)):
+            raise ValueError(
+                "PHt: every segment has zero exit rate, so service can never complete")
+        self._breakpoints = breakpoints
+        self._alpha = alpha
+        self._S = S
+        self._cyclic = bool(cyclic)
+        self._sample_clock = float(breakpoints[0])
+
+    @property
+    def breakpoints(self) -> np.ndarray:
+        """Segment boundaries, length n+1."""
+        return self._breakpoints
+
+    @property
+    def alpha(self) -> List[np.ndarray]:
+        """Per-segment initial probability vectors."""
+        return [a.copy() for a in self._alpha]
+
+    @property
+    def S(self) -> List[np.ndarray]:
+        """Per-segment sub-generators."""
+        return [M.copy() for M in self._S]
+
+    @property
+    def cyclic(self) -> bool:
+        """Whether the schedule repeats."""
+        return self._cyclic
+
+    def getBreakpoints(self) -> np.ndarray:
+        """Segment boundaries, length n+1 (MATLAB/JAR accessor name)."""
+        return self._breakpoints
+
+    def getAlphaSegments(self) -> List[np.ndarray]:
+        """Per-segment initial vectors (MATLAB/JAR accessor name)."""
+        return [a.copy() for a in self._alpha]
+
+    def getSSegments(self) -> List[np.ndarray]:
+        """Per-segment sub-generators (MATLAB/JAR accessor name)."""
+        return [M.copy() for M in self._S]
+
+    def isCyclic(self) -> bool:
+        """Whether the schedule repeats (MATLAB/JAR accessor name)."""
+        return self._cyclic
+
+    def getNumSegments(self) -> int:
+        return len(self._S)
+
+    def getNumberOfPhases(self) -> int:
+        return int(self._S[0].shape[0])
+
+    def getPeriod(self) -> float:
+        """Horizon length, which is the period when cyclic."""
+        return float(self._breakpoints[-1] - self._breakpoints[0])
+
+    def getSegmentIndexAt(self, t: float) -> int:
+        """Index of the segment in force at t, or -1 past a non-cyclic horizon."""
+        period = self.getPeriod()
+        offset = float(t) - self._breakpoints[0]
+        if self._cyclic:
+            offset = offset % period
+        elif offset < 0.0 or offset >= period:
+            return -1
+        pos = self._breakpoints[0] + offset
+        idx = int(np.searchsorted(self._breakpoints[1:], pos, side='right'))
+        return min(idx, len(self._S) - 1)
+
+    def getAlphaAt(self, t: float) -> np.ndarray:
+        """alpha in force at t; the last segment's vector past a non-cyclic
+        horizon, where getSAt is zero so no service can complete anyway."""
+        idx = self.getSegmentIndexAt(t)
+        if idx < 0:
+            return self._alpha[-1].copy()
+        return self._alpha[idx].copy()
+
+    def getSAt(self, t: float) -> np.ndarray:
+        """S in force at t; the zero matrix past a non-cyclic horizon."""
+        idx = self.getSegmentIndexAt(t)
+        if idx < 0:
+            return np.zeros_like(self._S[0])
+        return self._S[idx].copy()
+
+    def getTimeAverageProcess(self) -> Tuple[np.ndarray, np.ndarray]:
+        """Width-weighted average (alphabar, Sbar) over the horizon.
+
+        A convex combination of sub-generators is a sub-generator and of
+        probability vectors a probability vector, so the nominal is a valid
+        phase-type representation.
+        """
+        widths = np.diff(self._breakpoints)
+        total = float(np.sum(widths))
+        abar = sum(w * a for w, a in zip(widths, self._alpha)) / total
+        Sbar = sum(w * M for w, M in zip(widths, self._S)) / total
+        return abar, Sbar
+
+    def getTimeAverageProcessMAP(self) -> Tuple[np.ndarray, np.ndarray]:
+        """The nominal as a (D0, D1) pair, D1 = s*alpha, for the fluid carrier."""
+        abar, Sbar = self.getTimeAverageProcess()
+        sbar = -Sbar.sum(axis=1).reshape(-1, 1)
+        return Sbar, sbar @ abar.reshape(1, -1)
+
+    def getTimeAverageRate(self) -> float:
+        """Completion rate of the time-averaged phase-type, 1/(-alphabar*Sbar^-1*e)."""
+        abar, Sbar = self.getTimeAverageProcess()
+        return 1.0 / float(-abar @ np.linalg.solve(Sbar, np.ones(Sbar.shape[0])))
+
+    def getRateAt(self, t: float) -> float:
+        """Completion rate of the phase-type in force at t; zero past a
+        non-cyclic horizon."""
+        idx = self.getSegmentIndexAt(t)
+        if idx < 0:
+            return 0.0
+        S = self._S[idx]
+        return 1.0 / float(-self._alpha[idx] @ np.linalg.solve(S, np.ones(S.shape[0])))
+
+    def getRateSchedule(self) -> dict:
+        """The parameterisation of the process; the scalar summaries are not.
+
+        Model compilation recognises a schedule-bearing process by this method
+        rather than by class name.
+        """
+        return {'breakpoints': self._breakpoints,
+                'alpha': [a.copy() for a in self._alpha],
+                'S': [M.copy() for M in self._S],
+                'cyclic': self._cyclic}
+
+    def getMean(self) -> float:
+        """Mean of the time-averaged phase-type."""
+        return 1.0 / self.getTimeAverageRate()
+
+    def getRate(self) -> float:
+        return self.getTimeAverageRate()
+
+    def getVar(self) -> float:
+        """NaN; see getSCV."""
+        return float('nan')
+
+    def getSCV(self) -> float:
+        """NaN: the service-time distribution differs at every start epoch, so
+        there is no single i.i.d. law for an SCV to summarise. Returning the SCV
+        of the time-averaged representation would report a time-varying process
+        as a stationary one to every consumer of sn.scv."""
+        return float('nan')
+
+    def getSkew(self) -> float:
+        """NaN; see getSCV."""
+        return float('nan')
+
+    def getSkewness(self) -> float:
+        """NaN; see getSCV (MATLAB/JAR accessor name)."""
+        return float('nan')
+
+    def evalCDF(self, x: float) -> float:
+        """NaN; see getSCV."""
+        return float('nan')
+
+    def evalLST(self, s: float) -> float:
+        """NaN: no single interval distribution, so no Laplace-Stieltjes
+        transform. Overrides the base numerical quadrature, which would
+        integrate against an undefined CDF."""
+        return float('nan')
+
+    def __repr__(self) -> str:
+        return "line_solver.PHt(%d segments, %d phases, %s, avgRate=%f)" % (
+            self.getNumSegments(), self.getNumberOfPhases(),
+            "cyclic" if self._cyclic else "non-cyclic",
+            self.getTimeAverageRate())
+
+    def getProcess(self):
+        return [self._breakpoints, [a.copy() for a in self._alpha],
+                [M.copy() for M in self._S], self._cyclic]
+
+    def resetSampleClock(self) -> None:
+        """Restart the sample path at the schedule start."""
+        self._sample_clock = float(self._breakpoints[0])
+
+    def sample(self, n: int = 1, rng: Optional[np.random.Generator] = None) -> np.ndarray:
+        """Draw n successive service times along ONE sample path.
+
+        The law depends on absolute time, so this advances an internal clock
+        across calls: sample i starts where sample i-1 completed, not at a fixed
+        epoch. Use resetSampleClock() to restart, or sampleFrom() to draw a
+        service time starting at a chosen epoch. A non-cyclic schedule that runs
+        out returns 0 for every remaining sample.
+        """
+        if rng is None:
+            rng = np.random.default_rng()
+        out = np.zeros(n, dtype=float)
+        for i in range(n):
+            interval = self.sampleFrom(self._sample_clock, rng)
+            out[i] = interval
+            if interval <= 0.0:
+                break  # horizon exhausted: service can never complete
+            self._sample_clock += interval
+        return out
+
+    def sampleFrom(self, t0: float, rng: Optional[np.random.Generator] = None) -> float:
+        """Service time for a job whose service starts at wall clock t0.
+
+        Exact: within a segment the phase process is a homogeneous absorbing
+        CTMC, and by the memoryless property the residual holding time may be
+        redrawn at a breakpoint, so the boundary is crossed by advancing the
+        clock and resampling under the new sub-generator. The initial phase is
+        drawn from alpha in force at t0. Returns 0 when a non-cyclic horizon is
+        exhausted before absorption.
+        """
+        if rng is None:
+            rng = np.random.default_rng()
+        idx = self.getSegmentIndexAt(t0)
+        if idx < 0:
+            return 0.0
+        alpha = self._alpha[idx]
+        phase = int(np.searchsorted(np.cumsum(alpha), float(rng.random()) * float(np.sum(alpha))))
+        phase = min(phase, alpha.size - 1)
+        elapsed = 0.0
+        pos = float(t0)
+        while True:
+            idx = self.getSegmentIndexAt(pos)
+            if idx < 0:
+                return 0.0
+            period = self.getPeriod()
+            offset = pos - self._breakpoints[0]
+            if self._cyclic:
+                offset = offset % period
+            to_boundary = (self._breakpoints[idx + 1] - self._breakpoints[0]) - offset
+            S = self._S[idx]
+            total = -float(S[phase, phase])
+            if total <= 0.0:
+                if not self._cyclic and idx == len(self._S) - 1:
+                    return 0.0
+                elapsed += to_boundary
+                pos += to_boundary
+                continue
+            holding = float(rng.exponential(1.0 / total))
+            if holding >= to_boundary:
+                if not self._cyclic and idx == len(self._S) - 1:
+                    return 0.0
+                elapsed += to_boundary
+                pos += to_boundary
+                continue
+            elapsed += holding
+            pos += holding
+            # Competing transitions: absorption first, then phase changes.
+            exit_rate = float(-S[phase, :].sum())
+            weights = np.concatenate([[exit_rate], S[phase, :].copy()])
+            weights[1 + phase] = 0.0
+            u = float(rng.random()) * total
+            cum = 0.0
+            for j, wgt in enumerate(weights):
+                cum += wgt
+                if u < cum:
+                    if j == 0:
+                        return elapsed
+                    phase = j - 1
+                    break
+            else:
+                j = int(np.max(np.nonzero(weights)[0]))
+                if j == 0:
+                    return elapsed
+                phase = j - 1

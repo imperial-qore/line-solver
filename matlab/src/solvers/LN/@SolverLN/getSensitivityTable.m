@@ -38,6 +38,11 @@ if ~isempty(self.obj)
 elseif ~isempty(self.pyMode) && self.pyMode
     [SensTable, sens] = PYLINE.getLNSensitivityTable(self.model, self.options, varargin{:});
     return
+elseif ~isempty(self.cppMode) && self.cppMode
+    CPPLINE.cppUnsupported('LN', 'getSensitivityTable', ...
+        ['the C++ layered path returns the converged AvgTable only, and the per-layer ' ...
+        'sensitivities would have to be differentiated here, from another engine''s ' ...
+        'layer solves']);
 end
 
 % see _kb/06-solver-catalog.md (LN section) for rationale

@@ -17,7 +17,7 @@ function model = gallery_detm1()
 %
 % Examples:
 %   model = gallery_detm1();
-%   solver = CTMC(model);
+%   solver = CTMC(model,'exact');
 %   solver.solve();
 %   avg_table = solver.getAvgTable()
 %

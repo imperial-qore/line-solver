@@ -67,7 +67,9 @@ public final class Pfqn_sib {
 
             double T1l = (N - 2) * S2 - 1;
             double bl = betaL(NN, level - 1, alpha, rhoU, S2);
-            double phiLn = (T1l + FastMath.sqrt(Math.max(0, T1l * T1l + 4 * (N - 2) * (S2 + (N - 2) * bl)))) / (2 * level);
+            // eq (3.23) divides by 2*eta, the SAME constant eq (3.22) applies as
+            // 0.5/eta above; the Greek eta on the scan was read as the level index n
+            double phiLn = (T1l + FastMath.sqrt(Math.max(0, T1l * T1l + 4 * (N - 2) * (S2 + (N - 2) * bl)))) / (2 * eta);
             phiLo = Math.max(phiLo, phiLn);
         }
 

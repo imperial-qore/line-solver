@@ -240,8 +240,11 @@ public enum SchedStrategy {
                 return PAS;
             case "oi":
                 return OI;
+            case "pri":
             case "pp":
-                // LQNS preemptive priority - maps to FCFS with preemptive resume priority
+                // LQNS preemptive priority resume (SCHEDULE_PPR). lqns spells it
+                // "pri" (LQIO::SCHEDULE::PPR); "pp" is the stale lqn-core.xsd
+                // spelling, absent from the lqns 6.2.31 sources
                 return FCFSPRPRIO;
             case "cfs":
                 // LQNS completely fair scheduling - maps to Generalized Processor Sharing

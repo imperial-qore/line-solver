@@ -19,6 +19,8 @@ from ..api.mc.ctmc import (
 )
 from ..api.mc.dtmc import (
     dtmc_makestochastic,
+    dtmc_solve,
+    dtmc_solve_reducible,
     dtmc_timereverse,
 )
 from ..api.io.logging import line_error
@@ -200,6 +202,132 @@ class MarkovProcess:
             return ctmc_solve(self.infGen)
         return ctmc_solve_reducible(self.infGen)
 
+    def transient(self, pi0=None, t=1.0, method='unif'):
+        """Distribution at time t from pi0 (uniform if None).
+
+        method: 'unif' for Jensen uniformization (default), 'foxglynn' for the
+        Fox-Glynn weights, which avoid evaluating the Poisson terms directly.
+        """
+        Q = np.asarray(self.infGen, dtype=np.float64)
+        pi0 = self._init_or_uniform(pi0)
+        if str(method).lower() == 'foxglynn':
+            from ..api.mc.foxglynn import ctmc_foxglynn
+            return ctmc_foxglynn(pi0, Q, t)
+        from ..lib.kpctoolbox.mc import ctmc_uniformization
+        pi_t, _ = ctmc_uniformization(pi0, Q, t)
+        return pi_t
+
+    def solveRelative(self, refstate=0):
+        """Equilibrium distribution relative to refstate, i.e. with p(refstate)=1.
+
+        Unnormalized by construction, so it is defined even where the
+        normalizing constant is not; refstate is 0-based here and 1-based in
+        MATLAB, as elsewhere between the two codebases.
+        """
+        from ..lib.kpctoolbox.mc import ctmc_relsolve
+        return ctmc_relsolve(np.asarray(self.infGen, dtype=np.float64), refstate)
+
+    def aggregate(self, MS, method='courtois', param=None):
+        """Aggregation-disaggregation over the macrostate partition MS.
+
+        MS is a list of lists of 0-based state indices, one per macrostate.
+        method: 'courtois' (nearly-completely-decomposable approximation, param
+        is the randomization rate q), 'kms' (Koury-McAllister-Stewart) or
+        'takahashi' (param is the iteration count, default 10), or 'multi'
+        (param is the second-level partition MSS).
+
+        Returns (p, eps, epsMAX): the approximate stationary vector, the
+        nearly-complete-decomposability index of the partition, and the largest
+        index for which the approximation is meant to hold.
+        """
+        from ..api.mc.aggregation import (ctmc_courtois, ctmc_kms, ctmc_multi,
+                                          ctmc_takahashi)
+        Q = np.asarray(self.infGen, dtype=np.float64)
+        method = str(method).lower()
+        if method == 'courtois':
+            res = ctmc_courtois(Q, MS, param)
+        elif method == 'kms':
+            res = ctmc_kms(Q, MS, 10 if param is None else int(param))
+        elif method == 'takahashi':
+            res = ctmc_takahashi(Q, MS, 10 if param is None else int(param))
+        elif method == 'multi':
+            if param is None:
+                line_error('aggregate', "The 'multi' method requires the second-level partition MSS.")
+            res = ctmc_multi(Q, MS, param)
+        else:
+            line_error('aggregate', "Unknown aggregation method '%s'." % method)
+        return res.p, res.eps, res.epsMAX
+
+    # Alias, under the name the JAR must use since 'transient' is a Java keyword
+    transientProb = transient
+
+    def timeAverage(self, pi0=None, t=1.0):
+        """Time-averaged distribution over [0,t] and its endpoint."""
+        from ..api.mc.ctmc import ctmc_timeaverage
+        Q = np.asarray(self.infGen, dtype=np.float64)
+        out = ctmc_timeaverage(self._init_or_uniform(pi0), Q, t)
+        return out[0], out[1]
+
+    def sens(self, dQ):
+        """Sensitivity of the stationary distribution to a scalar parameter."""
+        from ..api.mc.ctmc import ctmc_sens
+        return ctmc_sens(np.asarray(self.infGen, dtype=np.float64),
+                         np.asarray(dQ, dtype=np.float64), self.solve())
+
+    def stochComp(self, I=None):
+        """Stochastic complement of the states I, a generator on that subset.
+
+        Returns the complement itself; stochCompFull additionally returns the
+        four blocks of the partitioned generator and the return-path term T.
+        """
+        from ..api.mc.ctmc import ctmc_stochcomp
+        return ctmc_stochcomp(np.asarray(self.infGen, dtype=np.float64), I)['S']
+
+    def stochCompFull(self, I=None):
+        """Stochastic complement of the states I with its blocks.
+
+        Returns a dict with the complement 'S', the blocks 'Q11', 'Q12', 'Q21',
+        'Q22' of the generator partitioned by I and its complement, and the
+        return-path term 'T' = Q12*inv(-Q22)*Q21, so that S = Q11 + T. Twin of
+        the MATLAB [S,Q11,Q12,Q21,Q22,T] = ctmc.stochCompFull(I) and of the JAR
+        stochCompFull, which return the same six matrices.
+        """
+        from ..api.mc.ctmc import ctmc_stochcomp
+        return ctmc_stochcomp(np.asarray(self.infGen, dtype=np.float64), I)
+
+    def isFeasible(self):
+        """True when the generator is a valid one."""
+        from ..api.mc.ctmc import ctmc_isfeasible
+        return bool(ctmc_isfeasible(np.asarray(self.infGen, dtype=np.float64)))
+
+    def toEmbedded(self):
+        """Embedded jump chain, i.e. the DTMC of the states visited at
+        transition epochs.
+
+        Unlike toDTMC (uniformization) it does not preserve the stationary
+        distribution, since it drops the holding times; an absorbing state
+        stays absorbing.
+        """
+        Q = np.asarray(self.infGen, dtype=np.float64)
+        n = Q.shape[0]
+        exit_rate = -np.diag(Q)
+        P = Q - np.diag(np.diag(Q))
+        for i in range(n):
+            if exit_rate[i] > 0:
+                P[i, :] = P[i, :] / exit_rate[i]
+            else:
+                P[i, i] = 1.0
+        A = MarkovChain(P)
+        A.setStateSpace(self.stateSpace)
+        return A
+
+    def _init_or_uniform(self, pi0):
+        """The given initial distribution as a row vector, or the uniform one."""
+        n = np.asarray(self.infGen).shape[0]
+        if pi0 is None or np.asarray(pi0).size != n:
+            return np.ones(n) / n
+        return np.asarray(pi0, dtype=np.float64).flatten()
+
     def sample(self, n=1, seed=None):
         """Sample a trajectory of n transitions.
 
@@ -300,6 +428,63 @@ class MarkovChain:
     def getTransMat(self):
         """Return the transition matrix."""
         return self.transMat
+
+    def solve(self):
+        """Stationary distribution of the DTMC. Twin of MarkovProcess.solve."""
+        if issym(self.transMat):
+            return dtmc_solve(self.transMat)
+        return dtmc_solve_reducible(self.transMat)
+
+    def transient(self, pi0=None, steps=1):
+        """Distribution at each step 0,...,steps from pi0 (uniform if None)."""
+        from ..api.mc.dtmc import dtmc_transient
+        P = np.asarray(self.transMat, dtype=np.float64)
+        if pi0 is None or np.asarray(pi0).size != P.shape[0]:
+            pi0 = np.ones(P.shape[0]) / P.shape[0]
+        return dtmc_transient(P, np.asarray(pi0, dtype=np.float64).flatten(), int(steps))
+
+    # Alias, under the name the JAR must use since 'transient' is a Java keyword
+    transientProb = transient
+
+    def hittingTime(self, target_states):
+        """Mean number of steps to reach any state in target_states."""
+        from ..api.mc.dtmc import dtmc_hitting_time
+        return dtmc_hitting_time(np.asarray(self.transMat, dtype=np.float64), target_states)
+
+    def stochComp(self, keep_states):
+        """Stochastic complement of the kept states, a DTMC on that subset."""
+        from ..api.mc.dtmc import dtmc_stochcomp
+        return dtmc_stochcomp(np.asarray(self.transMat, dtype=np.float64), keep_states)
+
+    def stochCompFull(self, keep_states):
+        """Stochastic complement of the kept states with its blocks.
+
+        Returns a dict with the complement 'S' and the blocks 'P11', 'P12',
+        'P21', 'P22' of the transition matrix partitioned by the kept and the
+        eliminated states. Twin of the MATLAB
+        [S,P11,P12,P21,P22] = dtmc.stochCompFull(I) and of the JAR
+        stochCompFull.
+        """
+        from ..api.mc.dtmc import dtmc_stochcomp_full
+        return dtmc_stochcomp_full(np.asarray(self.transMat, dtype=np.float64), keep_states)
+
+    def transientUnif(self, pi0=None, t=1.0):
+        """Distribution at time t of the DTMC seen through uniformization.
+
+        The chain is read as the randomized image of a CTMC, so t is continuous
+        here, unlike the step count taken by transient. Wraps dtmc_uniformization.
+        """
+        from ..lib.kpctoolbox.mc import dtmc_uniformization
+        P = np.asarray(self.transMat, dtype=np.float64)
+        if pi0 is None or np.asarray(pi0).size != P.shape[0]:
+            pi0 = np.ones(P.shape[0]) / P.shape[0]
+        pi_t, _ = dtmc_uniformization(np.asarray(pi0, dtype=np.float64).flatten(), P, t)
+        return pi_t
+
+    def isFeasible(self):
+        """True when the transition matrix is stochastic."""
+        from ..api.mc.dtmc import dtmc_isfeasible
+        return bool(dtmc_isfeasible(np.asarray(self.transMat, dtype=np.float64)))
 
     def sample(self, n=1, seed=None):
         """Simulate n steps of the DTMC from a random initial state.

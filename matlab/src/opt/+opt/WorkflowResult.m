@@ -18,18 +18,18 @@ classdef WorkflowResult < handle
 
     methods
         function obj = WorkflowResult()
-            obj.subproblemResults = containers.Map('KeyType', 'char', 'ValueType', 'any');
-            obj.finalVariableValues = containers.Map('KeyType', 'char', 'ValueType', 'any');
+            obj.subproblemResults = configureDictionary('string', 'cell');
+            obj.finalVariableValues = configureDictionary('string', 'cell');
         end
 
         function tf = isConverged(obj)
             tf = obj.converged;
         end
         function r = getSubProblemResult(obj, name)
-            if isKey(obj.subproblemResults, name), r = obj.subproblemResults(name); else, r = []; end
+            if isKey(obj.subproblemResults, name), r = obj.subproblemResults{name}; else, r = []; end
         end
         function v = getFinalVariableValue(obj, name)
-            if isKey(obj.finalVariableValues, name), v = obj.finalVariableValues(name); else, v = []; end
+            if isKey(obj.finalVariableValues, name), v = obj.finalVariableValues{name}; else, v = []; end
         end
     end
 end

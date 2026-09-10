@@ -9,6 +9,10 @@ import jline.inference.api.Infer_fmlps;
 import jline.inference.api.Infer_gibbs;
 import jline.inference.api.Infer_mlps;
 import jline.inference.api.Infer_qmle;
+import jline.inference.api.VariationalSpec;
+import jline.inference.api.VariationalResult;
+import jline.inference.api.VariationalOptions;
+import jline.inference.api.Infer_variational;
 import jline.inference.api.Sn_set_service_coc;
 import jline.inference.util.NnlsSolver;
 import jline.inference.util.OptimUtils;
@@ -43,6 +47,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -281,6 +286,7 @@ public class ParamEstimator {
         else if ("fmlps".equals(m)) estVal = estimatorFmlps(nodes);
         else if ("qmle".equals(m)) estVal = estimatorQmle(nodes);
         else if ("gibbs".equals(m)) estVal = estimatorGibbs(nodes);
+        else if ("vi".equals(m)) estVal = estimatorVariational(nodes);
         else throw new IllegalArgumentException("Unknown inference method: " + m);
 
         List<JobClass> jobClasses = model.getJobClasses();
@@ -1108,6 +1114,228 @@ public class ParamEstimator {
         return estVal;
     }
 
+    /**
+     * Variational inference for Markovian queueing networks (Perez-Casale, AAP
+     * 53(3), 2021). The network is translated into the transition set
+     * eta=(i,j,c) of the paper, with lambda_eta = mu_{i,c} p^c_{i,j}; routing
+     * probabilities are taken as known from the model and only the station
+     * rates of the requested nodes are estimated. The data are QLen
+     * timeseries, one per (node, class), read as exact with probability
+     * 1-epsilon and uniform over the remaining feasible values otherwise.
+     */
+    private Matrix estimatorVariational(List<Station> nodes) {
+        NetworkStruct sn = model.getStruct(false);
+        int M = sn.nstations;
+        int R = sn.nclasses;
+        List<JobClass> jobClasses = model.getJobClasses();
+        List<Node> allNodes = model.nodes;
+
+        for (int r = 0; r < R; r++) {
+            for (int s = 0; s < R; s++) {
+                if (r != s && sn.csmask.get(r, s) > 0) {
+                    throw new IllegalArgumentException(
+                            "The variational estimator does not support class switching.");
+                }
+            }
+        }
+
+        Matrix rtst = jline.api.sn.SnRtStations.snRtStations(sn).getLeft();
+        int[] sched = new int[M];
+        boolean[] isSource = new boolean[M];
+        List<Station> stations = model.getStations();
+        for (int i = 0; i < M; i++) {
+            SchedStrategy ss = sn.sched.get(stations.get(i));
+            if (ss == SchedStrategy.INF) {
+                sched[i] = 0;
+            } else if (ss == SchedStrategy.EXT) {
+                sched[i] = 2;
+                isSource[i] = true;
+            } else if (ss == SchedStrategy.PS || ss == SchedStrategy.FCFS
+                    || ss == SchedStrategy.DPS || ss == SchedStrategy.GPS
+                    || ss == SchedStrategy.SIRO || ss == SchedStrategy.LCFS) {
+                sched[i] = 1;
+            } else {
+                throw new IllegalArgumentException(
+                        "The variational estimator does not support scheduling " + ss
+                                + " at station " + (i + 1) + ".");
+            }
+        }
+
+        // transitions eta = (i,j,c); the pseudo-closed sink-to-source feedback
+        // is not a job transition
+        List<int[]> arcList = new ArrayList<int[]>();
+        List<Double> probList = new ArrayList<Double>();
+        for (int c = 0; c < R; c++) {
+            for (int i = 0; i < M; i++) {
+                for (int j = 0; j < M; j++) {
+                    if (i == j || isSource[j]) continue;
+                    double p = rtst.get(i * R + c, j * R + c);
+                    if (p <= 0) continue;
+                    arcList.add(new int[]{i + 1, j + 1, c + 1});
+                    probList.add(p);
+                }
+            }
+        }
+        if (arcList.isEmpty()) {
+            throw new IllegalArgumentException("The model has no job transitions to infer from.");
+        }
+
+        // which station-class rates are being estimated
+        int[][] estimated = new int[M][R];
+        int P = 0;
+        int[] nodeStation = new int[nodes.size()];
+        for (int n = 0; n < nodes.size(); n++) {
+            int i = stations.indexOf(nodes.get(n));
+            if (i < 0) {
+                throw new IllegalArgumentException("A node handed to the estimator is not a station.");
+            }
+            nodeStation[n] = i;
+            for (int r = 0; r < R; r++) {
+                double rate = sn.rates.get(i, r);
+                if (rate > 0 && !Double.isInfinite(rate) && !Double.isNaN(rate)) {
+                    P++;
+                    estimated[i][r] = P;
+                }
+            }
+        }
+        if (P == 0) {
+            throw new IllegalArgumentException(
+                    "No station-class pair with a positive service rate was selected.");
+        }
+
+        int narcs = arcList.size();
+        VariationalSpec spec = new VariationalSpec();
+        spec.arcs = new int[narcs][3];
+        spec.routeprob = new double[narcs];
+        spec.arcparam = new int[narcs];
+        spec.arcrate = new double[narcs];
+        for (int e = 0; e < narcs; e++) {
+            spec.arcs[e] = arcList.get(e);
+            spec.routeprob[e] = probList.get(e);
+            int i = spec.arcs[e][0] - 1;
+            int c = spec.arcs[e][2] - 1;
+            if (estimated[i][c] > 0) {
+                spec.arcparam[e] = estimated[i][c];
+                spec.arcrate[e] = Double.NaN;
+            } else {
+                spec.arcrate[e] = sn.rates.get(i, c);
+                if (!(spec.arcrate[e] > 0) || Double.isInfinite(spec.arcrate[e])) {
+                    throw new IllegalArgumentException("Station " + (i + 1) + " class " + (c + 1)
+                            + " has no usable rate to hold fixed.");
+                }
+            }
+        }
+
+        spec.sched = sched;
+        spec.nservers = new double[M];
+        for (int i = 0; i < M; i++) {
+            double k = sn.nservers.get(i);
+            spec.nservers[i] = (Double.isInfinite(k) || Double.isNaN(k) || k <= 0) ? 1.0 : k;
+        }
+
+        // observations: QLen timeseries, one column per (station, class) pair
+        TreeSet<Double> timeSet = new TreeSet<Double>();
+        Map<Integer, double[][]> series = new LinkedHashMap<Integer, double[][]>();
+        for (Node nd : allNodes) {
+            int i = stations.indexOf(nd);
+            if (i < 0) continue;
+            for (int r = 0; r < R; r++) {
+                List<SampledMetric> ql = getQLen(nd, jobClasses.get(r));
+                if (ql == null || ql.isEmpty()) continue;
+                SampledMetric sm = ql.get(0);
+                series.put(r * M + i, new double[][]{sm.t, sm.data});
+                for (int k = 0; k < sm.t.length; k++) timeSet.add(sm.t[k]);
+            }
+        }
+        if (series.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "The variational estimator needs QLen timeseries data.");
+        }
+        double[] obsTimes = new double[timeSet.size()];
+        int kk = 0;
+        for (Double t : timeSet) obsTimes[kk++] = t;
+        double[][] obsData = new double[obsTimes.length][M * R];
+        for (int k = 0; k < obsTimes.length; k++) {
+            for (int j = 0; j < M * R; j++) obsData[k][j] = Double.NaN;
+        }
+        for (Map.Entry<Integer, double[][]> en : series.entrySet()) {
+            double[] tv = en.getValue()[0];
+            double[] dv = en.getValue()[1];
+            for (int k = 0; k < tv.length; k++) {
+                int pos = Arrays.binarySearch(obsTimes, tv[k]);
+                if (pos >= 0) obsData[pos][en.getKey()] = Math.round(dv[k]);
+            }
+        }
+        spec.obsTimes = obsTimes;
+        spec.obsData = obsData;
+
+        // population per class bounds both the contamination support and the load
+        double[] popr = new double[R];
+        for (int r = 0; r < R; r++) {
+            double n = sn.njobs.get(r);
+            if (n < Double.MAX_VALUE / 2 && !Double.isInfinite(n)) {
+                popr[r] = n;
+            } else {
+                double peak = 1.0;
+                for (int k = 0; k < obsTimes.length; k++) {
+                    for (int i = 0; i < M; i++) {
+                        double v = obsData[k][r * M + i];
+                        if (!Double.isNaN(v)) peak = Math.max(peak, v);
+                    }
+                }
+                popr[r] = Math.max(1.0, 2.0 * peak);
+            }
+        }
+        spec.obsRange = new double[M * R];
+        spec.capacity = new double[M * R];
+        spec.x0 = new double[M][R];
+        for (int r = 0; r < R; r++) {
+            boolean closed = sn.njobs.get(r) < Double.MAX_VALUE / 2 && !Double.isInfinite(sn.njobs.get(r));
+            for (int i = 0; i < M; i++) {
+                spec.obsRange[r * M + i] = popr[r];
+                spec.capacity[r * M + i] = closed ? popr[r] : Double.POSITIVE_INFINITY;
+            }
+            if (closed && sn.njobs.get(r) > 0) {
+                int ref = (int) sn.refstat.get(r);
+                spec.x0[(ref >= 0 && ref < M) ? ref : 0][r] = sn.njobs.get(r);
+            }
+        }
+
+        // Gamma priors centred on the model's current rates
+        spec.alpha0 = new double[P];
+        spec.beta0 = new double[P];
+        for (int i = 0; i < M; i++) {
+            for (int r = 0; r < R; r++) {
+                int p = estimated[i][r];
+                if (p > 0) {
+                    spec.alpha0[p - 1] = options.priorShape;
+                    spec.beta0[p - 1] = options.priorShape / sn.rates.get(i, r);
+                }
+            }
+        }
+        spec.epsilon = options.epsilon;
+
+        VariationalOptions vopt = options.variational;
+        VariationalResult out = Infer_variational.infer_variational(spec, vopt);
+        options.posteriorAlpha = out.alpha;
+        options.posteriorBeta = out.beta;
+        options.bound = out.bound;
+
+        Matrix estVal = new Matrix(nodes.size(), R);
+        for (int n = 0; n < nodes.size(); n++) {
+            int i = nodeStation[n];
+            for (int r = 0; r < R; r++) {
+                int p = estimated[i][r];
+                if (p > 0) {
+                    estVal.set(n, r, out.meanServiceTime[p - 1]);
+                } else if (sn.rates.get(i, r) > 0) {
+                    estVal.set(n, r, 1.0 / sn.rates.get(i, r));
+                }
+            }
+        }
+        return estVal;
+    }
+
     public Pair<Network, Queue> buildClosedEquivalentForPS(Queue node) {
         NetworkStruct sn = model.getStruct(false);
         int R = sn.nclasses;
@@ -1424,6 +1652,7 @@ public class ParamEstimator {
         if ("fmlps".equals(method)) return "ArvR (per-class, trace) + RespT (per-class, trace). PS stations only.";
         if ("qmle".equals(method)) return "QLen (per-class). Open/mixed via closed equivalence.";
         if ("gibbs".equals(method)) return "ArvR (per-class, trace) + RespT (per-class, trace) + Tput (per-class). Gibbs sampling.";
+        if ("vi".equals(method)) return "QLen (per-class, timeseries) at every station. Variational inference over transition counts; noisy readings, Gamma posteriors.";
         return "Unknown method: " + method;
     }
 }

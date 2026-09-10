@@ -20,6 +20,7 @@ import jline.lang.constant.SolverType;
 import jline.lang.nodes.StatefulNode;
 import jline.lang.nodes.Station;
 import jline.lang.nodes.ServiceStation;
+import jline.lang.nodes.Source;
 import jline.lang.processes.Markovian;
 import jline.lang.processes.ContinuousDistribution;
 import jline.lang.processes.Exp;
@@ -56,6 +57,7 @@ import java.util.function.Function;
 
 import static java.lang.Math.*;
 import static jline.api.mam.Map_cdf.map_cdf;
+import static jline.api.mam.Map_mean.map_mean;
 import static jline.api.mam.Map_normalize.map_normalize;
 import static jline.api.mam.Map_pie.map_pie;
 import static jline.api.mc.Ctmc_makeinfgen.ctmc_makeinfgen;
@@ -1080,9 +1082,24 @@ public class SolverENV extends EnsembleSolver {
                 QExit[e][h] = new Matrix(M, K);
                 UExit[e][h] = new Matrix(M, K);
                 TExit[e][h] = new Matrix(M, K);
-                Matrix D0 = envObj.proc[e][h].get(0);
-                Matrix D1 = envObj.proc[e][h].get(1);
+                // THE WEIGHT IS THE STAGE SOJOURN, NOT THE e -> h CLOCK: competing
+                // exponentials leave the exit TIME independent of which destination
+                // won, so the exit average does not depend on h -- h enters only
+                // through the reset applied on the way in. Weighting by
+                // `proc[e][h]` read the transient over the mean of ONE risk rather
+                // than of their minimum: on renv_twostages_repairmen, whose Stage2
+                // competes a 0.5 self arc with a 0.5 arc back, that is a mean of 2
+                // against the sojourn's 1, and it reported Queue1 QLen 0.55879
+                // against MATLAB's 0.55550.
+                // COPIED because map_normalize rescales IN PLACE, and holdTime is
+                // the environment's own, read again by every later iteration.
+                Matrix D0 = envObj.holdTime[e].get(0).copy();
+                Matrix D1 = envObj.holdTime[e].get(1).copy();
                 map_normalize(D0, D1);
+                // The weight lives on the sojourn scale, so the grid summed over
+                // has to as well; see refineForCdf. The stage carries ONE grid
+                // for every (i,r), so it is refined once here.
+                CdfGrid grid = refineForCdf(results.get(it).get(e).t, D0, D1);
                 for (int i = 0; i < M; i++) {
                     if (isExtStation[i]) continue; // Skip Source stations (disabled in MATLAB)
                     for (int r = 0; r < K; r++) {
@@ -1091,15 +1108,15 @@ public class SolverENV extends EnsembleSolver {
                                 map_cdf(
                                         D0, D1,
                                         Matrix.extractRows(
-                                                results.get(it).get(e).t, 1, results.get(it).get(e).t.getNumRows(), null));
+                                                grid.t, 1, grid.t.getNumRows(), null));
 
                         Matrix cdf2 =
                                 map_cdf(
                                         D0, D1,
                                         Matrix.extractRows(
-                                                results.get(it).get(e).t,
+                                                grid.t,
                                                 0,
-                                                results.get(it).get(e).t.getNumRows() - 1,
+                                                grid.t.getNumRows() - 1,
                                                 null));
 
                         Matrix cdfDiff = cdf1.sub(1, cdf2); // probability of leaving stage e to h, which is also \pi
@@ -1125,17 +1142,17 @@ public class SolverENV extends EnsembleSolver {
                             QExit[e][h].set(
                                     i,
                                     r,
-                                    results.get(it).get(e).QNt[i][r].transpose().mult(w[e][h], null).value()
+                                    grid.on(results.get(it).get(e).QNt[i][r]).transpose().mult(w[e][h], null).value()
                                             / w[e][h].elementSum());
                             UExit[e][h].set(
                                     i,
                                     r,
-                                    results.get(it).get(e).UNt[i][r].transpose().mult(w[e][h], null).value()
+                                    grid.on(results.get(it).get(e).UNt[i][r]).transpose().mult(w[e][h], null).value()
                                             / w[e][h].elementSum());
                             TExit[e][h].set(
                                     i,
                                     r,
-                                    results.get(it).get(e).TNt[i][r].transpose().mult(w[e][h], null).value()
+                                    grid.on(results.get(it).get(e).TNt[i][r]).transpose().mult(w[e][h], null).value()
                                             / w[e][h].elementSum());
                         }
                     }
@@ -1258,21 +1275,24 @@ public class SolverENV extends EnsembleSolver {
             Matrix D0 = envObj.holdTime[e].get(0);
             Matrix D1 = envObj.holdTime[e].get(1);
             map_normalize(D0, D1);
+            // Same refinement as post(): the sum runs over the grid the weight
+            // can see, not over the one the integrator chose for the horizon.
+            CdfGrid grid = refineForCdf(resE.t, D0, D1);
 
             for (int i = 0; i < M; i++) {
                 for (int r = 0; r < K; r++) {
                     if (resE.QNt[i] == null || resE.QNt[i][r] == null) {
                         continue;
                     }
-                    int tR = resE.t.getNumRows();
+                    int tR = grid.t.getNumRows();
                     if (tR < 2) {
                         continue;
                     }
 
                     // Compute CDF weights: w = [0, cdf(t2)-cdf(t1), cdf(t3)-cdf(t2), ...]
                     // matching MATLAB: w{e} = [0, map_cdf(holdTime{e}, t(2:end)) - map_cdf(holdTime{e}, t(1:end-1))]'
-                    Matrix tLater = Matrix.extractRows(resE.t, 1, tR, null);
-                    Matrix tEarlier = Matrix.extractRows(resE.t, 0, tR - 1, null);
+                    Matrix tLater = Matrix.extractRows(grid.t, 1, tR, null);
+                    Matrix tEarlier = Matrix.extractRows(grid.t, 0, tR - 1, null);
                     Matrix cdfLater = map_cdf(D0, D1, tLater);
                     Matrix cdfEarlier = map_cdf(D0, D1, tEarlier);
                     Matrix cdfDiff = cdfLater.sub(1, cdfEarlier);
@@ -1288,13 +1308,13 @@ public class SolverENV extends EnsembleSolver {
                     double wSum = w.elementSum();
                     if (wSum > 0 && !w.hasNaN()) {
                         // QExit{e}(i,r) = QNt' * w / sum(w)
-                        QExit[e].set(i, r, resE.QNt[i][r].transpose().mult(w, null).value() / wSum);
+                        QExit[e].set(i, r, grid.on(resE.QNt[i][r]).transpose().mult(w, null).value() / wSum);
 
                         if (resE.UNt != null && resE.UNt[i] != null && resE.UNt[i][r] != null) {
-                            UExit[e].set(i, r, resE.UNt[i][r].transpose().mult(w, null).value() / wSum);
+                            UExit[e].set(i, r, grid.on(resE.UNt[i][r]).transpose().mult(w, null).value() / wSum);
                         }
                         if (resE.TNt != null && resE.TNt[i] != null && resE.TNt[i][r] != null) {
-                            TExit[e].set(i, r, resE.TNt[i][r].transpose().mult(w, null).value() / wSum);
+                            TExit[e].set(i, r, grid.on(resE.TNt[i][r]).transpose().mult(w, null).value() / wSum);
                         }
                     }
                 }
@@ -1327,7 +1347,19 @@ public class SolverENV extends EnsembleSolver {
 
         result.runtime = (System.nanoTime() - startTime) / 1000000000.0;
         if (options.verbose != VerboseLevel.SILENT) {
-            System.out.printf("blending completed in %d iterations in %.3f seconds\n", it, result.runtime);
+            // THE COMPLETION LINE NAMES THE SOLVER, in the shape every other JAR
+            // solver uses (NetworkSolver's banner). The former wording named the
+            // coupling ("blending completed in N iterations") and no solver at
+            // all, so any reader that pairs a table with the solver its banner
+            // names -- the parity comparator among them -- saw an UNLABELLED
+            // table and adopted it onto whatever golden key was left over. On
+            // renv_basic that was the example's standalone per-stage MVA table,
+            // i.e. the coupled answer scored against a single stage's.
+            jline.io.LineConsole.deferPrint(
+                    "ENV analysis [method: %s; type: approximate, deterministic; lang: java; "
+                            + "env: %s] completed in %fs. Iterations: %d.\n",
+                    (options.method == null || options.method.isEmpty()) ? "default" : options.method,
+                    System.getProperty("java.version"), result.runtime, it);
             System.out.flush();
         }
     }
@@ -1810,7 +1842,15 @@ public class SolverENV extends EnsembleSolver {
     @Override
     public AvgTable getEnsembleAvg() {
         if (this.result == null || this.result.QN == null || this.result.QN.isEmpty() || this.options.force) {
-            blending();
+            // Solver console: ENV reaches its analysis through blending(), not
+            // through EnsembleSolver.iterate, so the narrated run is opened
+            // here -- the point every accessor of the averages goes through.
+            jline.io.LineConsole.beginRun(this, this.options);
+            try {
+                blending();
+            } finally {
+                jline.io.LineConsole.closeRun(this);
+            }
         }
 
         List<Double> Qval = this.result.QN.toList1D();
@@ -2018,6 +2058,11 @@ public class SolverENV extends EnsembleSolver {
 
     @SuppressWarnings("unchecked")
     private void blending() {
+        if (options != null && options.method != null
+                && (options.method.equalsIgnoreCase("avg") || options.method.equalsIgnoreCase("dec"))) {
+            solveEnvLimit();
+            return;
+        }
         this.statevecMethod = options != null && options.method != null
                 && options.method.equalsIgnoreCase("statevec");
         if (this.statevecMethod) {
@@ -2092,6 +2137,147 @@ public class SolverENV extends EnsembleSolver {
         finish();
     }
 
+
+    /**
+     * Closed-form fast/slow random-environment limits (options.method='avg' or
+     * 'dec'), which require no inter-stage coupling iteration and therefore no
+     * transient analysis from the stage solvers.
+     *
+     * <p>'avg' is the fast-environment limit: the base model sees the
+     * stationary-probability-weighted average of the modulated rates, so a
+     * single rate-averaged model is built and solved once. Exact as the
+     * stage-switching rate tends to infinity.
+     *
+     * <p>'dec' is the slow-environment (quasi-stationary) decomposition: each
+     * stage is solved independently in steady state and the per-stage metrics
+     * are averaged with weights probEnv(e). Exact as the stage-switching rate
+     * tends to zero.
+     *
+     * <p>Mirrors matlab/src/solvers/@SolverENV/SolverENV.m solveEnvLimit().
+     */
+    private void solveEnvLimit() {
+        startTime = System.nanoTime();
+        init();
+        int E = getNumberOfModels();
+        int M = sn[0].nstations;
+        int K = sn[0].nclasses;
+        Matrix Qval = new Matrix(M, K);
+        Matrix Uval = new Matrix(M, K);
+        Matrix Tval = new Matrix(M, K);
+
+        if (options.method.equalsIgnoreCase("dec")) {
+            for (int e = 0; e < E; e++) {
+                double p = envObj.probEnv.get(0, e);
+                Solver se = envSolvers[e];
+                se.reset();
+                SolverResult re = ((NetworkSolver) se).getAvg();
+                accumulate(Qval, re.QN, p);
+                accumulate(Uval, re.UN, p);
+                accumulate(Tval, re.TN, p);
+            }
+        } else {
+            Network avgModel = buildRateAveragedModel();
+            NetworkSolver innerSolver = newStageSolver(envSolvers[0], avgModel);
+            SolverResult re = innerSolver.getAvg();
+            accumulate(Qval, re.QN, 1.0);
+            accumulate(Uval, re.UN, 1.0);
+            accumulate(Tval, re.TN, 1.0);
+        }
+
+        this.result = new SolverResult();
+        this.result.QN = Qval;
+        this.result.UN = Uval;
+        this.result.TN = Tval;
+        this.result.XN = new Matrix(1, K);
+        for (int k = 0; k < K; k++) {
+            this.result.XN.set(0, k, Tval.get((int) sn[0].refstat.get(k, 0), k));
+        }
+        this.result.runtime = (System.nanoTime() - startTime) / 1000000000.0;
+    }
+
+    /** dest += weight * src, tolerating a null or mis-shaped source. */
+    private void accumulate(Matrix dest, Matrix src, double weight) {
+        if (src == null || src.isEmpty()) {
+            return;
+        }
+        for (int i = 0; i < dest.getNumRows(); i++) {
+            for (int k = 0; k < dest.getNumCols(); k++) {
+                dest.set(i, k, dest.get(i, k) + weight * src.get(i, k));
+            }
+        }
+    }
+
+    /**
+     * Fast-environment model: replace every environment-modulated (i.e.
+     * stage-varying) station rate by its probEnv-weighted average, represented
+     * as an exponential. Non-modulated parameters keep their original
+     * distribution, so the base model is preserved exactly outside the
+     * modulated rates.
+     */
+    private Network buildRateAveragedModel() {
+        if (!(envModels[0] instanceof Network)) {
+            throw new RuntimeException("The rate-averaged (avg) environment limit requires flat Network stages.");
+        }
+        int E = getNumberOfModels();
+        Network avgModel = ((Network) envModels[0]).copy();
+        int M = avgModel.getNumberOfStations();
+        int K = avgModel.getNumberOfClasses();
+        java.util.List<Station> stations = avgModel.getStations();
+        java.util.List<JobClass> classes = avgModel.getClasses();
+        for (int i = 0; i < M; i++) {
+            Station node = stations.get(i);
+            // Stateful/absorbing nodes (Cache, Sink) are not Stations in the JAR
+            // hierarchy, so they cannot appear here; a station whose rate is NaN
+            // in some stage is skipped below.
+            for (int k = 0; k < K; k++) {
+                double[] r = new double[E];
+                boolean usable = true;
+                double rmin = Inf;
+                double rmax = -Inf;
+                for (int e = 0; e < E; e++) {
+                    r[e] = sn[e].rates.get(i, k);
+                    if (Double.isNaN(r[e]) || r[e] <= 0) {
+                        usable = false;
+                        break;
+                    }
+                    rmin = Math.min(rmin, r[e]);
+                    rmax = Math.max(rmax, r[e]);
+                }
+                if (!usable) {
+                    continue; // disabled for some stage: leave as configured
+                }
+                if ((rmax - rmin) <= 1e-12 * Math.max(1.0, rmax)) {
+                    continue; // not modulated: keep the original distribution
+                }
+                double ravg = 0;
+                for (int e = 0; e < E; e++) {
+                    ravg += envObj.probEnv.get(0, e) * r[e];
+                }
+                if (node instanceof Source) {
+                    ((Source) node).setArrival(classes.get(k), new Exp(ravg));
+                } else if (node instanceof ServiceStation) {
+                    ((ServiceStation) node).setService(classes.get(k), new Exp(ravg));
+                }
+            }
+        }
+        // The copy inherited a cached NetworkStruct from the stage model; force a
+        // hard rebuild so the averaged rates take effect.
+        avgModel.refreshStruct(true);
+        return avgModel;
+    }
+
+    /** A stage solver of the same class and options as the template, on another model. */
+    private NetworkSolver newStageSolver(Solver template, Network model) {
+        try {
+            return (NetworkSolver) template.getClass()
+                    .getConstructor(Network.class, SolverOptions.class)
+                    .newInstance(model, template.options);
+        } catch (Exception e) {
+            throw new RuntimeException("Cannot instantiate the stage solver " + template.getClass().getSimpleName()
+                    + " on the rate-averaged model: " + e.getMessage(), e);
+        }
+    }
+
     // =====================================================================
     // State-vector analyzer (options.method='statevec').
     //
@@ -2105,14 +2291,25 @@ public class SolverENV extends EnsembleSolver {
         svPre();
         int max_iter = options.iter_max;
         startTime = System.nanoTime();
+        boolean hasConverged = false;
         for (int it = 1; it <= max_iter; it++) {
             for (int e = 0; e < E; e++) {
                 svAnalyze(e);
             }
             svPost();
             if (svConverged()) {
+                hasConverged = true;
                 break;
             }
+        }
+        if (!hasConverged) {
+            // Exiting on iter_max is a NON-convergence: the last iterate can be
+            // far from the fixed point. Returning it silently is what makes a
+            // wrong number indistinguishable from a right one.
+            line_warning("SolverENV", "The statevec fixed point did not converge in options.iter_max=%d "
+                    + "iterations; the returned solution is the last iterate and may be far from the fixed "
+                    + "point. Raise options.iter_max, or loosen options.iter_tol only if the residual is "
+                    + "already small.", max_iter);
         }
         svFinish();
     }
@@ -2155,12 +2352,79 @@ public class SolverENV extends EnsembleSolver {
                         + "inner solver, but environment stage %d uses %s.", e, solver_e.getClass().getSimpleName()));
             }
             svStages[e] = st;
-            // Warm-start each entry distribution from the stage's own stationary
-            // distribution (a valid probability vector over its state space).
-            Matrix pi0 = Ctmc_solve_reducible.ctmc_solve_reducible(st.Q).getLeft();
-            piEnter[e] = rowNormalizeNonneg(pi0);
         }
+        svSeedEntryDistributions();
         piEnterPrev = piEnter.clone();
+    }
+
+    // Warm start. A stage's OWN stationary distribution is not a usable seed
+    // here: a stage that is individually unstable or critical (arrival rate >=
+    // its own service rate) has no stationary law at all, and
+    // ctmc_solve_reducible then returns the stationary law of the TRUNCATED
+    // generator, which piles mass against the truncation wall and whose mean
+    // grows linearly with the cutoff (for a critical M/M/1 truncated at N it is
+    // uniform, with mean N/2).
+    //
+    // The fixed point chained in svPost is exact -- it is the stationary
+    // equation of the joint (queue,stage) chain,
+    // phi_e = (sum_h phi_h q_he) (s_e I - Q_e)^-1 -- and it does contract to
+    // the right answer from that seed, but the number of sweeps needed grows
+    // with the cutoff. At a finite iter_max the reported result therefore
+    // drifts further from the truth as the cutoff is RAISED, i.e. the natural
+    // user response to a suspect number makes it worse.
+    //
+    // Seed instead from the environment-averaged generator sum_e probEnv(e)*Q_e,
+    // which is positive recurrent exactly when the model is stable on average --
+    // the regime in which the answer exists -- so its stationary law is
+    // cutoff-independent. Averaging needs one common state space; when the
+    // stages differ in size (resetStateFun is what bridges them) fall back to
+    // the per-stage law, which is no worse than before.
+    private void svSeedEntryDistributions() {
+        int E = getNumberOfModels();
+        boolean sameSpace = E > 1;
+        for (int e = 1; e < E && sameSpace; e++) {
+            sameSpace = svStages[e].Q.getNumRows() == svStages[0].Q.getNumRows();
+        }
+
+        Matrix shared = null;
+        if (sameSpace) {
+            double[] w = new double[E];
+            double wsum = 0.0;
+            boolean usable = envObj.probEnv != null && envObj.probEnv.getNumCols() >= E;
+            for (int e = 0; e < E && usable; e++) {
+                double pe = envObj.probEnv.get(0, e);
+                if (!Double.isFinite(pe) || pe < 0.0) {
+                    usable = false;
+                } else {
+                    wsum += pe;
+                }
+            }
+            if (usable && wsum > 0.0) {
+                for (int e = 0; e < E; e++) {
+                    w[e] = envObj.probEnv.get(0, e) / wsum;
+                }
+            } else {
+                // Stage probabilities unavailable or degenerate: weight equally.
+                for (int e = 0; e < E; e++) {
+                    w[e] = 1.0 / E;
+                }
+            }
+            Matrix Qbar = svStages[0].Q.copy();
+            Qbar.zero();
+            for (int e = 0; e < E; e++) {
+                Qbar = Qbar.add(w[e], svStages[e].Q);
+            }
+            shared = rowNormalizeNonneg(Ctmc_solve_reducible.ctmc_solve_reducible(Qbar).getLeft());
+        }
+
+        for (int e = 0; e < E; e++) {
+            if (shared == null) {
+                piEnter[e] = rowNormalizeNonneg(
+                        Ctmc_solve_reducible.ctmc_solve_reducible(svStages[e].Q).getLeft());
+            } else {
+                piEnter[e] = shared.copy();
+            }
+        }
     }
 
     // Propagate the entry distribution of stage e through its sojourn and store
@@ -2460,9 +2724,25 @@ public class SolverENV extends EnsembleSolver {
             // would not be read.
             this.envSolvers[e].options.init_sol = new Matrix(0, 0);
 
-            // Note: timespan is NOT adjusted here — getTranAvg() uses 30/minrate
+            // Note: timespan is NOT adjusted here - getTranAvg() uses 30/minrate
             // when timespan is unset, matching MATLAB's getTranAvg.m behavior.
-            solverTranAvgOf(this.envSolvers[e]);
+            //
+            // ASK FOR THE POINTS THE SOJOURN WEIGHT NEEDS, as MATLAB's analyze_
+            // and the native-python twin do. refineForCdf below still resamples
+            // whatever grid comes back, but reading the quadrature grid off a
+            // LINEAR interpolation of the integrator's steps is a first-order
+            // error its own dense output does not have: it left this engine
+            // 3.7e-4 from MATLAB on renv_fourstages_repairmen's Queue1 QLen
+            // while every other codebase agreed to 1e-4. Set for THIS stage
+            // solve and put back, since a stage solver's own getters must not
+            // inherit it.
+            double[] savedTranpoints = this.envSolvers[e].options.tranpoints;
+            this.envSolvers[e].options.tranpoints = stageCdfGrid(e);
+            try {
+                solverTranAvgOf(this.envSolvers[e]);
+            } finally {
+                this.envSolvers[e].options.tranpoints = savedTranpoints;
+            }
 
             // see _kb/06-solver-catalog.md (JAR-only implementation notes: per-iteration result deep copy)
             SolverResult stageResult = this.envSolvers[e].result.deepCopy();
@@ -2655,6 +2935,15 @@ public class SolverENV extends EnsembleSolver {
     }
 
     public final NetworkAvgTable getAvgTable(SolverOptions options, boolean keepDisabled) {
+        return jline.io.LineResultRecorder.around(this, "avg", () -> getAvgTableImpl(options, keepDisabled));
+    }
+
+    /**
+     * Body of {@link #getAvgTable(SolverOptions, boolean)}, split out so {@link jline.io.LineResultRecorder}
+     * sees what the getter RETURNED. The JAVA cross-codebase parity row is
+     * measured from that rather than from what an example printed.
+     */
+    protected final NetworkAvgTable getAvgTableImpl(SolverOptions options, boolean keepDisabled) {
 
         AvgTable avgTable = this.getEnsembleAvg();
         Matrix QN = this.result.QN;
@@ -2712,7 +3001,13 @@ public class SolverENV extends EnsembleSolver {
             }
         }
 
-        networkAvgTable.setOptions(options);
+        // ENV defaults verbose to SILENT to mute the ensemble progress log; that must not
+        // also mute an explicitly requested print(), which MATLAB/Python always emit.
+        SolverOptions tableOptions = options.copy();
+        if (tableOptions.verbose == VerboseLevel.SILENT) {
+            tableOptions.verbose = VerboseLevel.STD;
+        }
+        networkAvgTable.setOptions(tableOptions);
         networkAvgTable.setClassNames(className);
         networkAvgTable.setStationNames(stationName);
         return networkAvgTable;
@@ -2806,7 +3101,15 @@ public class SolverENV extends EnsembleSolver {
      * @return Array of method names
      */
     public String[] listValidMethods() {
-        return new String[]{"default"};
+        // SolverENV.m verbatim. Each name selects a COUPLING -- what crosses an
+        // environment switch -- and each is dispatched in this class or its
+        // analyzers: 'default'/'meanfield' carry the marginal means, 'statevec'/
+        // 'blend' the whole joint distribution, 'smp' lifts the Markovian-arc
+        // check, 'statedep' makes the transition depend on the state it leaves,
+        // and 'avg'/'dec' are the closed-form fast/slow environment limits. The
+        // list used to name only "default", so six dispatched methods were
+        // reachable only by reading the source.
+        return new String[]{"default", "meanfield", "smp", "statedep", "statevec", "blend", "avg", "dec"};
     }
 
     private MatrixCell findBestPartition(Matrix E0) {
@@ -3203,5 +3506,133 @@ public class SolverENV extends EnsembleSolver {
             this.G = G;
             this.pmicro = pmicro;
         }
+    }
+
+    /**
+     * The transient grid an exit average may be summed on, refined where the
+     * sojourn weight cannot see the solver's own grid.
+     *
+     * <p>The exit metric is the Stieltjes sum {@code sum_k m(t_k) * [F(t_k) -
+     * F(t_{k-1})]} evaluated on the ODE solver's OWN output grid. That grid is
+     * chosen for the horizon, not for the sojourn, so a stage integrated over
+     * {@code [0,1e3]} and read through an {@code Exp(1)} clock puts almost every
+     * point where the weight is zero, and the answer becomes an artifact of step
+     * placement rather than of the model.
+     *
+     * <p>The grid is rebuilt UNCONDITIONALLY -- 90% of the points under
+     * {@code 5*E[S]} and the rest across the tail -- rather than only when the
+     * solver's own grid looks too coarse. A "50 points inside the support is
+     * enough" escape (native python's, before this) stops wherever the
+     * integrator's steps happened to fall and does not converge: on
+     * renv_node_breakdown the sum runs 0.462260, 0.460580, 0.459704, 0.459272,
+     * 0.459138, 0.459122 as the point count goes 500 to 5e4. Rebuilding always
+     * is also what makes the four codebases sum the SAME points, which is the
+     * property parity needs.
+     */
+    private static final class CdfGrid {
+        static final int NINTERP = 5000;
+
+        final Matrix t;
+        private final Matrix src;   // null when the original grid was kept
+
+        private CdfGrid(Matrix t, Matrix src) {
+            this.t = t;
+            this.src = src;
+        }
+
+        /** A metric sampled on the original grid, re-sampled onto {@link #t}. */
+        Matrix on(Matrix metric) {
+            if (src == null || metric == null || metric.length() != src.length()) {
+                return metric;
+            }
+            Matrix out = new Matrix(t.getNumRows(), 1);
+            int n = src.length();
+            int j = 0;
+            for (int k = 0; k < t.getNumRows(); k++) {
+                double tk = t.get(k, 0);
+                while (j < n - 2 && src.get(j + 1) < tk) {
+                    j++;
+                }
+                double x0 = src.get(j);
+                double x1 = src.get(j + 1);
+                double y0 = metric.get(j);
+                double y1 = metric.get(j + 1);
+                double v;
+                if (tk <= x0) {
+                    v = y0;
+                } else if (tk >= x1) {
+                    v = y1;
+                } else {
+                    v = y0 + (y1 - y0) * (tk - x0) / (x1 - x0);
+                }
+                out.set(k, 0, v);
+            }
+            return out;
+        }
+    }
+
+    /**
+     * The instants stage {@code e}'s exit average is summed over, as an array
+     * the fluid integrator can be asked for, or null when the horizon is not
+     * finite (there is then no grid to ask for).
+     *
+     * <p>Same construction as {@link #refineForCdf}, built from the stage
+     * HORIZON rather than from a trajectory, so it can be requested before the
+     * solve.</p>
+     *
+     * @param e stage index
+     * @return increasing output instants, or null
+     */
+    private double[] stageCdfGrid(int e) {
+        double[] ts = this.envSolvers[e].options.timespan;
+        if (ts == null || ts.length < 2 || !Double.isFinite(ts[1]) || !(ts[1] > ts[0])) {
+            return null;
+        }
+        Matrix span = new Matrix(2, 1);
+        span.set(0, 0, ts[0]);
+        span.set(1, 0, ts[1]);
+        Matrix D0 = envObj.holdTime[e].get(0).copy();
+        Matrix D1 = envObj.holdTime[e].get(1).copy();
+        map_normalize(D0, D1);
+        Matrix fine = refineForCdf(span, D0, D1).t;
+        if (fine == null || fine.getNumRows() < 2) {
+            return null;
+        }
+        double[] out = new double[fine.getNumRows()];
+        for (int k = 0; k < out.length; k++) {
+            out[k] = fine.get(k, 0);
+        }
+        return out;
+    }
+
+    /** The grid {@code t} refined for a sojourn distributed as the MAP (D0, D1). */
+    private static CdfGrid refineForCdf(Matrix t, Matrix D0, Matrix D1) {
+        int n = (t == null) ? 0 : t.getNumRows();
+        if (n < 2) {
+            return new CdfGrid(t, null);
+        }
+        double t0 = t.get(0, 0);
+        double tEnd = t.get(n - 1, 0);
+        double meanSojourn = map_mean(D0, D1);
+        if (!(meanSojourn > 0) || Double.isInfinite(meanSojourn) || Double.isNaN(meanSojourn)) {
+            meanSojourn = (tEnd - t0) / 10.0;
+        }
+        double tCdfEnd = Math.min(tEnd, 5.0 * meanSojourn);
+        if (tCdfEnd <= t0) {
+            tCdfEnd = tEnd;
+        }
+        int nDense = (int) (0.9 * CdfGrid.NINTERP);
+        int nTail = CdfGrid.NINTERP - nDense;
+        boolean withTail = tCdfEnd < tEnd && nTail > 1;
+        Matrix fine = new Matrix(withTail ? nDense + nTail : nDense, 1);
+        for (int k = 0; k < nDense; k++) {
+            fine.set(k, 0, t0 + (tCdfEnd - t0) * k / (double) (nDense - 1));
+        }
+        if (withTail) {
+            for (int k = 1; k <= nTail; k++) {
+                fine.set(nDense + k - 1, 0, tCdfEnd + (tEnd - tCdfEnd) * k / (double) (nTail + 1 - 1));
+            }
+        }
+        return new CdfGrid(fine, t);
     }
 }

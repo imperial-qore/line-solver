@@ -69,7 +69,18 @@ public final class Pfqn_sqni {
                 Q.set(queueIdx, r, Xr * L.get(r));
             }
         } else {
+            // A Z=0 class (self-looping) has no delay to interpolate through: its
+            // queue length is its whole population and it is solved after the loop.
             for (int r = 0; r < C; r++) {
+                if (Z.get(r) == 0.0) {
+                    Q.set(queueIdx, r, N.get(0, r));
+                }
+            }
+
+            for (int r = 0; r < C; r++) {
+                if (Z.get(r) == 0.0) {
+                    continue;
+                }
                 double Nr = N.get(0, r);
                 double Lr = L.get(r);
                 double Zr = Z.get(r);
@@ -78,14 +89,14 @@ public final class Pfqn_sqni {
                 Nvec_1r.set(0, r, Nvec_1r.get(0, r) - 1);
 
                 double sumN = N.elementSum();
+                // sumBrPart runs over EVERY class, class r included, as in MATLAB
+                // pfqn_sqni; skipping r shifted X by 1.6% on a 2-class model.
                 double sumBrPart = 0.0;
                 for (int i = 0; i < C; i++) {
-                    if (i != r) {
-                        double Zi = Z.get(i);
-                        double Li = L.get(i);
-                        double Ni = Nvec_1r.get(0, i);
-                        sumBrPart += Zi * Ni / (Zi + Li + Li * (sumN - 2));
-                    }
+                    double Zi = Z.get(i);
+                    double Li = L.get(i);
+                    double Ni = Nvec_1r.get(0, i);
+                    sumBrPart += Zi * Ni / (Zi + Li + Li * (sumN - 2));
                 }
 
                 Matrix BrVec = new Matrix(1, C);

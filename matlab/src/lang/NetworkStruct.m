@@ -10,6 +10,9 @@ function sn=NetworkStruct()
  sn.cdscalingpeak=[]; % (nstations x nclasses) declared peak class-dependent rate scaling, for Util=T*S/peak normalization
  sn.jdscaling={}; % joint-dependent (non-product-form) scalings eta_i(n): scalar shared across classes or per-class, argument the joint vector (n_{i,1},...,n_{i,R}); see setJointDependence
  sn.jdscalingpeak=[]; % (nstations x nclasses) declared peak joint-dependent rate scaling, for Util=T*S/peak normalization
+ sn.gdscaling=[]; % network-level globally state-dependent (Whittle) scaling phi(n): argument the FULL (nstations x nclasses) population matrix, output scalar, (M x 1) or (M x K); see setGlobalDependence. Empty = none
+ sn.gdscalingpeak=[]; % (nstations x nclasses) declared peak global rate scaling, for Util=T*S/peak normalization
+ sn.gdscalingcutoff=[]; % per-slot open-class truncation used to materialize gdscaling onto the JSON wire (closed classes use their population); solving ignores it
  sn.chains=[];     % binary CxK matrix where 1 in entry (i,j) indicates that class j is in chain i.
  sn.classcap=[];    % buffer size for each class
  sn.classnames=string([]);  % name of each job class
@@ -95,13 +98,13 @@ function sn=NetworkStruct()
 
  % finite capacity regions
  sn.nregions=[];         % number of finite capacity regions (F)
- sn.region={};           % cell array of size F; region{f} is Matrix(M, K+1) where entry (i,r) is max jobs of class r at station i in region f; (i,K+1) is global max at station i; -1 = infinite
+ sn.region={};           % cell(F); region{f} is Matrix(M,K+1); entry (i,r)=max jobs of class r at station i in region f; (i,K+1)=global max at station i; -1=infinite
  sn.regionrule=[];       % Matrix(F, K) where entry (f,r) is DropStrategy for class r in region f
  sn.regionweight=[];     % Matrix(F, K) where entry (f,r) is class weight for class r in region f (default 1.0)
  sn.regionsz=[];         % Matrix(F, K) where entry (f,r) is class size/memory for class r in region f (default 1)
 sn.regionmaxmem={};     % cell(F,1); regionmaxmem{f} is Matrix(M,1) with the region global memory budget replicated on member station rows, -1 = unbounded
  sn.regionlincon={};     % cell(F,2); regionlincon{f,1} is Matrix(C_f, K) linear constraint matrix and regionlincon{f,2} is Matrix(C_f, 1) capacity vector for region f
- sn.regionmembers={};    % cell(F,1); regionmembers{f} is logical(M,1), true where station i belongs to region f. Membership is NOT recoverable from region{f}: -1 there means unbounded, which is indistinguishable from not-a-member, so a region constrained only by regionlincon would read as empty
+ sn.regionmembers={};    % cell(F,1); regionmembers{f} logical(M,1), true where station i in region f. Not recoverable from region{f}: -1 (unbounded) looks like non-member
 
  % hashing maps
  sn.nodeToStateful=[];
@@ -120,6 +123,19 @@ sn.regionmaxmem={};     % cell(F,1); regionmaxmem{f} is Matrix(M,1) with the reg
 
  % cache item state tracking (mirrors JAR varsparam)
  sn.varsparam=[];            % (nnodes x 1) item indices for cache state, -1 = none
+
+ % Krzesinski (1987) product-form state-dependent routing. Empty unless a node
+ % declares it with Node.setStateDepRouting. Station-indexed twin of the
+ % node-indexed copy kept in sn.nodeparam{ind}{r}.sdr; built by
+ % MNetwork.refreshStateDepRouting. Branch index 1 denotes the complement M-V
+ % and is unused, following the paper's own indexing.
+ %   sdr.entry, sdr.departure    station indices of e and d of Q(V,V)
+ %   sdr.branch{b}               station indices of branch b, b >= 2
+ %   sdr.entryOf(b), .departureOf(b)  station indices of e(b) and d(b)
+ %   sdr.level(b)                index t with B_b in V_t - V_{t+1}
+ %   sdr.C (1xT), sdr.d (TxB)    the coefficients C_t and d_tb of eq. (11)
+ %   sdr.entrynode, .departurenode, .branchnode  the same topology in node indices
+ sn.sdr=[];
 
  % marked (MMAP) source arrivals (populated by refreshStruct)
  sn.markidx=[];              % (nstations x nclasses) mark index (1-based) of class r
@@ -148,5 +164,7 @@ sn.regionmaxmem={};     % cell(F,1); regionmaxmem{f} is Matrix(M,1) with the reg
  % therefore live in the nodeparam container (indexed by node), not as flat root
  % fields. For a Queue node ind with server types, sn.nodeparam{ind} carries the
  % fields: nservertypes, servertypenames, serverspertype, servercompat,
- % heteroschedpolicy (see @MNetwork/refreshStruct.m).
+ % heteroschedpolicy (see @MNetwork/refreshStruct.m). The same container
+ % carries serverparallelism, a (1 x K) count of servers seized per class,
+ % present only where a class declares more than one.
 end

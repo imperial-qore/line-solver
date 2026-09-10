@@ -1,4 +1,4 @@
-function result = mapqn_bnd_lr_mva(params, objective_queue, objective_level, sense)
+function result = mapqn_bnd_lr_mva(params, objective_queue, objective_level, sense, objective_var)
 % MAPQN_BND_LR_MVA - MVA-based Linear Reduction Bounds for MAP Queueing Networks
 %
 % MATLAB port of bnd_lr_mva.py
@@ -21,8 +21,17 @@ function result = mapqn_bnd_lr_mva(params, objective_queue, objective_level, sen
 %                     .verbose - (optional) boolean
 %
 %   objective_queue - (optional) 1-based queue index, default 1
-%   objective_level - (optional) 1-based level index, default 1
+%   objective_level - (optional) 1-based level index, default 1. Pass 0 to
+%                     optimize the AGGREGATE over levels, sum_k X(queue,k),
+%                     which is the quantity the paper's bounds are stated on:
+%                     U_i(N) = sum_k U_i^k(N) is the utilization of station i,
+%                     while U_i^k alone is its utilization while the MAP sits
+%                     in phase k. Maximizing the K terms separately and adding
+%                     them is also an upper bound but a strictly looser one,
+%                     since the phases cannot all peak at once.
 %   sense           - (optional) 'min' or 'max', default 'max'
+%   objective_var   - (optional) 'UN' (default) or 'QN', the variable family
+%                     the objective is taken over
 %
 % Outputs:
 %   result   - Structure with results:
@@ -30,6 +39,15 @@ function result = mapqn_bnd_lr_mva(params, objective_queue, objective_level, sen
 %              .exitflag  - Solver exit flag
 %              .UN        - [M x K] utilization matrix
 %              .QN        - [M x K] queue length matrix
+%
+% Reference:
+%   G. Casale, E. Smirni, "MAP-AMVA: Approximate Mean Value Analysis of Bursty
+%   Systems", IEEE/IFIP DSN 2009, pp. 409-418. The LP assembled here is the
+%   paper's MAP-AMVA optimization program: the population constraint (1), the
+%   utilization bound (2), the MAP phase balance (3), the flow balance (4), the
+%   generalized horizontal cut (12), the vertical-cut MVA relation (13) in the
+%   linearized form (18)-(19) whose B(j,k,i) variables are the E_i^{j,k} of
+%   Theorem 4, and the two auxiliary families QN <= N*UN and sum_w QN >= N*UN.
 
     if nargin < 2 || isempty(objective_queue)
         objective_queue = 1;
@@ -39,6 +57,9 @@ function result = mapqn_bnd_lr_mva(params, objective_queue, objective_level, sen
     end
     if nargin < 4 || isempty(sense)
         sense = 'max';
+    end
+    if nargin < 5 || isempty(objective_var)
+        objective_var = 'UN';
     end
 
     % Extract parameters
@@ -424,8 +445,32 @@ function result = mapqn_bnd_lr_mva(params, objective_queue, objective_level, sen
 
     %% Build objective function
     if verbose; fprintf('Building objective function...\n'); end
+    switch upper(objective_var)
+        case 'UN'
+            getObjIdx = getUNIdx;
+        case 'QN'
+            getObjIdx = getQNIdx;
+        otherwise
+            error('mapqn_bnd_lr_mva:objectiveVar', ...
+                'objective_var must be ''UN'' or ''QN'', got ''%s''.', objective_var);
+    end
+    if objective_queue < 1 || objective_queue > M
+        error('mapqn_bnd_lr_mva:objectiveQueue', ...
+            'objective_queue must be in 1..%d, got %d.', M, objective_queue);
+    end
+    if objective_level < 0 || objective_level > K
+        error('mapqn_bnd_lr_mva:objectiveLevel', ...
+            'objective_level must be in 0..%d (0 aggregates over levels), got %d.', ...
+            K, objective_level);
+    end
     c = zeros(nVars, 1);
-    c(getUNIdx(objective_queue, objective_level)) = 1;
+    if objective_level == 0
+        for k = 1:K
+            c(getObjIdx(objective_queue, k)) = 1;
+        end
+    else
+        c(getObjIdx(objective_queue, objective_level)) = 1;
+    end
 
     if strcmp(sense, 'max')
         c = -c;

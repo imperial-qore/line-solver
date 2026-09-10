@@ -23,7 +23,9 @@ function UNb = ctmc_signal_busy(sn, ind, ist, schedIst, SIst, StateSpace, istSpa
 K = sn.nclasses;
 UNb = zeros(1,K);
 isPS = any(schedIst == [SchedStrategy.PS, SchedStrategy.DPS, SchedStrategy.GPS, SchedStrategy.LPS]);
-cols = (istSpaceShift(ist)+1):(istSpaceShift(ist)+size(sn.space{ist},2));
+% sn.space is keyed by STATEFUL index, not by station: read the width through
+% stationToStateful (the caller's istSpaceShift is already station-indexed).
+cols = (istSpaceShift(ist)+1):(istSpaceShift(ist)+size(sn.space{sn.stationToStateful(ist)},2));
 for st = wset
     if probSysState(st) == 0
         continue

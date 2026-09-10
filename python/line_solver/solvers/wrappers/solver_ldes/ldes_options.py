@@ -2,7 +2,7 @@
 LDES solver options and result dataclasses.
 
 This module provides configuration options and result containers for the
-LDES (LINE Discrete Event Simulator) solver, which runs via subprocess
+LDES solver, which runs via subprocess
 calling ldes.jar.
 """
 
@@ -122,6 +122,18 @@ class LDESOptions:
     [st0_cl0, st0_cl1, ..., stM-1_clK-1]. None = default initialization
     (closed jobs at their reference stations)."""
 
+    busy_period_orders: int = 0
+    """Highest busy period order measured (--busyperiod). A busy period of order n
+    for a set of stations runs from the instant an arrival raises the jobs held by
+    the set to n up to the instant the set falls back below n (H. Daduna, J. ACM
+    35(3), 1988). When positive, the orders 1..busy_period_orders are measured for
+    every station, every station-class pair and every busy_period_subnets entry.
+    Default: 0 (no measurement)"""
+
+    busy_period_subnets: List[List[int]] = field(default_factory=list)
+    """Station sets whose joint busy period is measured (--busyperiod-subnet),
+    each a list of station indexes. Default: empty"""
+
     rest_url: Optional[str] = None
     """Base URL of an LDES REST server (the imperialqore/ldes container), e.g.
     'http://localhost:8080'. When set, the model is POSTed to <url>/api/v1/solve
@@ -154,8 +166,67 @@ class LDESOptions:
             timespan=list(self.timespan) if self.timespan else None,
             timeout=self.timeout,
             init_sol=np.array(self.init_sol, copy=True) if self.init_sol is not None else None,
+            busy_period_orders=self.busy_period_orders,
+            busy_period_subnets=[list(v) for v in self.busy_period_subnets],
             rest_url=self.rest_url,
         )
+
+
+@dataclass
+class LNLDESResult:
+    """Result container for a LayeredNetwork LDES simulation.
+
+    Twin of the JAR's ``jline.solvers.ldes.LNLDESResult``, parsed from the
+    layered ``ldes-result`` document. Metrics are VECTORS over the LQN element
+    index space -- hosts, then tasks, then entries, then activities, 0-based,
+    with the shifts carried alongside -- not the (station, class) matrices of
+    :class:`LDESResult`. Calls have no room in that space, so their metrics are
+    separate vectors indexed by the call's own 0-based index.
+    """
+
+    # Index space
+    nidx: int = 0
+    nhosts: int = 0
+    ntasks: int = 0
+    nentries: int = 0
+    nacts: int = 0
+    ncalls: int = 0
+    tshift: int = 0
+    eshift: int = 0
+    ashift: int = 0
+    names: list = field(default_factory=list)
+    """Element names, indexed by the absolute LQN index."""
+
+    # Mean metrics [nidx]
+    QLN: Optional[np.ndarray] = None
+    ULN: Optional[np.ndarray] = None
+    RLN: Optional[np.ndarray] = None
+    WLN: Optional[np.ndarray] = None
+    TLN: Optional[np.ndarray] = None
+    ALN: Optional[np.ndarray] = None
+    ZLN: Optional[np.ndarray] = None
+
+    # Per-call and per-entry-stream occupancy
+    UCallLN: Optional[np.ndarray] = None
+    TCallLN: Optional[np.ndarray] = None
+    UEntryClassLN: Optional[np.ndarray] = None
+
+    # Confidence interval half-widths [nidx]
+    QLNCI: Optional[np.ndarray] = None
+    ULNCI: Optional[np.ndarray] = None
+    RLNCI: Optional[np.ndarray] = None
+    TLNCI: Optional[np.ndarray] = None
+
+    cache_metrics: list = field(default_factory=list)
+
+    entryRespTimeSamples: Optional[list] = None
+    """Per-entry response time observations, one array per entry in LOCAL index
+    space. ``RLN`` is their mean; these are what ``getCdfRespT`` builds the
+    empirical law from, so its tail is measured rather than fitted."""
+
+    runtime: float = 0.0
+    solver: str = "LDES"
+    method: str = "default"
 
 
 @dataclass
@@ -277,6 +348,11 @@ class LDESResult:
 
     state_trajectory_time: Optional[np.ndarray] = None
     """Time points for state_trajectory_space [npoints]."""
+
+    busy_periods: Optional[list] = None
+    """Busy period measurement (present when run with --busyperiod). One dict per
+    target with keys name, stations (station indexes), class (-1 aggregates every
+    class), mean and count, both indexed by order 1..K."""
 
     # Finite capacity region (FCR) metrics [regions x classes]
     QNfcr: Optional[np.ndarray] = None

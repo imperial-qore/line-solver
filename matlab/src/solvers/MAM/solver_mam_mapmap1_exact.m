@@ -79,14 +79,9 @@ ok = true;
 end
 
 function tf = is_markovian_map(D0, D1)
-% A MAP has non-negative off-diagonal rates in D0, non-negative rates in D1, and
-% (D0+D1) is an infinitesimal generator (zero row sums). A RAP/ME violates the
-% sign conditions while still defining a valid point process.
-ns = size(D0, 1);
-tol = 1e-9 * max(1, max(abs([D0(:); D1(:)])));
-offDiag = D0(~eye(ns) > 0);
-tf = all(offDiag >= -tol) && all(D1(:) >= -tol) ...
-    && all(abs(sum(D0 + D1, 2)) <= tol);
+% Single definition in mam_is_markovian_map, shared with solver_mam_ag, which
+% needs the same predicate to keep a RAP/ME out of the RCAT phase construction.
+tf = mam_is_markovian_map(D0, D1);
 end
 
 function tf = is_renewal_map(D0, D1)

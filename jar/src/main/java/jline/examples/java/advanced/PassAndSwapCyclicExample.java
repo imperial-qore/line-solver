@@ -193,6 +193,7 @@ public class PassAndSwapCyclicExample {
 
         // (3) CTMC -- exact
         SolverOptions opt = SolverCTMC.defaultOptions();
+        opt.method = "exact";   // pin the state-space path
         opt.cutoff = Matrix.singleton(total);
         NetworkAvgTable tc = new SolverCTMC(buildModel(), opt).getAvgTable();
         tc.print();

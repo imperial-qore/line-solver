@@ -1,0 +1,136 @@
+{
+  "class": {
+    "MAM": "deterministic",
+    "MVA": "deterministic",
+    "NC": "deterministic"
+  },
+  "example": "oqn_vsinks",
+  "solvers": {
+    "MAM": [
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class1",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 1.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class2",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 1.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 1.0,
+        "JobClass": "Class1",
+        "QLen": 0.010204,
+        "ResidT": 0.010204,
+        "RespT": 0.010204,
+        "Station": "Queue1",
+        "Tput": 1.0,
+        "Util": 0.01
+      },
+      {
+        "ArvR": 1.0,
+        "JobClass": "Class2",
+        "QLen": 0.010204,
+        "ResidT": 0.010204,
+        "RespT": 0.010204,
+        "Station": "Queue1",
+        "Tput": 1.0,
+        "Util": 0.01
+      }
+    ],
+    "MVA": [
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class1",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 1.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class2",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 1.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 1.0,
+        "JobClass": "Class1",
+        "QLen": 0.010204,
+        "ResidT": 0.010204,
+        "RespT": 0.010204,
+        "Station": "Queue1",
+        "Tput": 1.0,
+        "Util": 0.01
+      },
+      {
+        "ArvR": 1.0,
+        "JobClass": "Class2",
+        "QLen": 0.010204,
+        "ResidT": 0.010204,
+        "RespT": 0.010204,
+        "Station": "Queue1",
+        "Tput": 1.0,
+        "Util": 0.01
+      }
+    ],
+    "NC": [
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class1",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 1.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class2",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 1.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 1.0,
+        "JobClass": "Class1",
+        "QLen": 0.010204,
+        "ResidT": 0.010204,
+        "RespT": 0.010204,
+        "Station": "Queue1",
+        "Tput": 1.0,
+        "Util": 0.01
+      },
+      {
+        "ArvR": 1.0,
+        "JobClass": "Class2",
+        "QLen": 0.010204,
+        "ResidT": 0.010204,
+        "RespT": 0.010204,
+        "Station": "Queue1",
+        "Tput": 1.0,
+        "Util": 0.01
+      }
+    ]
+  }
+}

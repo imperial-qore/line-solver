@@ -5,6 +5,7 @@
  */
 package jline.api.pfqn.nc;
 
+import org.apache.commons.math3.special.Gamma;
 import org.apache.commons.math3.util.FastMath;
 
 import jline.GlobalConstants;
@@ -33,12 +34,36 @@ public final class Pfqn_kt {
             Zlocal = new Matrix(1, Llocal.getNumCols());
         }
 
+        // A class with no jobs contributes a factor of 1 to G, but its saddle point is
+        // u_r -> 0, where N_r*log(u_r) and N_r/u_r^2 are indeterminate and lG comes back
+        // NaN. Solve the reduced model, as the self-looping branch below already does.
+        int nEmpty = 0;
+        for (int r = 0; r < Llocal.getNumCols(); r++) {
+            if (Nlocal.get(0, r) <= GlobalConstants.Zero) nEmpty++;
+        }
+        if (nEmpty > 0 && nEmpty < Llocal.getNumCols()) {
+            int Rk = Llocal.getNumCols() - nEmpty;
+            Matrix Lk = new Matrix(Llocal.getNumRows(), Rk);
+            Matrix Nk = new Matrix(1, Rk);
+            Matrix Zk = new Matrix(1, Rk);
+            int c = 0;
+            for (int r = 0; r < Llocal.getNumCols(); r++) {
+                if (Nlocal.get(0, r) <= GlobalConstants.Zero) continue;
+                for (int i = 0; i < Llocal.getNumRows(); i++) Lk.set(i, c, Llocal.get(i, r));
+                Nk.set(0, c, Nlocal.get(0, r));
+                Zk.set(0, c, Zlocal.get(0, r));
+                c++;
+            }
+            return pfqn_kt(Lk, Nk, Zk);
+        }
+
         int Morig = Llocal.getNumRows();
         int Rorig = Llocal.getNumCols();
         double slcDemandFactor = 0.0;
 
         if (Rorig > 1) {
             boolean[] isSLC = new boolean[Rorig];
+            int[] slcStation = new int[Rorig];
 
             for (int r = 0; r < Rorig; r++) {
                 int nnz = 0;
@@ -49,21 +74,36 @@ public final class Pfqn_kt {
                         firstRow = k;
                     }
                 }
-
                 if (nnz == 1 && Zlocal.get(0, r) == 0.0) {
-                    int rep = (int) Math.round(Nlocal.get(0, r));
-                    if (rep > 0) {
-                        Matrix block = new Matrix(rep, Rorig);
-                        for (int i = 0; i < rep; i++) {
-                            for (int c = 0; c < Rorig; c++) {
-                                block.set(i, c, Llocal.get(firstRow, c));
-                            }
-                        }
-                        Llocal = Matrix.concatRows(Llocal, block, null);
-                    }
-
                     isSLC[r] = true;
-                    slcDemandFactor = Nlocal.get(0, r) * FastMath.log(Llocal.get(firstRow, r));
+                    slcStation[r] = firstRow;
+                }
+            }
+
+            // classes looping at the SAME station share one (1-V)^-(1+sum N) factor
+            // and contribute the multinomial (sum N)!/prod N_r!
+            boolean[] done = new boolean[Rorig];
+            for (int r = 0; r < Rorig; r++) {
+                if (!isSLC[r] || done[r]) continue;
+                int ist = slcStation[r];
+                double ntot = 0.0;
+                for (int s = r; s < Rorig; s++) {
+                    if (!isSLC[s] || slcStation[s] != ist) continue;
+                    done[s] = true;
+                    ntot += Nlocal.get(0, s);
+                    slcDemandFactor += Nlocal.get(0, s) * FastMath.log(Llocal.get(ist, s))
+                            - Gamma.logGamma(Nlocal.get(0, s) + 1.0);
+                }
+                slcDemandFactor += Gamma.logGamma(ntot + 1.0);
+                int rep = (int) Math.round(ntot);
+                if (rep > 0) {
+                    Matrix block = new Matrix(rep, Rorig);
+                    for (int i = 0; i < rep; i++) {
+                        for (int c = 0; c < Rorig; c++) {
+                            block.set(i, c, Llocal.get(ist, c));
+                        }
+                    }
+                    Llocal = Matrix.concatRows(Llocal, block, null);
                 }
             }
 
@@ -91,7 +131,15 @@ public final class Pfqn_kt {
 
         int M = Llocal.getNumRows();
         int R = Llocal.getNumCols();
-        double Ntot = Nlocal.sumRows(0);
+        double Ntot = R == 0 ? 0.0 : Nlocal.sumRows(0);
+        if (R == 0 || Ntot <= GlobalConstants.Zero) {
+            // nothing left to expand: the demand factors are the exact answer
+            out.lG = slcDemandFactor;
+            out.G = FastMath.exp(slcDemandFactor);
+            out.X = new Matrix(1, R);
+            out.Q = new Matrix(M, R);
+            return out;
+        }
 
         Ret.pfqnAMVA XQ = (Ntot <= 4.0)
                 ? Pfqn_bs.pfqn_bs(Llocal, Nlocal, Zlocal)
@@ -288,7 +336,7 @@ public final class Pfqn_kt {
             sumLogUs += FastMath.log(us[r]);
         }
         double lG = F - sumLogUs - (R / 2.0) * FastMath.log(2.0 * FastMath.PI)
-                - 0.5 * FastMath.log(H.det()) + slcDemandFactor;
+                - 0.5 * logDet(H) + slcDemandFactor;
 
         out.lG = lG;
         out.G = FastMath.exp(lG);
@@ -297,5 +345,35 @@ public final class Pfqn_kt {
         out.X = new Matrix(XQ.X);
         out.Q = new Matrix(XQ.Q);
         return out;
+    }
+
+    /**
+     * Logarithm of the determinant of a symmetric positive definite matrix, from its
+     * Cholesky factor. det(H) of an R x R Hessian leaves double range well before its
+     * logarithm does (it overflowed at R = 64, turning lG into -Infinity).
+     */
+    private static double logDet(Matrix H) {
+        int n = H.getNumRows();
+        double[][] a = new double[n][n];
+        for (int i = 0; i < n; i++) {
+            for (int j = 0; j < n; j++) a[i][j] = H.get(i, j);
+        }
+        double acc = 0.0;
+        for (int k = 0; k < n; k++) {
+            double d = a[k][k];
+            for (int j = 0; j < k; j++) d -= a[k][j] * a[k][j];
+            if (d <= 0) { // not numerically positive definite
+                return FastMath.log(H.det());
+            }
+            double lkk = Math.sqrt(d);
+            a[k][k] = lkk;
+            acc += 2 * FastMath.log(lkk);
+            for (int i = k + 1; i < n; i++) {
+                double sum = a[i][k];
+                for (int j = 0; j < k; j++) sum -= a[i][j] * a[k][j];
+                a[i][k] = sum / lkk;
+            }
+        }
+        return acc;
     }
 }

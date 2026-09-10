@@ -6,6 +6,7 @@
 package jline.io;
 
 import jline.lang.processes.APH;
+import jline.lang.processes.Markovian;
 import jline.lang.workflow.Workflow;
 import jline.lang.workflow.WorkflowActivity;
 import org.junit.jupiter.api.Test;
@@ -52,7 +53,7 @@ public class WfCommonsLoaderTest {
                 "}";
 
         Workflow wf = WfCommonsLoader.loadFromString(json);
-        APH ph = wf.toPH();
+        Markovian ph = wf.toPH();
 
         double expectedMean = 1.0 + 2.0 + 3.0;
         assertEquals(expectedMean, ph.getMean(), VERY_COARSE_TOL);
@@ -85,7 +86,7 @@ public class WfCommonsLoaderTest {
                 "}";
 
         Workflow wf = WfCommonsLoader.loadFromString(json);
-        APH ph = wf.toPH();
+        Markovian ph = wf.toPH();
 
         // Fork-join should have mean > sum of serial parts
         assertTrue(ph.getMean() > 4.0);
@@ -108,7 +109,7 @@ public class WfCommonsLoaderTest {
 
         WfCommonsOptions options = new WfCommonsOptions().setDefaultRuntime(5.0);
         Workflow wf = WfCommonsLoader.loadFromString(json, options);
-        APH ph = wf.toPH();
+        Markovian ph = wf.toPH();
 
         assertEquals(5.0, ph.getMean(), VERY_COARSE_TOL);
     }
@@ -190,7 +191,7 @@ public class WfCommonsLoaderTest {
 
         WfCommonsOptions options = WfCommonsOptions.deterministic();
         Workflow wf = WfCommonsLoader.loadFromString(json, options);
-        APH ph = wf.toPH();
+        Markovian ph = wf.toPH();
 
         assertEquals(3.0, ph.getMean(), VERY_COARSE_TOL);
     }
@@ -222,7 +223,7 @@ public class WfCommonsLoaderTest {
         writer.close();
 
         Workflow wf = WfCommonsLoader.load(tempFile.getAbsolutePath());
-        APH ph = wf.toPH();
+        Markovian ph = wf.toPH();
 
         assertEquals(3.0, ph.getMean(), VERY_COARSE_TOL);
     }
@@ -284,7 +285,7 @@ public class WfCommonsLoaderTest {
         writer.close();
 
         Workflow wf = Workflow.fromWfCommons(tempFile.getAbsolutePath());
-        APH ph = wf.toPH();
+        Markovian ph = wf.toPH();
 
         assertEquals(3.0, ph.getMean(), VERY_COARSE_TOL);
     }
@@ -318,7 +319,7 @@ public class WfCommonsLoaderTest {
                 "}";
 
         Workflow wf = WfCommonsLoader.loadFromString(json);
-        APH ph = wf.toPH();
+        Markovian ph = wf.toPH();
 
         assertEquals(5, wf.getActivities().size());
         assertTrue(ph.getMean() > 0);

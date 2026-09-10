@@ -19,20 +19,25 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
- * Test remote LQNS execution via the lqns-rest Docker container.
+ * Test remote LQNS execution against an lqns-rest service.
  *
- * <p>When Docker is available, the container is automatically started before tests
- * and stopped afterwards. If the Docker image is not present locally, the system
- * property {@code -Dlqns.docker.pull=true} must be set to authorize pulling it.</p>
+ * <p>LINE names no LQNS container image. LQNS is distributed under an evaluation
+ * agreement that forbids redistribution, so there is no image to pull and none is
+ * pulled here. The image, if any, is supplied by whoever holds that licence, via
+ * {@code -Dlqns.rest.image=<image>} or {@code LINE_LQNS_REST_IMAGE}; with neither
+ * set these tests are skipped unless a service is already reachable at
+ * {@link #REMOTE_URL}.</p>
  *
- * <p>To manually start the container instead:
- * <pre>docker run -p 8082:8080 imperialqore/line-lqns-rest:latest</pre></p>
+ * <p>When an image is named and Docker is available, the container is started
+ * before the tests and stopped afterwards. Pulling still requires
+ * {@code -Dlqns.docker.pull=true}.</p>
  */
 @Tag("remote")
 public class SolverLQNSRemoteTest {
 
     private static final String REMOTE_URL = "http://localhost:8082";
-    private static final String DOCKER_IMAGE = "imperialqore/line-lqns-rest:latest";
+    /** Image holding lqns-rest, supplied by the operator; empty means "none". */
+    private static final String DOCKER_IMAGE = resolveImageName();
     private static final String CONTAINER_NAME = "lqns-rest-test";
     private static final int HOST_PORT = 8082;
     private static final int CONTAINER_PORT = 8080;
@@ -42,6 +47,13 @@ public class SolverLQNSRemoteTest {
     /** True if this test class started the Docker container (and should stop it). */
     private static boolean containerStartedByUs = false;
 
+    /** {@code -Dlqns.rest.image} / {@code LINE_LQNS_REST_IMAGE}, or "" if unset. */
+    private static String resolveImageName() {
+        String v = System.getProperty("lqns.rest.image");
+        if (v == null || v.isEmpty()) v = System.getenv("LINE_LQNS_REST_IMAGE");
+        return v == null ? "" : v.trim();
+    }
+
     @BeforeAll
     public static void setUp() {
         Maths.setRandomNumbersMatlab(true);
@@ -49,6 +61,15 @@ public class SolverLQNSRemoteTest {
         // If the service is already reachable, nothing to do
         if (isServiceReachable()) {
             System.out.println("[LQNS Docker] Service already reachable at " + REMOTE_URL);
+            return;
+        }
+
+        // No image named: LINE does not know of one and must not guess. Skip.
+        if (DOCKER_IMAGE.isEmpty()) {
+            System.err.println("[LQNS Docker] No lqns-rest service at " + REMOTE_URL
+                + " and no image named. Set -Dlqns.rest.image=<image> (or "
+                + "LINE_LQNS_REST_IMAGE) to one you are licensed to run. "
+                + "Remote LQNS tests will be skipped.");
             return;
         }
 
@@ -299,9 +320,9 @@ public class SolverLQNSRemoteTest {
 
     private static final String DOCKER_UNAVAILABLE_WARNING =
         "WARNING: LQNS Docker container not available at " + REMOTE_URL + ". " +
-        "Ensure Docker is installed and either start the container manually " +
-        "(docker run -p 8082:8080 imperialqore/line-lqns-rest:latest) " +
-        "or run with -D" + PULL_PROPERTY + "=true to allow automatic image download.";
+        "Start an lqns-rest service there yourself, or name an image you are " +
+        "licensed to run with -Dlqns.rest.image=<image> (adding -D" + PULL_PROPERTY +
+        "=true if it still has to be pulled).";
 
     /**
      * Check Docker availability and skip test with warning if not available.

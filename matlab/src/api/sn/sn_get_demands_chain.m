@@ -51,8 +51,12 @@ ST(isnan(ST))=0;
 alpha = zeros(sn.nstations,sn.nclasses);
 Vchain = zeros(sn.nstations,sn.nchains);
 for c=1:sn.nchains
-    inchain = sn.inchain{c};    
-    if sn.refclass(c)>0 % if the model has a ref class
+    inchain = sn.inchain{c};
+    % a ref class that never visits the ref station gives a zero denominator,
+    % which turns every Vchain into Inf and then into 0 below
+    useRefClass = sn.refclass(c)>0 && ...
+        sum(sn.visits{c}(sn.stationToStateful(sn.refstat(inchain(1))),sn.refclass(c))) > GlobalConstants.Zero;
+    if useRefClass % if the model has a ref class
         for i=1:sn.nstations
             Vchain(i,c) = sum(sn.visits{c}(sn.stationToStateful(i),inchain)) / sum(sn.visits{c}(sn.stationToStateful(sn.refstat(inchain(1))),sn.refclass(c)));
             for kidx=1:length(inchain)
@@ -74,7 +78,12 @@ end
 Vchain(~isfinite(Vchain))=0;
 for c=1:sn.nchains
     inchain = sn.inchain{c};
-    Vchain(:,c) = Vchain(:,c) / Vchain(sn.refstat(inchain(1)),c);
+    % an empty chain has no visit at its reference station, and 0/0 would put
+    % NaN back into Vchain after the isfinite cleanup above
+    vref = Vchain(sn.refstat(inchain(1)),c);
+    if abs(vref) > GlobalConstants.Zero
+        Vchain(:,c) = Vchain(:,c) / vref;
+    end
 end
 alpha(~isfinite(alpha))=0;
 alpha(alpha<GlobalConstants.Zero)=0;

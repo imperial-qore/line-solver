@@ -90,7 +90,7 @@ public final class Solver_nc_marg {
             Matrix sivec = ret1.sir;
             java.util.List<Matrix> kirvec = ret1.kir;
 
-            // matrix.elementMin negative check disabled per Kotlin source comments
+            // matrix.elementMin negative check disabled per Java source comments
             Matrix nivec_chain = nirvec.mult(sn.chains.transpose());
 
             Matrix Lchain_tmp = new Matrix(0, Lchain.getNumCols());

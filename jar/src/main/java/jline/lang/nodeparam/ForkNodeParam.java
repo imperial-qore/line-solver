@@ -31,6 +31,22 @@ public class ForkNodeParam extends NodeParam {
      */
     public double fanOut = Double.NaN;
 
+    /**
+     * Variable forking levels, all (nnodes x nclasses) and indexed by
+     * DESTINATION NODE rather than link ordinal, so a relink cannot silently
+     * permute them. {@code fanOut} above stays the scalar every existing
+     * consumer reads.
+     *
+     * <p>{@code fanOutLink}: expected tasks sent to destination k for class r,
+     * zero on a link the class does not take. {@code fanOutProb}: probability
+     * the branch fires at all. {@code fanOutDist}: the jobs-per-link
+     * distribution, indexed {@code [k][r]} with null meaning degenerate at
+     * {@code fanOutLink}.</p>
+     */
+    public jline.util.matrix.Matrix fanOutLink;
+    public jline.util.matrix.Matrix fanOutProb;
+    public jline.lang.processes.DiscreteSampler[][] fanOutDist;
+
     /** FJ tag augmentation (ModelAdapter.fjtag): original classes forked here */
     public java.util.List<Integer> fjClasses;
     /** FJ tag augmentation: matched join node per forked class entry */

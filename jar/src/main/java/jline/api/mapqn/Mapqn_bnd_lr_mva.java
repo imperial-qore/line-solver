@@ -10,31 +10,83 @@ import org.apache.commons.math3.optim.nonlinear.scalar.GoalType;
 import org.apache.commons.math3.optim.PointValuePair;
 
 /**
- * Implementation of bnd_mvaversion.mod linear program.
+ * Implementation of bnd_mvaversion.mod linear program: the MAP-AMVA
+ * optimization program of G. Casale, E. Smirni, "MAP-AMVA: Approximate Mean
+ * Value Analysis of Bursty Systems", IEEE/IFIP DSN 2009, pp. 409-418.
+ *
+ * <p>The constraints assembled below are the paper's: the population constraint
+ * (1), the utilization bound (2), the MAP phase balance (3), the flow balance
+ * (4), the generalized horizontal cut (12), the vertical-cut MVA relation (13)
+ * in the linearized form (18)-(19) whose {@code B(j,k,i)} variables are the
+ * E_i^{j,k} of Theorem 4, and the two auxiliary families QN &lt;= N*UN and
+ * sum_w QN &gt;= N*UN.
  */
 public final class Mapqn_bnd_lr_mva {
     private Mapqn_bnd_lr_mva() {}
 
     public static Mapqn_solution solve(MVAVersionParameters params, int objectiveQueue, int objectiveLevel) {
+        return solve(params, objectiveQueue, objectiveLevel, "max");
+    }
+
+    /**
+     * As above, optimizing in the requested direction. The LP is a relaxation
+     * containing the exact solution, so "max" is a valid upper bound on the
+     * utilization at that population level and "min" the matching lower bound.
+     *
+     * @param sense "min" or "max"
+     */
+    public static Mapqn_solution solve(MVAVersionParameters params, int objectiveQueue, int objectiveLevel,
+                                       String sense) {
+        return solve(params, objectiveQueue, objectiveLevel, sense, "UN");
+    }
+
+    /**
+     * As above, over a chosen variable family and optionally over the SUM of
+     * the levels.
+     *
+     * <p>{@code objectiveLevel == 0} optimizes the aggregate sum_k X(queue, k),
+     * which is the quantity the paper's bounds are stated on: U_i(N) = sum_k
+     * U_i^k(N) is the utilization of station i, while U_i^k alone is its
+     * utilization while the MAP sits in phase k. Optimizing the K terms
+     * separately and adding them is also a bound but a strictly looser one,
+     * since the phases cannot all peak at once.
+     *
+     * @param objectiveVar "UN" or "QN", the variable family optimized over
+     */
+    public static Mapqn_solution solve(MVAVersionParameters params, int objectiveQueue, int objectiveLevel,
+                                       String sense, String objectiveVar) {
         params.validate();
+        if (!("min".equals(sense) || "max".equals(sense))) {
+            throw new IllegalArgumentException("Sense must be 'min' or 'max'");
+        }
         if (objectiveQueue < 1 || objectiveQueue > params.M) {
             throw new IllegalArgumentException("Objective queue must be in range 1.." + params.M);
         }
-        if (objectiveLevel < 1 || objectiveLevel > params.K) {
-            throw new IllegalArgumentException("Objective level must be in range 1.." + params.K);
+        if (objectiveLevel < 0 || objectiveLevel > params.K) {
+            throw new IllegalArgumentException(
+                    "Objective level must be in range 0.." + params.K + " (0 aggregates over levels)");
+        }
+        if (!("UN".equals(objectiveVar) || "QN".equals(objectiveVar))) {
+            throw new IllegalArgumentException("objectiveVar must be 'UN' or 'QN'");
         }
 
         Mapqn_lpmodel model = new Mapqn_lpmodel();
         registerVariables(model, params);
         addConstraints(model, params);
 
-        String objectiveVarName = "UN_" + objectiveQueue + "_" + objectiveLevel;
-        double[] objectiveCoeffs = model.createObjectiveCoefficients(objectiveVarName);
+        // Objective over one level, or over their sum when objectiveLevel is 0.
+        double[] objectiveCoeffs = new double[model.getNumVariables()];
+        int firstLevel = objectiveLevel == 0 ? 1 : objectiveLevel;
+        int lastLevel = objectiveLevel == 0 ? params.K : objectiveLevel;
+        for (int k = firstLevel; k <= lastLevel; k++) {
+            objectiveCoeffs[model.getVariableIndex(objectiveVar + "_" + objectiveQueue + "_" + k)] = 1.0;
+        }
         LinearObjectiveFunction objectiveFunction = new LinearObjectiveFunction(objectiveCoeffs, 0.0);
 
         SimplexSolver solver = new SimplexSolver();
         LinearConstraintSet constraintSet = new LinearConstraintSet(model.getConstraints());
-        PointValuePair solution = solver.optimize(objectiveFunction, constraintSet, GoalType.MAXIMIZE);
+        PointValuePair solution = solver.optimize(objectiveFunction, constraintSet,
+                "min".equals(sense) ? GoalType.MINIMIZE : GoalType.MAXIMIZE);
 
         return new Mapqn_solution(solution.getValue(), extractVariableValues(model, solution.getPoint()));
     }

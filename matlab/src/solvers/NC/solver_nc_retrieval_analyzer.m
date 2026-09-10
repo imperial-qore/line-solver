@@ -5,6 +5,14 @@ function [QN,UN,RN,TN,CN,XN,lG,hitprob,missprob,delayedprob,hitproblist,itemprob
 % recurrence algorithms: retrieval_nc (normalizing constant) and retrieval_metrics
 % (hit / miss / delayed-hit ratios). Latency is left to SolverMVA
 % (retrieval_fpi_latency) and returned as NaN here.
+%
+% Those recurrences are exponential in the number of items, so OPTIONS.METHOD =
+% 'rayint' selects instead the ray (WKB) approximation of retrieval_rayint, which
+% is polynomial. It applies only when every fetch station is infinite-server,
+% where the delayed-hit constant factorizes exactly as prod_k D_k times the plain
+% cache constant with access factors gamma_{k,j}/D_k; elsewhere it warns and falls
+% back to the exact path. Accuracy is that of retrieval_rayint, i.e. roughly
+% 0.14*(1/min_j m_j + 1/(n - sum_j m_j)) in relative terms.
 
 % Copyright (c) 2012-2026, Imperial College London
 % All rights reserved.
@@ -24,12 +32,57 @@ line_debug('NC retrieval analyzer starting: nclasses=%d', sn.nclasses);
 n = numel(lambda);
 r = sum(station_type == "PS");
 
-% --- exact normalizing constant E(m) = retrieval_nc(0,m,...) ---
-E = retrieval_nc(zeros(1, r), m, lambda, eta, gamma);
-lG = log(E);
+useray = isfield(options, 'method') && any(strcmpi(options.method, {'rayint','ray'}));
+if useray
+    % The ray expansion needs the delayed-hit constant to factorize. It does,
+    % EXACTLY, when every fetch station is infinite-server: dividing the
+    % retrieval_nc recurrence by prod_k D_k with D_k = 1 + lambda_k eta_{0,k}
+    % collapses it onto cache_erec with theta_{k,j} = gamma_{k,j}/D_k, so the
+    % delayed-hit cache IS a plain cache with fetch-inflated access factors.
+    % A queueing (PS) fetch station breaks this: the (v_s+1) multiplicity ties
+    % E(0,m) to the whole moment tower E(1_s,m), E(2_s,m), ..., and replacing it
+    % by the retrieval_fpi mean field overestimates E by 13%/140%/830% at
+    % n=6/8/10 (measured), growing with n. There is no validated expansion
+    % there, so refuse rather than return a confident wrong number.
+    reason = '';
+    if size(eta, 2) > 1 && any(any(eta(:, 2:end) ~= 0))
+        reason = 'the retrieval system has a queueing (non infinite-server) fetch station';
+    elseif sum(m) >= n
+        reason = 'the cache is full (sum(m) >= n), where the saddle point escapes to infinity';
+    end
+    if ~isempty(reason)
+        line_warning(mfilename, ['method ''rayint'' does not apply because %s; ' ...
+            'falling back to the exact recurrences.\n'], reason);
+        useray = false;
+    end
+end
 
-% --- exact hit / miss / delayed-hit ratios ---
-[pmiss, phit, pdh] = retrieval_metrics(m, lambda, eta, gamma);
+if useray
+    % --- ray (WKB) approximation, infinite-server fetch ---
+    D     = 1 + lambda(:).*eta(:, 1);
+    theta = gamma ./ D;
+    [~, lGcache, rayout] = retrieval_rayint(theta, m);
+    lG = sum(log(D)) + lGcache;
+
+    % Same saddle as the constant, so the ratios are consistent with lG:
+    % pi_{i,j} = theta_{i,j} xi_j / (1 + sum_l theta_{i,l} xi_l), and the
+    % out-of-cache mass 1 - sum_j pi_{i,j} splits between a true miss (weight 1)
+    % and an outstanding fetch (weight lambda_i eta_{0,i}) in proportion 1:D_i-1.
+    xi   = rayout.xi(:).';
+    txi  = theta .* xi;
+    phit = (txi ./ (1 + sum(txi, 2))).';        % h x n
+    pmiss = ((1 - sum(phit, 1)).') ./ D;        % pi_{i,0} = (1 - pihit_i)/D_i
+    pmiss = pmiss(:).';
+    pdh   = (lambda(:).*eta(:, 1)).' .* pmiss;  % phi_{0,i}, single IS row
+    method = 'rayint';
+else
+    % --- exact normalizing constant E(m) = retrieval_nc(0,m,...) ---
+    E = retrieval_nc(zeros(1, r), m, lambda, eta, gamma);
+    lG = log(E);
+
+    % --- exact hit / miss / delayed-hit ratios ---
+    [pmiss, phit, pdh] = retrieval_metrics(m, lambda, eta, gamma);
+end
 pi0  = pmiss(:).';      % per-item miss   pi_{i,0}
 pih  = sum(phit, 1);    % per-item hit    sum_j pi_{i,j}
 phid = sum(pdh, 1);     % per-item delayed sum_s phi_{s,i}
@@ -38,7 +91,7 @@ phid = sum(pdh, 1);     % per-item delayed sum_s phi_{s,i}
 ci = find(sn.nodetype == NodeType.Cache);
 ch = sn.nodeparam{ci};
 rk = keys(ch.retrievalSystemQueueIndices);
-jobinClass = double(rk{1}) + 1;
+jobinClass = double(rk(1)) + 1;
 w = lambda(:) / sum(lambda);            % access-weighted item mixture
 hitAgg = sum(w .* pih(:));
 missAgg = sum(w .* pi0(:));
@@ -79,7 +132,7 @@ if mc > 0, XN(mc) = sourceRate(jobinClass) * missAgg; end
 % --- retrieval-station mean occupancy (QLen) and throughput from phi/visits ---
 % phi_{s,i} (pdh) is the mean number of item i being retrieved at station s;
 % summing over items gives the station occupancy.
-queueNodes = double(ch.retrievalSystemQueueIndices(rk{1}));
+queueNodes = double(ch.retrievalSystemQueueIndices{rk(1)});
 S = numel(queueNodes);
 isIdx = find(station_type == "IS"); %#ok<NASGU>
 psIdx = find(station_type == "PS" | station_type == "SIRO" | station_type == "FCFS" | station_type == "LCFSPR");   % SIRO/FCFS/LCFSPR as PS

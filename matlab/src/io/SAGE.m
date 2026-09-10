@@ -4,7 +4,7 @@ classdef SAGE
     % Static helpers that talk to the line-sage-rest service, the same JSON
     % protocol the JAR (jline.api.sym) and native Python
     % (line_solver.api.sym) use. The service is SageMath in a container; see
-    % sage/server.py for the endpoints.
+    % io/sage/server.py for the endpoints.
     %
     % It exists for two reasons. The Symbolic Math Toolbox is licence-gated,
     % so a session without it cannot run any symbolic analysis at all; and
@@ -36,6 +36,17 @@ classdef SAGE
         PROBE_PORTS = [8085, 8080];
         STARTUP_TIMEOUT = 120;   % seconds to wait for a container to answer
         DEFAULT_TIMEOUT = 300;   % seconds per request
+        % A service that answers /health can still be unable to COMPUTE. The
+        % line-sage-rest image ships a FLINT built for CPUs that have BMI2 and
+        % ADX; on an older host the first multi-limb exact operation raises
+        % SIGILL, the worker dies mid-request and the call returns no bytes at
+        % all. Health is pure Python and keeps answering, so it cannot see
+        % this. The canary is the weighted-average softmin form -- what the
+        % fluid export actually sends -- and is the smallest expression
+        % observed to trigger it; see _kb/11-conventions-and-gotchas.md.
+        CANARY_EXPR = '(x*exp(-x) + exp(-1))/(exp(-x) + exp(-1))';
+        CANARY_ARG = '0.68999999999999995';
+        CANARY_VALUE = 0.82116556904906557;
     end
 
     methods (Static)
@@ -56,26 +67,26 @@ classdef SAGE
             end
             if strncmpi(requested, 'http://', 7) || strncmpi(requested, 'https://', 8)
                 url = requested;
-                if ~SAGE.isReachable(url)
+                if ~SAGE.isReachable(url) || ~SAGE.isUsable(url)
                     url = '';
                 end
                 return
             end
 
             env = getenv('LINE_SAGE_URL');
-            if ~isempty(env) && SAGE.isReachable(env)
+            if ~isempty(env) && SAGE.isReachable(env) && SAGE.isUsable(env)
                 url = env;
                 return
             end
 
-            if ~isempty(cachedUrl) && SAGE.isReachable(cachedUrl)
+            if ~isempty(cachedUrl) && SAGE.isReachable(cachedUrl) && SAGE.isUsable(cachedUrl)
                 url = cachedUrl;
                 return
             end
 
             for p = SAGE.PROBE_PORTS
                 candidate = sprintf('http://localhost:%d', p);
-                if SAGE.isSageService(candidate)
+                if SAGE.isSageService(candidate) && SAGE.isUsable(candidate)
                     url = candidate;
                     cachedUrl = url;
                     return
@@ -90,6 +101,15 @@ classdef SAGE
                 image = SAGE.getDockerImage();
             else
                 image = requested;
+            end
+            % Auto-pull only on an explicit opt-in: the 'sage' keyword or a named
+            % image. Bare 'auto'/'true'/'' keep the native backend unless the
+            % image is already local, so leaving symbolic on auto never pulls.
+            if isempty(image) && strcmpi(requested, 'sage')
+                image = SAGE.pullDockerImage(SAGE.DOCKER_IMAGES{1});
+            elseif ~isempty(image) && ~any(strcmpi(requested, {'auto', 'true', 'sage'})) ...
+                    && ~SAGE.hasLocalImage(image)
+                image = SAGE.pullDockerImage(image);
             end
             if isempty(image)
                 url = '';
@@ -125,14 +145,70 @@ classdef SAGE
             end
         end
 
+        function tf = hasLocalImage(image)
+            % HASLOCALIMAGE  True if IMAGE is present in the local Docker store.
+            tf = false;
+            if ispc || isempty(image)
+                return
+            end
+            [st, out] = unix(['docker images -q ', image, ' 2>/dev/null']);
+            tf = (st == 0) && ~isempty(strtrim(out));
+        end
+
+        function img = pullDockerImage(target)
+            % PULLDOCKERIMAGE  Pull TARGET if Docker is usable and there is room.
+            %
+            % Returns the tag on success, else ''. Storage-guarded via
+            % lineDockerHasStorageFor (the same guard as the LQNS/QNS/JMT
+            % wrappers), so an opt-in symbolic request never silently fills the
+            % Docker disk; on refusal the caller keeps its native algebra.
+            img = '';
+            if ispc
+                return
+            end
+            if unix('docker info >/dev/null 2>&1') ~= 0
+                return
+            end
+            if ~lineDockerHasStorageFor(target)
+                line_warning(mfilename, ['Skipping docker pull of %s: insufficient free ' ...
+                    'space at the Docker storage location; keeping the native symbolic ' ...
+                    'backend.\n'], target);
+                return
+            end
+            line_printf('[LINE] Pulling Docker image %s (this may take a while)...\n', target);
+            if unix(['docker pull ', target]) == 0 && SAGE.hasLocalImage(target)
+                img = target;
+            end
+        end
+
+        function out = startedContainer(name)
+            % STARTEDCONTAINER  Get/set the container this session started.
+            %
+            % Call with a name to set, '' to clear, or no argument to get the
+            % tracked name (parity with the Java/Python startedContainer state).
+            persistent tracked
+            if nargin >= 1
+                tracked = name;
+            end
+            if isempty(tracked)
+                out = '';
+            else
+                out = tracked;
+            end
+        end
+
         function url = startContainer(image)
             % STARTCONTAINER  Run the service and wait for it to answer.
             %
             % The container is bound to a free host port, so several MATLAB
             % sessions, or a session next to a hand-started service, do not
-            % collide. It is left running: MATLAB has no reliable exit hook,
-            % and a warm container is what makes repeated symbolic calls
-            % cheap. Stop it with SAGE.stopContainer.
+            % collide. It stays warm for the session (repeated symbolic calls
+            % are then cheap) and is best-effort stopped when MATLAB exits or
+            % SAGE is cleared, via the onCleanup guard below. Stop it sooner with
+            % SAGE.stopContainer.
+            % Held only for its destructor: cleared at MATLAB exit / clear SAGE,
+            % which fires the onCleanup below and stops the container.
+            persistent guard
             url = '';
             port = SAGE.freePort();
             name = sprintf('line-sage-rest-%d', port);
@@ -142,27 +218,52 @@ classdef SAGE
                 line_warning(mfilename, 'Could not start %s: %s\n', image, strtrim(out));
                 return
             end
+            % Track only this container so stopContainer targets it precisely
+            % (not every line-sage-rest-* on the host), matching Java/Python.
+            SAGE.startedContainer(name);
+            guard = onCleanup(@() SAGE.stopContainerByName(name)); %#ok<NASGU>
             candidate = sprintf('http://localhost:%d', port);
             deadline = tic;
             while toc(deadline) < SAGE.STARTUP_TIMEOUT
                 if SAGE.isReachable(candidate)
-                    url = candidate;
+                    if SAGE.isUsable(candidate)
+                        url = candidate;
+                        return
+                    end
+                    % Booted, but its arithmetic dies on this CPU. Keeping it
+                    % running would only cost memory, and returning it would
+                    % hand the caller a backend that kills every request.
+                    SAGE.stopContainerByName(name);
+                    SAGE.startedContainer('');
                     return
                 end
                 pause(0.5);
             end
-            unix(sprintf('docker stop -t 1 %s >/dev/null 2>&1', name));
+            SAGE.stopContainerByName(name);
+            SAGE.startedContainer('');
             line_warning(mfilename, ...
                 'Container %s did not answer within %d s.\n', name, SAGE.STARTUP_TIMEOUT);
         end
 
         function stopContainer()
-            % STOPCONTAINER  Stop every container this machine started here.
-            if ispc
+            % STOPCONTAINER  Stop the container this session started, if any.
+            %
+            % Parity with the Java (shutdown hook) and Python (atexit) clients:
+            % it stops only the container started here, not every line-sage-rest-*
+            % on the host.
+            name = SAGE.startedContainer();
+            if ~isempty(name)
+                SAGE.stopContainerByName(name);
+                SAGE.startedContainer('');
+            end
+        end
+
+        function stopContainerByName(name)
+            % STOPCONTAINERBYNAME  Stop a single named container, best effort.
+            if ispc || isempty(name)
                 return
             end
-            unix(['for c in $(docker ps -q --filter name=line-sage-rest-); do ', ...
-                'docker stop -t 1 $c >/dev/null 2>&1; done']);
+            unix(sprintf('docker stop -t 1 %s >/dev/null 2>&1', name));
         end
 
         function bool = isReachable(url)
@@ -174,6 +275,51 @@ classdef SAGE
                 bool = isfield(r, 'status') && strcmp(r.status, 'ok');
             catch
             end
+        end
+
+        function bool = isUsable(url)
+            % ISUSABLE  True if the service answers AND can evaluate.
+            %
+            % Verdicts are cached per URL: this costs one small request the
+            % first time a service is considered, and nothing after.
+            persistent verdicts
+            if isempty(verdicts)
+                verdicts = containers.Map('KeyType', 'char', 'ValueType', 'logical');
+            end
+            key = SAGE.trimUrl(url);
+            if isKey(verdicts, key)
+                bool = verdicts(key);
+                return
+            end
+            bool = false;
+            try
+                opts = weboptions('MediaType', 'application/json', ...
+                    'ContentType', 'json', 'Timeout', 60);
+                payload = struct('exprs', {{SAGE.CANARY_EXPR}}, ...
+                    'values', struct('x', SAGE.CANARY_ARG), 'timeout_s', 30);
+                r = webwrite([key, '/api/v1/eval'], payload, opts);
+                if isfield(r, 'status') && strcmp(r.status, 'ok') && isfield(r, 'values')
+                    v = r.values;
+                    if iscell(v)
+                        v = v{1};
+                    else
+                        v = v(1);
+                    end
+                    bool = isnumeric(v) && isfinite(v) ...
+                        && abs(v - SAGE.CANARY_VALUE) < 1e-9;
+                end
+            catch
+                % A dead worker closes the connection without a reply, which
+                % surfaces here as a webservices error rather than a service
+                % one. Either way the backend cannot serve us.
+            end
+            if ~bool
+                line_warning(mfilename, ...
+                    ['Ignoring symbolic backend at %s: it did not return the ', ...
+                     'usability canary. On a CPU without BMI2/ADX the image''s ', ...
+                     'FLINT raises SIGILL mid-request.\n'], key);
+            end
+            verdicts(key) = bool;
         end
 
         function bool = isSageService(url)

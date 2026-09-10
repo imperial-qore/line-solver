@@ -118,9 +118,18 @@ public final class ModelRegistry {
 
         // Load-dependent models
         register("ld_class_dependence", new Supplier<Network>() { public Network get() { return LoadDependentModel.ld_class_dependence(); } });
+        register("ld_joint_dependence", new Supplier<Network>() { public Network get() { return LoadDependentModel.ld_joint_dependence(); } });
         register("ld_multiserver_fcfs", new Supplier<Network>() { public Network get() { return LoadDependentModel.ld_multiserver_fcfs(); } });
         register("ld_multiserver_ps", new Supplier<Network>() { public Network get() { return LoadDependentModel.ld_multiserver_ps(); } });
         register("ld_multiserver_ps_twoclasses", new Supplier<Network>() { public Network get() { return LoadDependentModel.ld_multiserver_ps_twoclasses(); } });
+        // The FES tandems: what these register is the ORIGINAL network, which is
+        // what the scripts build and what a CLI row exports. The aggregate is
+        // derived from it by ModelAdapter.aggregateFES and is not a model the
+        // registry can hand back, since it exists only after the transform.
+        register("fes_aggregation", new Supplier<Network>() { public Network get() { return LoadDependentModel.fes_aggregation(); } });
+        register("fes_single_class", new Supplier<Network>() { public Network get() { return LoadDependentModel.fes_single_class(); } });
+        register("ld_fes_singleclass", new Supplier<Network>() { public Network get() { return LoadDependentModel.ld_fes_singleclass(); } });
+        register("ld_fes_multiclass", new Supplier<Network>() { public Network get() { return LoadDependentModel.ld_fes_multiclass(); } });
 
         // State probabilities models
         register("statepr_aggr", new Supplier<Network>() { public Network get() { return StateProbabilitiesModel.statepr_aggr(); } });

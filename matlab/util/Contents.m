@@ -27,6 +27,7 @@
 % multichoose - all ways of chosing elements in a set with repetition
 % multichoosecon - multichoose with constraints on number of elements
 % multinomialln - logarithm of multinomial coefficient
+% multiset_perms - all distinct permutations of a multiset
 % nchoosekln - logarithm of binomial coefficient
 % oner - decrement element in position of r of input vector
 % pprod - sequence of non-negative vectors less than a vector

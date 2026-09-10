@@ -67,12 +67,22 @@ public class Erlang extends Markovian implements Serializable {
 
     /**
      * Creates an Erlang distribution fitted to the specified mean and squared coefficient of variation.
-     * 
+     *
+     * An Erlang of order r has SCV = 1/r, so no Erlang has SCV &gt; 1 and the request is
+     * refused rather than answered with the 1-phase Erlang, which is an exponential and
+     * therefore a distribution the caller did not ask for. Port of the guard in MATLAB
+     * Erlang.fitMeanAndSCV.
+     *
      * @param mean the desired mean value
-     * @param SCV the desired squared coefficient of variation
+     * @param SCV the desired squared coefficient of variation, which must be at most 1
      * @return an Erlang distribution with the specified characteristics
+     * @throws IllegalArgumentException if the SCV exceeds 1
      */
     public static Erlang fitMeanAndSCV(double mean, double SCV) {
+        if (SCV > 1) {
+            throw new IllegalArgumentException(
+                "The Erlang distribution requires squared coefficient of variation <= 1, got " + SCV);
+        }
         int r = (int) FastMath.ceil(1.0 / SCV);
         double alpha = r / mean;
         Erlang er = new Erlang(alpha, r);
@@ -82,13 +92,19 @@ public class Erlang extends Markovian implements Serializable {
 
     /**
      * Creates an Erlang distribution fitted to the specified mean and standard deviation.
-     * 
+     *
+     * The SCV is the squared coefficient of VARIATION, (stdDev/mean)^2. This read
+     * mean/stdDev^2, which is not dimensionless and is not the SCV of anything: at
+     * mean = 2 and stdDev = 2 (an exponential, SCV 1) it asked for SCV 0.5 and returned
+     * a 2-phase Erlang. JLINE-only entry point, with no MATLAB counterpart and no caller
+     * in the tree, so the defect was latent.
+     *
      * @param mean the desired mean value
      * @param stdDev the desired standard deviation
      * @return an Erlang distribution with the specified characteristics
      */
     public static Erlang fitMeanAndStdDev(double mean, double stdDev) {
-        return Erlang.fitMeanAndSCV(mean, (mean / Math.pow(stdDev, 2)));
+        return Erlang.fitMeanAndSCV(mean, (stdDev * stdDev) / (mean * mean));
     }
 
     /**
@@ -185,38 +201,38 @@ public class Erlang extends Markovian implements Serializable {
         return sample(n, RandomManager.getThreadRandomAsRandom());
     }
 
-    // =================== KOTLIN-STYLE PROPERTY ALIASES ===================
+    // =================== PROPERTY ALIASES ===================
     
     /**
-     * Kotlin-style property alias for getMean()
+     * Property alias for getMean
      */
     public double mean() {
         return getMean();
     }
     
     /**
-     * Kotlin-style property alias for getRate()
+     * Property alias for getRate
      */
     public double rate() {
         return getRate();
     }
     
     /**
-     * Kotlin-style property alias for getSCV()
+     * Property alias for getSCV
      */
     public double scv() {
         return getSCV();
     }
     
     /**
-     * Kotlin-style property alias for getSkewness()
+     * Property alias for getSkewness
      */
     public double skewness() {
         return getSkewness();
     }
     
     /**
-     * Kotlin-style property alias for getVar()
+     * Property alias for getVar
      */
     public double var() {
         return getVar();

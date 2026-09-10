@@ -206,7 +206,7 @@ classdef Markovian < ContinuousDistribution
         function D = getRepresentation(self)
             % D = GETREPRESENTATION()
             % Return the (D0,D1,...) matrix representation of the process.
-            % Alias of getProcess, mirroring the Java/Kotlin/Python API.
+            % Alias of getProcess, mirroring the Java/Python API.
             D = self.getProcess;
         end
 

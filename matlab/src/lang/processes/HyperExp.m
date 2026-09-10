@@ -171,9 +171,46 @@ classdef HyperExp < Markovian
     end
 
     methods(Static)
-        function he = fit(MEAN, SCV, SKEW)
+        function he = fit(MEAN, SCV, SKEW, varargin)
             % HE = FIT(MEAN, SCV, SKEW)
             % Fit distribution from first three standard moments
+            %
+            % HE = FIT(DIST, 'method', 'feldmannwhitt', ...) fits the ccdf of
+            % the distribution DIST ITSELF at points spread over decades of
+            % time scale, rather than matching moments (HYPEREXP_FIT_LONGTAIL,
+            % Feldmann and Whitt 1998). That is the only form available for a
+            % long-tail law: a Pareto with tail index below 2 has no finite
+            % variance, so the moment fit above does not exist at all, and even
+            % where the moments are finite they say nothing about the orders of
+            % magnitude over which such a law acts. Any further name/value
+            % pairs ('k', 'c1', 'b', 'decade', 'points') are passed through.
+            if isa(MEAN, 'Distribution')
+                dist = MEAN;
+                args = {};
+                if nargin >= 2
+                    args = [{SCV}, {SKEW}, varargin];
+                    args = args(~cellfun(@(x) isequal(x,[]) , args));
+                end
+                methodName = 'feldmannwhitt';
+                keep = true(1, numel(args));
+                i = 1;
+                while i < numel(args)
+                    if ischar(args{i}) && strcmpi(args{i}, 'method')
+                        methodName = lower(char(args{i+1}));
+                        keep(i:i+1) = false;
+                        i = i + 2;
+                        continue
+                    end
+                    i = i + 2;
+                end
+                if ~strcmp(methodName, 'feldmannwhitt')
+                    line_error(mfilename, sprintf(['HyperExp.fit on a distribution supports ' ...
+                        'method ''feldmannwhitt'' only; ''%s'' was requested.'], methodName));
+                end
+                fitres = hyperexp_fit_longtail(@(t) 1 - dist.evalCDF(t), args{keep});
+                he = HyperExp(fitres.p(:).', fitres.lambda(:).');
+                return
+            end
             e1 = MEAN;
             e2 = (1+SCV)*e1^2;
             e3 = -(2*e1^3-3*e1*e2-SKEW*(e2-e1^2)^(3/2));

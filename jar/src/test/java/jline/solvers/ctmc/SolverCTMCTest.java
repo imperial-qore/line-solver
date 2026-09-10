@@ -151,12 +151,14 @@ public class SolverCTMCTest {
     
     //table.printTable();
 
-    double[] expectedQLen = {0.8923099748616234, 0.5292274741426646, 15.108, 7.470772525857336};
-    double[] expectedUtil = {0.8923099748616234, 0.5292274741426646, 0.669232704525731, 0.3307672954742693};
-    double[] expectedRespT = {1.0, 2.0, 16.93098296336792, 28.233};
-    double[] expectedResidT = {1.0, 2.0, 16.931, 28.233};
-    double[] expectedArvR = {0.8923102727009744, 0.2646138363794153, 0.8923099748616234, 0.26461};
-    double[] expectedTput = {0.89231, 0.26461, 0.89231, 0.26461};
+    // rebased 2026-08-15 against MATLAB ld_class_dependence.m (CTMC exact), which
+    // python reproduces to 5 digits; the previous golden predates setClassDependence
+    double[] expectedQLen = {0.8819631781498992, 0.2708220931100575, 15.118036821850097, 7.729177906889943};
+    double[] expectedUtil = {0.8819631781498992, 0.2708220931100575, 0.661472383612426, 0.3385276163875742};
+    double[] expectedRespT = {1.0, 2.0, 17.14134693645973, 57.07937501058218};
+    double[] expectedResidT = {1.0, 2.0, 17.14134693645973, 57.07937501058218};
+    double[] expectedArvR = {0.8819631781499012, 0.1354110465550297, 0.8819631781498992, 0.13541104655502875};
+    double[] expectedTput = {0.8819631781498992, 0.13541104655502875, 0.8819631781499012, 0.1354110465550297};
 
     assertTableMetrics(table, expectedQLen, expectedUtil, expectedRespT, expectedResidT, expectedArvR, expectedTput);
   }

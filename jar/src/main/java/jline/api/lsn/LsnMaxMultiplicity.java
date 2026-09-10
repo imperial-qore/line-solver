@@ -42,6 +42,12 @@ public final class LsnMaxMultiplicity {
         for (int ist = 0; ist < n; ist++) {
             if (type.get(ist) == (double) LayeredNetworkElement.TASK && isref.get(ist) != 0.0) {
                 inflow.set(ist, 0, mult.get(ist));
+            } else if (type.get(ist) == (double) LayeredNetworkElement.ENTRY
+                    && lsn.arrival != null && lsn.arrival.get(ist) != null) {
+                // an open arrival needs one thread of the entry's parent task, and is
+                // the only inflow source when no reference task exists
+                // (lsn_max_multiplicity.m:47-55)
+                inflow.set(ist, 0, 1.0);
             }
         }
 
@@ -59,9 +65,9 @@ public final class LsnMaxMultiplicity {
             int ist = (int) order.get(k);
             double inflowVal = inflow.get(ist);
             double multVal = mult.get(ist);
-            boolean isFunctionTask = lsn.isfunction != null && lsn.isfunction.length() > ist
-                    && lsn.isfunction.get(0, ist) == 1.0;
-            if (isFunctionTask && inflowVal > 0) {
+            boolean isSetupTask = lsn.hassetup != null && lsn.hassetup.length() > ist
+                    && lsn.hassetup.get(0, ist) == 1.0;
+            if (isSetupTask && inflowVal > 0) {
                 // see _kb/03-api-layer.md for rationale (fj/ and lsn/ additions)
                 outflow.set(ist, 0, multVal);
             } else {

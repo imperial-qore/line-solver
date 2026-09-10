@@ -27,8 +27,18 @@ lambda = zeros(K, 1);
 mu = zeros(K, 1);
 cs = zeros(K, 1);
 
+% sn.visits is indexed by CHAIN, not by station. The previous
+% sn.visits{source_ist} read the chain whose number happens to equal the Source's
+% station index -- chain 1 -- so on the multiclass models this analyzer exists for
+% every class beyond the first got the visit of a chain it does not belong to,
+% which is 0, and the function then rejected its own model with "Invalid arrival
+% or service rates". Take the chain of class k.
+chainOf = zeros(1,K);
 for k = 1:K
-    lambda(k) = sn.rates(source_ist, k) * sn.visits{source_ist}(sn.stationToStateful(queue_ist), k);
+    chainOf(k) = find(sn.chains(:,k), 1);
+end
+for k = 1:K
+    lambda(k) = sn.rates(source_ist, k) * sn.visits{chainOf(k)}(sn.stationToStateful(queue_ist), k);
     mu(k) = sn.rates(queue_ist, k);
     cs(k) = sqrt(sn.scv(queue_ist, k));
 end
@@ -81,7 +91,7 @@ X = zeros(M, K);
 
 % Populate results
 for k = 1:K
-    visits = sn.visits{source_ist}(sn.stationToStateful(queue_ist), k);
+    visits = sn.visits{chainOf(k)}(sn.stationToStateful(queue_ist), k);
     R(queue_ist, k) = W(k) * visits;
     T(source_ist, k) = lambda(k);
     T(queue_ist, k) = lambda(k);

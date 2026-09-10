@@ -2,7 +2,8 @@
 % Single-class closed network: Delay + Queue(FCFS) with 2-phase MAP service.
 % Compares exact CTMC solution against all available QRF methods.
 %
-% QRF approximation methods (qrf.mmi, qrf.mem, qrf.mmi.ld, qrf.mmi.linear)
+% QRF approximation methods (qrf.mmi, qrf.mem, qrf.bethe, qrf.mmi.ld,
+% qrf.mmi.linear)
 % approximate performance metrics via nonlinear programming.
 % QRF bounds methods (qrf.bas, qrf.rsrd) compute utilization bounds via LP.
 
@@ -37,7 +38,7 @@ AvgTable_exact = solver_exact.getAvgTable();
 disp(AvgTable_exact);
 
 %% QRF methods (no-blocking variants)
-qrf_methods = {'qrf.mmi', 'qrf.mem', 'qrf.mmi.ld', 'qrf.mmi.linear'};
+qrf_methods = {'qrf.mmi', 'qrf.mem', 'qrf.bethe', 'qrf.mmi.ld', 'qrf.mmi.linear'};
 
 results = struct();
 results.method = {};

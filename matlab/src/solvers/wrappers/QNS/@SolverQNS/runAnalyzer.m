@@ -16,18 +16,20 @@ lG = NaN;
 % supportsModelMethod) and additionally reports which features are unsupported;
 % a separate coarse check here would fire first and name nothing. It also
 % validates options.method, as in the other solvers.
-self.runAnalyzerChecks(options);
+verboseGuard = self.runAnalyzerChecks(options); %#ok<NASGU> restores the caller verbosity on return
 
 Solver.resetRandomGeneratorSeed(options.seed);
 
 sn = getStruct(self); % doesn't need initial state
+% The gate's own sentence for a caller running with enableChecks off: neither
+% path can keep a self-looping job on its server (qns_immfeed_refusal).
+immfeedReason = qns_immfeed_refusal(sn);
+if ~isempty(immfeedReason)
+    line_error(mfilename, immfeedReason);
+end
 line_ack('QNS', options.verbose);
 
 line_debug(options, 'QNS: starting (method=%s, multiserver=%s)', options.method, options.config.multiserver);
-
-if (strcmp(options.method,'exact')||strcmp(options.method,'mva')) && ~self.model.hasProductFormSolution
-    line_error(mfilename,'The exact method requires the model to have a product-form solution. This model does not have one. You can use Network.hasProductFormSolution() to check before running the solver.');
-end
 
 method = options.method;
 
@@ -89,11 +91,14 @@ else
         for i=1:sn.nstations
             t = lqn.ashift + r + (i-1)*sn.nclasses;
             QN(i,r) = AvgTable.QLen(t);
-            % lqns already reports the activity utilization per server, which
-            % is the convention LINE uses at a finite-capacity station, so it
-            % is carried over unscaled. Dividing by nservers here would report
-            % a utilization nservers times too low.
-            UN(i,r) = AvgTable.Util(t);
+            % Convention crossing: lqns reports the processor utilization summed
+            % over the host's servers, a Network station reports the per-server
+            % fraction, and QN2LQN maps nservers to the host multiplicity.
+            if ~isinf(sn.nservers(i))
+                UN(i,r) = AvgTable.Util(t)/sn.nservers(i);
+            else
+                UN(i,r) = AvgTable.Util(t);
+            end
             RN(i,r) = AvgTable.RespT(t);
             WN(i,r) = AvgTable.ResidT(t);
             TN(i,r) = AvgTable.Tput(t);

@@ -464,7 +464,9 @@ public class LineOptSolver {
      * One-sided differences are used near an infeasible boundary.
      */
     private double[] finiteDifferenceGradient(double[] x) {
-        double h = opt.fdStep;
+        // A layered evaluation re-solves an iterative fixed point, so the step
+        // must clear its noise floor (see fdStepLayered).
+        double h = evaluators.get(0).isLayered() ? opt.fdStepLayered : opt.fdStep;
         int dim = x.length;
         double[] g = new double[dim];
         Double f0 = null;

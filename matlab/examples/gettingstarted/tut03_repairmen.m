@@ -11,7 +11,7 @@ queue.setService(cclass, Exp(4.0));
 %% Block 3: topology
 model.link(Network.serialRouting(delay,queue));
 %% Block 4: solution
-solver = CTMC(model);
+solver = CTMC(model,'exact');
 ctmcAvgTable = solver.avgTable()
 
 StateSpace = solver.stateSpace()

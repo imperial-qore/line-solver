@@ -6,6 +6,7 @@
 package jline.examples.java.models;
 
 import jline.lang.*;
+import jline.lang.constant.JoinStrategy;
 import jline.lang.constant.SchedStrategy;
 import jline.lang.constant.ReplacementStrategy;
 import jline.lang.layered.*;
@@ -206,11 +207,11 @@ public class Gallery {
     }
 
     public static Network gallery_dm1() {
-        Network model = new Network("Det/M/1");
-        Source source = new Source(model, "mySource");
-        Queue queue = new Queue(model, "myQueue", SchedStrategy.FCFS);
-        Sink sink = new Sink(model, "mySink");
-        OpenClass oclass = new OpenClass(model, "myClass");
+        Network model = new Network("D/M/1");
+        Source source = new Source(model, "Source");
+        Queue queue = new Queue(model, "Queue", SchedStrategy.FCFS);
+        Sink sink = new Sink(model, "Sink");
+        OpenClass oclass = new OpenClass(model, "Class1");
         source.setArrival(oclass, new Det(1));
         queue.setService(oclass, new Exp(2));
         model.link(Network.serialRouting(source, queue, sink));
@@ -252,15 +253,15 @@ public class Gallery {
 
         node1.setArrival(jobclass1, Erlang.fitMeanAndOrder(1, n)); // (Source,Class1)
         node1.setArrival(jobclass2, Disabled.getInstance()); // (Source,Class2)
-        node2.setService(jobclass1, Erlang.fitMeanAndOrder(0.5, n)); // (Queue,Class1)
-        node2.setService(jobclass2, new Exp(3)); // (Queue,Class2)
+        node2.setService(jobclass1, Erlang.fitMeanAndOrder(0.1, n)); // (Queue,Class1)
+        node2.setService(jobclass2, new Exp(10)); // (Queue,Class2)
 
         // Block 3: topology
         RoutingMatrix routingMatrix = model.initRoutingMatrix();
 
         routingMatrix.set(jobclass1, jobclass1, node1, node2, 1.00); // (Source,Class1) -> (Queue,Class1)
-        routingMatrix.set(jobclass1, jobclass2, node2, node2, 1.00); // (CS_Queue_to_Queue,Class1) -> (Queue,Class2)
-        routingMatrix.set(jobclass2, jobclass2, node2, node3, 1.00); // (Queue,Class2) -> (Sink,Class2)
+        routingMatrix.set(jobclass1, jobclass2, node2, node2, 0.50); // (CS_Queue_to_Queue,Class1) -> (Queue,Class2)
+        routingMatrix.set(jobclass2, jobclass2, node2, node3, 0.50); // (Queue,Class2) -> (Sink,Class2)
 
         model.link(routingMatrix);
 
@@ -339,7 +340,7 @@ public class Gallery {
         Sink sink = new Sink(model, "Sink");
         OpenClass oclass1 = new OpenClass(model, "Class1");
         source.setArrival(oclass1, HyperExp.fitMeanAndSCV(1, 64));
-        queue.setService(oclass1, Erlang.fitMeanAndOrder(0.5, 5));
+        queue.setService(oclass1, Erlang.fitMeanAndOrder(0.05, 5));
         RoutingMatrix P = model.initRoutingMatrix();
         P.set(oclass1, oclass1, source, queue, 1.0);
         P.set(oclass1, oclass1, queue, queue, 0.9);
@@ -453,6 +454,7 @@ public class Gallery {
         // Block 1: nodes
         Source node1 = new Source(model, "Source");
         Queue node2 = new Queue(model, "Queue", SchedStrategy.FCFS);
+        node2.setNumberOfServers(2);
         Sink node3 = new Sink(model, "Sink");
 
         // Block 2: classes
@@ -972,10 +974,10 @@ public class Gallery {
 
     public static Network gallery_mm1_ps_feedback(double p) {
         Network model = new Network("M/M/1-PS-Feedback");
-        Source source = new Source(model, "mySource");
-        Queue queue = new Queue(model, "myQueue", SchedStrategy.PS);
-        Sink sink = new Sink(model, "mySink");
-        OpenClass oclass = new OpenClass(model, "myClass");
+        Source source = new Source(model, "Source");
+        Queue queue = new Queue(model, "Queue", SchedStrategy.PS);
+        Sink sink = new Sink(model, "Sink");
+        OpenClass oclass = new OpenClass(model, "Class1");
         source.setArrival(oclass, Exp.fitMean(1));
         queue.setService(oclass, Exp.fitMean(0.5));
         RoutingMatrix routingMatrix = model.initRoutingMatrix();
@@ -1079,7 +1081,7 @@ public class Gallery {
     public static Network gallery_mm1_tandem_multiclass() {
         Network model = new Network("M[2]/M[2]/1 -> -/M[2]/1");
 
-        Source source = new Source(model, "mySource");
+        Source source = new Source(model, "Source");
         Queue queue1 = new Queue(model, "Queue1", SchedStrategy.FCFS);
         Queue queue2 = new Queue(model, "Queue2", SchedStrategy.FCFS);
         Sink sink = new Sink(model, "mySink");
@@ -1087,11 +1089,11 @@ public class Gallery {
         OpenClass oclass1 = new OpenClass(model, "myClass1");
         source.setArrival(oclass1, new Exp(1));
         queue1.setService(oclass1, new Exp(4));
-        queue1.setService(oclass1, new Exp(6));
+        queue2.setService(oclass1, new Exp(6));
 
         OpenClass oclass2 = new OpenClass(model, "myClass2");
         source.setArrival(oclass2, new Exp(0.5));
-        queue2.setService(oclass2, new Exp(2));
+        queue1.setService(oclass2, new Exp(2));
         queue2.setService(oclass2, new Exp(6));
 
         RoutingMatrix P = model.initRoutingMatrix();
@@ -1206,11 +1208,11 @@ public class Gallery {
     }
 
     public static Network gallery_mpar1() {
-        Network model = new Network("Par/M/1");
-        Source source = new Source(model, "mySource");
-        Queue queue = new Queue(model, "myQueue", SchedStrategy.FCFS);
-        Sink sink = new Sink(model, "mySink");
-        OpenClass oclass = new OpenClass(model, "myClass");
+        Network model = new Network("M/Par/1");
+        Source source = new Source(model, "Source");
+        Queue queue = new Queue(model, "Queue", SchedStrategy.FCFS);
+        Sink sink = new Sink(model, "Sink");
+        OpenClass oclass = new OpenClass(model, "Class1");
         source.setArrival(oclass, new Exp(1));
         queue.setService(oclass, Pareto.fitMeanAndSCV(0.5, 64));
         model.link(Network.serialRouting(source, queue, sink));
@@ -1219,10 +1221,10 @@ public class Gallery {
 
     public static Network gallery_parm1() {
         Network model = new Network("Par/M/1");
-        Source source = new Source(model, "mySource");
-        Queue queue = new Queue(model, "myQueue", SchedStrategy.FCFS);
-        Sink sink = new Sink(model, "mySink");
-        OpenClass oclass = new OpenClass(model, "myClass");
+        Source source = new Source(model, "Source");
+        Queue queue = new Queue(model, "Queue", SchedStrategy.FCFS);
+        Sink sink = new Sink(model, "Sink");
+        OpenClass oclass = new OpenClass(model, "Class1");
         source.setArrival(oclass, Pareto.fitMeanAndSCV(1, 64));
         queue.setService(oclass, new Exp(2));
         model.link(Network.serialRouting(source, queue, sink));
@@ -1302,10 +1304,10 @@ public class Gallery {
 
     public static Network gallery_um1() {
         Network model = new Network("U/M/1");
-        Source source = new Source(model, "mySource");
-        Queue queue = new Queue(model, "myQueue", SchedStrategy.FCFS);
-        Sink sink = new Sink(model, "mySink");
-        OpenClass oclass = new OpenClass(model, "myClass");
+        Source source = new Source(model, "Source");
+        Queue queue = new Queue(model, "Queue", SchedStrategy.FCFS);
+        Sink sink = new Sink(model, "Sink");
+        OpenClass oclass = new OpenClass(model, "Class1");
         source.setArrival(oclass, new Uniform(1, 2));
         queue.setService(oclass, new Exp(2));
         model.link(Network.serialRouting(source, queue, sink));
@@ -1655,6 +1657,39 @@ public class Gallery {
         P.set(oclass, oclass, fork, queue2, 1.0);
         P.set(oclass, oclass, queue1, join, 1.0);
         P.set(oclass, oclass, queue2, join, 1.0);
+        P.set(oclass, oclass, join, delay, 1.0);
+        model.link(P);
+        return model;
+    }
+
+    /**
+     * A closed fork-join whose join fires on a 2-of-3 QUORUM: the third sibling is discarded when
+     * it arrives. SolverLDES and SolverJMT reproduce it exactly; SolverMVA and SolverNC charge the
+     * second order statistic of the branch completion times (FJ_ordstat_exp).
+     */
+    public static Network gallery_fj_quorum() {
+        Network model = new Network("Fork-Join-Quorum");
+        Delay delay = new Delay(model, "Delay");
+        Queue queue1 = new Queue(model, "Queue1", SchedStrategy.PS);
+        Queue queue2 = new Queue(model, "Queue2", SchedStrategy.PS);
+        Queue queue3 = new Queue(model, "Queue3", SchedStrategy.PS);
+        Fork fork = new Fork(model, "Fork");
+        Join join = new Join(model, "Join", fork);
+        ClosedClass oclass = new ClosedClass(model, "class1", 5, delay);
+        delay.setService(oclass, new Exp(1.0));
+        queue1.setService(oclass, new Exp(2.0));
+        queue2.setService(oclass, new Exp(2.0));
+        queue3.setService(oclass, new Exp(2.0));
+        join.setStrategy(oclass, JoinStrategy.PARTIAL);
+        join.setRequired(oclass, 2);
+        RoutingMatrix P = model.initRoutingMatrix();
+        P.set(oclass, oclass, delay, fork, 1.0);
+        P.set(oclass, oclass, fork, queue1, 1.0);
+        P.set(oclass, oclass, fork, queue2, 1.0);
+        P.set(oclass, oclass, fork, queue3, 1.0);
+        P.set(oclass, oclass, queue1, join, 1.0);
+        P.set(oclass, oclass, queue2, join, 1.0);
+        P.set(oclass, oclass, queue3, join, 1.0);
         P.set(oclass, oclass, join, delay, 1.0);
         model.link(P);
         return model;

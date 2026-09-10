@@ -161,7 +161,7 @@ if ~any(N > 0)
     return;
 end
 
-cache = containers.Map('KeyType','char','ValueType','double');
+cache = configureDictionary('string','double');
     function lg = lgm(m,n)
         % memoized log normalizing constant of the m-replica model; zero
         % population classes are stripped (they leave the NC unchanged) so

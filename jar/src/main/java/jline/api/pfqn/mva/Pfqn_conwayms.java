@@ -53,7 +53,7 @@ public final class Pfqn_conwayms {
             Q.set(s, new Matrix(M, R));
             P.set(s, new Matrix(M, maxNumServers));
             PB.set(s, new Matrix(M, 1 + R));
-            Delta.set(s, new Matrix(R, R));
+            Delta.set(s, new Matrix(M, R)); // Delta(i,r,s): indexed by STATION and class, not class twice
         }
         for (int i = 0; i < M; i++) {
             for (int r = 0; r < R; r++) {
@@ -73,10 +73,21 @@ public final class Pfqn_conwayms {
                     Matrix N_1 = (s == 0) ? N : Matrix.oner(N, s - 1);
                     double pop = N_1.elementSum();
                     if (nservers[i] > 1) {
+                        if (pop == 0) {
+                            // empty network: the station is idle with probability one
+                            for (int j = 1; j < nservers[i]; j++) P.get(s).set(i, j, 0);
+                            PB.get(s).set(i, 0);
+                            P.get(s).set(i, 0, 1);
+                            continue;
+                        }
                         for (int j = 1; j < nservers[i]; j++) {
                             P.get(s).set(i, j, 2 * Q.get(s).getRow(i).elementSum() / (pop * (pop + 1)));
                         }
-                        PB.get(s).set(i, 2 * Q.get(s).getRow(i).elementSum() / (pop + 1 - nservers[i]) / (pop * (pop + 1)));
+                        if (pop > nservers[i] - 1) {
+                            PB.get(s).set(i, 2 * Q.get(s).getRow(i).elementSum() / (pop + 1 - nservers[i]) / (pop * (pop + 1)));
+                        } else { // fewer jobs than servers: they cannot all be busy
+                            PB.get(s).set(i, 0);
+                        }
                         P.get(s).set(i, 0, 1 - PB.get(s).get(i) - P.get(s).sumSubMatrix(i, i + 1, 1, nservers[i]));
                     }
                 }
@@ -98,7 +109,7 @@ public final class Pfqn_conwayms {
                 for (int r = 0; r < R; r++) {
                     for (int s = 0; s < R; s++) {
                         Matrix Ns = Matrix.oner(N, s);
-                        if (N.get(s) > 2) {
+                        if (N.get(s) > 2 && N.get(r) > 0) { // an empty class has no F_ir to correct
                             Delta.get(s).set(i, r, Q.get(1 + s).get(i, r) / Ns.get(r) - Q.get(0).get(i, r) / N.get(r));
                         }
                     }
@@ -128,6 +139,7 @@ public final class Pfqn_conwayms {
                                                           SchedStrategy[] type, double tol, int maxiter) {
         boolean hasConverged = false;
         Matrix W = L.copy();
+        Matrix Wlast = null;
         Matrix T = Matrix.createLike(L);
         int iter = 1;
         while (!hasConverged) {
@@ -140,7 +152,16 @@ public final class Pfqn_conwayms {
             T = forwardMVAResult.T;
             P = forwardMVAResult.P;
             PB = forwardMVAResult.PB;
-            if (Q.copy().sub(Qlast).norm() < tol || iter > maxiter) hasConverged = true;
+            // W must enter the test: Q alone is satisfied on the FIRST sweep whenever Q
+            // cannot move (M=1 seeds Q at its own fixed point), and the residence times
+            // returned then are still the seed W=L, so T_1=Q/W is unbounded and the
+            // throughput exceeds the station's own service capacity.
+            double moved = Double.POSITIVE_INFINITY;
+            if (Wlast != null) {
+                moved = Math.max(Q.copy().sub(Qlast).norm(), W.copy().sub(Wlast).norm());
+            }
+            Wlast = W.copy();
+            if (moved < tol || iter > maxiter) hasConverged = true;
             iter++;
         }
         return Ret.LinearizerResult.withX(Q, W, T, P, PB, iter);
@@ -167,19 +188,34 @@ public final class Pfqn_conwayms {
             for (int r = 0; r < R; r++) {
                 for (int s = 0; s < R; s++) {
                     Matrix Ns = Matrix.oner(N_1, s);
-                    Q_1.get(1 + s).set(i, r, Ns.get(r) * (Q.get(i, r) / N_1.get(r) + Delta.get(s).get(i, r)));
+                    // a class with no jobs left has an empty queue everywhere
+                    Q_1.get(1 + s).set(i, r, N_1.get(r) > 0
+                            ? Ns.get(r) * (Q.get(i, r) / N_1.get(r) + Delta.get(s).get(i, r)) : 0);
                 }
             }
         }
+        // T_1 is Little's law over the queueing part of the cycle, sum_i Q_1 / sum_i W,
+        // and not the ratio at the FIRST station with a positive residence time: the
+        // per-station estimates disagree, so picking one made the answer depend on the
+        // station order. The demand matrix carries no order, so a model symmetric under
+        // permuting classes and stations together must return equal class throughputs,
+        // and with the single-station pick it did not.
         for (int r = 0; r < R; r++) {
             for (int s = 0; s < R; s++) {
                 Matrix Nr = Matrix.oner(N_1, r);
+                double num = 0;
+                double den = 0;
                 for (int i = 0; i < M; i++) {
-                    if (W.get(i, s) > 0) {
-                        T_1.set(s, 1 + r, Nr.get(s) * (Q.get(i, s) / N_1.get(s) + Delta.get(s).get(i, r)) / W.get(i, s));
-                        break;
+                    if (W.get(i, s) > 0 && N_1.get(s) > 0) { // a class with no jobs left has no throughput
+                        // Delta is indexed (station, queued class, removed class), as the
+                        // Q_1 loop above uses it: here class s queues and class r is removed
+                        num += Nr.get(s) * (Q.get(i, s) / N_1.get(s) + Delta.get(r).get(i, s));
+                        den += W.get(i, s);
                     }
                 }
+                // a reduced-population throughput cannot be negative; a negative one
+                // makes log(F) complex in the XR/XE sums of the forward step
+                if (den > 0) T_1.set(s, 1 + r, FastMath.max(0.0, num / den));
             }
         }
         return new Ret.pfqnEstimate(Q_1, P_1, PB_1, T_1);
@@ -223,7 +259,8 @@ public final class Pfqn_conwayms {
                         }
                         sprodRes = PopulationLattice.sprod(sprodRes.s, sprodRes.S, sprodRes.D);
                     }
-                    XR.set(i, r, XR.get(i, r) / C.get(i, 1 + r));
+                    // Br empty: fewer jobs than servers, so all of them can never be busy
+                    XR.set(i, r, C.get(i, 1 + r) > 0 ? XR.get(i, r) / C.get(i, 1 + r) : 0);
                 }
             }
         }
@@ -245,7 +282,8 @@ public final class Pfqn_conwayms {
                             }
                             sprodResult = PopulationLattice.sprod(sprodResult.s, sprodResult.S, sprodResult.D);
                         }
-                        XE.get(c).set(i, r, XE.get(c).get(i, r) / Cx.get(i, 1 + r));
+                        // Axr empty: class c has no job left in N_1-e_r, so its term is 0
+                        XE.get(c).set(i, r, Cx.get(i, 1 + r) > 0 ? XE.get(c).get(i, r) / Cx.get(i, 1 + r) : 0);
                     }
                 }
             }
@@ -273,27 +311,39 @@ public final class Pfqn_conwayms {
             T.set(r, N_1.get(r) / (Z.get(r) + W.getColumn(r).elementSum()));
             for (int i = 0; i < M; i++) Q.set(i, r, T.get(r) * W.get(i, r));
         }
+        // Queue-length marginals. The relations
+        //   p_j = A*p_{j-1}/j,  pB = A*(pB + p_{ms-1})/ms,  p_0 = 1 - pB - sum_j p_j
+        // with A = sum_s X_s*L_is the mean number of busy servers are solved in closed
+        // form rather than iterated. As a Jacobi iteration they amplify by A per sweep,
+        // and since the convergence test watches Q and W but not P the routine returned
+        // marginals whose mass had run to 334 behind the p_0 = max(0,1-...) floor.
+        // The estimate step hands the same marginals to every reduced population, so the
+        // population corrections that pfqn_linearizerms carries here are all zero.
         for (int i = 0; i < M; i++) {
-            if (nservers[i] > 1) {
-                for (int j = 0; j < nservers[i] - 1; j++) {
-                    for (int c = 0; c < R; c++) {
-                        P.set(i, 1 + j, P.get(i, 1 + j) + L.get(i, c) * T.get(c) * P_1.get(1 + c).get(i, 1 + (j - 1)) / (j + 1));
+            int ms = nservers[i];
+            if (ms > 1) {
+                double A = 0;
+                for (int s = 0; s < R; s++) A += L.get(i, s) * T.get(s);
+                for (int j = 0; j < ms; j++) P.set(i, j, 0.0);
+                if (A >= ms) {
+                    // Saturated: the closed form is singular and its limit is the degenerate
+                    // marginal, every server busy with probability one. N = m with Z = 0
+                    // reaches it exactly, so this is a legal input.
+                    PB.set(i, 1.0);
+                } else {
+                    double[] alpha = new double[ms];
+                    alpha[0] = 1.0;
+                    double sumAlpha = 0;
+                    for (int j = 1; j < ms; j++) {
+                        alpha[j] = A * alpha[j - 1] / j;
+                        sumAlpha += alpha[j];
                     }
+                    double alphaB = A * alpha[ms - 1] / (ms - A);
+                    double p0 = 1.0 / (1.0 + sumAlpha + alphaB);
+                    P.set(i, 0, p0);
+                    for (int j = 1; j < ms; j++) P.set(i, j, alpha[j] * p0);
+                    PB.set(i, alphaB * p0);
                 }
-            }
-        }
-        for (int i = 0; i < M; i++) {
-            if (nservers[i] > 1) {
-                PB.set(i, 0.0);
-                for (int c = 0; c < R; c++) {
-                    PB.set(i, PB.get(i) + L.get(i, c) * T.get(c) * (PB_1.get(i, 1 + c) + P_1.get(1 + c).get(i, nservers[i] - 1)) / nservers[i]);
-                }
-            }
-        }
-        for (int i = 0; i < M; i++) {
-            if (nservers[i] > 1) {
-                P.set(i, 0, FastMath.max(0.0, 1 - PB.get(i)));
-                for (int j = 1; j < nservers[i]; j++) P.set(i, 0, FastMath.max(0.0, P.get(i, 0) - P.get(i, j)));
             }
         }
         return new Ret.LinearizerResult(Q, W, T, P, PB);

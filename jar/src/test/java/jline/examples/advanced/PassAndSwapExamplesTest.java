@@ -20,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * <p>The PAS station has the order-independent product-form stationary
  * distribution (Dorsman & Gardner 2024). Golden QLen/Util/Tput values for the
  * PASQueue station rows were produced by the MATLAB reference implementation and
- * agree across MATLAB, Python-native, Java and Kotlin to CTMC precision. The
+ * agree across MATLAB, Python-native and Java to CTMC precision. The
  * mirrored {@code PassAndSwapExamplesTest.kt} asserts the same values.
  *
  * @see PassAndSwapExample

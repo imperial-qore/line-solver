@@ -6,10 +6,10 @@ function res = runTransientJson(self, numEvents)
 %
 % RES has fields:
 %   .t   - (nTimePoints x 1) time vector, or [] if none
-%   .QNt - 1 x Nouter cell; RES.QNt{i} is a 1 x R cell whose {r} entry is the
-%          (nTimePoints x 2) [value, time] trajectory of class r at the i-th
-%          stateful node, or [] if absent. Nouter matches the engine's outer
-%          transient dimension (stateful-node major, as consumed by sample()).
+%   .QNt - 1 x nstations cell; RES.QNt{i} is a 1 x R cell whose {r} entry is
+%          the (nTimePoints x 2) [value, time] trajectory of class r at the i-th
+%          STATION, or [] if absent. The outer index is the engine's own
+%          (station-major); sample() maps a node to it with sn.nodeToStation.
 %   .respTimeSamples - (nstations x nclasses) cell of per-job response time
 %          samples recorded by the engine (empty when the run produced none).
 %          These are the sample-path observations that getCdfRespT turns into
@@ -63,7 +63,12 @@ if isfield(tran, 'respTimeSamples') && ~isempty(tran.respTimeSamples)
 end
 if isfield(tran, 'QNt') && ~isempty(tran.QNt)
     sn = self.model.getStruct;
-    Nouter = sn.nstateful;
+    % STATION-major, as the engine writes it: `result.QNt = new
+    % Matrix[numStations][numClasses]` (Solver_ssj, indexed by serviceStation).
+    % Using sn.nstateful here read one station's series under another station's
+    % index, and past the end returned EMPTY, on any model holding a stateful
+    % node that is not a station (a Router, a Cache, a Place, a stateful Fork).
+    Nouter = sn.nstations;
     R = sn.nclasses;
     % Normalize into an Nouter x R cell of [nRows x 2] matrices, then repackage
     % as a 1 x Nouter cell of 1 x R class-cells (the layout sample() consumes).

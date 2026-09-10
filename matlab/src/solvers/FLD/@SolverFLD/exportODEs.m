@@ -37,6 +37,25 @@ switch notation
         line_error(mfilename, sprintf('Unknown notation ''%s''. Valid notations: scalar, matrix.', notation));
 end
 
+% lang='cpp' exports the drift from line-cli (-a odes), with --notation
+% reaching the C++ exporter so 'matrix' returns the matrix document and not
+% the scalar one under another name. SYS is the structural description
+% solver_fluid_symodes builds on this side; the CLI sends the document only,
+% so SYS is empty rather than reconstructed from another engine's numbers.
+if isfield(self.options,'lang') && strcmp(self.options.lang,'cpp')
+    tex = CPPLINE.exportODEs(self.name, self.model, self.options, notation);
+    sys = struct([]);
+    if ~isempty(filename)
+        fid = fopen(filename, 'w');
+        if fid < 0
+            line_error(mfilename, sprintf('could not open ''%s'' for writing.', filename));
+        end
+        fprintf(fid, '%s', tex);
+        fclose(fid);
+    end
+    return
+end
+
 options = self.getOptions;
 sn = self.getStruct;
 % SSA draws a sample path and the fluid ODEs read mu*phi as a flow, so their
@@ -216,8 +235,8 @@ L{end+1} = '\item The numerical solver regularizes vanishing denominators with a
 if strcmp(sys.form,'J') && any(strcmp('fcfsw', sys.factorType) | strcmp('fcfsws', sys.factorType))
     L{end+1} = '\item At FCFS stations, the mean phase residence times $w_{u} = -1/[D_{0}]_{kk}$ weight the backlog $\hat{n}_{i}$; the factors $w_{u}$ of the departing phases are folded into the rate coefficients.';
 end
-if strcmp(sys.form,'J') && any(strcmp('dps', sys.factorType))
-    L{end+1} = '\item At DPS stations, weights are normalized to sum to one and the products $S_{i} w_{ir}$ are folded into the rate coefficients; the constant added to $\tilde{n}_{i}$ in the denominator mirrors the implementation in \texttt{ode\_rates\_closing}.';
+if strcmp(sys.form,'J') && any(strcmp('dpsmin', sys.factorType))
+    L{end+1} = '\item At DPS stations, weights are normalized to sum to one and the weight $w_{ir}$ of the departing class is folded into the rate coefficient; the class shares $w_{ir}x/\tilde{n}_{i}$ divide the station capacity $\min(n_{i},S_{i})$, so they sum to one whenever the station is busy.';
 end
 if any(sys.sched(unique(sys.stateStation)) == SchedStrategy.FCFS) && any(strcmp(sys.method, {'matrix','closing'}))
     L{end+1} = '\item For FCFS stations with non-exponential service, the solver may iteratively re-fit the service distributions (non-exponential approximation); the exported system uses the nominal model parameters.';
@@ -294,7 +313,8 @@ switch sys.form
         for v = 1:n
             if ~sys.isSource(v)
                 i = sys.stateStation(v);
-                if isinf(sys.S(i))
+                % sys.S holds the population at an INF station, never Inf
+                if sys.isInfStation(i)
                     varFactor{v} = struct('type','lin','station',i,'class',sys.stateClass(v));
                 else
                     varFactor{v} = struct('type',sys.smoothing,'station',i,'class',sys.stateClass(v));
@@ -341,9 +361,10 @@ for v = 1:n
             needN(i) = true;
             gdef{i} = sprintf('g_{%d}(\\mathbf{x}) &= \\Bigl(1 + \\bigl(n_{%d}(\\mathbf{x})/%s\\bigr)^{%s}\\Bigr)^{-1/%s}', ...
                 i, i, fmtnum(sys.S(i)), fmtnum(sys.pstar(i)), fmtnum(sys.pstar(i)));
-        case 'dps'
+        case 'dpsmin'
+            needN(i) = true;
             needNT(i) = true;
-            gdef{i} = sprintf('g_{%d}(\\mathbf{x}) &= \\frac{1}{%s + \\tilde{n}_{%d}(\\mathbf{x})}', i, fmtnum(f.c0), i);
+            gdef{i} = sprintf('g_{%d}(\\mathbf{x}) &= \\frac{\\min(n_{%d}(\\mathbf{x}),\\, %s)}{\\tilde{n}_{%d}(\\mathbf{x})}', i, i, fmtnum(sys.S(i)), i);
         case 'dpspw'
             needN(i) = true;
             needNT(i) = true;
@@ -467,7 +488,7 @@ function fstr = factor_tex(v, ftype, fdata)
 switch ftype
     case 'lin'
         fstr = sprintf('x_{%d}', v);
-    case {'min','pnorm','dps','fcfsw','fcfsws'}
+    case {'min','pnorm','dpsmin','fcfsw','fcfsws'}
         fstr = sprintf('x_{%d}\\,g_{%d}(\\mathbf{x})', v, fdata.station);
     case 'dpspw'
         fstr = sprintf('x_{%d}\\,g_{%d,%d}(\\mathbf{x})', v, fdata.station, fdata.class);

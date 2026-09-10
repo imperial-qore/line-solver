@@ -156,6 +156,19 @@ for i=1:length(statres)
     classres = statres(i).classresults;
     for c=1:length(classres)
         inchain = sn.inchain{c};
+        % A multiserver Queue is written as <ldstation servers="1">, and a single
+        % ldstation switches JMVA to its load-dependent algorithm, whose
+        % Utilization measure is 1-p_i(0) at EVERY station, delay ones included.
+        % That is a different random variable from LINE's E[busy servers], not a
+        % mis-scaled one, so the reported value cannot be rescaled into it.
+        % Derive U from the chain throughput, reported alike by both algorithms.
+        chainTput = NaN;
+        for m=1:length(classres(c).measure)
+            if strcmp(classres(c).measure(m).ATTRIBUTE.measureType,'Throughput')
+                chainTput = classres(c).measure(m).ATTRIBUTE.meanValue;
+                break
+            end
+        end
         for m=1:length(classres(c).measure)
             for k=inchain(:)'
                 s = struct();
@@ -171,10 +184,20 @@ for i=1:length(statres)
                 s.('measureType') = classres(c).measure(m).ATTRIBUTE.measureType;
                 switch classres(c).measure(m).ATTRIBUTE.measureType
                     case 'Utilization'
-                        if isinf(sn.nservers(i))
-                            s.meanValue = ST(i,k) * (s.meanValue / STchain(i,c)) * Vchain(i,c) / Vchain(sn.refstat(k),c) * alpha(i,k);
-                        else
-                            s.meanValue = ST(i,k) * (s.meanValue / STchain(i,c)) / Vchain(sn.refstat(k),c) * alpha(i,k) * min(sum(NK(isfinite(NK))), sn.nservers(i)) / sn.nservers(i);
+                        if isnan(chainTput)
+                            line_error(mfilename,sprintf('The JMVA result file reports a Utilization at station %s with no Throughput measure alongside it; utilization is derived from the chain throughput and cannot be recovered from the reported value.',sn.nodenames{sn.stationToNode(i)}));
+                        end
+                        s.meanValue = ST(i,k) * chainTput / Vchain(sn.refstat(k),c) * alpha(i,k);
+                        % The divisor is the capacity WRITEJMVA exported, which is
+                        % max(nservers, max(lldscaling)): a load-dependent station
+                        % carries its c in the scaling and leaves sn.nservers at 1,
+                        % so reading nservers alone reported U = c * E[busy]/c.
+                        cEffJmva = sn.nservers(i);
+                        if ~isempty(sn.lldscaling) && size(sn.lldscaling,1) >= i
+                            cEffJmva = max(cEffJmva, max(sn.lldscaling(i,:)));
+                        end
+                        if ~isinf(cEffJmva)
+                            s.meanValue = s.meanValue / cEffJmva;
                         end
                         s.('measureType') = classres(c).measure(m).ATTRIBUTE.measureType;
                     case 'Throughput'

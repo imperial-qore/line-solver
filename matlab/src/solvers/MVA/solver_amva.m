@@ -35,6 +35,8 @@ switch options.method
         options.method = 'qd';
     case 'amva.aql'
         options.method = 'aql';
+    case 'amva.qsa'
+        options.method = 'qsa';
     case 'amva.qdaql'
         options.method = 'qdaql';
     case 'amva.lin'
@@ -51,6 +53,31 @@ switch options.method
         options.method = 'schmidt';
     case 'amva.schmidt-ext'
         options.method = 'schmidt-ext';
+    % 2026-07-29: listValidMethods (SolverMVA.m:63) advertises 'amva.tay' but
+    % this switch had no arm for it, so the name survived unchanged and fell
+    % through to the qd-equivalent path: on a Delay(Z=1)+FCFS(D=0.5) N=3 model
+    % 'tay' gave Qd=1.585456789 in 8 iterations while 'amva.tay' gave
+    % Qd=1.499999844 in 31, exactly the 'qd' figures. An advertised method must
+    % not silently compute a different one, and the other ten amva.X spellings
+    % all alias, so this follows them.
+    case 'amva.tay'
+        options.method = 'tay';
+    case 'amva.scat'
+        options.method = 'scat';
+    case 'amva.lcp'
+        options.method = 'lcp';
+    case 'amva.chow'
+        options.method = 'chow';
+    case 'amva.pamb'
+        options.method = 'pamb';
+    case 'amva.pami'
+        options.method = 'pami';
+    case 'amva.pamt'
+        options.method = 'pamt';
+    case 'amva.clust'
+        options.method = 'clust';
+    case 'amva.dmlin'
+        options.method = 'dmlin';
     case {'default','amva'}
         if (sum(Nchain)<=2 || any(Nchain<1))
             options.method = 'qd'; % changing to bs degrades accuracy
@@ -64,11 +91,46 @@ switch options.method
 end
 method = options.method;
 
+% The closed-population AMVA family (Bard-Schweitzer, SQNI, Tay, SCAT, AQL,
+% QSA, Bard LCP, Chow SA, Hsieh-Lam PAM, clustering, Improved Linearizer,
+% Akyildiz-Bolch, Schmidt) lives ONLY in the product-form branch below. The
+% same predicate the report gates on decides here, so a name the report offers
+% is a name that runs and a name it withholds errors rather than falling
+% through to solver_amvald and returning the qd-family answer -- or a table of
+% zeros -- under a method the caller did not ask for.
+[amvaOk, amvaReason] = SolverMVA.supportsClosedPopulation(sn, options.method);
+if ~amvaOk
+    line_error(mfilename, amvaReason);
+end
+% The preemptive-resume priority arm of solver_amvald_forward is a single-server
+% one; the same predicate the report gates on refuses a multiserver FCFSPRPRIO
+% station here, before the forward step where the refusal used to surface.
+[prsOk, prsReason] = SolverMVA.supportsPreemptivePriority(sn, options.method);
+if ~prsOk
+    line_error(mfilename, prsReason);
+end
+
 %% trivial models
 if sn_has_homogeneous_scheduling(sn,SchedStrategy.INF)
     options.config.multiserver = 'default';
     [Q,U,R,T,C,X,lG,totiter,converged] = solver_amvald(sn,Lchain,STchain,Vchain,alpha,Nchain,SCVchain,refstatchain,options);
     return
+end
+
+%% interlocked flow (Franks 1999, Eq. 4.7)
+% options.config.interlock arrives CLASS-indexed, and it is translated to the
+% chain basis the handlers work in without overwriting it: this function
+% re-enters itself on the Conway fallback below, where the class-level matrix
+% has to survive. Only SOLVER_AMVALD carries the correction, so an interlocked
+% model goes there rather than to the closed-form or linearizermx branches,
+% which have no interlock term and would drop it silently.
+options.config.interlock_chain = [];
+if isfield(options.config,'interlock') && ~isempty(options.config.interlock)
+    options.config.interlock_chain = sn_interlock_chain(sn, options.config.interlock);
+    if ~isempty(options.config.interlock_chain)
+        [Q,U,R,T,C,X,lG,totiter,converged] = solver_amvald(sn,Lchain,STchain,Vchain,alpha,Nchain,SCVchain,refstatchain,options);
+        return
+    end
 end
 
 sourceIdx = sn.nodetype == NodeType.Source;
@@ -91,12 +153,31 @@ end
 Q = zeros(M,C);
 U = zeros(M,C);
 
-cond1 = sn_has_product_form_not_het_fcfs(sn);
+% ab / schmidt / schmidt-ext ARE the class-dependent FCFS algorithms and live
+% only in the product-form branch below, so the het-FCFS exclusion must not
+% divert them: doing so would return the qd-family answer under their name.
+cond1 = sn_has_product_form_not_het_fcfs(sn) || ...
+    (any(strcmpi(options.method,{'ab','schmidt','schmidt-ext'})) && ...
+     sn_has_product_form_not_het_fcfs(sn, false));
 cond2 = ~sn_has_load_dependence(sn);
 cond3 = ~sn_has_open_classes(sn);
 if cond1 && cond2 && (cond3 || (sn_has_product_form(sn) && sn_has_open_classes(sn) && strcmpi(options.method,'lin')))
     % we can use linearizer only if the open model is not heterfcfs as that approximation is not supported, so strict product-form is required
     [lambda,L0,N,Z0,~,nservers,V(sn.nodeToStation(queueIdx|delayIdx),:)] = sn_get_product_form_chain_params(sn);
+    if size(L0,1) == 0
+        % Nothing to correct: with no queueing station the arrival-instant queue
+        % length is identically zero, so every AMVA approximation coincides with
+        % the exact delay solution and the name a caller passed selects nothing.
+        % SOLVER_AMVALD computes it; the kernels below were instead handed a
+        % zero-row demand matrix and returned a table of zeros under whatever
+        % name was asked for. The C++ port already guards this
+        % (solver_mva.h, pf.queue_stations.empty()); the JAR reaches it through
+        % SnHasHomogeneousScheduling, which does not reproduce the MATLAB
+        % findstring quirk that reduces the trivial-models exit above to
+        % nstations == 1.
+        [Q,U,R,T,C,X,lG,totiter,converged] = solver_amvald(sn,Lchain,STchain,Vchain,alpha,Nchain,SCVchain,refstatchain,options);
+        return
+    end
     L = L0;
     Z = Z0;
     switch options.config.multiserver
@@ -134,20 +215,42 @@ if cond1 && cond2 && (cond3 || (sn_has_product_form(sn) && sn_has_open_classes(s
 
     switch options.method
         case 'sqni' % square root non-iterative approximation
-            if sn.nstations==2 && sum(sn.sched==SchedStrategy.INF)==1
-                [Q(sn.nodeToStation(queueIdx),:),U(sn.nodeToStation(queueIdx),:),X] = pfqn_sqni(N,L,Z);
-            else
-                [Q,U,R,T,C,X,lG,totiter,method] = deal([],[],[],[],[],[],[],0,options.method);
-                return
-            end
+            % pfqn_sqni is a closed form for one queueing station with a delay;
+            % SUPPORTSCLOSEDPOPULATION above refuses any other shape (returning
+            % empty here silently reported zeros for every metric).
+            [Q(sn.nodeToStation(queueIdx),:),U(sn.nodeToStation(queueIdx),:),X] = pfqn_sqni(N,L,Z);
             totiter=1;
         case 'bs'
             [X,Q(sn.nodeToStation(queueIdx),:),U(sn.nodeToStation(queueIdx),:),~,totiter] = pfqn_bs(L,N,Z,options.tol,options.iter_max,Q0,sn.sched(queueIdx));
+        case 'lcp'
+            % Bard LCP: the Schweitzer proportional term set to zero
+            [X,Q(sn.nodeToStation(queueIdx),:),U(sn.nodeToStation(queueIdx),:),~,totiter] = pfqn_lcp(L,N,Z,options.tol,options.iter_max,Q0,sn.sched(queueIdx));
+        case 'chow'
+            % Chow Second Approximation: theta-terms taken off the LCP solution
+            [X,Q(sn.nodeToStation(queueIdx),:),U(sn.nodeToStation(queueIdx),:),~,totiter] = pfqn_chow(L,N,Z,options.tol,options.iter_max,Q0,sn.sched(queueIdx));
+        case {'pamb','pami','pamt'}
+            % Hsieh-Lam proportional approximations, noniterative
+            [X,Q(sn.nodeToStation(queueIdx),:),U(sn.nodeToStation(queueIdx),:)] = pfqn_pam(L,N,Z,options.method);
+            totiter=1;
+        case 'clust'
+            % de Souza e Silva-Lavenberg-Muntz clustering approximation
+            [X,Q(sn.nodeToStation(queueIdx),:),U(sn.nodeToStation(queueIdx),:),~,totiter] = pfqn_clust(L,N,Z,[],[],'lin',options.tol,options.iter_max);
+        case 'dmlin'
+            % de Souza e Silva-Muntz Improved Linearizer
+            [Q(sn.nodeToStation(queueIdx),:),U(sn.nodeToStation(queueIdx),:),~,~,X,totiter] = pfqn_dmlin(L,N,Z,sn.sched(sn.nodeToStation(queueIdx)),options.tol,options.iter_max,Q0);
+        case 'tay'
+            % single-server recursion: SUPPORTSCLOSEDPOPULATION above refuses a
+            % multiserver model, as it does for 'aql' and 'qsa'
+            [X,Q(sn.nodeToStation(queueIdx),:),U(sn.nodeToStation(queueIdx),:),~,totiter] = pfqn_tay(L,N,Z,options.tol,options.iter_max,Q0);
+        case 'scat'
+            % Neuse-Chandy SCAT: the Linearizer fixed point with a single Delta
+            % refresh. Multiserver stations arrive here already Seidmann-scaled,
+            % as they do for 'bs', so no separate guard is needed.
+            [Q(sn.nodeToStation(queueIdx),:),U(sn.nodeToStation(queueIdx),:),~,~,X,totiter] = pfqn_scat(L,N,Z,sn.sched(sn.nodeToStation(queueIdx)),options.tol,options.iter_max,Q0);
         case 'aql'
-            if sn_has_multi_server(sn)
-                line_error(mfilename,'AQL cannot handle multi-server stations. Try with the ''default'' or ''lin'' methods.');
-            end
             [X,Q(sn.nodeToStation(queueIdx),:),U(sn.nodeToStation(queueIdx),:),~,totiter] = pfqn_aql(L,N,Z,options.tol,options.iter_max,Q0);
+        case 'qsa'
+            [Q(sn.nodeToStation(queueIdx),:),U(sn.nodeToStation(queueIdx),:),~,~,X,totiter] = pfqn_qsa(L,N,Z,sn.sched(queueIdx),options.tol,options.iter_max,3,Q0);
         case 'ab'
             % Akyildiz-Bolch AMVA for multi-server networks
             % Use L0/Z0 (original demands) since ab handles multi-server directly
@@ -198,6 +301,15 @@ if cond1 && cond2 && (cond3 || (sn_has_product_form(sn) && sn_has_open_classes(s
             U(sn.nodeToStation(queueIdx),:) = repmat(X,size(L0,1),1) .* L0 ./ repmat(nservers,1,C);
             totiter = 1;
         case 'schmidt-ext'
+            % One predicate for the gate and the run, asked about the numbers
+            % THIS arm passes: pfqn_schmidt_ext forms its alpha correction from
+            % the network with one class-r customer tagged, and a chain holding
+            % no customer has none to tag.
+            [sxOk, sxReason] = SolverMVA.supportsSchmidtExt(N, ...
+                sn.sched(sn.nodeToStation(queueIdx)) == SchedStrategy.FCFS, 'schmidt-ext');
+            if ~sxOk
+                line_error(mfilename, sxReason);
+            end
             % Extended Schmidt MVA with alpha corrections
             % Use L0/Z0 (original demands) since schmidt-ext handles multi-server directly
             % without needing Seidmann transformation
@@ -230,6 +342,13 @@ if cond1 && cond2 && (cond3 || (sn_has_product_form(sn) && sn_has_open_classes(s
                 % remove sources from L
                 [Q(sn.nodeToStation(queueIdx),:),U(sn.nodeToStation(queueIdx),:),~,~,X,totiter] = pfqn_linearizermx(lambda,L,N,Z,nservers,sn.sched(sn.nodeToStation(queueIdx)),options.tol,options.iter_max, options.method, Q0);
             else
+                % 'erlang' names no algorithm of its own: SOLVER_AMVALD_FORWARD
+                % implements default/softmin/seidmann/suri and rejects the rest,
+                % so both other sites in this file (the non-lin arm and the
+                % non-product-form tail) alias it to 'default' before calling in.
+                if strcmp(options.config.multiserver,'erlang')
+                    options.config.multiserver = 'default';
+                end
                 switch options.config.multiserver
                     case 'conway'
                         [Q(sn.nodeToStation(queueIdx),:),U(sn.nodeToStation(queueIdx),:),~,~,X,totiter] = pfqn_conwayms(L,N,Z,nservers,sn.sched(queueIdx),options.tol,options.iter_max,Q0);
@@ -237,7 +356,29 @@ if cond1 && cond2 && (cond3 || (sn_has_product_form(sn) && sn_has_open_classes(s
                         [Q(sn.nodeToStation(queueIdx),:),U(sn.nodeToStation(queueIdx),:),~,~,X,totiter] = pfqn_linearizermx(lambda,L,N,Z,nservers,sn.sched(sn.nodeToStation(queueIdx)),options.tol,options.iter_max, options.method, Q0);
                     case {'default', 'softmin', 'seidmann', 'suri'}
                         [Q,U,R,T,C,X,lG,totiter,converged] = solver_amvald(sn,Lchain,STchain,Vchain,alpha,Nchain,SCVchain,refstatchain,options);
+                        if ~isempty(converged) && ~converged && ~amvaConservesPopulation(sn,Q,Nchain)
+                            % The amvald fixed point can oscillate without converging on
+                            % het-FCFS multiserver layers (e.g. lqn_bpmn layer 10), and its
+                            % unconverged iterate violates the closed populations. Conway's
+                            % multiserver linearizer is stable there, so re-solve with it.
+                            % The population test, not the convergence flag alone, gates the
+                            % re-solve: exhausting the iteration budget is routine on a
+                            % many-job multichain layer and leaves a feasible iterate, and
+                            % pfqn_conwayms is the worse answer there (on lqn_basic layer
+                            % P:P1 it returned U=1.0106 against amvald's 0.9959).
+                            line_warning(mfilename,'AMVA (%s multiserver) did not converge and violates the closed populations; re-solving with the Conway multiserver linearizer.\n',options.config.multiserver);
+                            options.config.multiserver = 'conway';
+                            [Q,U,R,T,C,X,lG,totiter2,~,converged] = solver_amva(sn,options);
+                            totiter = totiter + totiter2;
+                        end
                         return
+                    otherwise
+                        % Falling through left Q, U and X unassigned and the
+                        % caller died on 'Unrecognized function or variable X',
+                        % naming nothing. An unhandled rule must name itself.
+                        line_error(mfilename,sprintf(['Unrecognized multiserver approximation ''%s''. ' ...
+                            'Supported: default, softmin, seidmann, suri, conway, erlang, krzesinski.'], ...
+                            options.config.multiserver));
                 end
             end
         otherwise
@@ -250,48 +391,72 @@ if cond1 && cond2 && (cond3 || (sn_has_product_form(sn) && sn_has_open_classes(s
     end
 
     % compute performance at delay, then unapply seidmann if needed
-    for i=1:size(Z0,1)
-        % For ab/schmidt methods, Q for delays was already set correctly by the algorithm
-        % using original demands Z0. For other methods, use Seidmann-modified Z.
-        if strcmp(options.method,'ab') || startsWith(options.method,'schmidt')
-            Q(sn.nodeToStation(delayIdx),:) = repmat(X,sum(delayIdx),1) .* Z0;
-        else
-            Q(sn.nodeToStation(delayIdx),:) = repmat(X,sum(delayIdx),1) .* Z;
-        end
-        U(sn.nodeToStation(delayIdx),:) = Q(sn.nodeToStation(delayIdx),:);
-        switch options.config.multiserver
-            case {'default','seidmann'}
-                % Skip Seidmann un-apply for ab and schmidt methods as it removes queue length
-                if ~strcmp(options.method,'ab') && ~startsWith(options.method,'schmidt')
-                    for j=1:size(L,1)
-                        if i == 1 && nservers(j)>1
-                            % un-apply seidmann from first delay    and move it to
-                            % the origin queue
-                            jq = find(queueIdx,j);
-                            Q(jq,:) = Q(jq,:) + (L0(j,:) .* (repmat(nservers(j),1,C) - 1)./ repmat(nservers(j),1,C)) .* X;
-                        end
+    % The delay is charged the ORIGINAL think time Z0 for every method. Seidmann
+    % folds L(m-1)/m of each multiserver station into Z, but that population is
+    % in service at the station and is given back to it below; charging Z here
+    % as well counted it twice, so sum(Q) exceeded N.
+    Q(sn.nodeToStation(delayIdx),:) = repmat(X,sum(delayIdx),1) .* Z0;
+    U(sn.nodeToStation(delayIdx),:) = Q(sn.nodeToStation(delayIdx),:);
+    switch options.config.multiserver
+        case {'default','seidmann'}
+            % Skip Seidmann un-apply for ab and schmidt methods: they were handed
+            % the original demands, so the transform was never applied to them
+            if ~strcmp(options.method,'ab') && ~startsWith(options.method,'schmidt')
+                % station of algorithm row j, in the order the solves above wrote
+                % Q(sn.nodeToStation(queueIdx),:); find(queueIdx,j) returned the
+                % first j queues instead, spraying station j's term over all of them
+                stationsQ = sn.nodeToStation(queueIdx);
+                for j=1:size(L,1)
+                    if nservers(j)>1
+                        % move the folded delay component back to its own station
+                        jq = stationsQ(j);
+                        Q(jq,:) = Q(jq,:) + (L0(j,:) .* (repmat(nservers(j),1,C) - 1)./ repmat(nservers(j),1,C)) .* X;
                     end
                 end
-        end
+            end
     end
     T = V .* repmat(X,M,1);
     R = Q ./ T;
-    % For ab/schmidt methods, use original delay demands Z0
-    if strcmp(options.method,'ab') || startsWith(options.method,'schmidt')
-        C = N ./ X - Z0;
-    else
-        C = N ./ X - Z;
-    end
+    % Cycle time excludes the think time actually spent at the delays, which is
+    % Z0 summed over them: with the Seidmann Z it disagreed with sum(R.*V)
+    C = N ./ X - sum(Z0,1);
     lG = NaN;
     if sn_has_class_switching(sn)
         [Q,U,R,T,C,X] = sn_deaggregate_chain_results(sn, Lchain, [], STchain, Vchain, alpha, [], [], R, T, [], X);
     end
 else
+    % Nothing of the closed-population family can reach here: it is refused
+    % above by SUPPORTSCLOSEDPOPULATION, the one predicate the report also
+    % gates on. Keeping a second copy of that rule here is what let the two
+    % drift, so that 'bs', 'sqni', 'ab' and the two Schmidt arms fell through
+    % to solver_amvald and returned the qd-family answer under their name while
+    % 'aql', 'qsa', 'tay' and the Chapter-2 survey algorithms errored.
     switch options.config.multiserver
         case {'conway','erlang','krzesinski'}
             options.config.multiserver = 'default';
     end
     [Q,U,R,T,C,X,lG,totiter,converged] = solver_amvald(sn,Lchain,STchain,Vchain,alpha,Nchain,SCVchain,refstatchain,options);
+end
+end
+
+function tf = amvaConservesPopulation(sn,Q,Nchain)
+% True when the class-level queue lengths Q still add up, chain by chain, to
+% the closed populations Nchain. Population is conserved per CHAIN, not per
+% class, since class switching moves jobs between the classes of a chain.
+tf = true;
+if isempty(Q) || isempty(sn.chains)
+    return
+end
+for c=1:size(sn.chains,1)
+    if c > numel(Nchain) || ~isfinite(Nchain(c)) || Nchain(c) <= 0
+        continue
+    end
+    inchain = sn.chains(c,:) > 0;
+    qc = sum(sum(Q(:,inchain),'omitnan'),'omitnan');
+    if ~isfinite(qc) || abs(qc - Nchain(c)) > 1e-3 * Nchain(c)
+        tf = false;
+        return
+    end
 end
 end
 

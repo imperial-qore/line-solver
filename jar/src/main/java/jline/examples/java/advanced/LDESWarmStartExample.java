@@ -164,13 +164,13 @@ public class LDESWarmStartExample {
         System.out.println("PART A: sample efficiency, near-balanced tandem, N=" + nA);
         System.out.println();
 
-        Matrix exactA = new SolverCTMC(buildModel(nA), "verbose", false).getAvgQLen();
+        Matrix exactA = new SolverCTMC(buildModel(nA), "exact", "verbose", false).getAvgQLen();
         System.out.println("Exact CTMC mean queue lengths: " + rowToString(exactA.transpose()));
 
         Network m1 = buildModel(nA);
         Object[] wMva = warmPlacement(m1, new SolverMVA(m1, "exact", "verbose", false));
         Network m2 = buildModel(nA);
-        Object[] wCtmc = warmPlacement(m2, new SolverCTMC(m2, "verbose", false));
+        Object[] wCtmc = warmPlacement(m2, new SolverCTMC(m2, "exact", "verbose", false));
         System.out.printf("Warm placement from SolverMVA  (%.3fs, rounded mean qlen): %s%n",
                 (Double) wMva[1], rowToString((Matrix) wMva[0]));
         System.out.printf("Warm placement from SolverCTMC (%.3fs, distribution mode): %s%n",

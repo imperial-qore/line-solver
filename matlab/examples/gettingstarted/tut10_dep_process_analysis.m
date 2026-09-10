@@ -5,7 +5,7 @@
 % part of the example: unseeded, it varied over ~0.889-0.920 across runs,
 % three times the 1e-2 tolerance its regression test asserts. Matches the
 % Python tut10_dep_process_analysis.py, which already pins seed=23000.
-solver = CTMC(model,'cutoff',150,'seed',23000);
+solver = CTMC(model, 'exact','cutoff',150,'seed',23000);
 
 sa = solver.sampleSysAggr(5e3);
 ind = model.getNodeIndex(queue);

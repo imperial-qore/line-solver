@@ -54,6 +54,16 @@ class SolverSSAReturn:
     samples: int = 0
     event_log: Optional[List] = None
     state_log: Optional[List] = None
+    # Derived START/PREEMPT rates [stations x classes]: how often per unit time
+    # a class-r service starts at station i, and how often a class-r job in
+    # service is pushed back into the buffer there. Annotations on transitions
+    # the engine already fires, so they add no getAvgTable column.
+    startRate: Optional[np.ndarray] = None
+    preemptRate: Optional[np.ndarray] = None
+    # (time, station, class, kind) rows of the sampled path, kind 0 = START and
+    # 1 = PREEMPT. sn.sync carries no derived tag, so a trace can only report
+    # them from here.
+    tag_log: Optional[List] = None
     timedOut: bool = False
 
 
@@ -119,8 +129,8 @@ def solver_ssa(
         return solver_ssa_parallel(sn, options)
     if method == 'nrm':
         from .nrm import (solver_ssa_nrm, _ALLOWED_SCHED, _fcr_nrm_ok,
-                          _routing_nrm_ok, _impatience_nrm_ok, _phase_nrm_ok,
-                          _cache_nrm_ok)
+                          _impatience_nrm_ok, _phase_nrm_ok,
+                          _cache_nrm_ok, _gd_nrm_ok)
         try:
             supported = all(
                 (sn.sched.get(ist) if isinstance(sn.sched, dict) else sn.sched[ist]) in _ALLOWED_SCHED
@@ -129,9 +139,6 @@ def solver_ssa(
             supported = False
         # see _kb/06-solver-catalog.md (SSA: "NRM engine now supports FCR directly")
         if supported and not _fcr_nrm_ok(sn):
-            supported = False
-        # NRM resolves JSQ/memoryless SQ at firing time; others need serial.
-        if supported and not _routing_nrm_ok(sn):
             supported = False
         # QUEUE_LENGTH balking and memoryless reneging only
         if supported and not _impatience_nrm_ok(sn):
@@ -142,6 +149,10 @@ def solver_ssa(
         # Cache nodes are simulated natively (immediate read -> hit/miss class
         # switch); only the retrieval (delayed-hit) system still needs serial.
         if supported and not _cache_nrm_ok(sn):
+            supported = False
+        # A global (Whittle) dependence reads the whole population matrix, which
+        # the per-station propensity closures do not receive.
+        if supported and not _gd_nrm_ok(sn):
             supported = False
         if supported:
             return solver_ssa_nrm(sn, options)

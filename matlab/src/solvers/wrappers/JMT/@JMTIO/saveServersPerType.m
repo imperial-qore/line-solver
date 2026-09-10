@@ -6,23 +6,12 @@ function [simDoc, section] = saveServersPerType(self, simDoc, section, ind)
 % Copyright (c) 2012-2026, Imperial College London
 % All rights reserved.
 
-sn = self.getStruct;
-np = sn.nodeparam{ind};
-
-% Check if this station has heterogeneous servers
-if ~isfield(np, 'nservertypes') || np.nservertypes == 0
+pools = self.serverPools(ind);
+if isempty(pools)
     return;
 end
 
-% Get servers per type for this station
-if ~isfield(np, 'serverspertype')
-    return;
-end
-
-serversPerType = np.serverspertype;
-if isempty(serversPerType)
-    return;
-end
+serversPerType = pools.counts;
 
 % Create serversPerServerType parameter array
 serversPerTypeNode = simDoc.createElement('parameter');

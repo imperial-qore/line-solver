@@ -151,7 +151,23 @@ public final class Pfqn_stdf_heur {
 
                     double lGk;
                     if (M == 1) {
+                        // The network WITHOUT station k is EMPTY here, and its
+                        // normalizing constant is the think-only one, NOT 0:
+                        // G = prod_r Z_r^n_r / n_r!. Short-circuiting to 0.0
+                        // asserts G = 1 and makes the returned CDF identically
+                        // 1.0. Same defect and same fix as Pfqn_stdf.
+                        // Z HAS ONE ROW PER DELAY NODE (snGetProductFormParams
+                        // builds it (max(1,Mz) x R)), so class r's think time is
+                        // the COLUMN SUM. Z.get(0,r) used the first delay only.
                         lGk = 0.0;
+                        for (int rr = 0; rr < R; rr++) {
+                            double nr = Nr.get(0, rr);
+                            if (nr > 0) {
+                                double Ztot = 0.0;
+                                for (int zi = 0; zi < Z.getNumRows(); zi++) Ztot += Z.get(zi, rr);
+                                lGk += nr * Math.log(Ztot) - Maths.factln((int) nr);
+                            }
+                        }
                     } else {
                         Ret.pfqnMVALD result = Pfqn_mvald.pfqn_mvald(LReduced, Nr, Z, muReduced);
                         lGk = result.lG.get(result.lG.size() - 1);
@@ -162,7 +178,11 @@ public final class Pfqn_stdf_heur {
                         for (int m = 0; m < (int) Nr.elementSum(); m++) {
                             if (m + 1 < hkc[r].getNumCols()) {
                                 double denominator = hkc[r].get(t, m + 1);
-                                if (Math.abs(denominator) > GlobalConstants.FineTol) {
+                                // > 0, NOT > FineTol: pfqn_stdf_heur.m:109-111
+                                // divides unconditionally, so the wider guard is
+                                // a port invention that discards legitimately
+                                // small hkc values at small t.
+                                if (denominator > 0.0) {
                                     gammat.set(kIdx, m, mu.get(kIdx, m) * hkc[r].get(t, m) / denominator);
                                 }
                             }

@@ -13,6 +13,8 @@ classdef UQ < EnsembleSolver
     % - Orchestrates multiple solver runs
     % - Aggregates results with prior-weighted expectations
     % - Provides posterior distribution access
+    % - Reports the support-only (interval) range through getInterval, which
+    %   ignores the weights and keeps only the endpoints of each Prior
     %
     % Example:
     % @code
@@ -31,6 +33,7 @@ classdef UQ < EnsembleSolver
     % avgTable = post.getAvgTable();            % Prior-weighted expectations
     % postTable = post.getPosteriorTable();     % Per-alternative results
     % postDist = post.getPosteriorDist('R', queue, class); % Response time distribution
+    % ival = post.getIntervalTable();           % Support-only range, no weights
     % @endcode
     %
     % Copyright (c) 2012-2026, Imperial College London
@@ -52,6 +55,37 @@ classdef UQ < EnsembleSolver
     end
 
     methods
+        function [bool, reason] = supportsModelMethod(self, method)
+            % [BOOL, REASON] = SUPPORTSMODELMETHOD(METHOD)
+            %
+            % UQ's refusal IN ITS OWN WORDS, which the base gate cannot supply
+            % here. That one falls back to SUPPORTS(MODEL), which answers with
+            % a bare logical, and a caller left to reconstruct a reason from
+            % the feature set gets a list of every feature the model uses: this
+            % class's set declares the Prior UQ ITSELF consumes, every other
+            % feature being the inner solver's to accept (see SUPPORTS), so
+            % comparing it against a model answers a question nobody asked.
+            %
+            % The rule is the one SUPPORTS states: a model with no uncertain
+            % parameter is not a UQ model. On top of it, the tensor-product
+            % design of the discrete/quadrature methods must fit
+            % MaxDesignPoints, a rule buildDesign used to state alone on the
+            % run path; 'montecarlo' has no such cap.
+            bool = UQ.modelHasPrior(self.model);
+            if bool
+                reason = '';
+                if ~strcmp(UQ.resolveUQMethod(method), 'montecarlo')
+                    [bool, reason] = self.tensorDesignRefusal();
+                end
+            else
+                reason = ['SolverUQ analyses a model with an UNCERTAIN parameter: it expands ' ...
+                    'the Prior into one model per design point and runs an inner solver on ' ...
+                    'each. No service or arrival process of this model is a Prior, so there ' ...
+                    'is one design point and its posterior is the point estimate the inner ' ...
+                    'solver already returns.'];
+            end
+        end
+
         function self = UQ(model, solverFactory, varargin)
             % UQ Create a UQ solver wrapper
             %
@@ -210,10 +244,11 @@ classdef UQ < EnsembleSolver
 
             counts = cellfun(@length, margDists);
             total = prod(counts);
-            if total > UQ.MaxDesignPoints
-                line_error(mfilename, sprintf(['Tensor-product design has %d points, above the limit of %d. ', ...
-                    'Use options.method = ''montecarlo'' or reduce options.samples.'], ...
-                    total, UQ.MaxDesignPoints));
+            % the predicate supportsModelMethod asks, so the run raises the
+            % sentence the report showed
+            [okd, whyd] = self.tensorDesignRefusal(counts);
+            if ~okd
+                line_error(mfilename, whyd);
             end
 
             self.design = repmat(struct('weight', 1, 'dists', {{}}), 1, total);
@@ -236,18 +271,11 @@ classdef UQ < EnsembleSolver
             %
             % 'default' keeps the historical behaviour: discrete Priors are
             % expanded as given, continuous Priors are discretized by
-            % quadrature.
+            % quadrature. The name table is RESOLVEUQMETHOD, shared with the
+            % gate so the two cannot disagree on a method name.
             method = 'quadrature';
             if isfield(self.options, 'method') && ~isempty(self.options.method)
-                m = char(self.options.method);
-                switch m
-                    case {'default', 'discrete', 'quadrature'}
-                        method = 'quadrature';
-                    case 'montecarlo'
-                        method = 'montecarlo';
-                    otherwise
-                        line_error(mfilename, sprintf('Unknown UQ method: %s', m));
-                end
+                method = UQ.resolveUQMethod(self.options.method);
             end
         end
 
@@ -260,6 +288,37 @@ classdef UQ < EnsembleSolver
             end
             if n < 1
                 line_error(mfilename, 'options.samples must be at least 1');
+            end
+        end
+
+        function [ok, reason] = tensorDesignRefusal(self, counts)
+            % [OK, REASON] = TENSORDESIGNREFUSAL(COUNTS)
+            % Whether the tensor-product design of the discrete/quadrature
+            % methods fits MaxDesignPoints. COUNTS, the per-Prior alternative
+            % counts, is derived from the Priors when omitted. Asked by
+            % supportsModelMethod, so model.help refuses 'quadrature' on a
+            % model whose Priors multiply out past the cap and still offers
+            % 'montecarlo', and by buildDesign, so the run raises the same
+            % sentence.
+            ok = true;
+            reason = '';
+            if isempty(self.priorInfo)
+                return
+            end
+            if nargin < 2 || isempty(counts)
+                n = self.getUQNodes();
+                L = length(self.priorInfo);
+                counts = zeros(1, L);
+                for l = 1:L
+                    counts(l) = length(self.priorInfo(l).prior.discretize(n, 'quadrature'));
+                end
+            end
+            total = prod(counts);
+            if total > UQ.MaxDesignPoints
+                ok = false;
+                reason = sprintf(['Tensor-product design has %d points, above the limit of %d. ', ...
+                    'Use options.method = ''montecarlo'' or reduce options.samples.'], ...
+                    total, UQ.MaxDesignPoints);
             end
         end
 
@@ -327,6 +386,11 @@ classdef UQ < EnsembleSolver
             for i = 1:n
                 % Deep copy the model
                 modelCopy = self.originalModel.copy();
+                % setService does NOT invalidate a cached sn (Queue.setService:
+                % deliberate, for SolverLN's iteration cost), and copy() carries
+                % the cache, so without this every design point would be solved
+                % with the Prior's MIXTURE moments -- see _kb/06-solver-catalog.md
+                modelCopy.resetStruct();
 
                 nodes = modelCopy.getNodes();
                 classes = modelCopy.getClasses();
@@ -356,6 +420,20 @@ classdef UQ < EnsembleSolver
         function pre(self, it)
             % PRE Pre-iteration operations (no-op for UQ)
             % UQ only needs a single iteration
+        end
+
+        function varargout = iterate(self, varargin)
+            % ITERATE Run the ensemble, narrating the run on the console
+            %
+            % Solver console: UQ drives an ensemble of alternative models and
+            % does not pass through runAnalyzerChecks. Every entry point
+            % (runAnalyzer, getAvg, getAvgTable) reaches the analysis through
+            % iterate, so the run is opened here. The guard must live until
+            % this function returns.
+            consoleGuard = LineConsole.beginRun(self, self.options); %#ok<NASGU>
+            LineConsole.step('uncertainty quantification over %d alternative models', ...
+                self.getNumAlternatives());
+            [varargout{1:nargout}] = iterate@EnsembleSolver(self, varargin{:});
         end
 
         function [result, runtime] = analyze(self, it, e)
@@ -492,10 +570,21 @@ classdef UQ < EnsembleSolver
             end
         end
 
-        function AvgTable = getAvgTable(self, varargin)
+        function varargout = getAvgTable(self, varargin)
             % GETAVGTABLE Return prior-weighted average table
             %
             % Returns a table of aggregated metrics weighted by prior probabilities.
+            % The result recorder captures the returned table together with the solver
+            % that produced it -- see LineResultRecorder. Recording an ensemble here
+            % rather than in the member solver it delegates to is what keeps an
+            % AUTO/LN/ENV/UQ answer from being filed under the member's name.
+            [scope, scopeGuard] = LineResultRecorder.enter(); %#ok<ASGLU>
+            [varargout{1:max(nargout,1)}] = self.getAvgTable_impl(varargin{:});
+            LineResultRecorder.capture(scope, self, 'avg', varargout{1});
+        end
+
+        function AvgTable = getAvgTable_impl(self, varargin)
+            % GETAVGTABLE_IMPL Implementation of GETAVGTABLE; see the wrapper above.
 
             % Run solver if not done
             if isempty(self.results)
@@ -701,6 +790,215 @@ classdef UQ < EnsembleSolver
             empDist = EmpiricalCDF(cdfData);
         end
 
+        %% Interval (support-only) uncertainty
+
+        function ival = getInterval(self)
+            % IVAL = GETINTERVAL()
+            % Range of every metric over the support of the Priors.
+            %
+            % This drops the weights and keeps only the endpoints, which is
+            % the epistemic case in which the modeller can bound a parameter
+            % but not distribute it. Two regimes, distinguished by ival.exact:
+            %
+            %  exact = true   The model is a single-class closed product-form
+            %                 network with load-independent single-server
+            %                 queues and delays, so pfqn_mva_interval returns
+            %                 the exact hull of MVA over the whole demand box
+            %                 by the monotonicity of Luthi and Haring (1998).
+            %                 No ensemble run is needed and the interval is
+            %                 attained, not sampled.
+            %  exact = false  Fallback: the range across the design points
+            %                 that were actually solved. For a discrete Prior
+            %                 this is again exact, because the design visits
+            %                 the whole support; for a continuous one it is an
+            %                 INNER approximation of the true range, since a
+            %                 quadrature node is not an endpoint of the
+            %                 support. It is therefore not an enclosure.
+            %
+            % The interval is conditional on the true parameters lying inside
+            % the Prior supports. It is not a bound on the exact solution of
+            % the network and must not be composed with SolverBA brackets.
+            %
+            % @return ival Struct with fields Q, U, R, T, W of size
+            %              nstations x nclasses x 2, the trailing index
+            %              selecting the lower and the upper endpoint, plus X
+            %              and Rtot (1 x 2, exact path only), exact (logical)
+            %              and method (char).
+
+            [ok, why] = self.qualifiesForIntervalMVA();
+            if ok
+                ival = self.intervalByMVA();
+            else
+                line_warning(mfilename, ...
+                    ['Exact interval MVA does not apply (%s); reporting the range over the design ', ...
+                    'points, which spans the sampled support only and is not an enclosure.'], why);
+                ival = self.intervalBySampling();
+            end
+        end
+
+        function itable = getIntervalTable(self)
+            % ITABLE = GETINTERVALTABLE()
+            % Tabular form of getInterval, two columns per metric.
+
+            ival = self.getInterval();
+            sn = self.originalModel.getStruct(false);
+            M = sn.nstations;
+            K = sn.nclasses;
+
+            Station = {}; JobClass = {};
+            QLen_lo = []; QLen_up = []; Util_lo = []; Util_up = [];
+            RespT_lo = []; RespT_up = []; Tput_lo = []; Tput_up = [];
+
+            for ist = 1:M
+                for k = 1:K
+                    if ival.Q(ist,k,2) <= 0 && ival.U(ist,k,2) <= 0 && ival.T(ist,k,2) <= 0
+                        continue
+                    end
+                    Station{end+1, 1} = sn.nodenames{sn.stationToNode(ist)}; %#ok<AGROW>
+                    JobClass{end+1, 1} = sn.classnames{k}; %#ok<AGROW>
+                    QLen_lo(end+1, 1) = ival.Q(ist,k,1); %#ok<AGROW>
+                    QLen_up(end+1, 1) = ival.Q(ist,k,2); %#ok<AGROW>
+                    Util_lo(end+1, 1) = ival.U(ist,k,1); %#ok<AGROW>
+                    Util_up(end+1, 1) = ival.U(ist,k,2); %#ok<AGROW>
+                    RespT_lo(end+1, 1) = ival.R(ist,k,1); %#ok<AGROW>
+                    RespT_up(end+1, 1) = ival.R(ist,k,2); %#ok<AGROW>
+                    Tput_lo(end+1, 1) = ival.T(ist,k,1); %#ok<AGROW>
+                    Tput_up(end+1, 1) = ival.T(ist,k,2); %#ok<AGROW>
+                end
+            end
+
+            if isempty(Station)
+                itable = table();
+                return;
+            end
+
+            Station = categorical(Station);
+            JobClass = categorical(JobClass);
+            itable = table(Station, JobClass, QLen_lo, QLen_up, Util_lo, Util_up, ...
+                RespT_lo, RespT_up, Tput_lo, Tput_up);
+        end
+
+        function [ok, why] = qualifiesForIntervalMVA(self)
+            % [OK, WHY] = QUALIFIESFORINTERVALMVA()
+            % Whether the monotonicity theorems behind pfqn_mva_interval hold
+            % for this model. WHY names the first violated condition.
+
+            ok = false;
+            sn = self.originalModel.getStruct(false);
+            if ~isempty(self.priorInfo) && ~all(strcmp({self.priorInfo.type}, 'service'))
+                why = 'a Prior sits on an arrival process, so the model is open'; return
+            end
+            if sn.nclasses ~= 1
+                why = 'the theorems are proved for a single class only'; return
+            end
+            if sn.nclosedjobs <= 0
+                why = 'the class is not closed'; return
+            end
+            if sn.nnodes ~= sn.nstations
+                why = 'the model has nodes that are not stations'; return
+            end
+            isinf_ = (sn.sched == SchedStrategy.INF);
+            if any(sn.nservers(~isinf_) > 1)
+                why = 'a queueing station has more than one server'; return
+            end
+            if ~all(isinf_ | sn.sched == SchedStrategy.PS | sn.sched == SchedStrategy.FCFS)
+                why = 'a station is neither delay, PS nor FCFS'; return
+            end
+            stations = arrayfun(@(p) sn.nodeToStation(p.nodeIdx), self.priorInfo);
+            if numel(unique(stations)) ~= numel(stations)
+                why = 'two Priors sit on the same station'; return
+            end
+            ok = true;
+            why = '';
+        end
+
+        function ival = intervalByMVA(self)
+            % IVAL = INTERVALBYMVA()
+            % Exact hull through pfqn_mva_interval. The demand box is the
+            % nominal demand vector with the prior-carrying stations widened
+            % to the range of mean service times over the Prior support.
+
+            sn = self.originalModel.getStruct(false);
+            M = sn.nstations;
+            V = sn.visits{1}(:);
+            isinf_ = (sn.sched == SchedStrategy.INF);
+            ST = 1 ./ sn.rates(:,1);
+            ST(isnan(ST)) = 0;
+            STlo = ST; STup = ST;
+
+            for l = 1:numel(self.priorInfo)
+                ist = sn.nodeToStation(self.priorInfo(l).nodeIdx);
+                [lo, up] = UQ.priorMeanRange(self.priorInfo(l).prior, self.getUQNodes());
+                STlo(ist) = lo; STup(ist) = up;
+            end
+
+            Dlo = V .* STlo; Dup = V .* STup;
+            Zint = [sum(Dlo(isinf_)), sum(Dup(isinf_))];
+            qidx = find(~isinf_);
+            [X, Qq, Uq, Rq, Rtot] = pfqn_mva_interval([Dlo(qidx), Dup(qidx)], sn.nclosedjobs, Zint);
+
+            Q = zeros(M,2); U = zeros(M,2); R = zeros(M,2); W = zeros(M,2);
+            Q(qidx,:) = Qq;
+            U(qidx,:) = Uq;
+            W(qidx,:) = Rq;
+            R(qidx,:) = Rq ./ V(qidx);
+            % A delay station never queues, so its residence time is its own
+            % demand interval and its population is the throughput times that
+            % demand, enclosed as a product of two intervals.
+            W(isinf_,:) = [Dlo(isinf_), Dup(isinf_)];
+            R(isinf_,:) = [STlo(isinf_), STup(isinf_)];
+            Q(isinf_,:) = [X(1)*Dlo(isinf_), X(2)*Dup(isinf_)];
+            U(isinf_,:) = Q(isinf_,:);
+
+            ival = struct();
+            ival.X = X;
+            ival.Rtot = Rtot;
+            ival.Q = reshape(Q, [M,1,2]);
+            ival.U = reshape(U, [M,1,2]);
+            ival.R = reshape(R, [M,1,2]);
+            ival.W = reshape(W, [M,1,2]);
+            ival.T = reshape(V * X, [M,1,2]);
+            ival.exact = true;
+            ival.method = 'mvainterval';
+        end
+
+        function ival = intervalBySampling(self)
+            % IVAL = INTERVALBYSAMPLING()
+            % Range of each metric across the design points that were solved.
+
+            if isempty(self.results)
+                self.iterate();
+            end
+            n = self.getNumberOfModels();
+            fields = {'Q', 'U', 'R', 'T', 'W'};
+            ival = struct();
+            for f = 1:length(fields)
+                fname = fields{f};
+                lo = []; up = [];
+                for e = 1:n
+                    res = self.results{1, e};
+                    if isempty(res) || ~isfield(res, 'Avg') || ~isfield(res.Avg, fname) || isempty(res.Avg.(fname))
+                        continue
+                    end
+                    v = res.Avg.(fname);
+                    if isempty(lo)
+                        lo = v; up = v;
+                    else
+                        lo = min(lo, v); up = max(up, v);
+                    end
+                end
+                if isempty(lo)
+                    ival.(fname) = [];
+                else
+                    ival.(fname) = cat(3, lo, up);
+                end
+            end
+            ival.X = [];
+            ival.Rtot = [];
+            ival.exact = false;
+            ival.method = 'sampled';
+        end
+
         %% Required Solver abstract methods
 
         function runtime = runAnalyzer(self, options)
@@ -835,6 +1133,23 @@ classdef UQ < EnsembleSolver
     end
 
     methods (Static)
+        function [lo, up] = priorMeanRange(prior, n)
+            % [LO, UP] = PRIORMEANRANGE(PRIOR, N)
+            % Range of the mean of a Prior over its alternatives.
+            %
+            % Exact for a discrete Prior, whose alternatives are the support.
+            % A continuous Prior is first discretized on N quadrature nodes,
+            % so the range is that of the discretized support: an unbounded
+            % parameter density is never reached at its tails.
+
+            dists = prior.discretize(n, 'quadrature');
+            m = zeros(1, length(dists));
+            for i = 1:length(dists)
+                m(i) = dists{i}.getMean();
+            end
+            lo = min(m); up = max(m);
+        end
+
         function idx = unrankIndex(i, counts)
             % IDX = UNRANKINDEX(I, COUNTS)
             % Map the linear index I in 1..prod(COUNTS) to a subscript vector
@@ -848,6 +1163,26 @@ classdef UQ < EnsembleSolver
             end
         end
 
+        function method = resolveUQMethod(name)
+            % METHOD = RESOLVEUQMETHOD(NAME)
+            % The design a method name selects: 'default', 'discrete' and
+            % 'quadrature' are the tensor-product (quadrature) design, and
+            % 'montecarlo' the sampled one. One table for getUQMethod and the
+            % gate, so the two cannot disagree on a name.
+            method = 'quadrature';
+            if isempty(name)
+                return
+            end
+            switch char(name)
+                case {'default', 'discrete', 'quadrature'}
+                    method = 'quadrature';
+                case 'montecarlo'
+                    method = 'montecarlo';
+                otherwise
+                    line_error(mfilename, sprintf('Unknown UQ method: %s', char(name)));
+            end
+        end
+
         function featSupported = getFeatureSet()
             % GETFEATURESET Return supported features
             featSupported = SolverFeatureSet;
@@ -856,8 +1191,62 @@ classdef UQ < EnsembleSolver
 
         function [bool, featSupported] = supports(model)
             % SUPPORTS Check if model is supported
-            bool = true;
+            %
+            % A MODEL WITH NO UNCERTAIN PARAMETER IS NOT A UQ MODEL. This
+            % returned true unconditionally, which made UQ claim every model in
+            % the language: SolverAUTO.listValidMethods offered every 'uq.*'
+            % method name on an ordinary network, whose posterior is a single design
+            % point equal to the point estimate the inner solver already
+            % returns. The JAR (SolverUQ.supports -> detectPrior() != null) and
+            % native python (hasPriorDistribution) have always gated it this
+            % way, so this closes an m/j/p divergence rather than tightening a
+            % rule the other two share.
+            %
+            % The feature set stays the answer to a DIFFERENT question and is
+            % returned unchanged: what UQ itself consumes is the Prior, while
+            % every other feature is the INNER solver's to accept or refuse, on
+            % a model from which the Prior has already been removed.
             featSupported = UQ.getFeatureSet();
+            bool = UQ.modelHasPrior(model);
+        end
+
+        function tf = modelHasPrior(model)
+            % TF = MODELHASPRIOR(MODEL)
+            % True when the model carries an uncertain parameter, i.e. when a
+            % service or arrival process is a Prior and the model therefore
+            % expands into one instance per design point. SolverAUTO asks the
+            % same question through this method, so the constructor's routing
+            % and this gate cannot disagree.
+            tf = false;
+            if ~isa(model,'Network')
+                return
+            end
+            nodes = model.getNodes();
+            classes = model.getClasses();
+            for i = 1:length(nodes)
+                node = nodes{i};
+                if isa(node,'Queue') || isa(node,'Delay')
+                    for c = 1:length(classes)
+                        try
+                            dist = node.getService(classes{c});
+                        catch
+                            dist = [];
+                        end
+                        if ~isempty(dist) && isa(dist,'Prior')
+                            tf = true;
+                            return
+                        end
+                    end
+                elseif isa(node,'Source')
+                    for c = 1:length(classes)
+                        if size(node.arrivalProcess,2) >= c && ~isempty(node.arrivalProcess{1,c}) ...
+                                && isa(node.arrivalProcess{1,c},'Prior')
+                            tf = true;
+                            return
+                        end
+                    end
+                end
+            end
         end
 
         function options = defaultOptions()

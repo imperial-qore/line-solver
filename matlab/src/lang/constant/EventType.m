@@ -22,7 +22,15 @@ classdef EventType < Copyable
         SWITCH = 12; % the server of a polling station advances its switchover timer
         FAILURE = 13; % the server of a station breaks down (goes from up to down)
         REPAIR = 14; % the server of a station is repaired (goes from down to up)
+        START = 15; % a job begins or resumes holding a server (tag on an ARV/DEP arc)
+        PREEMPT = 16; % a job holding a server is pushed back into the buffer (tag on an ARV arc)
     end
+    % START and PREEMPT are instantaneous tags on the arc of the transition
+    % that causes them, never the active half of an sn.sync entry: they carry
+    % no clock, add no state and leave every numerical result unchanged.
+    % PREEMPT is spelled in full because PRE = 8 already names the Petri-net
+    % pre-arc. REPAIR emits no START on purpose: the supported breakdown model
+    % resumes the held job (downServiceRates degrades, it does not evict).
     
     methods(Static)
         function text = toText(type)
@@ -59,6 +67,10 @@ classdef EventType < Copyable
                     text = 'FAILURE';
                 case EventType.REPAIR
                     text = 'REPAIR';
+                case EventType.START
+                    text = 'START';
+                case EventType.PREEMPT
+                    text = 'PREEMPT';
             end
         end        
     end

@@ -28,7 +28,8 @@ classdef Queue < ServiceStation
         % Heterogeneous server properties
         serverTypes;              % Cell array of ServerType objects
         heteroSchedPolicy;        % HeteroSchedPolicy for server assignment
-        heteroServiceDistributions;  % containers.Map: ServerType -> (containers.Map: JobClass -> Distribution)
+        heteroServiceDistributions;  % dictionary: ServerType -> (dictionary: JobClass -> Distribution)
+        serverParallelism;        % Array: per-class number of servers a job seizes at once (default 1)
         % Immediate feedback property
         immediateFeedback;        % Cell array of class indices, or 'all' for all classes
         % Pass-and-swap properties
@@ -71,7 +72,8 @@ classdef Queue < ServiceStation
                 self.batchRejectProb = [];
                 self.serverTypes = {};
                 self.heteroSchedPolicy = HeteroSchedPolicy.ORDER;
-                self.heteroServiceDistributions = containers.Map();
+                self.heteroServiceDistributions = configureDictionary('string','cell');
+                self.serverParallelism = [];
                 self.immediateFeedback = {};
                 self.swapGraph = [];
                 self.svcRateFun = [];
@@ -89,11 +91,11 @@ classdef Queue < ServiceStation
                             self.schedPolicy = SchedStrategyType.NP;
                             self.server = Server(classes);
                         case SchedStrategy.PAS
-                            % Pass-and-swap: non-preemptive order-independent queue whose class compatibility/swap graph defaults to complete (materialized at struct refresh) unless set via setSwapGraph.
+                            % Pass-and-swap: non-preemptive order-independent queue; swap graph defaults to complete (materialized at struct refresh) unless set via setSwapGraph.
                             self.schedPolicy = SchedStrategyType.NP;
                             self.server = Server(classes);
                         case SchedStrategy.OI
-                            % Order-independent: pass-and-swap specialization whose swap graph is always zero (empty). Class order is preserved on completion; only the rank rate mu(supp(c)) matters.
+                            % Order-independent: pass-and-swap specialization; swap graph always zero (empty). Class order kept on completion; only rank rate mu(supp(c)) matters.
                             self.schedPolicy = SchedStrategyType.NP;
                             self.server = Server(classes);
                         case SchedStrategy.INF
@@ -392,12 +394,121 @@ classdef Queue < ServiceStation
             end
         end
 
+        function [ok, badc, badr, partial] = checkRateMonotonicity(self, Nvec, cap)
+            % [OK, BADC, BADR, PARTIAL] = CHECKRATEMONOTONICITY(NVEC, CAP)
+            %
+            % Checks the order-independence (OI) condition (1) on the service
+            % rate mu(c): the per-job rates must be non-negative, that is
+            % mu(c1..cj) >= mu(c1..c_{j-1}) for every microstate and position j.
+            %
+            % A rate can be permutation-invariant and still fail to parameterize
+            % an OI queue. Single-server processor sharing with class-dependent
+            % rates, mu(c) = (sum_j mu_{cj}) / n, is the standard trap: it is
+            % flatly invariant under permutations, yet as soon as two classes
+            % have different rates its prefix increments go negative -- with
+            % mu_hit = 3.0 and mu_miss = 0.7, mu(Hit) = 3.0 while
+            % mu(Hit,Miss) = 1.85, so the second job would be served at -1.15.
+            %
+            % Run this AFTER checkPermInvariance: permutation invariance is what
+            % makes mu a function of the count vector, and the increments to
+            % test are then just mu(n + e_r) - mu(n) over count vectors n and
+            % classes r, with no permutation enumeration. Prefixes are non-empty,
+            % so mu is never evaluated on an empty microstate, and an increment
+            % of exactly zero is accepted -- that is how a class which does not
+            % visit this station is expressed. Returns OK=false with the
+            % microstate BADC whose rate is lowered and the class BADR whose
+            % arrival lowers it. When the reachable population is too large to
+            % enumerate exhaustively, only a subset is verified and PARTIAL is
+            % returned true.
+            ok = true; badc = []; badr = []; partial = false;
+            muFun = self.svcRateFun;
+            if isempty(muFun), return, end
+            K = numel(Nvec);
+            tol = 1e-9;
+            LATTICE_BUDGET = 4096;
+            MAXEVAL = 50000;    % total mu evaluations budget
+
+            % per-class count bound and total-length bound
+            ub = Nvec(:)';
+            hasOpen = any(~isfinite(ub));
+            if isfinite(cap) && cap >= 0 && cap < intmax
+                Lmax = cap;
+            else
+                Lmax = sum(ub(isfinite(ub)));
+            end
+            ub(~isfinite(ub)) = min(Lmax, 6);       % open classes: sample bound
+            ub = min(ub, Lmax);
+            if ~isfinite(Lmax) || Lmax < 2, return, end
+
+            latSize = prod(ub + 1);
+            exhaustive = ~hasOpen && latSize <= LATTICE_BUDGET && isfinite(latSize);
+            neval = 0;
+            saved = rng; rng(0);                    % reproducible, no global side effect
+            try
+                if exhaustive
+                    n = zeros(1, K);                % odometer over count vectors
+                    while true
+                        if sum(n) >= 1 && sum(n) <= Lmax - 1
+                            [ok, badc, badr, neval] = local_step(n);
+                            if ~ok, break, end
+                            if neval >= MAXEVAL, partial = true; break, end
+                        end
+                        % increment odometer
+                        d = 1;
+                        while d <= K
+                            n(d) = n(d) + 1;
+                            if n(d) <= ub(d), break, end
+                            n(d) = 0; d = d + 1;
+                        end
+                        if d > K, break, end
+                    end
+                else
+                    partial = true;                 % large / open population: sample
+                    for trial = 1:400
+                        len = randi(max(1, min(Lmax, 6)));
+                        n = zeros(1, K);
+                        for j = 1:len
+                            r = randi(K);
+                            if n(r) < ub(r), n(r) = n(r) + 1; end
+                        end
+                        if sum(n) >= 1 && sum(n) <= Lmax - 1
+                            [ok, badc, badr, neval] = local_step(n);
+                            if ~ok, break, end
+                            if neval >= MAXEVAL, break, end
+                        end
+                    end
+                end
+            catch ME
+                rng(saved); rethrow(ME);
+            end
+            rng(saved);
+
+            function [ok_, badc_, badr_, neval_] = local_step(nc)
+                % No one-job extension of the prefix nc may lower the total rate.
+                ok_ = true; badc_ = []; badr_ = []; neval_ = neval;
+                base = muFun(repelem(1:K, nc)); neval_ = neval_ + 1;
+                for r_ = 1:K
+                    if nc(r_) >= ub(r_), continue, end
+                    nx = nc; nx(r_) = nx(r_) + 1;
+                    cx = repelem(1:K, nx);
+                    v = muFun(cx); neval_ = neval_ + 1;
+                    if v - base < -tol * max(1, abs(base))
+                        ok_ = false; badc_ = cx; badr_ = r_; return
+                    end
+                end
+            end
+        end
+
         function setLoadDependence(self, alpha)
+            % DPS is admitted alongside PS and FCFS: alpha(n) scales the total
+            % station capacity and the discipline then splits it, so the two
+            % compose. State.afterEventStation already applies lldscaling in
+            % its DPS branch, and SolverFLD closes it through psi(n).
             switch SchedStrategy.toId(self.schedStrategy)
-                case {SchedStrategy.PS, SchedStrategy.FCFS}
+                case {SchedStrategy.PS, SchedStrategy.FCFS, SchedStrategy.DPS}
                     setLimitedLoadDependence(self, alpha);
                 otherwise
-                    line_error(mfilename,'Load-dependence supported only for processor sharing (PS) and first-come first-serve (FCFS) stations.');
+                    line_error(mfilename,'Load-dependence supported only for processor sharing (PS), discriminatory processor sharing (DPS) and first-come first-serve (FCFS) stations.');
             end
         end
 
@@ -464,6 +575,15 @@ classdef Queue < ServiceStation
                         end
                     otherwise
                         self.numberOfServers = value;
+                        % Station.setNumServers invalidates here and this
+                        % override did not, so a server count changed after
+                        % anything had built the struct (a gate call, a
+                        % getStruct, a solve) left sn.nservers at the OLD
+                        % value: the model reported one station and every
+                        % sn-based predicate judged another. The recorder
+                        % reads the node objects, so a feature set saw the
+                        % new count while a structural rule saw the old one.
+                        self.invalidateStruct();
                 end
             else
                 self.obj.setNumberOfServers(value);
@@ -1359,6 +1479,61 @@ classdef Queue < ServiceStation
         %            distrib = self.serviceProcess{oclass};
         %        end
 
+        function setServerParallelism(self, class, n)
+            % SETSERVERPARALLELISM(CLASS, N)
+            %
+            % Sets the number of servers that a class-CLASS job seizes for the
+            % whole of its service, JMT's job parallelism (Server.serverNumRequired).
+            % A job waits until N servers are simultaneously free and holds all
+            % of them until it completes, so the station serves at most
+            % floor(c/N) such jobs at a time. Default is 1.
+            %
+            % Parameters:
+            %   class - JobClass object
+            %   n     - Number of servers required, an integer in [1, c]
+
+            if n < 1 || n ~= round(n)
+                line_error(mfilename, 'Server parallelism must be a positive integer.');
+            end
+            if isempty(self.obj)
+                c = class.index;
+                if n > self.getNumberOfServers()
+                    line_error(mfilename, 'Server parallelism (%d) exceeds the %d servers of station %s, so a job of class %s could never enter service.', n, self.getNumberOfServers(), self.getName(), class.getName());
+                end
+                if length(self.serverParallelism) < c
+                    self.serverParallelism(end+1:c) = 1;
+                end
+                self.serverParallelism(c) = n;
+            else
+                self.obj.setServerParallelism(class.obj, n);
+            end
+        end
+
+        function n = getServerParallelism(self, class)
+            % N = GETSERVERPARALLELISM(CLASS)
+            %
+            % Returns the number of servers seized by a class-CLASS job, 1 if unset.
+
+            if isempty(self.obj)
+                c = class.index;
+                if c <= length(self.serverParallelism) && self.serverParallelism(c) >= 1
+                    n = self.serverParallelism(c);
+                else
+                    n = 1;
+                end
+            else
+                n = self.obj.getServerParallelism(class.obj);
+            end
+        end
+
+        function tf = hasServerParallelism(self)
+            % TF = HASSERVERPARALLELISM()
+            %
+            % True when some class seizes more than one server.
+
+            tf = ~isempty(self.serverParallelism) && any(self.serverParallelism > 1);
+        end
+
         % ==================== Heterogeneous Server Methods ====================
 
         function self = addServerType(self, serverType)
@@ -1391,7 +1566,7 @@ classdef Queue < ServiceStation
                 self.serverTypes{end+1} = serverType;
 
                 % Initialize service distribution map for this server type
-                self.heteroServiceDistributions(serverType.getName()) = containers.Map();
+                self.heteroServiceDistributions{serverType.getName()} = configureDictionary('string','cell');
 
                 % Update total number of servers
                 self.updateTotalServerCount();
@@ -1519,11 +1694,11 @@ classdef Queue < ServiceStation
             if isempty(self.obj)
                 % MATLAB native implementation
                 if ~isKey(self.heteroServiceDistributions, serverType.getName())
-                    self.heteroServiceDistributions(serverType.getName()) = containers.Map();
+                    self.heteroServiceDistributions{serverType.getName()} = configureDictionary('string','cell');
                 end
-                classMap = self.heteroServiceDistributions(serverType.getName());
-                classMap(jobClass.getName()) = distribution;
-                self.heteroServiceDistributions(serverType.getName()) = classMap;
+                classMap = self.heteroServiceDistributions{serverType.getName()};
+                classMap{jobClass.getName()} = distribution;
+                self.heteroServiceDistributions{serverType.getName()} = classMap;
 
                 % Ensure compatibility
                 if ~serverType.isCompatible(jobClass)
@@ -1547,9 +1722,9 @@ classdef Queue < ServiceStation
 
             if isempty(self.obj)
                 if isKey(self.heteroServiceDistributions, serverType.getName())
-                    classMap = self.heteroServiceDistributions(serverType.getName());
+                    classMap = self.heteroServiceDistributions{serverType.getName()};
                     if isKey(classMap, jobClass.getName())
-                        distribution = classMap(jobClass.getName());
+                        distribution = classMap{jobClass.getName()};
                     else
                         distribution = [];
                     end

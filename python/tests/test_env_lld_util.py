@@ -54,6 +54,11 @@ def test_env_statevec_matches_ctmc_on_identical_lld_stages():
     options = SolverOptions(SolverType.ENV)
     options.method = 'statevec'
     options.verbose = False
+    # The state-vector analyzer under test is native: the delegating ENV engines
+    # solve every stage by the fluid transient and refuse a CTMC-staged ensemble
+    # outright, so the RECOMBINATION is pinned here while the stage solvers keep
+    # the ambient lang and the CTMC oracle above is read the same way.
+    options.lang = 'python'
 
     solver = SolverENV(env, lambda m: SolverCTMC(m, timespan=[0, 1e6], verbose=False),
                        options=options)
@@ -77,6 +82,11 @@ def test_env_statevec_matches_ctmc_on_queue_lengths_too():
     options = SolverOptions(SolverType.ENV)
     options.method = 'statevec'
     options.verbose = False
+    # The state-vector analyzer under test is native: the delegating ENV engines
+    # solve every stage by the fluid transient and refuse a CTMC-staged ensemble
+    # outright, so the RECOMBINATION is pinned here while the stage solvers keep
+    # the ambient lang and the CTMC oracle above is read the same way.
+    options.lang = 'python'
 
     solver = SolverENV(env, lambda m: SolverCTMC(m, timespan=[0, 1e6], verbose=False),
                        options=options)

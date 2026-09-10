@@ -1,3 +1,3 @@
-function str=kpc_version()
-str='0.3.2';
+function str=kpcfit_version()
+str='0.5.0';
 end

@@ -12,7 +12,16 @@ if nargin<2 %~exist('R','var')
     R = getAvgRespTHandles(self);
 end
 RD = cell(sn.nstations, sn.nclasses);
+% The steady-state marginal only seeds initFromMarginal for the logging run
+% below, so it belongs to the same native-JMT computation and takes the same
+% lang. Left on the caller's lang it is the ONE solve here that is not forced.
+% Pinned to 'matlab' because the logging run that follows is this wrapper's
+% own (it rewrites the JSIM document with per-node loggers), so the seed must
+% come from the same implementation whatever the caller's lang says.
+origLang = self.options.lang;
+self.options.lang = 'matlab';
 QN = getAvgQLen(self); % steady-state qlen
+self.options.lang = origLang;
 n = QN;
 for r=1:sn.nclasses
     if isinf(sn.njobs(r))

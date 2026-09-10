@@ -18,39 +18,16 @@ def _proc_to_ph(proc_entry, rate):
     HyperExp parameter dict, or a (D0, D1) matrix pair. ``rate`` is the fallback
     mean rate from ``sn.rates`` (used for the exponential case).
     """
-    if isinstance(proc_entry, dict):
-        if 'probs' in proc_entry and 'rates' in proc_entry:           # HyperExp
-            probs = np.asarray(proc_entry['probs'], dtype=float).ravel()
-            rates = np.asarray(proc_entry['rates'], dtype=float).ravel()
-            return probs.copy(), np.diag(-rates)
-        if 'k' in proc_entry:                                          # Erlang
-            k = int(proc_entry['k'])
-            r = float(proc_entry.get('rate', proc_entry.get('mu', rate)))
-            T = np.zeros((k, k))
-            for a in range(k):
-                T[a, a] = -r
-                if a + 1 < k:
-                    T[a, a + 1] = r
-            al = np.zeros(k)
-            al[0] = 1.0
-            return al, T
-        mu = float(proc_entry.get('rate', proc_entry.get('mu', proc_entry.get('lambda', rate))))
-        return np.array([1.0]), np.array([[-mu]])
-    if isinstance(proc_entry, (list, tuple)) and len(proc_entry) >= 1:  # (D0, D1) matrices
-        D0 = np.asarray(proc_entry[0], dtype=float)
-        ph = D0.shape[0]
-        if ph == 1:
-            return np.array([1.0]), D0.copy()
-        # PH initial distribution alpha = -(alpha solves) ; for a PH/MAP without an
-        # explicit entry vector, use the embedded one from D1 row sums normalised.
-        if len(proc_entry) >= 2:
-            D1 = np.asarray(proc_entry[1], dtype=float)
-            w = D1.sum(axis=1)
-            s = w.sum()
-            al = (w / s) if s > 0 else np.concatenate(([1.0], np.zeros(ph - 1)))
-        else:
-            al = np.concatenate(([1.0], np.zeros(ph - 1)))
-        return al, D0.copy()
+    # sn.proc stores (D0, D1); proc_to_ph returns the PH view and also accepts
+    # the legacy descriptors. NOTE this also corrects the entry vector: the
+    # previous code took alpha from D1 ROW sums, which are the exit rates
+    # (sum_j D1[i,j] = exit_i), not the entry distribution. For an Erlang-2 that
+    # returned alpha = [0 1] where the correct entry vector is [1 0]. alpha comes
+    # from the COLUMN sums, sum_i D1[i,j] = alpha_j * sum_i exit_i.
+    from ..sn.proc_form import proc_to_ph
+    al, T = proc_to_ph(proc_entry)
+    if al is not None:
+        return np.asarray(al, dtype=float), np.asarray(T, dtype=float)
     # scalar rate fallback
     return np.array([1.0]), np.array([[-float(rate)]])
 

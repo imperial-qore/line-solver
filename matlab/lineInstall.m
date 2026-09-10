@@ -3,10 +3,10 @@ addpath(genpath(cwd));
 w=warning('query');
 warning on
 disp('Checking JAVA...')
-[status,~] = system('java');
+[status,~] = system('java -version');
 hasWarnings = false;
 v = ver;
-if status == 0
+if status ~= 0
     error('ERROR: the Java Runtime Environment (JRE) is not installed, this is required for LINE.')
 end
 disp('Checking MATLAB toolboxes...')

@@ -2,7 +2,7 @@
 Extended Renewal Continuous-time Hidden Markov Model (ER-CHMM) functions.
 
 Ported from MATLAB: matlab/lib/kpctoolbox/erchmm/
-JAR reference: jar/src/main/kotlin/jline/lib/kpctoolbox/erchmm/ERCHMM.kt
+JAR reference: jar/src/main/java/jline/lib/kpctoolbox/erchmm/ERCHMM.java
 
 The EM algorithm is based on:
 - Okamura et al. (2008). An EM algorithm for a Superposition of Markovian

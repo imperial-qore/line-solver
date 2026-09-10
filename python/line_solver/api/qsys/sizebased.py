@@ -457,21 +457,47 @@ def qsys_mg1_lrpt(
         E_S2_i = (1 + cs_arr[i] ** 2) / (mu_arr[i] ** 2)
         E_X2 += p[i] * E_S2_i
 
-    # Compute response times using LRPT formula
-    # E[T(x)] = x/(1-rho) + lambda_total*E[X^2] / (2*(1-rho)^2)
-    W = np.zeros(K)
-
-    for k in range(K):
-        # Mean service time for this class
-        x = 1.0 / mu_arr[k]
-
-        # LRPT formula
-        term1 = x / (1 - rho_total)
+    # The reference has TWO branches and only the exponential one was ported
+    # here, so a class with cs != 1 was answered with the exponential formula:
+    # on lambda=[0.3,0.2], mu=[1,0.5], cs=[1,sqrt(0.5)] that read
+    # W = [13.33, 5.33] against MATLAB's [7.111, 3.333].
+    if np.all(np.abs(cs_arr - 1.0) < 1e-6):
+        # E[T(x)] = x/(1-rho) + lambda_total*E[X^2] / (2*(1-rho)^2)
+        W = np.zeros(K)
         term2 = lambda_total * E_X2 / (2 * (1 - rho_total) ** 2)
-        W[k] = term1 + term2
+        for k in range(K):
+            W[k] = (1.0 / mu_arr[k]) / (1 - rho_total) + term2
+    else:
+        W = _lrpt_general(lambda_arr, mu_arr)
 
     # Compute rhohat = Q/(1+Q) to match qsys convention
     Q = np.sum(lambda_arr * W)
     rho_out = Q / (1 + Q)
 
     return W, rho_out
+
+
+def _lrpt_general(lambda_arr: np.ndarray, mu_arr: np.ndarray) -> np.ndarray:
+    """General (non-exponential) LRPT branch of MATLAB qsys_mg1_lrpt.
+
+    The class-based preemptive priority surrogate, with the classes ordered by
+    DECREASING mean service time, which is the order LRPT serves them in::
+
+        W_q(k) = (sum_{j<=k} lambda_j/mu_j^2) / ((1 - rho_{<k})(1 - rho_{<=k}))
+        W(k)   = W_q(k) + 1/mu_k
+
+    The sort must be STABLE, as MATLAB's descending sort is, or two classes of
+    equal mean size swap places and the cumulative sums change.
+    """
+    K = len(lambda_arr)
+    mean_service = 1.0 / mu_arr
+    order = sorted(range(K), key=lambda i: -mean_service[i])
+    W = np.zeros(K)
+    rho_prev = 0.0
+    er_k = 0.0
+    for r in order:
+        rho_curr = rho_prev + lambda_arr[r] / mu_arr[r]
+        er_k += lambda_arr[r] / (mu_arr[r] ** 2)
+        W[r] = er_k / ((1 - rho_prev) * (1 - rho_curr)) + 1.0 / mu_arr[r]
+        rho_prev = rho_curr
+    return W

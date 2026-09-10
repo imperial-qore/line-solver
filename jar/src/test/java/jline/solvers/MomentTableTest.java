@@ -690,7 +690,7 @@ public class MomentTableTest {
     }
 
     @Test
-    @DisplayName("the Linearizer token family all select the approximate path")
+    @DisplayName("the Linearizer method name family all select the approximate path")
     public void testLinearizerMethodFamily() {
         // MATLAB's isLinearizerMethod accepts the whole Linearizer family, case
         // insensitively; every other method takes the exact path.

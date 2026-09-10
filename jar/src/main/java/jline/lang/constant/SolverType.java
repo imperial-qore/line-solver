@@ -9,6 +9,7 @@ package jline.lang.constant;
  * Constants for specifying a named solver
  */
 public enum SolverType {
+    AG,
     AUTO,
     BA,
     CTMC,

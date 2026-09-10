@@ -18,7 +18,7 @@ import warnings
 import pytest
 
 from line_solver import (Exp, Network, OpenClass, Queue, SchedStrategy, Sink,
-                         SolverAuto, SolverJMT, SolverLDES, SolverLQNS,
+                         SolverAUTO, SolverJMT, SolverLDES, SolverLQNS,
                          SolverQNS, SolverSSA, Source)
 
 
@@ -76,15 +76,15 @@ def test_auto_follows_its_candidate_loop():
     # AUTO returned True whenever a candidate existed, regardless of support.
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
-        assert SolverAuto(_plain()).supports(_plain()) is True
+        assert SolverAUTO(_plain()).supports(_plain()) is True
         # LDES is a candidate and supports FCFSPR, so AUTO must accept it. This
         # also pins the candidate construction: LDES/JMT moved under wrappers/
         # and AUTO kept the old import path, so _create_solver raised
         # ModuleNotFoundError and every LDES/JMT candidate was silently skipped.
-        assert SolverAuto(_fcfspr()).supports(_fcfspr()) is True
+        assert SolverAUTO(_fcfspr()).supports(_fcfspr()) is True
 
 
 def test_auto_can_construct_its_candidates():
-    auto = SolverAuto(_plain())
+    auto = SolverAUTO(_plain())
     for candidate in auto._candidate_solvers:
         auto._create_solver(candidate)  # must not raise ModuleNotFoundError

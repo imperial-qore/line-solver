@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import org.apache.commons.math3.util.CombinatoricsUtils;
+import org.apache.commons.math3.special.Gamma;
 import org.apache.commons.math3.util.FastMath;
 
 import jline.solvers.SolverOptions;
@@ -25,10 +26,10 @@ public final class Pfqn_xia {
         double ret = 0.0;
         int j = 0;
         while (j < k) {
-            ret += FastMath.pow(u, j) / CombinatoricsUtils.factorial(j);
+            ret += powOverFact(u, j);
             j++;
         }
-        ret += FastMath.pow(u, k) / CombinatoricsUtils.factorial((int) k) / (1 - u / k);
+        ret += powOverFact(u, k) / (1 - u / k);
         return ret;
     }
 
@@ -68,5 +69,19 @@ public final class Pfqn_xia {
             }
         }
         return logGasy;
+    }
+
+    /**
+     * u^j/j! without forming either half: the quotient is bounded by exp(u) but
+     * both u^j and j! leave the double range for j &gt;~ 171.
+     */
+    private static double powOverFact(double u, double j) {
+        if (j == 0) {
+            return 1.0;
+        }
+        if (u == 0) {
+            return 0.0;
+        }
+        return FastMath.exp(j * FastMath.log(u) - Gamma.logGamma(j + 1.0));
     }
 }

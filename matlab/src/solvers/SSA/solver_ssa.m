@@ -1,46 +1,28 @@
-function [pi,SSq,arvRates,depRates,tranSysState,tranSync,sn]=solver_ssa(sn, init_state, options, eventCache)
-% [PI,SSQ,ARVRATES,DEPRATES,TRANSYSSTATE,QN]=SOLVER_SSA(QN,OPTIONS)
+function [pi,SSq,arvRates,depRates,tranSysState,tranSync,sn,dlyRates,startRates,preemptRates,tranStartTag,tranPreemptTag]=solver_ssa(sn, init_state, options, eventCache)
+% [PI,SSQ,ARVRATES,DEPRATES,TRANSYSSTATE,QN,DLYRATES,STARTRATES,PREEMPTRATES,TRANSTARTTAG,TRANPREEMPTTAG]=SOLVER_SSA(QN,OPTIONS)
+%
+% STARTRATES and PREEMPTRATES are the derived START/PREEMPT rates per unique
+% state, laid out like ARVRATES/DEPRATES: how fast the transitions enabled in
+% that state start a class-r service at a stateful node, or push a class-r job
+% in service there back into the buffer.
+%
+% TRANSTARTTAG{e} and TRANPREEMPTTAG{e} are the tags of the transition that
+% actually FIRED at step e, as rows [statefulIndex class]. The trace needs
+% them explicitly: @SolverSSA/sample.m rebuilds events from sn.sync{tranSync(e)},
+% which by construction carries no derived tag.
 
 % Copyright (c) 2012-2026, Imperial College London
 % All rights reserved.
 
 % by default the jobs are all initialized in the first valid state
 
-% Impatience support checks (mirror SolverCTMC): reneging supports only
-% exponential (memoryless) patience; balking supports only QUEUE_LENGTH.
-if isfield(sn,'impatienceClass') && ~isempty(sn.impatienceClass)
-    badRenege = (sn.impatienceClass==ImpatienceType.RENEGING) & (sn.impatienceType~=ProcessType.EXP);
-    if any(badRenege(:))
-        line_error(mfilename,'SolverSSA supports only exponential (memoryless) patience for reneging. Use SolverLDES or SolverJMT for phase-type patience.');
-    end
-end
-if isfield(sn,'balkingStrategy') && ~isempty(sn.balkingStrategy)
-    badBalk = (sn.balkingStrategy~=0) & (sn.balkingStrategy~=BalkingStrategy.QUEUE_LENGTH);
-    if any(badBalk(:))
-        line_error(mfilename,'SolverSSA supports only QUEUE_LENGTH balking. Use SolverLDES or SolverJMT for wait-time-based balking.');
-    end
-end
-if isfield(sn,'retrialProc') && ~isempty(sn.retrialProc)
-    hasRetrial = ~cellfun(@isempty, sn.retrialProc);
-    if any(hasRetrial(:))
-        if any(hasRetrial(:) & (sn.retrialType(:)~=ProcessType.EXP))
-            line_error(mfilename,'SolverSSA supports only exponential (memoryless) retrial delay. Use SolverLDES or SolverMAM for phase-type retrials.');
-        end
-        if any(hasRetrial(:) & (sn.retrialMaxAttempts(:)>=0))
-            line_error(mfilename,'SolverSSA supports only unlimited retrials (maxAttempts=-1). Use SolverLDES for finite max-attempts.');
-        end
-        for ii = find(any(hasRetrial,2))'
-            served = 0;
-            for rr = 1:sn.nclasses
-                if ~isempty(sn.proc{ii}{rr}) && ~any(any(isnan(sn.proc{ii}{rr}{1})))
-                    served = served + 1;
-                end
-            end
-            if served > 1
-                line_error(mfilename,'SolverSSA supports retrial only for single-class stations. Use SolverLDES for multi-class retrial.');
-            end
-        end
-    end
+% Impatience and server-count support checks. The rules live in
+% SOLVER_CTMC_STATE_SUPPORTS, shared with SolverCTMC because both drive the
+% same State.afterEventStation; SolverSSA.supportsModelMethod asks it too, so
+% the report and this run cannot differ.
+[stateOk, stateWhy] = solver_ctmc_state_supports(sn, 'SolverSSA');
+if ~stateOk
+    line_error(mfilename, stateWhy);
 end
 
 if ~isfield(options,'seed')
@@ -203,7 +185,7 @@ if fcrOn
         if isfield(sn,'regionmaxmem') && numel(sn.regionmaxmem) >= f && ~isempty(sn.regionmaxmem{f})
             memvecFCR = sn.regionmaxmem{f}(:);
         end
-        mask = (any(Rmat ~= -1, 2) | memvecFCR ~= -1)';
+        mask = sn_region_members(sn, f, Rmat, memvecFCR);
         fcrMemberMask{f} = mask;
         fcrMembers{f} = find(mask);
         ccap = inf(1,Kfcr);
@@ -249,6 +231,21 @@ init_state_hashed = ones(1,nstateful); % pick the first state in init_state{i}
 %%
 arvRatesSamples = zeros(options.samples,nstateful,R);
 depRatesSamples = zeros(options.samples,nstateful,R);
+% see _kb/09-ldes-and-cache.md (SSA: delayed-hit rate from the merge transition).
+% Cache row layout is [srv(R) | var(V)], so the srv block ends V columns from
+% the right; keep V per stateful index rather than assuming V == 0.
+dlyRatesSamples = zeros(options.samples,nstateful,R);
+% Derived START/PREEMPT rates, sampled exactly like the three above: the rate
+% at which the transitions enabled in the current state start a class-r
+% service, or push a class-r job in service back into the buffer.
+startRatesSamples = zeros(options.samples,nstateful,R);
+preemptRatesSamples = zeros(options.samples,nstateful,R);
+cacheVarW = -ones(nstateful,1);
+for ind=1:sn.nnodes
+    if sn.nodetype(ind) == NodeType.Cache && sn.isstateful(ind)
+        cacheVarW(sn.nodeToStateful(ind)) = sum(sn.nvars(ind,:));
+    end
+end
 A = length(sync);
 G = length(gsync);
 samples_collected = 1;
@@ -274,6 +271,9 @@ statelen = cellfun(@length, cur_state);
 % data structures to save transient information - pre-allocate for all samples
 nSamples = options.samples;
 tranSync = zeros(nSamples,1);
+% tags of the transition that fires at each step, as rows [statefulIndex class]
+tranStartTag = cell(nSamples,1);
+tranPreemptTag = cell(nSamples,1);
 tranState = zeros(1+length(state), nSamples);
 tranState(1:(1+length(state)),1) = [0, state]';
 SSq = zeros(length(cell2mat(nir')), nSamples);
@@ -290,6 +290,10 @@ for act=1:A
     event_p{act} = sync{act}.passive{1}.event;
     outprob_a{act} = [];
     outprob_p{act} = [];
+    start_a{act} = [];
+    preempt_a{act} = [];
+    start_p{act} = [];
+    preempt_p{act} = [];
     % see _kb/06-solver-catalog.md for rationale (SSA immfeed self-loop)
     immfeed_selfloop{act} = false;
     if event_a{act}==EventType.DEP && node_p{act}==node_a{act} ...
@@ -313,6 +317,12 @@ samples_collected = 1;
 cur_time = 0;
 use_inline = true; % true = stable version, false = dev version
 
+% Global (Whittle) rate scaling declared through setGlobalDependence. It reads
+% the FULL population matrix, so it is a constant within one state and factors
+% out of the per-transition rates, exactly as in SOLVER_CTMC.
+hasGD = isfield(sn,'gdscaling') && ~isempty(sn.gdscaling);
+gdNow = [];
+
 try
     while samples_collected < options.samples && cur_time <= options.timespan(2) && ~lineTimeoutExceeded(options)
         %% This section corresponds to solver_ssa_findenabled in Java
@@ -321,9 +331,15 @@ try
             enabled_sync = []; % row is action label, col1=rate, col2=new state
             enabled_rates = [];
             enabled_fcr = zeros(0,4); % [region class dest isSwitch] FCR marker per transition
+            % derived tags of each enabled transition, as rows [statefulIndex class]
+            enabled_tagS = {};
+            enabled_tagP = {};
             ctr = 1;
             A = length(sync);
             G = length(gsync);
+            if hasGD
+                gdNow = solver_ssa_gdfactor(sn, cur_state);
+            end
             % FCR: current aggregate per-class population of each region, used by
             % the arrival gate below to block entries that would exceed a cap.
             if fcrOn
@@ -345,11 +361,18 @@ try
                 enabled_next_states{act} = cur_state;
                 update_cond_a = true;
                 if update_cond_a
-                    [enabled_next_states{act}{isf_a}, rate_a{act}, outprob_a{act}, eventCache] =  State.afterEvent(sn, node_a{act}, cur_state{isf_a}, event_a{act}, class_a{act}, isSimulation, eventCache, aectx, immfeed_selfloop{act});
+                    [enabled_next_states{act}{isf_a}, rate_a{act}, outprob_a{act}, eventCache, start_a{act}, preempt_a{act}] =  State.afterEvent(sn, node_a{act}, cur_state{isf_a}, event_a{act}, class_a{act}, isSimulation, eventCache, aectx, immfeed_selfloop{act});
                 end
 
                 if isempty(enabled_next_states{act}{isf_a}) || isempty(rate_a{act})
                     continue
+                end
+
+                % PHASE matters as much as DEP: refreshSync emits phase moves as
+                % active station events, so phase-type service would otherwise
+                % advance unscaled.
+                if hasGD && sn.isstation(node_a{act}) && (event_a{act} == EventType.DEP || event_a{act} == EventType.PHASE)
+                    rate_a{act} = rate_a{act} * gdNow(sn.nodeToStation(node_a{act}), class_a{act});
                 end
 
                 for ia=1:size(enabled_next_states{act}{isf_a},1) % for all possible new states, check if they are enabled
@@ -363,6 +386,20 @@ try
                     if enabled_next_states{act}{isf_a}(ia,:) == -1 % hash not found
                         continue
                     end
+                    % A delayed hit is the ONLY cache transition that empties the
+                    % node: the request merges onto the in-flight fetch and is held
+                    % in block B, so it departs later in the hit class and is
+                    % otherwise indistinguishable there from a true hit.
+                    isMergeA = false;
+                    if cacheVarW(isf_a) >= 0 && event_a{act} == EventType.READ
+                        rowA = enabled_next_states{act}{isf_a}(ia,:);
+                        preA = cur_state{isf_a};
+                        eA = numel(rowA) - cacheVarW(isf_a);
+                        eP = numel(preA) - cacheVarW(isf_a);
+                        if eA >= R && eP >= R
+                            isMergeA = (sum(rowA((eA-R+1):eA)) - sum(preA((eP-R+1):eP))) == -1;
+                        end
+                    end
                     update_cond_p = true; %samples_collected == 1 || ((node_p{act} == last_node_a || node_p{act} == last_node_p)) || isempty(outprob_a{act}) || isempty(outprob_p{act});
 
                     if rate_a{act}(ia)>0
@@ -370,12 +407,12 @@ try
                             if node_p{act} == node_a{act} %self-loop, active and passive are the same
                                 isf_p = isf_a;
                                 if update_cond_p
-                                    [enabled_next_states{act}{isf_p}, ~, outprob_p{act}, eventCache] =  State.afterEvent(sn, node_p{act}, enabled_next_states{act}{isf_p}, event_p{act}, class_p{act}, isSimulation, eventCache, aectx);
+                                    [enabled_next_states{act}{isf_p}, ~, outprob_p{act}, eventCache, start_p{act}, preempt_p{act}] =  State.afterEvent(sn, node_p{act}, enabled_next_states{act}{isf_p}, event_p{act}, class_p{act}, isSimulation, eventCache, aectx);
                                 end
                             else % departure
                                 isf_p = sn.nodeToStateful(node_p{act});
                                 if update_cond_p
-                                    [enabled_next_states{act}{isf_p}, ~, outprob_p{act}, eventCache] =  State.afterEvent(sn, node_p{act}, enabled_next_states{act}{isf_p}, event_p{act}, class_p{act}, isSimulation, eventCache, aectx);
+                                    [enabled_next_states{act}{isf_p}, ~, outprob_p{act}, eventCache, start_p{act}, preempt_p{act}] =  State.afterEvent(sn, node_p{act}, enabled_next_states{act}{isf_p}, event_p{act}, class_p{act}, isSimulation, eventCache, aectx);
                                 end
                             end
                             if ~isempty(enabled_next_states{act}{isf_p})
@@ -443,10 +480,44 @@ try
                                     if node_p{act} < local && ~sn.csmask(class_a{act}, class_p{act}) && sn.nodetype(node_p{act})~=NodeType.Source && (rate_a{act}(ia) * prob_sync_p{act} >0)
                                         line_error(mfilename,sprintf('Error: state-dependent routing at node %d (%s) violates the class switching mask (node %d -> node %d, class %d -> class %d).', node_a{act}, sn.nodenames{node_a{act}}, node_a{act}, node_p{act}, class_a{act}, class_p{act}));
                                     end
+                                    if isMergeA && ~blockFCR
+                                        % Weighted like enabled_rates, NOT like
+                                        % depRates: for a simulated READ the item
+                                        % is already sampled from pread, so folding
+                                        % outprob_a back in would count p(k) twice.
+                                        dlyRatesSamples(samples_collected,isf_a,class_a{act}) = ...
+                                            dlyRatesSamples(samples_collected,isf_a,class_a{act}) + rate_a{act}(ia) * prob_sync_p{act};
+                                    end
+                                    % START/PREEMPT tags of this arc, weighted like
+                                    % enabled_rates: they annotate the transition
+                                    % itself, so their rate is its rate. Written for
+                                    % EVERY action, not only for departures -- a
+                                    % retrial or a polling switchover starts service
+                                    % without being a DEP, and the arrival half of a
+                                    % departure is where most starts happen.
+                                    tagS_here = zeros(0,2);
+                                    tagP_here = zeros(0,2);
+                                    if ~blockFCR
+                                        w_tag = rate_a{act}(ia) * prob_sync_p{act};
+                                        if ~isempty(start_a{act}) && ia <= size(start_a{act},1)
+                                            startRatesSamples(samples_collected,isf_a,:) = reshape(startRatesSamples(samples_collected,isf_a,:),1,R) + w_tag * start_a{act}(ia,:);
+                                            preemptRatesSamples(samples_collected,isf_a,:) = reshape(preemptRatesSamples(samples_collected,isf_a,:),1,R) + w_tag * preempt_a{act}(ia,:);
+                                            tagS_here = [tagS_here; sub_tagrows(isf_a, start_a{act}(ia,:))]; %#ok<AGROW>
+                                            tagP_here = [tagP_here; sub_tagrows(isf_a, preempt_a{act}(ia,:))]; %#ok<AGROW>
+                                        end
+                                        if node_p{act} ~= local && ~isempty(start_p{act})
+                                            startRatesSamples(samples_collected,isf_p,:) = reshape(startRatesSamples(samples_collected,isf_p,:),1,R) + w_tag * start_p{act}(1,:);
+                                            preemptRatesSamples(samples_collected,isf_p,:) = reshape(preemptRatesSamples(samples_collected,isf_p,:),1,R) + w_tag * preempt_p{act}(1,:);
+                                            tagS_here = [tagS_here; sub_tagrows(isf_p, start_p{act}(1,:))]; %#ok<AGROW>
+                                            tagP_here = [tagP_here; sub_tagrows(isf_p, preempt_p{act}(1,:))]; %#ok<AGROW>
+                                        end
+                                    end
                                     if ~blockFCR
                                         enabled_rates(ctr) = rate_a{act}(ia) * prob_sync_p{act};
                                         enabled_sync(ctr) = act;
                                         enabled_fcr(ctr,:) = fcrMark;
+                                        enabled_tagS{ctr} = tagS_here;
+                                        enabled_tagP{ctr} = tagP_here;
                                         ctr = ctr + 1;
                                     end
                                 end
@@ -463,6 +534,9 @@ try
                 for ia=find(outrate .* outprob)
                     enabled_rates(ctr) = outrate(ia) * outprob(ia);
                     enabled_sync(ctr) = A+gact;
+                    % an SPN transition holds no server: no service starts there
+                    enabled_tagS{ctr} = zeros(0,2);
+                    enabled_tagP{ctr} = zeros(0,2);
                     ctr = ctr + 1;
 
                     % Record departure/arrival rates for FIRE events at Places
@@ -522,7 +596,7 @@ try
                 end
             end
         else
-            [enabled_next_states,enabled_rates,enabled_sync,gctr_start,depRatesSamples,arvRatesSamples,outprob_a,outprob_p,rate_a, eventCache] = solver_ssa_findenabled(sn,node_a,enabled_next_states,cur_state,outprob_a,event_a,class_a,isSimulation,node_p,local,outprob_p,event_p,class_p,sync,gsync,depRatesSamples,samples_collected,arvRatesSamples,last_node_a,last_node_p,eventCache);
+            [enabled_next_states,enabled_rates,enabled_sync,gctr_start,depRatesSamples,arvRatesSamples,outprob_a,outprob_p,rate_a, eventCache,startRatesSamples,preemptRatesSamples,enabled_tagS,enabled_tagP] = solver_ssa_findenabled(sn,node_a,enabled_next_states,cur_state,outprob_a,event_a,class_a,isSimulation,node_p,local,outprob_p,event_p,class_p,sync,gsync,depRatesSamples,samples_collected,arvRatesSamples,last_node_a,last_node_p,eventCache,startRatesSamples,preemptRatesSamples);
         end
         %% Gillespie direct method
         tot_rate = sum(enabled_rates);
@@ -550,14 +624,26 @@ try
                 deltalen = length(cur_state{isf}) - statelen(isf);
                 if deltalen>0
                     statelen(isf) = length(cur_state{isf});
-                    % here do padding
-                    if ind==1
-                        shift = 0;
-                    else
-                        shift = sum(statelen(1:isf-1));
-                    end
+                    % Rows before this node's block; row 1 of tranState is dt, so
+                    % the block starts at shift+2. Keyed on the STATEFUL index,
+                    % never on the node index: a station whose node is first need
+                    % not be the first stateful node, and sum(x(1:0)) is already 0.
+                    shift = sum(statelen(1:isf-1));
+                    % INSERT deltalen rows at the LEFT of the block -- the buffer
+                    % is right-aligned, so a widened row's fresh slots are its
+                    % leftmost ones and every earlier sample must gain exactly
+                    % those. Resuming the tail at (shift+1+deltalen) instead DROPPED
+                    % deltalen-1 rows of real history and grew the matrix by one row
+                    % rather than by deltalen. At deltalen == 1 the two agree, which
+                    % is why every per-class-count buffer was unaffected; the
+                    % preemptive families store (class,phase) PAIRS and grow by 2,
+                    % so their history was silently re-encoded and unique() then
+                    % conflated states that differ only in which class holds the
+                    % server. On Source -> FCFSPRPRIO -> Sink at lambda = 0.08 per
+                    % class that reported TN = [0.018 0.142] for an exact
+                    % [0.08 0.08], the total right and the split wrong.
                     pad = zeros(deltalen, size(tranState,2));
-                    tranState = [tranState(1:(shift+1), :); pad ; tranState((shift+1+deltalen):end, :)];
+                    tranState = [tranState(1:(shift+1), :); pad ; tranState((shift+2):end, :)];
                 end
             end
         end
@@ -570,6 +656,12 @@ try
         %% Save simulation output data
         tranState(1:(1+length(state)),samples_collected) = [dt, state]';
         tranSync(samples_collected,1) = enabled_sync(selected_transition);
+        % the derived tags of the transition that fired; sn.sync carries none,
+        % so the trace would otherwise have no way to report them
+        if selected_transition <= numel(enabled_tagS)
+            tranStartTag{samples_collected} = enabled_tagS{selected_transition};
+            tranPreemptTag{samples_collected} = enabled_tagP{selected_transition};
+        end
         for ind=1:sn.nnodes
             if sn.isstation(ind)
                 isf = sn.nodeToStateful(ind);
@@ -623,12 +715,12 @@ try
         samples_collected = samples_collected + 1;
 
         %% Print progress
-        print_progress(options,samples_collected);
+        print_progress(options,samples_collected,cur_time);
     end
-    % Print newline after progress counter
-    if options.verbose
-        line_printf('\n');
-    end
+    % The counter row is closed here rather than newline-terminated:
+    % line_printf already ends an open row, so an explicit newline was a
+    % SECOND one and showed as a blank row before the completion banner.
+    LineStatus.close();
 catch ME
     getReport(ME)
 end
@@ -637,6 +729,8 @@ end
 samples_collected = samples_collected - 1;  % Adjust for the increment at end of loop
 tranState = tranState(:, 1:samples_collected);
 tranSync = tranSync(1:samples_collected, :);
+tranStartTag = tranStartTag(1:samples_collected);
+tranPreemptTag = tranPreemptTag(1:samples_collected);
 SSq = SSq(:, 1:samples_collected);
 
 % see _kb/06-solver-catalog.md for rationale (SSA warmup discard)
@@ -650,6 +744,8 @@ if warmupfrac > 0 && samples_collected > 1
         keep = (nDrop+1):samples_collected;
         tranState = tranState(:, keep);
         tranSync = tranSync(keep, :);
+        tranStartTag = tranStartTag(keep);
+        tranPreemptTag = tranPreemptTag(keep);
         SSq = SSq(:, keep);
         if exist('arvRatesSamples', 'var') && ~isempty(arvRatesSamples) ...
                 && size(arvRatesSamples, 1) >= samples_collected
@@ -658,6 +754,14 @@ if warmupfrac > 0 && samples_collected > 1
         if exist('depRatesSamples', 'var') && ~isempty(depRatesSamples) ...
                 && size(depRatesSamples, 1) >= samples_collected
             depRatesSamples = depRatesSamples(keep, :, :);
+        end
+        if exist('dlyRatesSamples', 'var') && ~isempty(dlyRatesSamples) ...
+                && size(dlyRatesSamples, 1) >= samples_collected
+            dlyRatesSamples = dlyRatesSamples(keep, :, :);
+        end
+        if size(startRatesSamples, 1) >= samples_collected
+            startRatesSamples = startRatesSamples(keep, :, :);
+            preemptRatesSamples = preemptRatesSamples(keep, :, :);
         end
         samples_collected = numel(keep);
     end
@@ -675,6 +779,9 @@ for j=1:length(statesz)
 end
 arvRates = zeros(size(u,1),sn.nstateful,R);
 depRates = zeros(size(u,1),sn.nstateful,R);
+dlyRates = zeros(size(u,1),sn.nstateful,R);
+startRates = zeros(size(u,1),sn.nstateful,R);
+preemptRates = zeros(size(u,1),sn.nstateful,R);
 
 pi = zeros(1,size(u,1));
 for s=1:size(u,1)
@@ -694,6 +801,22 @@ for ind=1:sn.nnodes
             for r=1:R
                 arvRates(s,isf,r) = arvRatesSamples(ui(s),isf,r); % for each unique state, one (any) sample of the rate is enough here
                 depRates(s,isf,r) = depRatesSamples(ui(s),isf,r); % for each unique state, one (any) sample of the rate is enough here
+                % the tag rates are a deterministic function of the state too,
+                % so one visit gives them exactly, as for the two above
+                startRates(s,isf,r) = startRatesSamples(ui(s),isf,r);
+                preemptRates(s,isf,r) = preemptRatesSamples(ui(s),isf,r);
+            end
+        end
+        % see _kb/09-ldes-and-cache.md (SSA: the merge rate needs EVERY visit).
+        % Unlike a DEP rate, the merge rate is random given the state, so one
+        % visit is a single Bernoulli draw whose variance does not shrink with
+        % the sample count.
+        if cacheVarW(isf) >= 0
+            nsmp = numel(uj); % dlyRatesSamples is preallocated, tranState is not
+            visitCnt = accumarray(uj, 1, [size(u,1) 1]);
+            for r=1:R
+                dlySum = accumarray(uj, dlyRatesSamples(1:nsmp,isf,r), [size(u,1) 1]);
+                dlyRates(:,isf,r) = dlySum ./ max(visitCnt,1);
             end
         end
     end
@@ -702,21 +825,47 @@ pi = pi/sum(pi);
 %sn.nservers = init_nserver; % restore Inf at delay nodes
 end
 
-function print_progress(options,samples_collected)
+function print_progress(options,samples_collected,cur_time)
+if LineConsole.isActive()
+    % the console owns the line: report a decimated progress row instead of
+    % the in-place counter, which a paged log cannot rewrite
+    every = max(1,round(options.samples/20));
+    if mod(samples_collected, every) == 0
+        LineConsole.iter(samples_collected/every, ...
+            'simulated %d of %g samples (%.0f%%), simulated time %.4g', ...
+            samples_collected, options.samples, ...
+            100*samples_collected/options.samples, cur_time);
+    end
+    return
+end
 if options.verbose && ~batchStartupOptionUsed
-    if samples_collected == 1e2
-        line_printf(sprintf('\nSSA samples: %6d',samples_collected));
-    elseif options.verbose == 2
-        if samples_collected == 0
-            line_printf(sprintf('\nSSA samples: %6d',samples_collected));
-        else
-            line_printf(sprintf('\b\b\b\b\b\b%6d',samples_collected));
-        end
-    elseif mod(samples_collected,1e2)==0 || options.verbose == 2
-        line_printf(sprintf('\b\b\b\b\b\b%6d',samples_collected));
+    % ONE REWRITTEN FIELD, not a fixed-width one. LineStatus rewinds by
+    % the width it actually wrote, so a counter that only grows needs no
+    % padding at all and leaves no trailing blanks -- a fixed %-9d field
+    % showed its pad as "SSA samples: 100000   ". It also cannot desync
+    % the way a hardcoded run of backspaces does once the count outgrows
+    % the field. line_printf closes the row, so the completion banner
+    % terminates it without help.
+    if options.verbose == 2 || (samples_collected > 0 && mod(samples_collected,1e2) == 0)
+        LineStatus.set('SSA samples: %d', samples_collected);
     end
 end
 end
+function rows = sub_tagrows(isf, tagrow)
+% ROWS=SUB_TAGROWS(ISF,TAGROW) expand a per-class tag count into one
+% [statefulIndex class] row per tagged job, so the trace can report each of
+% them separately. A count is a whole number on every path but the merged
+% destinations of a G-network signal, where it is an expectation; the trace
+% enumerates events, so it takes the integer part and the exact fractional
+% value stays in the rate counters.
+rows = zeros(0,2);
+for r = find(tagrow(:)' > 0)
+    for c = 1:tagrow(r)
+        rows(end+1,:) = [isf, r]; %#ok<AGROW>
+    end
+end
+end
+
 function x = fcr_regionpop(sn, cur_state, members)
 % X=FCR_REGIONPOP(SN,CUR_STATE,MEMBERS) per-class population of a finite
 % capacity region given the current state cells

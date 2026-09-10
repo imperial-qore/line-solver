@@ -6,13 +6,16 @@
 package jline.lang.layered;
 
 import jline.GlobalConstants;
+import jline.lang.constant.RoutingStrategy;
 import jline.lang.constant.SchedStrategy;
 import jline.lang.processes.Distribution;
 import jline.lang.processes.Exp;
 import jline.lang.processes.Immediate;
 import jline.util.matrix.Matrix;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
@@ -62,11 +65,32 @@ public class Activity extends LayeredNetworkElement {
     protected Matrix syncCallMeans = new Matrix(1, 1, 0);
     protected Map<Integer, String> asyncCallDests = new HashMap<>();
     protected Matrix asyncCallMeans = new Matrix(1, 1, 0);
+    /**
+     * Call groups dispatched by a routing strategy instead of independently. The
+     * calls themselves stay in syncCallDests/syncCallMeans so every consumer that
+     * ignores dispatch order still sees the same aggregate call means.
+     */
+    protected List<CallGroup> syncCallGroups = new ArrayList<>();
     protected Matrix scheduling = new Matrix(0, 0, 0);
     protected Distribution thinkTime;
     protected double thinkTimeMean;
     protected double thinkTimeSCV;
     protected int phase = 1;  // Phase number (1 or 2), default=1
+
+    /** A set of call targets dispatched as one group by a routing strategy. */
+    public static class CallGroup {
+        public final RoutingStrategy strategy;
+        public final List<String> dests;
+
+        public CallGroup(RoutingStrategy strategy, List<String> dests) {
+            this.strategy = strategy;
+            this.dests = dests;
+        }
+    }
+
+    public List<CallGroup> getSyncCallGroups() {
+        return this.syncCallGroups;
+    }
 
     public Activity(LayeredNetwork model, String name, Distribution hostDemand, String boundToEntry, String callOrder) {
         super(name);
@@ -288,10 +312,88 @@ public class Activity extends LayeredNetworkElement {
      * @return This activity for method chaining
      */
     public Activity setPhase(int phase) {
-        if (phase < 1 || phase > 2) {
-            line_error(mfilename(new Object() {}), "Phase must be 1 or 2.");
+        // 1..3 because lqn-core.xsd bounds the phase attribute there; every
+        // consumer of lsn.actphase tests phase > 1, so 3 is served as 2 is.
+        if (phase < 1 || phase > 3) {
+            line_error(mfilename(new Object() {}), "Phase must be 1, 2 or 3.");
         }
         this.phase = phase;
+        return this;
+    }
+
+    /**
+     * Dispatch synchronous calls round-robin over a set of target entries.
+     *
+     * synchCallMean is the total mean number of calls the activity issues per
+     * invocation; successive calls go to the targets in cyclic order, so each
+     * target receives synchCallMean/entries.size() of them. The probabilistic
+     * model with the same per-target means is the ungrouped equivalent: the
+     * group adds the deterministic interleaving, not a different call rate.
+     *
+     * Only the squashed ("flat") layering can represent this, because under
+     * "srvn" the targets never share a submodel.
+     *
+     * @param synchCallDests - the target entries, at least two
+     * @param synchCallMean  - total mean calls per invocation
+     * @return this activity
+     */
+    public Activity synchCallRoundRobin(List<Entry> synchCallDests, double synchCallMean) {
+        return addCallGroup(RoutingStrategy.RROBIN, synchCallDests, synchCallMean,
+                "synchCallRoundRobin");
+    }
+
+    /**
+     * Dispatch synchronous calls to the least loaded of a set of target entries.
+     *
+     * Same contract as synchCallRoundRobin, with the cyclic pointer replaced by
+     * join-the-shortest-queue: each call goes to the target task whose station
+     * holds the fewest jobs at dispatch time, ties split uniformly.
+     *
+     * Only the squashed ("flat") layering can represent this, and only a layer
+     * solver with state-dependent routing honours it.
+     *
+     * @param synchCallDests - the target entries, at least two
+     * @param synchCallMean  - total mean calls per invocation
+     * @return this activity
+     */
+    public Activity synchCallJSQ(List<Entry> synchCallDests, double synchCallMean) {
+        return addCallGroup(RoutingStrategy.JSQ, synchCallDests, synchCallMean,
+                "synchCallJSQ");
+    }
+
+    /**
+     * Records a routed call group and its per-target call means.
+     */
+    private Activity addCallGroup(RoutingStrategy strategy, List<Entry> synchCallDests,
+                                  double synchCallMean, String caller) {
+        if (synchCallDests == null || synchCallDests.size() < 2) {
+            throw new IllegalArgumentException(caller + " needs at least two target entries");
+        }
+        double share = synchCallMean / synchCallDests.size();
+        List<String> names = new ArrayList<>();
+        for (Entry e : synchCallDests) {
+            synchCall(e, share);
+            names.add(e.getName());
+        }
+        return recordCallGroup(strategy, names);
+    }
+
+    /**
+     * Records the grouping of synchronous calls this activity ALREADY declares.
+     *
+     * addCallGroup issues the member calls and then records them; the .lqnx reader
+     * has read them back as ordinary synch-call elements, so it records the grouping
+     * alone and must not issue them a second time.
+     *
+     * @param strategy  - the dispatch strategy over the group
+     * @param destNames - the target entry names, at least two
+     * @return this activity
+     */
+    public Activity recordCallGroup(RoutingStrategy strategy, List<String> destNames) {
+        if (destNames == null || destNames.size() < 2) {
+            throw new IllegalArgumentException("A call group needs at least two target entries");
+        }
+        this.syncCallGroups.add(new CallGroup(strategy, destNames));
         return this;
     }
 

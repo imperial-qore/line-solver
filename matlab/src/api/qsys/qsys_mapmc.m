@@ -43,17 +43,13 @@ for i = 1:length(ql)
     meanQL = meanQL + (i - 1) * ql(i);
 end
 
-% Compute mean waiting time from PH representation
+% Compute mean waiting time from PH representation. Q_CT_MAP_M_C already
+% restricts (wait_alpha,Smat) to the support of the arrival-epoch vector, and
+% wait_alpha is DEFECTIVE by design: its deficit 1-sum(wait_alpha) is the atom
+% at zero, i.e. the probability of finding a free server. E[W] = alpha(-T)^-1 e
+% carries that atom correctly, so no further row selection is admissible here.
 if ~isempty(wait_alpha) && ~isempty(Smat)
-    % Mean of PH distribution = alpha * (-T)^{-1} * e
-    nonzeroIdx = find(wait_alpha > 0);
-    if ~isempty(nonzeroIdx)
-        wait_alpha_nz = wait_alpha(nonzeroIdx);
-        negSinv = inv(-Smat);
-        meanWT = wait_alpha_nz * negSinv * ones(size(Smat, 1), 1);
-    else
-        meanWT = 0;
-    end
+    meanWT = wait_alpha(:).' * ((-Smat) \ ones(size(Smat, 1), 1));
 else
     meanWT = 0;
 end

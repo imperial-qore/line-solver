@@ -154,29 +154,43 @@ public final class Dtmc_solve_reducible {
         // Compute spectral decomposition of lumped matrix
         Matrix PI = computeLimitingMatrix(Pl);
 
-        for (int i = 0; i < numSCC; i++) {
-            if (pinl.get(0, i) > 0) {
-                Matrix pi0i = Matrix.zeros(1, numSCC);
-                pi0i.set(0, i, 1.0);
-                Matrix pili = pi0i.mult(PI);
+        // One row per SCC, so that the position of a row in `pis` IS its SCC index.
+        // The rows used to be appended only when pinl(i) > 0, which compacted the list
+        // and silently desynchronized it from the SCC numbering; the "single transient
+        // SCC" branch below then indexed `pis` with an SCC id and threw
+        // IndexOutOfBounds as soon as a skipped component preceded the transient one.
+        // Each SCC's internal stationary vector depends only on that SCC, not on where
+        // the chain started, so solve it ONCE per SCC and reuse it across the rows
+        // below. Solving it inside the (i, j) loop costs numSCC^2 solves for numSCC
+        // distinct answers.
+        Matrix[] sccPi = new Matrix[numSCC];
+        for (int j = 0; j < numSCC; j++) {
+            if (!sccIdx.get(j).isEmpty()) {
+                Matrix indices = new Matrix(sccIdx.get(j).size(), 1);
+                for (int k = 0; k < sccIdx.get(j).size(); k++) {
+                    indices.set(k, 0, sccIdx.get(j).get(k).doubleValue());
+                }
+                sccPi[j] = Dtmc_solve.dtmc_solve(P.getSubMatrix(indices, indices));
+            }
+        }
 
-                Matrix pisi = Matrix.zeros(1, P.getNumRows());
-                for (int j = 0; j < numSCC; j++) {
-                    if (pili.get(0, j) > 0 && !sccIdx.get(j).isEmpty()) {
-                        Matrix indices = new Matrix(sccIdx.get(j).size(), 1);
-                        for (int k = 0; k < sccIdx.get(j).size(); k++) {
-                            indices.set(k, 0, sccIdx.get(j).get(k).doubleValue());
-                        }
-                        Matrix subP = P.getSubMatrix(indices, indices);
-                        Matrix subPi = Dtmc_solve.dtmc_solve(subP);
-                        for (int k = 0; k < sccIdx.get(j).size(); k++) {
-                            int stateIdx = sccIdx.get(j).get(k);
-                            pisi.set(0, stateIdx, pili.get(0, j) * subPi.get(0, k));
-                        }
+        for (int i = 0; i < numSCC; i++) {
+            Matrix pi0i = Matrix.zeros(1, numSCC);
+            pi0i.set(0, i, 1.0);
+            Matrix pili = pi0i.mult(PI);
+
+            Matrix pisi = Matrix.zeros(1, P.getNumRows());
+            for (int j = 0; j < numSCC; j++) {
+                if (pili.get(0, j) > 0 && sccPi[j] != null) {
+                    for (int k = 0; k < sccIdx.get(j).size(); k++) {
+                        int stateIdx = sccIdx.get(j).get(k);
+                        pisi.set(0, stateIdx, pili.get(0, j) * sccPi[j].get(0, k));
                     }
                 }
-                pis.add(pisi);
+            }
+            pis.add(pisi);
 
+            if (pinl.get(0, i) > 0) {
                 for (int k = 0; k < P.getNumRows(); k++) {
                     piResult.set(0, k, piResult.get(0, k) + pisi.get(0, k) * pinl.get(0, i));
                 }

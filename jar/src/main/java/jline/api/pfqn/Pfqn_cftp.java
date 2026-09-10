@@ -110,8 +110,11 @@ public final class Pfqn_cftp {
 
         MersenneTwister rand = RandomManager.getThreadRandom();
 
-        Matrix X = new Matrix(nsamples, M);
-        Matrix T = new Matrix(nsamples, 1);
+        // X and T are filled row by row, which on the sparse CSC backing of Matrix
+        // costs O(nnz) per element; the samples go into dense row-major buffers and
+        // are wrapped once instead.
+        double[] Xdata = new double[nsamples * M];
+        double[] Tdata = new double[nsamples];
         String m = method.toLowerCase();
         for (int smp = 0; smp < nsamples; smp++) {
             int[] x;
@@ -128,10 +131,12 @@ public final class Pfqn_cftp {
                 throw new RuntimeException("pfqn_cftp: unknown method '" + method + "'.");
             }
             for (int i = 0; i < M; i++) {
-                X.set(smp, i, x[i]);
+                Xdata[smp * M + i] = x[i];
             }
-            T.set(smp, 0, horizon);
+            Tdata[smp] = horizon;
         }
+        Matrix X = new Matrix(new org.ejml.data.DMatrixRMaj(nsamples, M, true, Xdata));
+        Matrix T = new Matrix(new org.ejml.data.DMatrixRMaj(nsamples, 1, true, Tdata));
 
         // Q = column mean of X (1 x M).
         Matrix Q = new Matrix(1, M);

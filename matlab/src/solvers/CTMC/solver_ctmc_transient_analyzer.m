@@ -49,10 +49,28 @@ rate_sched = [];
 if isfield(options,'config') && isfield(options.config,'rate_sched') && ~isempty(options.config.rate_sched)
     rate_sched = options.config.rate_sched;
 end
+% see _kb/06-solver-catalog.md (CTMC section, transient methods) for rationale
+transient_method = 'ode';
+if isfield(options,'config') && isfield(options.config,'transient_method') && ~isempty(options.config.transient_method)
+    transient_method = lower(options.config.transient_method);
+end
 if isempty(rate_sched)
-    [pit,t] = ctmc_transient(InfGen,pi0,options.timespan(1),options.timespan(2),options.stiff,[],options.timestep);
+    switch transient_method
+        case 'fau'
+            [pit,t] = local_ctmc_fau(InfGen,pi0,options);
+        case 'ode'
+            [pit,t] = ctmc_transient(InfGen,pi0,options.timespan(1),options.timespan(2),options.stiff,[],options.timestep);
+        otherwise
+            line_error(mfilename,sprintf('Unknown options.config.transient_method ''%s''; use ''ode'' or ''fau''.',transient_method));
+    end
     mscale = [];
 else
+    if ~strcmp(transient_method,'ode')
+        % A time-INHOMOGENEOUS generator is integrated by its own
+        % piecewise-constant propagator below; accepting 'fau' here would
+        % silently answer the constant-rate question instead.
+        line_error(mfilename,'options.config.transient_method is not available together with a rate schedule.');
+    end
     [pit,t,mscale] = local_ctmc_timevarying(sn, options, InfGen, StateSpace, pi0, rate_sched, M, K);
 end
 pit(pit<GlobalConstants.Zero)=0;
@@ -116,6 +134,67 @@ runtime = toc(Tstart);
 %if options.verbose
 %    line_printf('\nCTMC analysis completed. Runtime: %f seconds.\n',runtime);
 %end
+end
+
+function [pit, t] = local_ctmc_fau(Q, pi0, options)
+% Transient trajectory by FAST ADAPTIVE UNIFORMIZATION, selected with
+% options.config.transient_method = 'fau' (see CTMC_FAU for the method).
+%
+% WHY IT IS NOT A METHOD NAME. 'fau' is not in SolverCTMC.listValidMethods and
+% must not be: that list is enumerated by the sanity harness, which then demands
+% a recorded baseline per method, and this one changes no stationary answer at
+% all -- it is the transient path only. The config key is where the other
+% transient switches of this analyzer already live (rate_sched, ctmc_tv_ngrid).
+%
+% MARCHED, NOT RESTARTED. pi(t_{k+1}) is obtained from pi(t_k) over the step
+% rather than from pi(0) over the whole horizon, which is what keeps the cost
+% proportional to the grid instead of quadratic in it. Every step removes a
+% little mass and none puts any back, so the per-step tolerance is EPSILON
+% divided by the number of steps and the total defect stays below EPSILON; the
+% accumulated defect is reported rather than normalized away, since the whole
+% point of the method is that its error is a measured quantity.
+ts = options.timespan;
+if ~isfinite(ts(2))
+    line_error(mfilename,'transient_method ''fau'' needs a finite horizon; options.timespan(2) is not finite.');
+end
+if isfield(options,'timestep') && ~isempty(options.timestep) && options.timestep > 0
+    t = (ts(1):options.timestep:ts(2))';
+    if t(end) ~= ts(2)
+        t = [t; ts(2)];
+    end
+else
+    ngrid = 100;
+    if isfield(options,'config') && isfield(options.config,'fau_ngrid') && ~isempty(options.config.fau_ngrid)
+        ngrid = options.config.fau_ngrid;
+    end
+    t = linspace(ts(1), ts(2), ngrid)';
+end
+nt = numel(t);
+epsilon = 1e-6;
+if isfield(options,'config') && isfield(options.config,'fau_epsilon') && ~isempty(options.config.fau_epsilon)
+    epsilon = options.config.fau_epsilon;
+end
+delta = 1e-12;
+if isfield(options,'config') && isfield(options.config,'fau_delta') && ~isempty(options.config.fau_delta)
+    delta = options.config.fau_delta;
+end
+epsStep = epsilon / max(1, nt-1);
+
+pit = zeros(nt, length(Q));
+pit(1,:) = pi0(:)';
+defect = 0;
+suppmax = 0;
+for k = 1:nt-1
+    [pk, info] = ctmc_fau(pit(k,:), Q, t(k+1)-t(k), epsStep, delta);
+    pit(k+1,:) = pk;
+    defect = defect + info.errorBound;
+    suppmax = max(suppmax, info.supportMax);
+end
+line_debug('CTMC transient by FAU: %d grid points, support at most %d of %d states, missing mass %.3e', ...
+    nt, suppmax, length(Q), defect);
+if defect > GlobalConstants.CoarseTol
+    line_warning(mfilename,'FAU transient discarded %.3e of the probability mass over the horizon; tighten options.config.fau_epsilon or options.config.fau_delta.\n', defect);
+end
 end
 
 function [pit, t, mscale] = local_ctmc_timevarying(sn, options, Qbase, StateSpace, pi0, rate_sched, M, K)

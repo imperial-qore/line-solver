@@ -1,47 +1,24 @@
-function [Q,stateSpace,stateSpaceAggr,Dfilt,arvRates,depRates,sn]=solver_ctmc(sn,options)
-% [Q,SS,SSQ,DFILT,ARVRATES,DEPRATES,QN]=SOLVER_CTMC(QN,OPTIONS)
+function [Q,stateSpace,stateSpaceAggr,Dfilt,arvRates,depRates,sn,DfiltAux]=solver_ctmc(sn,options)
+% [Q,SS,SSQ,DFILT,ARVRATES,DEPRATES,QN,DFILTAUX]=SOLVER_CTMC(QN,OPTIONS)
+%
+% DFILTAUX carries the two DERIVED event filtrations, DFILTAUX.start{i,r} and
+% DFILTAUX.preempt{i,r}: the (state x state) rate at which a class-r job
+% begins holding a server at station i, and the rate at which one is pushed
+% back into the buffer there. They are deliberately NOT appended to DFILT: a
+% START rides on the SAME arc as the ARV or DEP that causes it, so adding it
+% to the eventFilt cell would double-count D1 in @SolverCTMC/sample.m
+% (D0 = infGen - sum(eventFilt)) and break the pairing with sn.sync that
+% getGenerator.m asserts. See _kb/06-solver-catalog.md.
 %
 % Copyright (c) 2012-2026, Imperial College London
 % All rights reserved.
 
-%% impatience support checks
-% see _kb/06-solver-catalog.md (CTMC section, support gates) for rationale
-if isfield(sn,'impatienceClass') && ~isempty(sn.impatienceClass)
-    badRenege = (sn.impatienceClass==ImpatienceType.RENEGING) & (sn.impatienceType~=ProcessType.EXP);
-    if any(badRenege(:))
-        line_error(mfilename,'SolverCTMC supports only exponential (memoryless) patience for reneging. Use SolverLDES or SolverJMT for phase-type patience.');
-    end
-end
-if isfield(sn,'balkingStrategy') && ~isempty(sn.balkingStrategy)
-    badBalk = (sn.balkingStrategy~=0) & (sn.balkingStrategy~=BalkingStrategy.QUEUE_LENGTH);
-    if any(badBalk(:))
-        line_error(mfilename,'SolverCTMC supports only QUEUE_LENGTH balking. Use SolverLDES or SolverJMT for wait-time-based balking.');
-    end
-end
-% see _kb/06-solver-catalog.md (CTMC section, support gates) for rationale
-if isfield(sn,'retrialProc') && ~isempty(sn.retrialProc)
-    hasRetrial = ~cellfun(@isempty, sn.retrialProc);
-    if any(hasRetrial(:))
-        if any(hasRetrial(:) & (sn.retrialType(:)~=ProcessType.EXP))
-            line_error(mfilename,'SolverCTMC supports only exponential (memoryless) retrial delay. Use SolverLDES or SolverMAM for phase-type retrials.');
-        end
-        if any(hasRetrial(:) & (sn.retrialMaxAttempts(:)>=0))
-            line_error(mfilename,'SolverCTMC supports only unlimited retrials (maxAttempts=-1). Use SolverLDES for finite max-attempts.');
-        end
-        % A retrial orbit is enumerated per single populated class; reject a
-        % retrial station that serves more than one class.
-        for ii = find(any(hasRetrial,2))'
-            served = 0;
-            for rr = 1:sn.nclasses
-                if ~isempty(sn.proc{ii}{rr}) && ~any(any(isnan(sn.proc{ii}{rr}{1})))
-                    served = served + 1;
-                end
-            end
-            if served > 1
-                line_error(mfilename,'SolverCTMC supports retrial only for single-class stations. Use SolverLDES for multi-class retrial.');
-            end
-        end
-    end
+%% impatience and server-count support checks
+% The rules live in SOLVER_CTMC_STATE_SUPPORTS, which SolverCTMC.supportsModelMethod
+% and SolverSSA ask as well: one body, so the report and this run cannot differ.
+[stateOk, stateWhy] = solver_ctmc_state_supports(sn, 'SolverCTMC');
+if ~stateOk
+    line_error(mfilename, stateWhy);
 end
 % see _kb/06-solver-catalog.md (CTMC section, support gates) for rationale, incl. the REPLY-signal exception
 if isfield(sn,'issignal') && ~isempty(sn.issignal) && any(sn.issignal)
@@ -143,10 +120,22 @@ line_debug('State space generated: %d states', size(stateSpaceHashed,1));
 % see _kb/06-solver-catalog.md (CTMC section) for rationale
 fcrWaitq = isfield(sn,'nregions') && sn.nregions > 0;
 
+%% Global (Whittle) dependence: one evaluation of phi(n) per state
+% phi reads the FULL population matrix, so within a state it is a constant that
+% factors out of every rate at that state; see _kb/11-conventions-and-gotchas.md
+hasGD = isfield(sn,'gdscaling') && ~isempty(sn.gdscaling);
+gdFactor = [];
+if hasGD
+    if fcrWaitq
+        line_error(mfilename,'A global dependence (setGlobalDependence) cannot be combined with finite capacity regions: the region generator builds its own transitions and would ignore the scaling.');
+    end
+    gdFactor = solver_ctmc_gdfactor(sn, stateSpaceAggr, options);
+end
+
 %%
 if fcrWaitq
     % see _kb/06-solver-catalog.md (CTMC section) for rationale
-    [stateSpace,stateSpaceAggr,stateSpaceHashed,Dfilt,sn,basBlockQ] = solver_ctmc_fcr_waitq(sn,options);
+    [stateSpace,stateSpaceAggr,stateSpaceHashed,Dfilt,sn,basBlockQ,DfiltAux] = solver_ctmc_fcr_waitq(sn,options);
     Q = speye(size(stateSpaceHashed,1)); % the diagonal elements will be removed later
     % see _kb/06-solver-catalog.md (True BAS blocking) for rationale
     Qimm = 0*Q;
@@ -156,6 +145,9 @@ Dfilt = cell(1,A);
 for a=1:A
     Dfilt{a} = 0*Q;
 end
+% Derived START/PREEMPT filtrations, one sparse matrix per (station, class).
+% They live outside Dfilt on purpose: their arcs are the same arcs.
+DfiltAux = solver_ctmc_auxfilt_init(sn, Q);
 % see _kb/06-solver-catalog.md (True BAS blocking) for rationale
 basBlockQ = 0*Q;
 % see _kb/06-solver-catalog.md (Vanishing states) for rationale
@@ -200,9 +192,15 @@ for a=1:A
         state_a = state(sn.nodeToStateful(node_a));
         class_a = sync{a}.active{1}.class;
         event_a = sync{a}.active{1}.event;
-        [new_state_a, rate_a] = State.afterEventHashed( sn, node_a, state_a, event_a, class_a);
+        [new_state_a, rate_a, ~, start_a, preempt_a] = State.afterEventHashed( sn, node_a, state_a, event_a, class_a);
         % SPN code:
         %[new_state_a, rate_a,~,trans_a, modes_a] = State.afterEventHashed( qn, node_a, state_a, event_a, class_a);
+        if hasGD && sn.isstation(node_a) && (event_a == EventType.DEP || event_a == EventType.PHASE)
+            % phi(n) is constant across the rows of rate_a at this state, so it
+            % factors out; PHASE is scaled too or phase-type service would
+            % advance unscaled (see refreshSync.m, which emits it as active)
+            rate_a = rate_a * gdFactor(s, sn.nodeToStation(node_a) + (class_a-1)*sn.nstations);
+        end
 
         %% debugging block
         %        if true%options.verbose == 2
@@ -257,9 +255,9 @@ for a=1:A
                     %end
                     %%
                     if node_p == node_a %self-loop
-                        [new_state_p, ~, outprob_p] = State.afterEventHashed( sn, node_p, new_state_a(ia), event_p, class_p);
+                        [new_state_p, ~, outprob_p, start_p, preempt_p] = State.afterEventHashed( sn, node_p, new_state_a(ia), event_p, class_p);
                     else % departure
-                        [new_state_p, ~, outprob_p] = State.afterEventHashed( sn, node_p, state_p, event_p, class_p);
+                        [new_state_p, ~, outprob_p, start_p, preempt_p] = State.afterEventHashed( sn, node_p, state_p, event_p, class_p);
                     end
                     %  SPN code:
                     %                    if node_p == node_a %self-loop
@@ -336,6 +334,13 @@ for a=1:A
                                     else
                                         Dfilt{a}(s,ns) = rate_a(ia) * prob_sync_p;
                                     end
+                                    % Both halves of the synchronization are tagged: a
+                                    % DEP promotes at the sender while the paired ARV
+                                    % starts or preempts at the receiver, and each is
+                                    % annotated on its own node's successor row.
+                                    w_aux = rate_a(ia) * prob_sync_p;
+                                    DfiltAux = solver_ctmc_auxfilt_add(DfiltAux, sn, node_a, s, ns, w_aux, start_a, preempt_a, ia);
+                                    DfiltAux = solver_ctmc_auxfilt_add(DfiltAux, sn, node_p, s, ns, w_aux, start_p, preempt_p, ip);
                                 end
                             end
                             % SPN code:
@@ -376,6 +381,8 @@ for a=1:A
                                 else
                                     Dfilt{a}(s,ns) = rate_a(ia) * prob_sync_p;
                                 end
+                                % local action: only the active node can tag
+                                DfiltAux = solver_ctmc_auxfilt_add(DfiltAux, sn, node_a, s, ns, rate_a(ia) * prob_sync_p, start_a, preempt_a, ia);
                             end
                         end
                     end
@@ -662,6 +669,12 @@ Q(zero_col,zero_col) = -eye(length(zero_col));
 for a=1:A
     Dfilt{a}(:,end+1:end+(size(Dfilt{a},1)-size(Dfilt{a},2)))=0;
 end
+for i=1:size(DfiltAux.start,1)
+    for r=1:size(DfiltAux.start,2)
+        DfiltAux.start{i,r}(:,end+1:end+(size(DfiltAux.start{i,r},1)-size(DfiltAux.start{i,r},2)))=0;
+        DfiltAux.preempt{i,r}(:,end+1:end+(size(DfiltAux.preempt{i,r},1)-size(DfiltAux.preempt{i,r},2)))=0;
+    end
+end
 
 if options.verbose == VerboseLevel.DEBUG || GlobalConstants.Verbose == VerboseLevel.DEBUG
     SolverCTMC.printInfGen(Q,stateSpace);
@@ -691,7 +704,7 @@ if ~isempty(sn.state) && all(~cellfun(@isempty, sn.state))
     initState = matchrow(stateSpace, initRow);
     if initState > 0
         % any nonzero off-diagonal is an arc: an ME embeds with negative ones
-        adj = abs(Q - diag(diag(Q))) > 1e-12;
+        adj = abs(Q - diag(diag(Q))) > GlobalConstants.ArcTol;
         reach = false(size(Q,1),1);
         reach(initState) = true;
         frontier = initState;
@@ -700,6 +713,32 @@ if ~isempty(sn.state) && all(~cellfun(@isempty, sn.state))
             nxt = nxt(~reach(nxt));
             reach(nxt) = true;
             frontier = nxt;
+        end
+        % Checked BEFORE pruning: afterwards the retained chain is irreducible by
+        % construction and the ambiguity is no longer observable. A state that
+        % cannot reach the initial class must lead into some other closed class,
+        % so the backward closure of `reach` is exactly the test, at the cost of
+        % one transposed sweep rather than a full SCC decomposition.
+        if ~all(reach)
+            feeds = reach;
+            frontierB = find(reach)';
+            while ~isempty(frontierB)
+                prv = find(any(adj(:,frontierB),2))';
+                prv = prv(~feeds(prv));
+                feeds(prv) = true;
+                frontierB = prv;
+            end
+            if ~all(feeds)
+                line_warning_always(mfilename, ...
+                    ['CTMC: the generator has more than one closed communicating class (%d of %d ' ...
+                    'states cannot reach the one containing the initial state), so its stationary ' ...
+                    'distribution is not unique. Results are those of the class the initial state ' ...
+                    'selects, and depend on it: an order-preserving discipline under routing that ' ...
+                    'admits no overtaking freezes the relative service order at time zero, so ' ...
+                    'declaring the classes in a different order gives a different, equally valid ' ...
+                    'answer. Product-form results (MVA, NC) normalize over the whole space instead ' ...
+                    'and will not agree.'], sum(~feeds), numel(feeds));
+            end
         end
         if ~all(reach)
             line_debug('CTMC: %d of %d states unreachable from the initial state, dropped', ...
@@ -715,6 +754,12 @@ if ~isempty(sn.state) && all(~cellfun(@isempty, sn.state))
             depRates = depRates(keep,:,:);
             for a=1:A
                 Dfilt{a} = Dfilt{a}(keep,keep);
+            end
+            for i=1:size(DfiltAux.start,1)
+                for r=1:size(DfiltAux.start,2)
+                    DfiltAux.start{i,r} = DfiltAux.start{i,r}(keep,keep);
+                    DfiltAux.preempt{i,r} = DfiltAux.preempt{i,r}(keep,keep);
+                end
             end
             for k=1:FJ
                 Dfilt_fjsync{k} = Dfilt_fjsync{k}(keep,keep);
@@ -812,6 +857,17 @@ if options.config.hide_immediate % if want to remove immediate transitions
         Ta = (-Q22) \ Q21a;
         Ta = Q12*Ta;
         Dfilt{a} = Dfilt{a}(nonimm,nonimm)+Ta;
+    end
+    % The derived filtrations are complemented exactly like Dfilt: a service
+    % start that lands on a vanishing state would otherwise be dropped, and
+    % the START rate would silently undercount by that path.
+    for i=1:size(DfiltAux.start,1)
+        for r=1:size(DfiltAux.start,2)
+            Tsa = Q12*((-Q22) \ DfiltAux.start{i,r}(imm,nonimm));
+            DfiltAux.start{i,r} = DfiltAux.start{i,r}(nonimm,nonimm)+Tsa;
+            Tpa = Q12*((-Q22) \ DfiltAux.preempt{i,r}(imm,nonimm));
+            DfiltAux.preempt{i,r} = DfiltAux.preempt{i,r}(nonimm,nonimm)+Tpa;
+        end
     end
     % recompute arvRates and depRates
     %     arvRates = zeros(size(stateSpace,1),nstateful,nclasses);

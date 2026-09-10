@@ -62,14 +62,18 @@ else
                  % or variable 'lGn'".
 end
 if size(n,2)==1
-    % Joint probability of total queue lengths
+    % Joint probability of total queue lengths. Delegated to pfqn_jointmarg so
+    % that the permanent identity lives in one place; here the think time is a
+    % single aggregated delay row, which is the M+1-th station.
     if sum(Z)>0
         n0 = sum(N) - sum(n);
-        Fjoint = Fper([L;Z],N,[n(:);n0]);
-        pjoint = exp(log(Fjoint)-lGn-factln(sum(n0)));
+        if n0 < 0
+            pjoint = 0;
+            return
+        end
+        pjoint = pfqn_jointmarg([n(:);n0],[L;Z(:)'],N,M+1,lGn);
     else
-        Fjoint = Fper(L,N,[n(:)]);
-        pjoint = exp(log(Fjoint)-lGn);
+        pjoint = pfqn_jointmarg(n(:),L,N,[],lGn);
     end
 elseif size(n,2)==R
     n0 = N - sum(n,1);
@@ -86,19 +90,4 @@ elseif size(n,2)==R
 else
     line_error(mfilename,'Invalid argument to pfqn_joint');
 end
-end
-
-function [F,A] = Fper(L,N,m)
-[M,R]=size(L);
-Ak = [];
-for r=1:R
-    Ak = [Ak, repmat(L(:,r),1,N(r))];
-end
-A = [];
-for i=1:M
-    if m(i)>0
-        A((end+1):(end+m(i)),:) = repmat(Ak(i,:),m(i),1);
-    end
-end
-F=perm(A)/prod(factorial(N));
 end

@@ -7,7 +7,6 @@
 package jline.solvers;
 
 import jline.GlobalConstants;
-import static jline.GlobalConstants.Inf;
 import jline.lang.constant.SolverType;
 import jline.VerboseLevel;
 import jline.util.RandomManager;
@@ -16,8 +15,8 @@ import jline.solvers.fluid.LSODAExt;
 import jline.solvers.fluid.handlers.FluidRateMultiplier;
 import odesolver.LSODA;
 import org.apache.commons.math3.ode.FirstOrderIntegrator;
-import org.apache.commons.math3.ode.nonstiff.ClassicalRungeKuttaIntegrator;
-import org.apache.commons.math3.ode.nonstiff.DormandPrince54Integrator;
+import org.apache.commons.math3.ode.nonstiff.AdamsMoultonIntegrator;
+import org.apache.commons.math3.ode.nonstiff.BogackiShampine23Integrator;
 import org.apache.commons.math3.util.FastMath;
 
 import java.util.ArrayList;
@@ -126,6 +125,20 @@ public class SolverOptions {
     public String remote_endpoint;
 
     /**
+     * Base URL of a solver REST server, e.g. "http://localhost:8080". Empty or
+     * null means the solver runs its tool locally. Used by SolverLDES (through
+     * LDESOptions.restUrl) and by SolverJMT, whose backend dispatch is
+     * described in {@link jline.solvers.wrappers.jmt.JmtBackend}.
+     */
+    public String restUrl;
+
+    /**
+     * Docker image to dispatch an external tool through, overriding the
+     * default candidates. Only consulted when no local binary is available.
+     */
+    public String container;
+
+    /**
      * ODE solver configurations for fluid analysis
      */
     public ODESolvers odesolvers;
@@ -181,6 +194,20 @@ public class SolverOptions {
     public double[] timespan;
 
     /**
+     * Instants the caller wants the transient trajectory AT, increasing, or null.
+     *
+     * <p>When set, the fluid integrator adds them to its recorded grid from its
+     * own continuous extension, instead of reporting only the steps it happened
+     * to take. Port of MATLAB's {@code options.tranpoints}
+     * (solver_fluid_iteration.m) and of the native-python twin;
+     * {@link jline.solvers.env.SolverENV} sets it to the sojourn quadrature
+     * grid, because reading that grid off a LINEAR interpolation of the step
+     * grid is a first-order error the dense output does not have. Null leaves
+     * every other caller unchanged.</p>
+     */
+    public double[] tranpoints = null;
+
+    /**
      * Fixed timestep for transient analysis (null for adaptive stepping)
      */
     public Double timestep;
@@ -189,6 +216,11 @@ public class SolverOptions {
      * Verbosity level for solver output
      */
     public VerboseLevel verbose;
+
+    /*
+     * The solver console (jline.io.LineConsole) has NO option of its own: it IS
+     * VerboseLevel.DEBUG, so `verbose = VerboseLevel.DEBUG` is what asks for it.
+     */
 
     /**
      * Wall-clock time budget in seconds from solver launch to end.
@@ -224,6 +256,13 @@ public class SolverOptions {
     public double[][] qrfAlpha;
 
     /**
+     * Blocking parameters for the QRF bounds qrf.bas / qrf.rsrd. Null means the
+     * caller supplied none, and those two methods then REJECT the model rather
+     * than assume no blocking; see {@link QrfParams}.
+     */
+    public QrfParams qrfParams;
+
+    /**
      * Hierarchy level for SolverBA bound hierarchies (pbh/cbh MVA-step depth,
      * pbk/bjbk iteration count k). Default 2.
      */
@@ -244,6 +283,9 @@ public class SolverOptions {
         this.config.np_priority = "default";
         this.config.fork_join = "default";
         this.config.fj_warmstart = true;
+        this.config.map_env = "auto";
+        this.config.map_env_method = "auto";
+        this.config.map_env_maxstages = 64;
         this.config.eventcache = true;
         this.config.hide_immediate = false; // Default for config
         this.config.pstar = new ArrayList<>();
@@ -275,18 +317,11 @@ public class SolverOptions {
         this.method = "default";
         this.remote = false;
         this.remote_endpoint = "127.0.0.1";
+        this.restUrl = null;
+        this.container = null;
 
         this.odesolvers = new ODESolvers();
-        this.odesolvers.odeminstep = 0.001;
-        //this.odeMinStep = 0.00000001;
-        this.odesolvers.odemaxstep = Inf;
-        this.odesolvers.fastODESolver = new ClassicalRungeKuttaIntegrator(this.odesolvers.odemaxstep);
-        this.odesolvers.accurateODESolver =
-                new DormandPrince54Integrator(this.odesolvers.odeminstep, this.odesolvers.odemaxstep, tol, tol);
-        this.odesolvers.fastStiffODESolver =
-                new LSODAExt(this.odesolvers.odeminstep, this.odesolvers.odemaxstep, tol, tol, 3, 3, 10000000);
-        this.odesolvers.accurateStiffODESolver =
-                new LSODAExt(this.odesolvers.odeminstep, this.odesolvers.odemaxstep, tol, tol, 12, 5, 10000000);
+        this.odesolvers.setDefaults(0.001, Inf, tol);
 
         this.samples = 10000;
         this.events = -1; // unset: DES solvers fall back to samples
@@ -296,7 +331,7 @@ public class SolverOptions {
         this.timespan[0] = Inf;
         this.timespan[1] = Inf;
         this.timestep = null;
-        this.verbose = GlobalConstants.getInstance().getVerbose();
+        this.verbose = GlobalConstants.getVerbose();
         this.confint = 0; // disabled by default
         this.timeout = Inf; // no wall-clock time budget by default
     }
@@ -333,27 +368,34 @@ public class SolverOptions {
                 break;
             case ENV:
                 this.iter_max = 100;
-                this.verbose = VerboseLevel.SILENT;
+                // STD like every other solver, as MATLAB and python now are:
+                // at SILENT this ensemble printed no banner of its own and
+                // could not narrate on the console either.
+                this.verbose = VerboseLevel.STD;
                 break;
             case FLUID:
                 this.config.highvar = "default";
-                this.config.hide_immediate = false; // Stiff ODE solver handles immediate rates accurately
-                this.config.put("immediate_tol", 1e7); // Threshold for detecting immediate transitions
+                // TRUE: a coordinate whose exit rate is GlobalConstants.Immediate is LINE's
+                // stand-in for infinity, not a fast rate, and every fluid route now
+                // stochastic-complements it out of the event set rather than integrating it
+                // (ImmediateElimination, reached through FluidHideImmediate). It read false while
+                // MATLAB's stiff slot was @ode15s, which coped; under LSODA -- which this port has
+                // always used -- a single LN task layer carrying one InfRate phase took 145 s here
+                // for the answer the reduced system returns in 0.35 s.
+                this.config.hide_immediate = true;
+                // No immediate_tol default: the in-code threshold is GlobalConstants.Immediate*(1-1e-2),
+                // the same rule MATLAB uses, so that only the InfRate sentinel qualifies and a
+                // genuinely fast rate the user wrote does not. Set the key to override it.
                 this.iter_max = 200;
                 this.stiff = true;
                 this.timespan[0] = 0;
                 // Reduce min step to handle Immediate transition rates (~1e8)
                 // MATLAB's ode15s has effectively no minimum step constraint
-                this.odesolvers.odeminstep = 1e-14;
-                this.odesolvers.accurateODESolver =
-                    new DormandPrince54Integrator(this.odesolvers.odeminstep, this.odesolvers.odemaxstep, tol, tol);
-                this.odesolvers.fastStiffODESolver =
-                    new LSODAExt(this.odesolvers.odeminstep, this.odesolvers.odemaxstep, tol, tol, 3, 3, 10000000);
-                this.odesolvers.accurateStiffODESolver =
-                    new LSODAExt(this.odesolvers.odeminstep, this.odesolvers.odemaxstep, tol, tol, 12, 5, 10000000);
+                this.odesolvers.setDefaults(1e-14, this.odesolvers.odemaxstep, tol);
                 break;
             case LN:
                 this.config.interlocking = true;
+                this.config.layering = "srvn";
                 this.config.multiserver = "default";
                 // Under-relaxation options for convergence improvement
                 this.config.relax = "fixed"; // 'auto' | 'fixed' | 'adaptive' | 'none'
@@ -369,7 +411,8 @@ public class SolverOptions {
             case LQNS:
                 this.timespan = new double[]{Inf, Inf};
                 this.keep = true;
-                this.verbose = VerboseLevel.SILENT;  // MATLAB has "false" which maps to SILENT
+                // STD like every other solver, matching MATLAB's flipped default
+                this.verbose = VerboseLevel.STD;
                 this.config.multiserver = "rolia";
                 break;
             case MAM:
@@ -424,18 +467,47 @@ public class SolverOptions {
         // Cloning config with null checks
         if (this.config != null) {
             cloned.config = new Config();
+            // The additionalParams map carries every config key set through
+            // Config.put -- the ones with no declared field, such as the MAM
+            // 'bgaggr'/'bgstates_max'/'qbdphases_max' and 'etaqa_trunc'. It was
+            // NOT copied here, and Solver's own constructor calls copy(), so a
+            // put() key never reached the analyzer: the solver silently ran its
+            // default while reporting the requested method, which is
+            // indistinguishable from the option having no effect at all.
+            cloned.config.additionalParams = new java.util.HashMap<>(this.config.additionalParams);
+            // NOTE: the rest of this clone is field-by-field, so a declared
+            // Config field added without a line here is silently dropped on
+            // every copy().
+            cloned.config.slotted = this.config.slotted;
+            cloned.config.slotlength = this.config.slotlength;
             cloned.config.highvar = this.config.highvar;
+            cloned.config.fluid_earlystop = this.config.fluid_earlystop;
             cloned.config.warmupfrac = this.config.warmupfrac;
             cloned.config.multiserver = this.config.multiserver;
+            cloned.config.aghq_nodes = this.config.aghq_nodes;
+            cloned.config.mcmc_batches = this.config.mcmc_batches;
+            cloned.config.mcmc_burnin = this.config.mcmc_burnin;
             cloned.config.np_priority = this.config.np_priority;
             cloned.config.pstar = this.config.pstar != null ? new ArrayList<>(this.config.pstar) : null;
             cloned.config.variates = this.config.variates;
             cloned.config.fork_join = this.config.fork_join;
+            cloned.config.sjn_lattice_max = this.config.sjn_lattice_max;
+            cloned.config.sjn_ns = this.config.sjn_ns;
+            cloned.config.sjn_lfactor = this.config.sjn_lfactor;
+            cloned.config.sjn_umax = this.config.sjn_umax;
             cloned.config.fj_warmstart = this.config.fj_warmstart;
+            cloned.config.map_env = this.config.map_env;
+            cloned.config.map_env_method = this.config.map_env_method;
+            cloned.config.map_env_maxstages = this.config.map_env_maxstages;
             cloned.config.merge = this.config.merge;
+            cloned.config.warmup = this.config.warmup;
             cloned.config.compress = this.config.compress;
             cloned.config.space_max = this.config.space_max;
             cloned.config.interlocking = this.config.interlocking;
+            cloned.config.interlock = this.config.interlock != null ? this.config.interlock.copy() : null;
+            cloned.config.interlock_chain = this.config.interlock_chain != null ? this.config.interlock_chain.copy() : null;
+            cloned.config.layering = this.config.layering;
+            cloned.config.layer_init = this.config.layer_init;
             cloned.config.eventcache = this.config.eventcache;
             cloned.config.hide_immediate = this.config.hide_immediate;
             cloned.config.state_space_gen = this.config.state_space_gen;
@@ -472,12 +544,27 @@ public class SolverOptions {
             cloned.config.rate_sched = this.config.rate_sched != null
                     ? new ArrayList<>(this.config.rate_sched) : null;
             cloned.config.ctmc_tv_ngrid = this.config.ctmc_tv_ngrid;
+            cloned.config.transient_method = this.config.transient_method;
+            cloned.config.fau_epsilon = this.config.fau_epsilon;
+            cloned.config.fau_delta = this.config.fau_delta;
+            cloned.config.fau_ngrid = this.config.fau_ngrid;
             cloned.config.ln_transient = this.config.ln_transient;
             cloned.config.ln_transient_channels = this.config.ln_transient_channels;
             cloned.config.ln_transient_iter_max = this.config.ln_transient_iter_max;
             cloned.config.ln_transient_tol = this.config.ln_transient_tol;
             cloned.config.orbit_maxlevel = this.config.orbit_maxlevel;
             cloned.config.orbit_tailtol = this.config.orbit_tailtol;
+            cloned.config.kp_init_sol = this.config.kp_init_sol != null
+                    ? this.config.kp_init_sol.clone() : null;
+            cloned.config.init_cov = this.config.init_cov != null
+                    ? new Matrix(this.config.init_cov) : null;
+            cloned.config.moment_sigma2 = this.config.moment_sigma2 != null
+                    ? this.config.moment_sigma2.clone() : null;
+            cloned.config.moment_cov = this.config.moment_cov != null
+                    ? this.config.moment_cov.clone() : null;
+            cloned.config.moment_maxstate = this.config.moment_maxstate;
+            cloned.config.dae_maxstate = this.config.dae_maxstate;
+            cloned.config.dae_maxcov = this.config.dae_maxcov;
         }
 
         cloned.force = this.force;
@@ -492,20 +579,13 @@ public class SolverOptions {
         cloned.level = this.level;
         cloned.remote = this.remote;
         cloned.remote_endpoint = this.remote_endpoint;
+        cloned.restUrl = this.restUrl;
+        cloned.container = this.container;
 
-        // Cloning ODESolvers - create new instances because ODE solvers have mutable internal state
+        // Fresh instances of the DEFAULT integrators (they hold mutable state), but a
+        // caller-assigned integrator is kept: rebuilding it would discard the choice.
         if (this.odesolvers != null) {
-            cloned.odesolvers = new ODESolvers();
-            cloned.odesolvers.odeminstep = this.odesolvers.odeminstep;
-            cloned.odesolvers.odemaxstep = this.odesolvers.odemaxstep;
-            // Create fresh ODE solver instances to avoid shared mutable state
-            cloned.odesolvers.fastODESolver = new ClassicalRungeKuttaIntegrator(cloned.odesolvers.odemaxstep);
-            cloned.odesolvers.accurateODESolver = new DormandPrince54Integrator(
-                    cloned.odesolvers.odeminstep, cloned.odesolvers.odemaxstep, this.tol, this.tol);
-            cloned.odesolvers.fastStiffODESolver = new LSODAExt(
-                    cloned.odesolvers.odeminstep, cloned.odesolvers.odemaxstep, this.tol, this.tol, 3, 3, 10000000);
-            cloned.odesolvers.accurateStiffODESolver = new LSODAExt(
-                    cloned.odesolvers.odeminstep, cloned.odesolvers.odemaxstep, this.tol, this.tol, 12, 5, 10000000);
+            cloned.odesolvers = this.odesolvers.copy(this.tol);
         }
 
         cloned.samples = this.samples;
@@ -513,6 +593,7 @@ public class SolverOptions {
         cloned.seed = this.seed;
         cloned.stiff = this.stiff;
         cloned.timespan = this.timespan != null ? this.timespan.clone() : new double[]{Inf, Inf};
+        cloned.tranpoints = this.tranpoints != null ? this.tranpoints.clone() : null;
         cloned.timestep = this.timestep;
         cloned.verbose = this.verbose;
         cloned.confint = this.confint;
@@ -522,6 +603,9 @@ public class SolverOptions {
             for (int i = 0; i < this.qrfAlpha.length; i++) {
                 cloned.qrfAlpha[i] = this.qrfAlpha[i].clone();
             }
+        }
+        if (this.qrfParams != null) {
+            cloned.qrfParams = this.qrfParams.copy();
         }
 
         return cloned;
@@ -668,14 +752,7 @@ public class SolverOptions {
      * @param odeMaxStep maximum step size for numerical integration
      */
     public void setODEMaxStep(double odeMaxStep) {
-        this.odesolvers.odemaxstep = odeMaxStep;
-        this.odesolvers.fastODESolver = new ClassicalRungeKuttaIntegrator(this.odesolvers.odemaxstep);
-        this.odesolvers.accurateODESolver =
-                new DormandPrince54Integrator(this.odesolvers.odeminstep, this.odesolvers.odemaxstep, tol, tol);
-        this.odesolvers.fastStiffODESolver =
-                new LSODAExt(this.odesolvers.odeminstep, this.odesolvers.odemaxstep, tol, tol, 3, 3, 10000000);
-        this.odesolvers.accurateStiffODESolver =
-                new LSODAExt(this.odesolvers.odeminstep, this.odesolvers.odemaxstep, tol, tol, 12, 5, 10000000);
+        this.odesolvers.setDefaults(this.odesolvers.odeminstep, odeMaxStep, tol);
     }
 
     /**
@@ -684,14 +761,7 @@ public class SolverOptions {
      * @param odeMinStep minimum step size for numerical integration
      */
     public void setODEMinStep(double odeMinStep) {
-        this.odesolvers.odeminstep = odeMinStep;
-        this.odesolvers.fastODESolver = new ClassicalRungeKuttaIntegrator(this.odesolvers.odeminstep);
-        this.odesolvers.accurateODESolver =
-                new DormandPrince54Integrator(this.odesolvers.odeminstep, this.odesolvers.odemaxstep, tol, tol);
-        this.odesolvers.fastStiffODESolver =
-                new LSODAExt(this.odesolvers.odeminstep, this.odesolvers.odemaxstep, tol, tol, 3, 3, 10000000);
-        this.odesolvers.accurateStiffODESolver =
-                new LSODAExt(this.odesolvers.odeminstep, this.odesolvers.odemaxstep, tol, tol, 12, 5, 10000000);
+        this.odesolvers.setDefaults(odeMinStep, this.odesolvers.odemaxstep, tol);
     }
 
     /**
@@ -765,9 +835,39 @@ public class SolverOptions {
     public static class Config {
 
         /**
+         * Run the solver on a discrete time scale (slot lattice) rather than on
+         * the continuous time axis. SolverLDES simulates the lattice directly;
+         * SolverNC routes to the discrete-time product-form analyzer
+         * (Solver_nc_dt_analyzer) and refuses a model outside it, rather than
+         * falling back to a continuous-time approximation. Default: false.
+         */
+        public boolean slotted = false;
+
+        /**
+         * Slot length in model time units, used when {@link #slotted} is true;
+         * null keeps unit slots. Metrics are computed per slot and rescaled by
+         * this factor, so the caller reads back the units it built the model in.
+         */
+        public Double slotlength;
+
+        /**
          * High-variance class handling strategy
          */
         public String highvar;
+
+        /**
+         * SolverCTMC.getCdfFirstPassT: "expm" (default) or "lt", selecting the
+         * dense matrix-exponential route or the Laplace-transform inversion of
+         * ctmc_passage_time. Null means the default.
+         */
+        public String passage_method;
+
+        /**
+         * Fluid: stop the ODE window loop once the geometric tail of the
+         * iteration says the state is at a fixed point, instead of always
+         * running iter_max windows. Null means the default, which is on.
+         */
+        public Boolean fluid_earlystop;
 
         /**
          * SSA warmup discard fraction. When set and positive the serial SSA
@@ -777,6 +877,59 @@ public class SolverOptions {
          * disables the mean discard and the CI falls back to its legacy 10%.
          */
         public Double warmupfrac;
+
+        /**
+         * Warmup length as an ABSOLUTE number of samples to discard; null leaves
+         * the transient filter on {@link #warmupfrac}.
+         *
+         * <p>The simulators only take a FRACTION of the run, so a count is
+         * meaningful only against {@code options.samples} and is converted to
+         * {@code warmupfrac = warmup / samples} when the run is configured, not
+         * when it is parsed: the two may be given in either order. A count at
+         * or beyond the sample budget would discard the whole run and is
+         * refused rather than clamped.</p>
+         */
+        public Double warmup;
+
+        /**
+         * Convergence tolerance of the MDD level iteration (SolverCTMC method
+         * 'mdd'); null keeps the Mdd_mcd default of 1e-12.
+         *
+         * <p>Kept separate from {@code iter_tol} on purpose: that is the
+         * solver-level fixed-point tolerance, sized for AMVA outer loops, while
+         * the level iteration is an inner numerical solve whose result is
+         * checked against the population invariant at 1e-6. Feeding iter_tol
+         * here stops the iteration short of the fixed point and trips that
+         * guard.</p>
+         */
+        public Double mdd_tol;
+
+        /**
+         * Maximum sweeps of the MDD level iteration; null keeps the Mdd_mcd
+         * default of 500.
+         */
+        public Integer mdd_maxiter;
+
+        /**
+         * Number of non-overlapping batches the Chen-O'Cinneide MCMC estimator
+         * (Pfqn_mcmc) splits its run into for the batch-means confidence
+         * intervals; null keeps the 30 of Schmeiser (1982), the count used in
+         * the tables of the paper.
+         */
+        /**
+         * options.config.aghq_nodes: nodes per simplex direction of the adaptive
+         * Gauss-Hermite rule. q = 1 reproduces pfqn_le; the rule costs q^(M-1)
+         * evaluations, so the default stays small.
+         */
+        public Integer aghq_nodes;
+        public Integer mcmc_batches;
+
+        /**
+         * Warm-up fraction the MCMC estimator discards before it starts
+         * accumulating; null keeps 0.1. The paper discards none and ignores the
+         * initialization bias.
+         */
+        public Double mcmc_burnin;
 
         /**
          * Multi-server scheduling strategy
@@ -811,6 +964,31 @@ public class SolverOptions {
         public Boolean rqna_beta;
 
         /**
+         * RQT (Robust Queueing Theory) service adaptation regime of Table 1:
+         * "independent" (default, service distribution unknown), "normal" or
+         * "pareto".
+         */
+        public String rqt_regime;
+
+        /**
+         * RQT toggle replacing the closed-form bound of Theorem 3 by the exact
+         * worst case over the uncertainty sets. Null (default) = closed form.
+         */
+        public Boolean rqt_exact;
+
+        /**
+         * RQT tail coefficient in (1,2] of the external arrival processes.
+         * Null (default) = 2, the finite-variance regime.
+         */
+        public Double rqt_alpha_a;
+
+        /**
+         * RQT tail coefficient in (1,2] of the service processes.
+         * Null (default) = 2, the finite-variance regime.
+         */
+        public Double rqt_alpha_s;
+
+        /**
          * Variance reduction technique for LDES simulation.
          * <p>Available options:</p>
          * <ul>
@@ -839,12 +1017,54 @@ public class SolverOptions {
         public String fork_join;
 
         /**
+         * Lattice size above which the shortest-job-next dispatch prefers the Schweitzer fixed
+         * point over the population recursion, under method 'default'. Null keeps the built-in
+         * threshold. Mirrors MATLAB/Python options.config.sjn_lattice_max.
+         */
+        public Double sjn_lattice_max;
+
+        /**
+         * Number of grid subdivisions of the job size axis at a shortest-job-next station, even.
+         * Null keeps the built-in value. Mirrors MATLAB/Python options.config.sjn_ns.
+         */
+        public Integer sjn_ns;
+
+        /**
+         * Grid extent at a shortest-job-next station, in units of the largest mean service time.
+         * Null keeps the built-in value. Mirrors MATLAB/Python options.config.sjn_lfactor.
+         */
+        public Double sjn_lfactor;
+
+        /**
+         * Utilization cap at a shortest-job-next station, strictly below one. Null keeps the
+         * built-in value. Mirrors MATLAB/Python options.config.sjn_umax.
+         */
+        public Double sjn_umax;
+
+        /**
          * Resume the fork-join (MMT) fixed point from the iterate retained by the
          * previous runAnalyzer call on the same solver, instead of restarting from
          * GlobalConstants.FineTol. Only has an effect under an outer iteration such
          * as SolverLN, which re-solves each layer once per outer iteration.
          */
         public boolean fj_warmstart;
+
+        /**
+         * Random-environment fallback for MAP/MMPP/MMAP models on solvers that
+         * cannot consume a non-renewal process: "auto" approximates the model
+         * through its environment image, "off" rejects it as before.
+         */
+        public String map_env;
+
+        /**
+         * Environment recombination used by that fallback: "auto", "meanfield"
+         * (transient-capable stage solvers only), "dec" (slow-environment
+         * limit) or "avg" (fast-environment limit).
+         */
+        public String map_env_method;
+
+        /** Cap on the number of environment stages, i.e. the product of the phase orders. */
+        public int map_env_maxstages;
 
         /**
          * State merging strategy
@@ -865,6 +1085,19 @@ public class SolverOptions {
          * Enable interlocking optimization
          */
         public boolean interlocking;
+
+        /**
+         * Interlock matrix of Franks (1999), Eq. (4.7), CLASS-indexed: interlock(r,s) is the
+         * share of the class-s queue that a class-r arrival must not see, because that work was
+         * itself caused by the class-r request. Null for every model but the layers of SolverLN.
+         */
+        public Matrix interlock;
+
+        /**
+         * The same matrix aggregated to the chain basis, set by the AMVA handler for the
+         * iteration it is about to run. Never set from outside the MVA solvers.
+         */
+        public Matrix interlock_chain;
 
         /**
          * Enable event caching for SSA
@@ -906,6 +1139,18 @@ public class SolverOptions {
          * first two moments exactly. SSA, Fluid and JMT must use "ph".
          */
         public String phfit = "cme";
+        /**
+         * `options.config.runLengthPlan`: ask a simulation solver how long its
+         * run SHOULD have been for a target relative precision.
+         *
+         * Null leaves the plan uncomputed. A Double is the target relative
+         * precision at the run's own confidence level; a
+         * {@code Map<String,Double>} with keys {@code relprecision} and
+         * {@code confidence} sets both. The plan lands in
+         * {@code result.runLengthPlan} and is computed by
+         * {@link jline.api.sim.SimRunlength#sim_runlength_plan}.
+         */
+        public Object runLengthPlan = null;
 
         /**
          * Whether to preserve deterministic distributions during non-Markovian
@@ -951,6 +1196,13 @@ public class SolverOptions {
          * first solve; null/"none" uses the default (zero) initialization.
          */
         public String layer_init;
+
+        /**
+         * SolverLN layering strategy. "srvn" (default) builds one submodel per
+         * server; "flat"/"squashed" builds a single submodel holding every
+         * processor and task. See _kb/06-solver-catalog.md (LN section).
+         */
+        public String layering;
 
         /**
          * Relaxation factor (omega) when relaxation is enabled.
@@ -1127,6 +1379,83 @@ public class SolverOptions {
         public java.util.List<FluidRateMultiplier.RateEntry> rate_sched = null;
 
         /**
+         * Fluid 'kp': initial state vector in the KO-PENDER layout -- one offset
+         * counter walking the stations in order, an arrival-phase block at each EXT
+         * station-class and a service-phase block at every other, with no mass
+         * returning to the source. Mirrors the MATLAB
+         * {@code options.config.kp_init_sol}.
+         *
+         * <p>NOT {@link SolverOptions#init_sol}: that one is laid out for the
+         * CLOSING state vector, and consuming it here silently zeroes the source
+         * phase mass and with it the whole network. A wrong-sized seed is
+         * refused rather than ignored.</p>
+         * <p>Default: null</p>
+         */
+        public double[] kp_init_sol = null;
+
+        /**
+         * Fluid 'kp': initial covariance Sigma(0), dim-by-dim in the same layout
+         * as {@link #kp_init_sol}. A caller that carries a DISTRIBUTION across a
+         * handoff supplies the second moment beside the mean, so the next stage
+         * does not restart from a point mass it never had. Null keeps the
+         * default diag(theta) - theta theta' of the initial arrival phase.
+         * <p>Default: null</p>
+         */
+        public Matrix init_cov = null;
+
+        /**
+         * Fluid moment closure: per-station population variance closing the
+         * {@code E[min(X,c)]} term of the closing drift. Null or all-zero
+         * selects the first-order closure, which is what every method other than
+         * {@code minnormal} uses, so the legacy code path stays bit-identical.
+         * Set by the outer fixed point of the moment-closure driver.
+         * <p>Default: null</p>
+         */
+        public double[] moment_sigma2 = null;
+
+        /**
+         * Fluid moment closure: per-station coordinate covariance blocks closing
+         * the capacity-share RATIO of the PS/FCFS/DPS/GPS branches, which is a
+         * separate closure from the min(). One entry per station, null where the
+         * station needs none. Paired with {@link #moment_sigma2}.
+         * <p>Default: null</p>
+         */
+        public Matrix[] moment_cov = null;
+
+        /**
+         * Fluid moment closure: largest phase-resolved state the covariance
+         * (Lyapunov) equation is attempted on. The solve is cubic in this
+         * dimension and the covariance is dense, so the driver refuses rather
+         * than silently crawling above it.
+         * <p>Default: 200</p>
+         */
+        public int moment_maxstate = 200;
+
+        /**
+         * Fluid 'dae': largest phase-resolved state the SIMULTANEOUS closure
+         * solve is attempted on. Lower than {@link #moment_maxstate} because
+         * this route takes a finite-difference Jacobian over the unknowns rather
+         * than solving one Lyapunov equation, so its cost is quartic and not
+         * cubic. Above it the driver refuses and names
+         * {@code options.method='minnormal'}, which computes the same closure by
+         * successive substitution.
+         * <p>Default: 100</p>
+         */
+        public int dae_maxstate = 100;
+
+        /**
+         * Fluid 'dae' transient: largest covariance dimension integrated
+         * ALONGSIDE the mean. The covariance adds nc^2 differential states and
+         * the Jacobian is formed by finite differences over all of them, so the
+         * cost grows as nc^4. Above this the mean is still integrated as a DAE
+         * -- population conservation stays an algebraic equation -- but the
+         * variance is held at its stationary value, which is what 'minnormal'
+         * does for the whole of its transient anyway.
+         * <p>Default: 25</p>
+         */
+        public int dae_maxcov = 25;
+
+        /**
          * CTMC time-varying transient: number of points of the uniform time grid
          * over which the non-homogeneous generator is propagated (one matrix
          * exponential per interval, multiplier frozen at the interval midpoint).
@@ -1135,6 +1464,42 @@ public class SolverOptions {
          * <p>Default: 100</p>
          */
         public int ctmc_tv_ngrid = 100;
+
+        /**
+         * CTMC transient method: {@code "ode"} (default) integrates the forward
+         * equation, {@code "fau"} marches fast adaptive uniformization
+         * ({@link jline.api.mc.Ctmc_fau}) over the output grid. It is a config
+         * key rather than a {@code method} name because it changes no stationary
+         * answer, and because a new entry in the solver's valid-method list is
+         * enumerated by the sanity harness, which then wants a baseline per
+         * method. Mirrors the MATLAB {@code options.config.transient_method}.
+         * <p>Default: "ode"</p>
+         */
+        public String transient_method = "ode";
+
+        /**
+         * CTMC transient by {@code "fau"}: total probability mass the whole
+         * horizon may discard. It is divided by the number of grid steps, each
+         * step removing mass and none putting any back, so the accumulated
+         * defect stays below this. Mirrors {@code options.config.fau_epsilon}.
+         * <p>Default: 1e-6</p>
+         */
+        public double fau_epsilon = 1e-6;
+
+        /**
+         * CTMC transient by {@code "fau"}: occupancy below which a state is
+         * dropped from the support. Mirrors {@code options.config.fau_delta}.
+         * <p>Default: 1e-12</p>
+         */
+        public double fau_delta = 1e-12;
+
+        /**
+         * CTMC transient by {@code "fau"}: number of points of the uniform
+         * output grid, used when {@code options.timestep} is unset. Mirrors
+         * {@code options.config.fau_ngrid}.
+         * <p>Default: 100</p>
+         */
+        public int fau_ngrid = 100;
 
         /**
          * SolverLN transient coupling mode: {@code "coupled"} (default) runs the
@@ -1242,5 +1607,147 @@ public class SolverOptions {
          * Accurate integrator for stiff problems
          */
         public LSODA accurateStiffODESolver;
+
+        // The instances handed out by the last setDefaults, so copy() can tell a
+        // default apart from one the caller assigned and only rebuild the former.
+        private FirstOrderIntegrator defaultFastODESolver;
+        private FirstOrderIntegrator defaultAccurateODESolver;
+        private LSODA defaultFastStiffODESolver;
+        private LSODA defaultAccurateStiffODESolver;
+
+        /**
+         * Installs the built-in integrators, mirroring MATLAB {@code SolverOptions.m}:
+         * {@code fastOdeSolver}/{@code accurateOdeSolver} are the non-stiff pair
+         * (@ode23 / @ode113 there, their adaptive Runge-Kutta and Adams-Moulton
+         * counterparts here) and the stiff pair is LSODA, as @ode15s is there.
+         *
+         * @param minStep minimum step size
+         * @param maxStep maximum step size
+         * @param tol     absolute and relative tolerance
+         */
+        public void setDefaults(double minStep, double maxStep, double tol) {
+            this.odeminstep = minStep;
+            this.odemaxstep = maxStep;
+            // @ode23 twin: the same Bogacki-Shampine 3(2) pair, supplied here
+            // because commons-math3 ships no order-3 embedded Runge-Kutta method
+            this.fastODESolver = new BogackiShampine23Integrator(minStep, maxStep, tol, tol);
+            // @ode113 twin: Adams-Moulton PECE. ode113 varies its order up to 13;
+            // the commons-math3 implementation is fixed-order, and order 5 is where
+            // its Nordsieck start-up stays stable at the tolerances used here.
+            this.accurateODESolver = new AdamsMoultonIntegrator(5, minStep, maxStep, tol, tol);
+            this.fastStiffODESolver = newStiff(minStep, maxStep, tol, 3, 3);
+            this.accurateStiffODESolver = newStiff(minStep, maxStep, tol, 12, 5);
+            this.defaultFastODESolver = this.fastODESolver;
+            this.defaultAccurateODESolver = this.accurateODESolver;
+            this.defaultFastStiffODESolver = this.fastStiffODESolver;
+            this.defaultAccurateStiffODESolver = this.accurateStiffODESolver;
+        }
+
+        /**
+         * The stiff integrator to use over {@code [t0,t1]}.
+         *
+         * <p>MATLAB's {@code odeset} leaves {@code MaxStep} at {@code 0.1*|tf-t0|}
+         * unless the caller pins it, and every MATLAB fluid ODE call but
+         * {@code solver_fluid_kp} takes that default. The JAR left the step
+         * unbounded, and an unbounded step lets LSODA's Nordsieck interpolation
+         * drift off a fixed point by ~1e-6 instead of settling on it, so a closed
+         * model's throughputs stopped balancing flow. The bound is applied only to
+         * the built-in integrators and only while {@code odemaxstep} is infinite,
+         * so an integrator or a maximum step the caller supplied is left alone.</p>
+         *
+         * @param t0   window start
+         * @param t1   window end
+         * @param tol  absolute and relative tolerance
+         * @param fast true for the coarse-tolerance integrator
+         * @return the integrator to drive over this window
+         */
+        public LSODA stiffIntegratorFor(double t0, double t1, double tol, boolean fast) {
+            LSODA chosen = fast ? this.fastStiffODESolver : this.accurateStiffODESolver;
+            LSODA builtin = fast ? this.defaultFastStiffODESolver : this.defaultAccurateStiffODESolver;
+            double maxStep = defaultMaxStep(t0, t1);
+            if (chosen != builtin || maxStep <= 0) {
+                return chosen;
+            }
+            return fast ? newStiff(this.odeminstep, maxStep, tol, 3, 3)
+                    : newStiff(this.odeminstep, maxStep, tol, 12, 5);
+        }
+
+        /**
+         * The stiff slot's integrator, pinned to the BDF half.
+         *
+         * <p>MATLAB fills this slot with {@code @ode15s} and the native Python with
+         * scipy's BDF, both A-stable. LSODA is an Adams/BDF auto-switcher that STARTS
+         * on Adams, and its Adams half loses its stability bound at a fixed point,
+         * where the corrector converges before the eigenvalue estimate behind that
+         * bound is taken: the step then grows to MaxStep and the solution wanders
+         * around the fixed point at the amplitude the error test tolerates instead of
+         * settling on it. On Delay(1) -> PS(0.8), N=4 at tol=1e-4 that is 2.5e-5 of
+         * queue length after 200 windows, against 1e-12 in both references, and it
+         * grows with the horizon. Pinning the BDF half makes this slot the ode15s
+         * twin it is documented to be; it also took FEWER steps on that model.</p>
+         */
+        private LSODA newStiff(double minStep, double maxStep, double tol, int maxOrderN, int maxOrderS) {
+            LSODAExt s = new LSODAExt(minStep, maxStep, tol, tol, maxOrderN, maxOrderS, 10000000);
+            s.setForceStiff(true);
+            return s;
+        }
+
+        /**
+         * The non-stiff integrator to use over {@code [t0,t1]}, under the same
+         * {@code odeset} MaxStep default as {@link #stiffIntegratorFor}.
+         *
+         * @param t0   window start
+         * @param t1   window end
+         * @param tol  absolute and relative tolerance
+         * @param fast true for the coarse-tolerance integrator
+         * @return the integrator to drive over this window
+         */
+        public FirstOrderIntegrator integratorFor(double t0, double t1, double tol, boolean fast) {
+            FirstOrderIntegrator chosen = fast ? this.fastODESolver : this.accurateODESolver;
+            FirstOrderIntegrator builtin = fast ? this.defaultFastODESolver : this.defaultAccurateODESolver;
+            double maxStep = defaultMaxStep(t0, t1);
+            if (chosen != builtin || maxStep <= 0) {
+                return chosen;
+            }
+            return fast ? new BogackiShampine23Integrator(this.odeminstep, maxStep, tol, tol)
+                    : new AdamsMoultonIntegrator(5, this.odeminstep, maxStep, tol, tol);
+        }
+
+        /** MATLAB odeset's MaxStep default, or 0 when the caller already pinned one. */
+        private double defaultMaxStep(double t0, double t1) {
+            if (!Double.isInfinite(this.odemaxstep)) {
+                return 0;
+            }
+            double width = Math.abs(t1 - t0);
+            return (width > 0 && !Double.isInfinite(width)) ? 0.1 * width : 0;
+        }
+
+        /**
+         * Returns a copy for a cloned SolverOptions. Integrators carry mutable state
+         * (step handlers, and LSODA's whole working set), so each copy gets its own
+         * instance of every DEFAULT integrator -- but an integrator the caller
+         * assigned is carried over as-is, because there is no way to rebuild it and
+         * silently replacing it would discard the caller's choice.
+         *
+         * @param tol tolerance for the rebuilt default integrators
+         * @return the copy
+         */
+        public ODESolvers copy(double tol) {
+            ODESolvers cloned = new ODESolvers();
+            cloned.setDefaults(this.odeminstep, this.odemaxstep, tol);
+            if (this.fastODESolver != this.defaultFastODESolver) {
+                cloned.fastODESolver = this.fastODESolver;
+            }
+            if (this.accurateODESolver != this.defaultAccurateODESolver) {
+                cloned.accurateODESolver = this.accurateODESolver;
+            }
+            if (this.fastStiffODESolver != this.defaultFastStiffODESolver) {
+                cloned.fastStiffODESolver = this.fastStiffODESolver;
+            }
+            if (this.accurateStiffODESolver != this.defaultAccurateStiffODESolver) {
+                cloned.accurateStiffODESolver = this.accurateStiffODESolver;
+            }
+            return cloned;
+        }
     }
 }

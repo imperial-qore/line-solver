@@ -42,23 +42,22 @@ public class SwitchoverTimesModel {
         
         // Block 1: nodes
         Source source = new Source(model, "mySource");
-        Queue queue = new Queue(model, "myQueue", SchedStrategy.POLLING); // Use POLLING to support switchover
+        Queue queue = new Queue(model, "myQueue", SchedStrategy.FCFS);
         Sink sink = new Sink(model, "mySink");
         
         // Block 2: classes
         OpenClass oclass1 = new OpenClass(model, "myClass1");
         source.setArrival(oclass1, new Exp(0.2));
-        queue.setService(oclass1, new Exp(0.5));  // Service rate must exceed arrival rate for stability
+        queue.setService(oclass1, new Exp(0.1));
         
         OpenClass oclass2 = new OpenClass(model, "myClass2");
         source.setArrival(oclass2, new Exp(0.8));
         queue.setService(oclass2, new Exp(1.5));
         
-        // Set switchover times between job classes
-        // In MATLAB: queue.setSwitchover(oclass1, oclass2, Exp(1))
-        // In MATLAB: queue.setSwitchover(oclass2, oclass1, Erlang(1,2))
-        queue.setSwitchover(oclass1, new Exp(1.0));        // Exponential switchover time for class 1
-        queue.setSwitchover(oclass2, new Erlang(1.0, 2));  // Erlang(rate=1.0, phases=2) switchover time for class 2
+        // The switchover is PAIRWISE in the reference: a cost to switch from one
+        // class to the other, not one cost per class.
+        queue.setSwitchover(oclass1, oclass2, new Exp(1.0));
+        queue.setSwitchover(oclass2, oclass1, new Erlang(1.0, 2));
         
         // Block 3: topology
         RoutingMatrix routingMatrix = model.initRoutingMatrix();

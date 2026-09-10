@@ -50,7 +50,7 @@ public class OpenNHPPModel {
         queue.setService(jobclass, new Exp(10));
 
         // Block 3: topology
-        model.link(model.serialRouting(source, queue, sink));
+        model.link(Network.serialRouting(source, queue, sink));
 
         return model;
     }

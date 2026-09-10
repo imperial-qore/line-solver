@@ -174,48 +174,111 @@ classdef LayeredNetwork < Model & Ensemble
             self.usedFeatures = usedFeatures;
         end
 
+        function T = findSolver(self, metric, showAll)
+            % T = FINDSOLVER(METRIC, SHOWALL)
+            %
+            % Which solvers and solver methods can analyze this layered model.
+            %
+            %   model.findSolver()               every runnable (solver, method) pair
+            %   model.findSolver('tran')         ... that returns transients
+            %   model.findSolver('', true)       also the refused pairs, and why
+            %
+            % One row per pair, with columns Solver, Method, Runnable, Class
+            % ('exact', 'approx', 'bound' or 'simulation'), Metrics and Reason.
+            % Method is the method name to pass as a solver method, so a row can be
+            % acted on directly.
+            %
+            % FINDMETHOD and HELP are aliases.
+            %
+            % On a LayeredNetwork the families in play are the ones
+            % FAMILYACCEPTSMODELCLASS admits for one, 'ln' and 'lqns'; the flat
+            % Network families describe what they accept INSIDE a layer and
+            % answering with them would answer a question that was not asked.
+            %
+            % See also SolverAUTO.findSolver, LayeredNetwork.getUsedLangFeatures
+            if nargin < 2
+                metric = '';
+            end
+            if nargin < 3
+                showAll = false;
+            end
+            % The guard covers the CONSTRUCTION as well as the walk:
+            % SolverAUTO probes every candidate with supports(model) as it
+            % builds them, and a report must not print.
+            verboseGuard = GlobalConstants.pushVerbose(VerboseLevel.SILENT); %#ok<NASGU>
+            T = SolverAUTO(self, 'verbose', 0).findSolver(metric, showAll);
+        end
+
+        function T = findMethod(self, metric, showAll)
+            % T = FINDMETHOD(METRIC, SHOWALL)
+            % Alias of FINDSOLVER; see LayeredNetwork.findSolver.
+            if nargin < 2
+                metric = '';
+            end
+            if nargin < 3
+                showAll = false;
+            end
+            T = self.findSolver(metric, showAll);
+        end
+
+        function T = help(self, metric, showAll)
+            % T = HELP(METRIC, SHOWALL)
+            % Alias of FINDSOLVER; see LayeredNetwork.findSolver. It shadows
+            % the builtin HELP for LayeredNetwork objects, deliberately: an
+            % object handed to HELP is a question about that model, and the
+            % class documentation is still reached by name as
+            % `help LayeredNetwork`.
+            if nargin < 2
+                metric = '';
+            end
+            if nargin < 3
+                showAll = false;
+            end
+            T = self.findSolver(metric, showAll);
+        end
+
         function view(self)
             jlqnmodel = JLINE.from_line_layered_network(self);
             jlqnmodel.view();
         end
 
         function result = nodeIndex(self, varargin)
-            % NODEINDEX Kotlin-style alias for getNodeIndex
+            % NODEINDEX Alias for getNodeIndex
             result = self.getNodeIndex(varargin{:});
         end
 
         function result = nodeByName(self, varargin)
-            % NODEBYNAME Kotlin-style alias for getNodeByName
+            % NODEBYNAME Alias for getNodeByName
             result = self.getNodeByName(varargin{:});
         end
 
         function result = nodeNames(self, varargin)
-            % NODENAMES Kotlin-style alias for getNodeNames
+            % NODENAMES Alias for getNodeNames
             result = self.getNodeNames(varargin{:});
         end
 
         function result = struct(self, varargin)
-            % STRUCT Kotlin-style alias for getStruct
+            % STRUCT Alias for getStruct
             result = self.getStruct(varargin{:});
         end
 
         function result = numberOfLayers(self, varargin)
-            % NUMBEROFLAYERS Kotlin-style alias for getNumberOfLayers
+            % NUMBEROFLAYERS Alias for getNumberOfLayers
             result = self.getNumberOfLayers(varargin{:});
         end
 
         function result = numberOfModels(self, varargin)
-            % NUMBEROFMODELS Kotlin-style alias for getNumberOfModels
+            % NUMBEROFMODELS Alias for getNumberOfModels
             result = self.getNumberOfModels(varargin{:});
         end
 
         function result = layers(self, varargin)
-            % LAYERS Kotlin-style alias for getLayers
+            % LAYERS Alias for getLayers
             result = self.getLayers(varargin{:});
         end
 
         function result = usedLangFeatures(self, varargin)
-            % USEDLANGFEATURES Kotlin-style alias for getUsedLangFeatures
+            % USEDLANGFEATURES Alias for getUsedLangFeatures
             result = self.getUsedLangFeatures(varargin{:});
         end
 

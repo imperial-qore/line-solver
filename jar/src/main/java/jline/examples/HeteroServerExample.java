@@ -28,6 +28,7 @@ public class HeteroServerExample {
         example1_basic();
         example2_compatibility();
         example3_policies();
+        example4_parallelism();
     }
 
     /**
@@ -63,6 +64,11 @@ public class HeteroServerExample {
 
         // Set scheduling policy for heterogeneous servers
         queue.setHeteroSchedPolicy(HeteroSchedPolicy.FSF);  // Fastest Server First
+
+        // The class-level service is what JMT actually runs every pool at: its
+        // loader keys the ServiceStrategy array by class, so the per-pool rates
+        // below reach SolverLDES and SolverCTMC but not the JMT engine.
+        queue.setService(jobClass, new Exp(1.5));
 
         // Set service rates per server type
         queue.setService(jobClass, fastServers, new Exp(2.0));  // Fast: rate 2.0
@@ -132,6 +138,10 @@ public class HeteroServerExample {
         // Set scheduling policy
         queue.setHeteroSchedPolicy(HeteroSchedPolicy.FSF);
 
+        // The class-level service is what the JMT engine runs every pool at
+        queue.setService(classA, new Exp(1.5));
+        queue.setService(classB, new Exp(1.5));
+
         // Set service rates per (class, server type)
         queue.setService(classA, fastServers, new Exp(2.0));
         queue.setService(classA, slowServers, new Exp(1.0));
@@ -190,6 +200,7 @@ public class HeteroServerExample {
             queue.addServerType(slow);
             queue.setHeteroSchedPolicy(policy);
 
+            queue.setService(jobClass, new Exp(1.5));
             queue.setService(jobClass, fast, new Exp(2.0));
             queue.setService(jobClass, slow, new Exp(1.0));
 
@@ -215,5 +226,47 @@ public class HeteroServerExample {
         }
 
         System.out.println("Examples completed!");
+    }
+
+    /**
+     * Example 4: Job parallelism, the servers a job seizes for its whole service.
+     *
+     * A saturated four-server station at rate 10 clears floor(4/n) jobs at a time,
+     * so its throughput drops from 40 to 20 to 10 as n goes 1, 2, 4.
+     */
+    public static void example4_parallelism() {
+        System.out.println("=== Example 4: Job Parallelism ===\n");
+
+        for (int n : new int[]{1, 2, 4}) {
+            Network model = new Network("Parallelism" + n);
+
+            Source source = new Source(model, "Source");
+            Queue queue = new Queue(model, "ParQueue", SchedStrategy.FCFS);
+            Sink sink = new Sink(model, "Sink");
+
+            OpenClass jobClass = new OpenClass(model, "Jobs");
+            source.setArrival(jobClass, new Exp(1000.0));  // saturated
+            queue.setNumberOfServers(4);
+            queue.setService(jobClass, new Exp(10.0));
+            queue.setServerParallelism(jobClass, n);
+
+            model.link(Network.serialRouting(source, queue, sink));
+
+            try {
+                SolverJMT solver = new SolverJMT(model);
+                solver.options.seed = 23000;
+                NetworkAvgTable results = solver.getAvgTable();
+                for (int i = 0; i < results.getStationNames().size(); i++) {
+                    if ("ParQueue".equals(results.getStationNames().get(i))) {
+                        System.out.printf("  servers seized = %d, throughput = %.2f (expected %d)%n",
+                                n, results.getTput().get(i), (4 / n) * 10);
+                        break;
+                    }
+                }
+            } catch (Exception e) {
+                System.out.println("  Error: " + e.getMessage());
+            }
+        }
+        System.out.println();
     }
 }

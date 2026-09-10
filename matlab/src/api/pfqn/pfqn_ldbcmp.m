@@ -29,7 +29,8 @@ function [Xlo,Rhi,Qhat] = pfqn_ldbcmp(L,N,Z,c,varargin)
  %          rho_i/(1-rho_i); c(i)>0 a Heffes LD station with open queue
  %          (c(i)+1)*rho_i/(1-rho_i) (their eq. 22-23). The bottleneck is
  %          assumed fixed-rate (population transform (7) reduces to N'=N).
- % @param tol Fixed-point tolerance for Algorithm 1 (default 1e-10).
+ % @param varargin Optional trailing arguments, in order: tol, the fixed-point
+ %          tolerance for Algorithm 1 (default 1e-10).
  % @return Xlo Lower bound on system throughput X(N); NaN if N < Qhat.
  % @return Rhi Upper bound on system response+think time, N/Xlo (Little).
  % @return Qhat Sum of non-bottleneck limiting queue lengths (eq. 11).

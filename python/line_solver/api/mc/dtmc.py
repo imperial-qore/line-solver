@@ -11,12 +11,29 @@ Key algorithms:
     dtmc_simulate: Sample path simulation
 """
 
+import hashlib
+from collections import OrderedDict
+
 import numpy as np
 from numpy.linalg import LinAlgError
 from scipy import linalg
+from scipy.sparse import issparse
 from typing import Dict, Any, Optional, List
 
 from .ctmc import GMRES_MIN_STATES, ctmc_solve, _find_weakly_connected_components
+
+
+# dtmc_solve is a pure function of P alone, and the layered fixed point asks it the
+# same question over and over: one SolverLN(SolverMVA) solve of lqn_ofbiz issues 2410
+# calls carrying ONE distinct matrix, because a layer's routing topology does not
+# change between iterations -- only its rates do, and visits do not depend on rates.
+#
+# The key is the matrix's raw BYTES, not a hash alone: a hit re-compares them, so a
+# digest collision cannot return another matrix's answer. Bytes also keep -0.0 and
+# NaN distinct from +0.0 and each other, which makes the cache conservative rather
+# than clever. Entries are copied in and out so no caller can mutate a cached answer.
+_DTMC_SOLVE_CACHE = OrderedDict()
+_DTMC_SOLVE_CACHE_MAX = 32
 
 
 def dtmc_solve(P: np.ndarray) -> np.ndarray:
@@ -35,7 +52,17 @@ def dtmc_solve(P: np.ndarray) -> np.ndarray:
     Returns:
         Steady-state probability distribution (1D array)
     """
+    # ctmc_solve is dense-backed, so a sparse transition matrix is expanded here
+    if issparse(P):
+        P = P.toarray()
     P = np.asarray(P, dtype=np.float64)
+
+    raw = np.ascontiguousarray(P).tobytes()
+    ck = (P.shape, hashlib.blake2b(raw, digest_size=16).digest())
+    hit = _DTMC_SOLVE_CACHE.get(ck)
+    if hit is not None and hit[0] == raw:
+        _DTMC_SOLVE_CACHE.move_to_end(ck)
+        return hit[1].copy()
 
     # Convert to "generator" form: Q = P - I
     # This has the property that πQ = π(P-I) = πP - π = 0 when πP = π
@@ -44,7 +71,12 @@ def dtmc_solve(P: np.ndarray) -> np.ndarray:
     for i in range(n):
         Q[i, i] -= 1.0
 
-    return ctmc_solve(Q)
+    pi = ctmc_solve(Q)
+    _DTMC_SOLVE_CACHE[ck] = (raw, np.array(pi, copy=True))
+    _DTMC_SOLVE_CACHE.move_to_end(ck)
+    while len(_DTMC_SOLVE_CACHE) > _DTMC_SOLVE_CACHE_MAX:
+        _DTMC_SOLVE_CACHE.popitem(last=False)
+    return pi
 
 
 def dtmc_solve_reducible(P: np.ndarray, pin: np.ndarray = None) -> np.ndarray:
@@ -70,6 +102,8 @@ def dtmc_solve_reducible(P: np.ndarray, pin: np.ndarray = None) -> np.ndarray:
     from scipy.sparse.csgraph import connected_components
     from scipy.sparse import csc_matrix
 
+    if issparse(P):
+        P = P.toarray()
     P = np.asarray(P, dtype=np.float64)
     n = P.shape[0]
 
@@ -152,25 +186,36 @@ def dtmc_solve_reducible(P: np.ndarray, pin: np.ndarray = None) -> np.ndarray:
     PI = _compute_limiting_matrix_power(Pl)
 
     # Compute stationary distribution for each starting SCC
+    # Each SCC's internal stationary vector depends only on that SCC, not on where
+    # the chain started, so solve it ONCE per SCC and reuse it across the rows
+    # below. Solving it inside the (i, j) loop costs num_scc^2 solves for num_scc
+    # distinct answers.
+    scc_pi = [None] * num_scc
+    for j in range(num_scc):
+        states_j = scc_idx[j]
+        if len(states_j) > 1:
+            scc_pi[j] = dtmc_solve(P[np.ix_(states_j, states_j)])
+
+    # Fill a row for EVERY SCC, not only those with pinl[i] > 0. The rows are
+    # addressed by SCC index below ("pis[transient_sccs[0], :]"), so a row left
+    # unfilled is not absent, it is a row of ZEROS masquerading as a
+    # distribution: the single-transient-SCC branch would then return an
+    # all-zero vector for a start whose SCC happened to carry no initial mass.
+    # The mixture below still uses pinl, so pi is unchanged.
     pis = np.zeros((num_scc, n))
     for i in range(num_scc):
-        if pinl[i] > 1e-10:
-            # Compute limiting distribution starting from SCC i
-            pi0_l = np.zeros(num_scc)
-            pi0_l[i] = 1.0
-            pil_i = pi0_l @ PI
+        # Compute limiting distribution starting from SCC i
+        pi0_l = np.zeros(num_scc)
+        pi0_l[i] = 1.0
+        pil_i = pi0_l @ PI
 
-            # For each SCC, solve internal stationary distribution
-            for j in range(num_scc):
-                if pil_i[j] > 1e-10:
-                    states_j = scc_idx[j]
-                    if len(states_j) == 1:
-                        pis[i, states_j[0]] = pil_i[j]
-                    else:
-                        # Solve internal DTMC
-                        Pj = P[np.ix_(states_j, states_j)]
-                        pij = dtmc_solve(Pj)
-                        pis[i, states_j] = pil_i[j] * pij
+        for j in range(num_scc):
+            if pil_i[j] > 1e-10:
+                states_j = scc_idx[j]
+                if len(states_j) == 1:
+                    pis[i, states_j[0]] = pil_i[j]
+                else:
+                    pis[i, states_j] = pil_i[j] * scc_pi[j]
 
     # Combine distributions weighted by initial SCC probabilities
     pi = np.zeros(n)
@@ -447,6 +492,49 @@ def dtmc_stochcomp(
     return S
 
 
+def dtmc_stochcomp_full(
+    P: np.ndarray,
+    keep_states: np.ndarray,
+    eliminate_states: Optional[np.ndarray] = None
+) -> Dict[str, np.ndarray]:
+    """
+    Stochastic complement of a DTMC together with its blocks.
+
+    Same computation as dtmc_stochcomp, additionally returning the four blocks
+    of the transition matrix partitioned by the kept and the eliminated states.
+    Twin of the MATLAB [S,P11,P12,P21,P22] = dtmc_stochcomp(P,I) and of the JAR
+    dtmc_stochcomp_full.
+
+    Args:
+        P: Transition probability matrix
+        keep_states: States to retain in reduced model
+        eliminate_states: States to eliminate (optional, inferred if None)
+
+    Returns:
+        dict with 'S', 'P11', 'P12', 'P21', 'P22'
+    """
+    P = np.asarray(P, dtype=np.float64)
+    keep_states = np.asarray(keep_states, dtype=int).flatten()
+
+    n = P.shape[0]
+    if eliminate_states is None:
+        eliminate_states = np.array(sorted(set(range(n)) - set(keep_states)), dtype=int)
+    else:
+        eliminate_states = np.asarray(eliminate_states, dtype=int).flatten()
+
+    S = dtmc_stochcomp(P, keep_states, eliminate_states)
+    I = keep_states
+    Ic = eliminate_states
+    empty = np.zeros((len(I), 0))
+    return {
+        'S': S,
+        'P11': P[np.ix_(I, I)],
+        'P12': P[np.ix_(I, Ic)] if len(Ic) else empty,
+        'P21': P[np.ix_(Ic, I)] if len(Ic) else empty.T,
+        'P22': P[np.ix_(Ic, Ic)] if len(Ic) else np.zeros((0, 0)),
+    }
+
+
 def dtmc_transient(
     P: np.ndarray,
     initial_dist: np.ndarray,
@@ -533,6 +621,7 @@ __all__ = [
     'dtmc_rand',
     'dtmc_timereverse',
     'dtmc_stochcomp',
+    'dtmc_stochcomp_full',
     'dtmc_transient',
     'dtmc_hitting_time',
 ]

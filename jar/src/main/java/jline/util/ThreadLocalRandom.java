@@ -11,7 +11,7 @@ package jline.util;
  * 
  * @deprecated Use RandomManager directly for new code. This class is maintained for backward compatibility.
  */
-
+@Deprecated
 public class ThreadLocalRandom {
 
     /**

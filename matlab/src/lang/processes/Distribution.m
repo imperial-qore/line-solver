@@ -114,6 +114,19 @@ classdef Distribution < Copyable
     end
     
     methods
+        function featName = getFeatureName(self)
+            % FEATNAME = GETFEATURENAME()
+            % The SolverFeatureSet entry this distribution is marked under by
+            % getUsedLangFeatures.
+            %
+            % Separate from NAME because that one also selects the ProcessType
+            % and the JSON wire type: a subclass whose registry name is more
+            % specific than its process type (a Trace, or a two-phase Coxian)
+            % says so here without moving to a different process type. Defaults
+            % to NAME, so a distribution needing no distinction is unaffected.
+            featName = self.name;
+        end
+
         function nParam = setNumParams(self, numParam)
             % NPARAM = SETNUMPARAMS(NUMPARAM)
             % Initializes the parameters

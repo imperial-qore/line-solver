@@ -15,6 +15,14 @@ if strcmp(self.getOptions.lang,'java')
     % native JMT path; the JLINE (lang=java) delegation does not produce them.
     line_error(mfilename,'SolverJMT log-based sampling (sampleAggr/getProbAggr) is not supported with lang=''java''. Use lang=''matlab'' or SolverCTMC.');
 end
+if strcmp(self.getOptions.lang,'cpp')
+    % Same reason as lang='java', and see sampleSysAggr: the trajectory is read
+    % back from the per-node CSV logs linkAndLog asks JMT to write, and
+    % line-cli's -s jmt arm reports an AvgTable rather than writing them.
+    CPPLINE.cppUnsupported(self.name, 'sampleAggr/getProbAggr', ...
+        ['log-based sampling reads the per-node CSV logs linkAndLog asks JMT to write, and ' ...
+        'line-cli''s -s jmt arm reports an AvgTable rather than writing them']);
+end
 
 if nargin<4
     markActivePassive = false;

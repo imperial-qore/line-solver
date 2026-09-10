@@ -18,6 +18,8 @@ from math import log, exp, comb, factorial
 from typing import Tuple, List, Optional
 from dataclasses import dataclass
 
+from ..perm import compute_permanent
+
 
 @dataclass
 class LcfsqnNcResult:
@@ -187,7 +189,9 @@ def _perm_with_population(A: np.ndarray, N: np.ndarray) -> float:
                 expanded_matrix[row_idx, :A.shape[1]] = A[r, :]
             row_idx += 1
 
-    return _ryser_permanent(expanded_matrix)
+    # Routed through the shared permanent so the expansion picks the
+    # better-conditioned orientation; see _kb/03-api-layer.md.
+    return compute_permanent(expanded_matrix)
 
 
 def pfqn_lcfsqn_nc(alpha: np.ndarray, beta: np.ndarray,

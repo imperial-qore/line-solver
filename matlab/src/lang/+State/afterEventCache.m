@@ -13,29 +13,9 @@ switch event
     case EventType.DEP
         if space_srv(class)>0
             % A retrieval-class job departs the cache only to BEGIN a retrieval
-            % (cache -> queue); record the item in the per-item occupancy bitmap.
+            % (cache -> queue). The per-item occupancy bit is already set by the
+            % READ that started the fetch, so the departure only moves the job.
             beginBlocked = false;
-            if isfield(sn.nodeparam{ind}, 'retrievalClassIndices')
-                rciDep = sn.nodeparam{ind}.retrievalClassIndices;
-            else
-                rciDep = [];
-            end
-            if any(rciDep == class)
-                if isfield(sn.nodeparam{ind}, 'totalCacheCapacity')
-                    tccDep = sn.nodeparam{ind}.totalCacheCapacity;
-                else
-                    tccDep = sum(sn.nodeparam{ind}.itemcap);
-                end
-                pDep = sn.nodeparam{ind}.pread{class};
-                item = find(pDep == 1, 1, 'first'); % retrieval class reads its one-hot item
-                if ~isempty(item) && (tccDep + item <= size(space_var,2))
-                    if any(space_var(:, tccDep + item) ~= 0)
-                        beginBlocked = true; % already retrieving this item -> no transition
-                    else
-                        space_var(:, tccDep + item) = 1;
-                    end
-                end
-            end
             if ~beginBlocked
                 space_srv(:,class) = space_srv(:,class) - 1;
                 switch sn.routing(ind,class)
@@ -74,6 +54,31 @@ switch event
             retrievalClassIndices = sn.nodeparam{ind}.retrievalClassIndices;
         else
             retrievalClassIndices = [];
+        end
+        % Block B of the local-variable vector: per-retrieval-class counts of the
+        % secondary requests merged onto an in-flight fetch (see State.spaceCache).
+        % Its width and truncation level are read off the node state space rather
+        % than from nodeparam, because ctmc_ssg propagates only sn.space back from
+        % the state-space generator.
+        [rcList, rcItems, rcOrigClass] = State.cacheRetrievalClassMap(sn, ind);
+        blockBOffset = totalCacheCapacity + n;
+        widthB = size(space_var,2) - blockBOffset;
+        if widthB ~= numel(rcList)
+            widthB = 0;
+        end
+        % Simulation has no enumerated state space, hence no truncation: a fetch may
+        % absorb any number of secondary requests.
+        if isSimulation
+            maxPending = Inf;
+        else
+            maxPending = 0;
+            if widthB > 0
+                isfc = sn.nodeToStateful(ind);
+                if ~isempty(sn.space) && numel(sn.space) >= isfc && ~isempty(sn.space{isfc})
+                    spc = sn.space{isfc};
+                    maxPending = max(sum(spc(:, (size(spc,2)-widthB+1):end), 2));
+                end
+            end
         end
         if space_srv(class)>0 && sum(space_srv)==1 %  a job of class is in
             p = sn.nodeparam{ind}.pread{class};
@@ -127,14 +132,23 @@ switch event
                             end
 
                             % Begin a retrieval: the job switches to the retrieval class for
-                            % item k. The occupancy bitmap is set on the subsequent DEP (when
-                            % the job departs the cache for the queue), so the cache contents
-                            % are unchanged here. A concurrent request for an item already
-                            % being retrieved is served by the in-flight retrieval and exits
-                            % (its class is not incremented, so the job is absorbed).
+                            % item k and item k is marked as being fetched. A concurrent
+                            % request for an item already being fetched is a delayed hit: it
+                            % merges onto the in-flight fetch, and is held in block B until
+                            % that fetch completes.
                             if ~isFromRetrieval && rClass ~= -1
                                 if ~inRetrieval
                                     space_srv_e(rClass) = space_srv_e(rClass) + 1;
+                                    if totalCacheCapacity + k <= size(var,2)
+                                        var(totalCacheCapacity + k) = 1;
+                                    end
+                                else
+                                    bslot = find(rcList == rClass, 1);
+                                    bcol = blockBOffset + bslot;
+                                    if isempty(bslot) || bcol > size(var,2) || sum(var((blockBOffset+1):end)) >= maxPending
+                                        continue % beyond the delayed-hit truncation level
+                                    end
+                                    var(bcol) = var(bcol) + 1;
                                 end
                                 space_srv_k = [space_srv_k; space_srv_e];
                                 space_var_k = [space_var_k; var];
@@ -148,10 +162,21 @@ switch event
                             end
 
                             % Item has now been retrieved (or there is no retrieval system):
-                            % mark it as a miss and clear its retrieval-system bit.
+                            % mark it as a miss and clear its retrieval-system bit. Every
+                            % secondary request merged onto this fetch is released in the same
+                            % transition and departs as a delayed hit, in the hit class of the
+                            % job class that issued it.
                             space_srv_e(missclass(class)) = space_srv_e(missclass(class)) + 1;
                             if totalCacheCapacity + k <= size(var,2)
                                 var(totalCacheCapacity + k) = 0;
+                            end
+                            for bslot = find(rcItems == k)
+                                bcol = blockBOffset + bslot;
+                                if bcol <= size(var,2) && var(bcol) > 0
+                                    hc = hitclass(rcOrigClass(bslot));
+                                    space_srv_e(hc) = space_srv_e(hc) + var(bcol);
+                                    var(bcol) = 0;
+                                end
                             end
                             switch replacement_id
                                 case {ReplacementStrategy.FIFO, ReplacementStrategy.LRU, ReplacementStrategy.SFIFO, ReplacementStrategy.HLRU}

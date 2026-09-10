@@ -11,7 +11,8 @@ function p_est = perm_heur(A)
 % 4. Scales the result back to the original matrix scale
 %
 % Input:
-%   A - Positive matrix (all elements must be > 0)
+%   A - Strictly positive matrix (all elements must be > 0; a zero entry is
+%       refused by PERM_REQUIRE_SUPPORT rather than floored)
 %
 % Output:
 %   p_est - Approximate permanent value
@@ -29,21 +30,30 @@ n = size(A, 1);
 tol = 1e-10;
 maxiter = 1000;
 
-% Add small epsilon to zeros to ensure positivity for Sinkhorn scaling
-epsilon = 1e-15;
+% A zero used to be replaced by 1e-15 here. That is not invertible: it changes
+% the permanent by n!*eps, which is O(1) by n=18. Refuse instead.
+perm_require_support(A, mfilename);
 B = A;
-B(B == 0) = epsilon;
 
 % Sinkhorn scaling to make matrix approximately doubly stochastic
 r = ones(n, 1);
 c = ones(n, 1);
 
+converged = false;
 for iter = 1:maxiter
     r = 1 ./ (B * c);
     c = 1 ./ (B' * r);
     if max(abs(r .* (B * c) - 1)) < tol
+        converged = true;
         break;
     end
+end
+if ~converged
+    line_error(mfilename, ['The Sinkhorn scaling did not converge to a doubly ' ...
+        'stochastic matrix in %d sweeps (margin error %g against a tolerance of ' ...
+        '%g). The estimate below assumes convergence, so no value is returned. ' ...
+        'The usual cause is a matrix without total support.'], ...
+        maxiter, max(abs(r .* (B * c) - 1)), tol);
 end
 B = diag(r) * B * diag(c);
 

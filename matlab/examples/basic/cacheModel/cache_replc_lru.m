@@ -28,16 +28,16 @@ P{missClass, jobClass}(cacheNode, delay) =  1.0;
 
 model.link(P);
 
-solver{1} = CTMC(model,'keep',false);
+solver{1} = CTMC(model, 'exact','keep',false);
 AvgTable{1} = solver{1}.getAvgNodeTable; AvgTable{1}
 
 model.reset;
-solver{2} = SSA(model,'samples',1e4,'verbose',true,'method','serial','seed',23000);
+solver{2} = SSA(model,'samples',1e5,'verbose',true,'method','serial','seed',23000);
 AvgTable{2} = solver{2}.getAvgNodeTable; AvgTable{2}
 
 solver{3} = MVA(model);
 AvgTable{3} = solver{3}.getAvgNodeTable; AvgTable{3}
 
-model.reset;
-solver{4} = FLD(model,'method','rmf');
-AvgTable{4} = solver{4}.getAvgNodeTable; AvgTable{4}
+% No SolverFLD row: LRU has no drift-based fluid model, so the refined mean
+% field carries RANDOM(m)/FIFO(m) and strict FIFO(m) only (see
+% solver_fld_cacheqn_analyzer). Use CTMC/SSA/MVA/LDES for an LRU cache.

@@ -1,5 +1,5 @@
 classdef LDES < SolverLDES
-    % LDES - Alias for SolverLDES (LINE Discrete Event Simulator)
+    % LDES - Alias for SolverLDES
     %
     % Copyright (c) 2012-2026, Imperial College London
     % All rights reserved.

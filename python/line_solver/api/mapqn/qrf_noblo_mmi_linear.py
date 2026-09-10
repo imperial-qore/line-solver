@@ -2,7 +2,7 @@
 QRF No-Blocking NLP with Linear Constraint Matrices.
 
 Builds sparse Aeq/beq and A/b matrices for linear constraints, then
-solves an NLP with nonlinear objective (MEM) subject to these linear
+solves an NLP with nonlinear objective (MMI) subject to these linear
 constraints. This is computationally more efficient than callback-based
 constraints for larger problems.
 
@@ -19,22 +19,31 @@ mieq == 0 branch tops the buffer up by 2*n*(n+1), which is why an otherwise
 identical problem without inequality rows survives.
 
 Port of MATLAB qrf_noblo_mmi_linear.m.
-Note: Despite the filename containing 'mmi', the MATLAB implementation
-uses the MEM objective. This port faithfully reproduces that behavior.
+
+The 'linear' in the name is about HOW the constraints are built -- emitted
+directly as sparse matrices rather than recovered from a residual callback --
+not about which they are, and not about the objective, which is the nonlinear
+MMI. Until 2026-08-29 the MATLAB reference called its own mem() here (its
+mmi() survived only in a commented-out line) and all three ports mirrored
+that, so the token named for mutual-information minimisation computed an
+entropy extremum instead.
 """
 
 import numpy as np
-from scipy.optimize import minimize
 from scipy.sparse import lil_matrix
 
 from .qrf_noblo_common import (
     sub_qrfvar,
-    mem_objective,
+    mmi_objective,
+    extract_busy,
     extract_results,
     extract_mu_v_from_maps,
     build_q_ld,
     reduce_equalities,
     feasible_start,
+    qrf_index_map,
+    solve_qrf_nlp,
+    mmi_gradient,
 )
 
 
@@ -92,7 +101,7 @@ def _deltae(i, k, M, N, K, MR):
 def qrf_noblo_mmi_linear(MAPs, N, rt, alpha=None):
     """QRF no-blocking NLP with linear constraint matrices.
 
-    Builds sparse equality/inequality matrices and uses SLSQP with MEM objective.
+    Builds sparse equality/inequality matrices and uses SLSQP with the MMI objective.
 
     Args:
         MAPs: List of [D0, D1] pairs per queue
@@ -136,31 +145,17 @@ def qrf_noblo_mmi_linear(MAPs, N, rt, alpha=None):
     # see _kb/03-api-layer.md for rationale
     x0 = feasible_start(Aeq_dense, beq_arr, Aub_dense, bub_arr, num_vars)
 
-    constraints = []
-    if Aeq_dense.shape[0] > 0:
-        constraints.append({
-            'type': 'eq',
-            'fun': lambda x: Aeq_dense @ x - beq_arr,
-        })
-    if Aub_dense.shape[0] > 0:
-        constraints.append({
-            'type': 'ineq',
-            'fun': lambda x: -(Aub_dense @ x - bub_arr),  # A*x <= b => -(A*x - b) >= 0
-        })
+    idx = qrf_index_map(M, N, K, MR)
+    xopt = solve_qrf_nlp(
+        lambda x: mmi_objective(x, M, N, K, F, MR),
+        lambda x: mmi_gradient(x, M, N, K, F, MR, idx),
+        x0, Aeq_dense, beq_arr, Aub_dense, bub_arr, 'qrf_noblo_mmi_linear')
 
-    result = minimize(
-        lambda x: mem_objective(x, M, N, K, F, MR),
-        x0,
-        method='SLSQP',
-        bounds=bounds,
-        constraints=constraints,
-        options={'maxiter': 100, 'disp': False, 'ftol': 1e-8},
-    )
-
-    p2opt, _ = sub_qrfvar(result.x, M, N, K, MR)
+    p2opt, _ = sub_qrfvar(xopt, M, N, K, MR)
     UN, QN = extract_results(p2opt, M, K, F, MR)
+    BN = extract_busy(p2opt, M, K, F, MR, alpha)
 
-    return UN, QN
+    return UN, QN, BN
 
 
 def _build_linear_constraints(q, M, MR, BB, F, N, K, num_vars):

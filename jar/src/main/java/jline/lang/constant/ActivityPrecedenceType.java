@@ -26,35 +26,63 @@ public class ActivityPrecedenceType {
     public static final String PRE_OR = "pre-OR";
     public static final String PRE_SEQ = "pre";
 
-    public static String toFeature(ActivityPrecedenceType precedenceType) {
+    /**
+     * The FeatureSet entry naming a precedence, as ActivityPrecedence stores it.
+     *
+     * The argument is the String an ActivityPrecedence carries in preType /
+     * postType, not an instance of this constant holder: this class has no
+     * instances, so the previous signature could only ever be passed null, and
+     * every branch compared a String against it and fell through to the throw.
+     * The names returned are the REGISTRY names (ActivityPrecedence_*), not the
+     * class name with "Type" in it, which matched no registry entry either.
+     *
+     * POST_LOOP has no registry entry -- LINE models a loop by its pseudo-task,
+     * not by a declared capability -- so it returns the empty string, the same
+     * "no gated capability" convention the SchedStrategy and RoutingStrategy
+     * helpers use for their internal markers.
+     *
+     * @param precedenceType the precedence type string
+     * @return the registry name, or "" when the type gates nothing
+     */
+    public static String toFeature(String precedenceType) {
         if (PRE_SEQ.equals(precedenceType)) {
-            return "ActivityPrecedenceType_PRE_SEQ";
+            return "ActivityPrecedence_PRE_SEQ";
         }
         if (PRE_AND.equals(precedenceType)) {
-            return "ActivityPrecedenceType_PRE_AND";
+            return "ActivityPrecedence_PRE_AND";
         }
         if (PRE_OR.equals(precedenceType)) {
-            return "ActivityPrecedenceType_PRE_OR";
+            return "ActivityPrecedence_PRE_OR";
         }
         if (POST_SEQ.equals(precedenceType)) {
-            return "ActivityPrecedenceType_POST_SEQ";
+            return "ActivityPrecedence_POST_SEQ";
         }
         if (POST_AND.equals(precedenceType)) {
-            return "ActivityPrecedenceType_POST_AND";
+            return "ActivityPrecedence_POST_AND";
         }
         if (POST_OR.equals(precedenceType)) {
-            return "ActivityPrecedenceType_POST_OR";
-        }
-        if (POST_LOOP.equals(precedenceType)) {
-            return "ActivityPrecedenceType_POST_LOOP";
+            return "ActivityPrecedence_POST_OR";
         }
         if (POST_CACHE.equals(precedenceType)) {
-            return "ActivityPrecedenceType_POST_CACHE";
+            return "ActivityPrecedence_POST_CACHE";
         }
-        throw new RuntimeException("Unrecognized precedence type");
+        if (POST_LOOP.equals(precedenceType)) {
+            return "";
+        }
+        throw new RuntimeException("Unrecognized precedence type: " + precedenceType);
     }
 
-    public static int toId(ActivityPrecedenceType precedenceType) {
+    /**
+     * The numeric id of a precedence, as ActivityPrecedence stores its type.
+     *
+     * Takes the type String for the same reason toFeature does: this class has
+     * no instances, so the previous signature could only be passed null and
+     * every branch fell through to the throw.
+     *
+     * @param precedenceType the precedence type string
+     * @return the ID_ constant for that type
+     */
+    public static int toId(String precedenceType) {
         if (PRE_SEQ.equals(precedenceType)) {
             return ID_PRE_SEQ;
         }

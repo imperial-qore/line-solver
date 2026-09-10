@@ -41,32 +41,33 @@ end
 
 % see _kb/03-api-layer.md (pfqn/ family: scaling, log-domain switches, dispatch gates)
 Nt = sum(N);
-lGest = -Inf;
-for i = 1:M
-    t = 0; ok = true;
-    for r = 1:R
-        if N(r) > 0
-            if L(i,r) > 0
-                t = t + N(r)*log(L(i,r));
-            else
-                ok = false; break
-            end
+% Each class independently takes whichever station -- or the delay -- gives it
+% its largest factor. The mixed state so named has term at least the product of
+% those factors, because a station holding several classes carries a multinomial
+% coefficient of at least one, so this is still a LOWER bound on log G. It
+% dominates the per-configuration maximum it replaces, which asked ONE station
+% (or the delay) to hold every class at once and so dropped the delay entirely
+% as soon as a single class had no think time. That collapse is what made the
+% scaling scale UP: on L=[1e-9,1], N=[99,1], Z=[1,0] the old estimate was the
+% all-at-the-queue -2051.6 against a true log G of -359.1, giving kscale=-30,
+% and Z/2^-30 = 1.07e9 overflowed the delay column Z^n/n! at n=[40,0].
+lGest = 0;
+for r = 1:R
+    if N(r) <= 0, continue; end
+    best = -Inf;
+    for i = 1:M
+        if L(i,r) > 0
+            best = max(best, N(r)*log(L(i,r)));
         end
     end
-    if ok, lGest = max(lGest, t); end
-end
-if any(Z > 0)                       % all jobs at the delay
-    t = 0; ok = true;
-    for r = 1:R
-        if N(r) > 0
-            if sum(Z(:,r)) > 0
-                t = t + N(r)*log(sum(Z(:,r))) - factln(N(r));
-            else
-                ok = false; break
-            end
-        end
+    if sum(Z(:,r)) > 0
+        best = max(best, N(r)*log(sum(Z(:,r))) - factln(N(r)));
     end
-    if ok, lGest = max(lGest, t); end
+    if ~isfinite(best)
+        % no station and no delay can hold class r, so G(N) is exactly zero
+        lGest = -Inf; break
+    end
+    lGest = lGest + best;
 end
 if ~isfinite(lGest)
     kscale = 0;

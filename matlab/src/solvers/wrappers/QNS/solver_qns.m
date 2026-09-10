@@ -14,6 +14,7 @@ TN = zeros(M,K);
 CN = zeros(1,K);
 XN = zeros(1,K);
 
+% see _kb/06-solver-catalog.md (Wrappers: two ways to reach an external binary)
 filePath = lineTempName('qns');
 fileName = 'model';
 fname = [fileName,'.jmva'];
@@ -43,6 +44,14 @@ switch options.method
 end
 if any(sn.nservers>1 & sn.nservers<Inf)
     line_debug('Multi-server queues detected, selecting multiserver method');
+    % The switch below has no arm for 'suri' or 'schmidt', so it used to fall
+    % through with CMD unassigned and fail at the LD_LIBRARY_PATH line with an
+    % undefined-variable error about a temporary. Ask the rule instead, which is
+    % the same one @SolverQNS/supportsModelMethod asks.
+    [msok, msreason] = qns_multiserver_refusal(sn, options.config.multiserver);
+    if ~msok
+        line_error(mfilename, '%s', msreason);
+    end
     switch options.config.multiserver
         case {'default','conway'}
             if strcmpi(options.config.multiserver, 'default')
@@ -88,15 +97,17 @@ else
     end
 end
 
-% see _kb/06-solver-catalog.md (Wrappers: LQNS/lqsim/qnsolver LD_LIBRARY_PATH GLIBCXX strip)
 if isunix
+    % see _kb/06-solver-catalog.md (Wrappers: LQNS/lqsim/qnsolver LD_LIBRARY_PATH GLIBCXX strip)
     cmd = ['env -u LD_LIBRARY_PATH ', cmd];
 end
 if GlobalConstants.Verbose == VerboseLevel.DEBUG
     line_printf('SolverQNS command:\n');
     disp(cmd)
 end
+LineConsole.step('running the qnsolver binary as a subprocess');
 system(cmd);
+LineConsole.step('parsing the qnsolver output');
 name = cell(sn.nstations*(sn.nchains+1),0);
 Uchain = zeros(0,sn.nchains);
 Qchain = zeros(0,sn.nchains);
@@ -111,7 +122,12 @@ try
     strline = 1;
     while strline>0
         strline = fgetl(fid);
-        if sn.nclasses==1
+        % The stride is set by the CHAIN count: qnsolver writes a per-chain
+        % column plus an aggregate one for each of Q, R, U and X, and drops the
+        % aggregate entirely at one chain. Switching on nclasses agrees only
+        % while classes and chains are in bijection; with class switching
+        % folding two classes into one chain it reads $U as the residence time.
+        if sn.nchains==1
             [Uchain, Qchain, Wchain, Tchain, statlabel] = parse_dollar_output_singleclass(strline, Uchain, Qchain, Wchain, Tchain);
         else
             [Uchain, Qchain, Wchain, Tchain, statlabel] = parse_dollar_output(strline, Uchain, Qchain, Wchain, Tchain);
@@ -125,6 +141,14 @@ try
 catch
     line_warning(mfilename,'Failed execution: cannot open the qnsolver output file at: ');
     line_warning(mfilename,resultFileName)
+    % qnsolver exits 0 on a parse error, so the status is no evidence and its own message is
+    % the only one; a build that cannot read an <ldstation> otherwise looks like a lost file.
+    if isfile(logfname)
+        logtext = strtrim(fileread(logfname));
+        if ~isempty(logtext)
+            line_warning(mfilename,'qnsolver said: %s',logtext);
+        end
+    end
     QN = nan(M,K);
     UN = nan(M,K);
     RN = nan(M,K);
@@ -166,10 +190,13 @@ Qchain = QchainReordered;
 Wchain = WchainReordered;
 Tchain = TchainReordered;
 
-ref= zeros(sn.nchains,1);
 for c=1:sn.nchains
-    chain = find(sn.chains(c,:));
-    Xchain(c)=Tchain(sn.refstat(c),c);
+    % sn.refstat is indexed by CLASS, so the chain's reference station is read
+    % through the chain's first class, as writeJMVA and sn_get_demands_chain
+    % both do. Indexing it with the chain number lands on an unrelated class
+    % once class switching makes the two index spaces differ.
+    inchain = sn.inchain{c};
+    Xchain(c)=Tchain(sn.refstat(inchain(1)),c);
     if Xchain(c) == 0
         % For open chains where refstat is Source (not in qnsolver output),
         % recover Xchain from any station with valid throughput:

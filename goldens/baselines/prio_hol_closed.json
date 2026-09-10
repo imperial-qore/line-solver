@@ -1,0 +1,180 @@
+{
+  "class": {
+    "JMT": "stochastic"
+  },
+  "example": "prio_hol_closed",
+  "solvers": {
+    "JMT": [
+      {
+        "ArvR": 0.15362,
+        "JobClass": "Class1",
+        "QLen": 1.5207,
+        "ResidT": 9.7915,
+        "RespT": 9.7915,
+        "Station": "SlowDelay",
+        "Tput": 0.14874,
+        "Util": 1.5207
+      },
+      {
+        "ArvR": 0.24697,
+        "JobClass": "Class2",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "SlowDelay",
+        "Tput": 0.23036,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.14462,
+        "JobClass": "Class3",
+        "QLen": 1.4418,
+        "ResidT": 10.094,
+        "RespT": 10.094,
+        "Station": "SlowDelay",
+        "Tput": 0.14461,
+        "Util": 1.4418
+      },
+      {
+        "ArvR": 0.60871,
+        "JobClass": "Class1",
+        "QLen": 0.69829,
+        "ResidT": 3.9421,
+        "RespT": 0.98554,
+        "Station": "FCFSQueue",
+        "Tput": 0.59738,
+        "Util": 0.17795
+      },
+      {
+        "ArvR": 0.56427,
+        "JobClass": "Class2",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "FCFSQueue",
+        "Tput": 0.54637,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.57602,
+        "JobClass": "Class3",
+        "QLen": 0.81659,
+        "ResidT": 5.0083,
+        "RespT": 1.2521,
+        "Station": "FCFSQueue",
+        "Tput": 0.57562,
+        "Util": 0.34165
+      },
+      {
+        "ArvR": 0.14897,
+        "JobClass": "Class1",
+        "QLen": 0.28894,
+        "ResidT": 1.9751,
+        "RespT": 1.9751,
+        "Station": "SIROQueue",
+        "Tput": 0.14799,
+        "Util": 0.16159
+      },
+      {
+        "ArvR": 0.22633,
+        "JobClass": "Class2",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "SIROQueue",
+        "Tput": 0.21927,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.14454,
+        "JobClass": "Class3",
+        "QLen": 0.30834,
+        "ResidT": 2.3319,
+        "RespT": 2.3319,
+        "Station": "SIROQueue",
+        "Tput": 0.144,
+        "Util": 0.21255
+      },
+      {
+        "ArvR": 0.14759,
+        "JobClass": "Class1",
+        "QLen": 0.26401,
+        "ResidT": 1.6945,
+        "RespT": 1.6945,
+        "Station": "PSQueue",
+        "Tput": 0.14758,
+        "Util": 0.14175
+      },
+      {
+        "ArvR": 0.11778,
+        "JobClass": "Class2",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "PSQueue",
+        "Tput": 0.11285,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.14179,
+        "JobClass": "Class3",
+        "QLen": 0.42896,
+        "ResidT": 3.1486,
+        "RespT": 3.1486,
+        "Station": "PSQueue",
+        "Tput": 0.14205,
+        "Util": 0.28248
+      },
+      {
+        "ArvR": 0.14672,
+        "JobClass": "Class1",
+        "QLen": 15.239,
+        "ResidT": 103.3,
+        "RespT": 103.3,
+        "Station": "HOLQueue",
+        "Tput": 0.14744,
+        "Util": 0.3766
+      },
+      {
+        "ArvR": 0.17254,
+        "JobClass": "Class2",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "HOLQueue",
+        "Tput": 0.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.1435,
+        "JobClass": "Class3",
+        "QLen": 14.951,
+        "ResidT": 103.84,
+        "RespT": 103.84,
+        "Station": "HOLQueue",
+        "Tput": 0.14281,
+        "Util": 0.6199
+      },
+      {
+        "ArvR": 0.14871,
+        "JobClass": "Class1",
+        "QLen": 0.14942,
+        "ResidT": 0.99582,
+        "RespT": 0.99582,
+        "Station": "FastDelay",
+        "Tput": 0.14872,
+        "Util": 0.14942
+      },
+      {
+        "ArvR": 0.14411,
+        "JobClass": "Class3",
+        "QLen": 0.1443,
+        "ResidT": 0.9783,
+        "RespT": 0.9783,
+        "Station": "FastDelay",
+        "Tput": 0.14394,
+        "Util": 0.1443
+      }
+    ]
+  }
+}

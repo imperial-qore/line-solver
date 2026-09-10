@@ -8,29 +8,25 @@ package jline.lang.layered;
 import jline.lang.constant.SchedStrategy;
 
 /**
- * FunctionTask is an alias for Task, provided for backward compatibility.
+ * FunctionTask is the former name of SetupTask, retained for backward compatibility.
  *
- * <p>All setup/delayoff functionality has been moved to the base Task class.
- * Any Task can now have setup time (cold start delay) and delay-off time
- * (teardown delay) configured via setSetupTime() and setDelayOffTime().
+ * <p>Setup and delay-off times are not specific to serverless (function-as-a-service)
+ * platforms, so the class carrying them is now named after the modelling primitive
+ * rather than after that application domain.
  *
- * <p>This class is retained for backward compatibility with existing code
- * that uses FunctionTask to model serverless functions or tasks with
- * initialization overhead.
- *
- * @see Task
- * @deprecated Use Task directly with setSetupTime() and setDelayOffTime() methods.
+ * @see SetupTask
+ * @deprecated Use SetupTask, or a plain Task with setSetupTime() and setDelayOffTime().
  */
 @Deprecated
-public class FunctionTask extends Task {
+public class FunctionTask extends SetupTask {
 
     /**
      * Constructor for FunctionTask.
      *
      * @param model The LayeredNetwork model this task belongs to
-     * @param name The name of the function task
-     * @param multiplicity The number of function instances that can run concurrently
-     * @param scheduling The scheduling strategy for the function instances
+     * @param name The name of the task
+     * @param multiplicity The number of servers that can run concurrently
+     * @param scheduling The scheduling strategy for the servers
      */
     public FunctionTask(LayeredNetwork model, String name, int multiplicity, SchedStrategy scheduling) {
         super(model, name, multiplicity, scheduling);
@@ -49,8 +45,6 @@ public class FunctionTask extends Task {
     public FunctionTask(LayeredNetwork model, String name) {
         this(model, name, 1, SchedStrategy.FCFS);
     }
-
-    // Override methods to return FunctionTask for method chaining (backward compatibility)
 
     @Override
     public FunctionTask on(Processor parent) {

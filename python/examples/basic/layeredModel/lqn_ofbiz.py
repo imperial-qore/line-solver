@@ -54,12 +54,17 @@ AvgTable = {}
 #    print('LQNS solver not available - skipping solver[1]')
 
 # Solve with LN without initialization
-# MATLAB: solver{2} = LN(model, @(x) NC(x,'verbose',false));
+# MATLAB: solver{2} = LN(model, @(x) NC(x,'verbose',false), lnoptions);
 # MATLAB: AvgTable{2} = solver{2}.getAvgTable;
 try:
     nc_options = NC.default_options()
     nc_options.verbose = False
-    solver[2] = LN(model, lambda x: NC(x, nc_options))
+    # Pin the LN seed, as the MATLAB twin does: SolverLN randomizes its
+    # stochastic-layer seed base when options.seed is unset, which makes the
+    # fixed point of this large model irreproducible run to run.
+    lnoptions = LN.default_options()
+    lnoptions.seed = 23000
+    solver[2] = LN(model, lambda x: NC(x, nc_options), lnoptions)
     Tnoinit_start = time.time()
     AvgTable[2] = solver[2].avg_table()
     Tnoinit = time.time() - Tnoinit_start

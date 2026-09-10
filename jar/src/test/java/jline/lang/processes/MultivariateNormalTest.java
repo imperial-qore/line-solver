@@ -262,9 +262,9 @@ class MultivariateNormalTest {
         }
 
         // Check covariance convergence
-        assertEquals(1.0, empCov[0][0], 0.15);
-        assertEquals(0.5, empCov[0][1], 0.15);
-        assertEquals(2.0, empCov[1][1], 0.15);
+        assertEquals(1.0, empCov[0][0], 0.03);
+        assertEquals(0.5, empCov[0][1], 0.03);
+        assertEquals(2.0, empCov[1][1], 0.03);
     }
 
     // =================== PDF EVALUATION TESTS ===================

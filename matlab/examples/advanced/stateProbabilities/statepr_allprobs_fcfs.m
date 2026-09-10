@@ -52,10 +52,13 @@ end
 state = model.getState;
 
 %% getProbAggr
-solver = CTMC(model,options);
+solver = CTMC(model, 'exact',options);
 Pr = solver.getProbAggr(node{M});
 fprintf(1,'Station %d is in state %s with probability %d\n',i,mat2str(state{i}),Pr);
-Pmarga_ctmc = Pr
+Pmarga_ctmc = Pr;
+% Printed explicitly rather than by unsuppressed display: format short renders
+% 4 decimals, which the Python twin's full-precision print cannot match.
+fprintf(1,'Pmarga_ctmc =\n%.15g\n',Pmarga_ctmc);
 
 solver = NC(model,options);
 Pr = solver.getProbAggr(node{M});
@@ -73,7 +76,7 @@ fprintf(1,'Station %d is in state %s with probability %d\n',i,mat2str(state{i}),
 Pmarga_jmt = Pr
 
 %% getProb
-solver = CTMC(model,options);
+solver = CTMC(model, 'exact',options);
 Pr = solver.getProb(node{M});
 fprintf(1,'Station %d is in state %s with probability %d\n',i,mat2str(state{i}),Pr);
 Pmarg_ctmc = Pr
@@ -88,7 +91,7 @@ fprintf(1,'Station %d is in state %s with probability %d\n',i,mat2str(state{i}),
 Pmarg_ssa = Pr
 
 %% getProbSysAggr
-solver = CTMC(model,options);
+solver = CTMC(model, 'exact',options);
 Pr = solver.getProbSysAggr();
 Pjointa_ctmc = Pr
 
@@ -105,7 +108,7 @@ Pr = solver.getProbSysAggr();
 Pjointa_jmt = Pr
 
 %% getProbSys
-solver = CTMC(model,options);
+solver = CTMC(model, 'exact',options);
 Pr = solver.getProbSys();
 Pjoint_ctmc = Pr
 

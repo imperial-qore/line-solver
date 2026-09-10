@@ -36,6 +36,9 @@ xvec_t = [];
 xvec_it = {zeros(size(sn.state{1}, 2), 1)};
 
     function [QN,UN,RN,TN,xvec_it,QNt,UNt,TNt,xvec_t,t] = fallback_matrix(reason)
+        % The documented fallback. FLUID_MFQ_ADMITS states the same conditions
+        % ahead of the run, so SolverFLD.resolveMethod labels the pair 'matrix'
+        % wherever this branch would take it.
         line_warning(mfilename, 'MFQ-prio not applicable (%s); falling back to matrix method.', reason);
         opts = options; opts.method = 'matrix';
         [QN,UN,RN,TN,xvec_it,QNt,UNt,TNt,xvec_t,t] = solver_fluid_matrix(sn, opts);

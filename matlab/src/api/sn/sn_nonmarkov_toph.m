@@ -39,7 +39,13 @@ end
 
 % Family used when a concrete distribution has to be replaced by a Markovian
 % surrogate: 'cme' fits a concentrated matrix exponential plus an exponential
-% tail, 'ph' keeps the Erlang/Bernstein phase-type. At a budget of nPhases the ME
+% tail, 'ph' keeps the Erlang/Bernstein phase-type, 'hyperexp' fits a mixture of
+% exponentials to the ccdf ITSELF across decades of time scale
+% (HYPEREXP_FIT_LONGTAIL, Feldmann and Whitt 1998), which is the only one of the
+% three that says anything about a LONG TAIL: a Pareto with tail index below 2
+% has no finite variance, so a two-moment fit does not exist at all, and even
+% where the moments are finite they say nothing about the several orders of
+% magnitude over which such a law acts. At a budget of nPhases the ME
 % reaches an SCV of O(1/nPhases^2) where the Erlang stops at 1/nPhases, and it
 % matches the first two moments EXACTLY, which is what makes an M/G/1 mean come
 % out right. 'cme' is the default; SSA, Fluid and JMT pass 'ph' because they
@@ -82,8 +88,8 @@ for ist = 1:M
             continue;
         end
 
-        % see _kb/04-networkstruct.md (api/sn/*.m derived-field helpers) for rationale
-        if procType == ProcessType.NHPP
+        % see _kb/04-networkstruct.md (api/sn derived-field helpers) for rationale
+        if procType == ProcessType.NHPP || procType == ProcessType.MAPT || procType == ProcessType.PHT
             continue;
         end
 
@@ -104,28 +110,33 @@ for ist = 1:M
 
         % Get PDF based on distribution type and stored parameters
         origProc = sn.proc{ist}{r};
+        ccdf_func = [];   % set only by the families with a closed-form tail
 
         switch procType
             case ProcessType.GAMMA
                 shape = origProc{1};
                 scale = origProc{2};
                 pdf_func = @(x) gampdf(x, shape, scale);
+                ccdf_func = @(x) 1 - gamcdf(x, shape, scale);
 
             case ProcessType.WEIBULL
                 shape_param = origProc{1};  % r
                 scale_param = origProc{2};  % alpha
                 pdf_func = @(x) wblpdf(x, scale_param, shape_param);
+                ccdf_func = @(x) exp(-(x/scale_param).^shape_param);
 
             case ProcessType.LOGNORMAL
                 mu = origProc{1};
                 sigma = origProc{2};
                 pdf_func = @(x) lognpdf(x, mu, sigma);
+                ccdf_func = @(x) 1 - logncdf(x, mu, sigma);
 
             case ProcessType.PARETO
                 shape_param = origProc{1};  % alpha
                 scale_param = origProc{2};  % k (minimum value)
                 % Pareto PDF: alpha * k^alpha / x^(alpha+1) for x >= k
                 pdf_func = @(x) (x >= scale_param) .* shape_param .* scale_param.^shape_param ./ x.^(shape_param + 1);
+                ccdf_func = @(x) min(1, (scale_param./max(x, scale_param)).^shape_param);
 
             case ProcessType.UNIFORM
                 minVal = origProc{1};
@@ -133,10 +144,17 @@ for ist = 1:M
                 pdf_func = @(x) (x >= minVal & x <= maxVal) / (maxVal - minVal);
 
             case ProcessType.DET
-                % Deterministic: the most concentrated surrogate the phase budget
-                % allows. Erlang-20 only reaches SCV 0.05; the CME plus
-                % exponential reaches 5.7e-3 at the same 20 phases.
-                [MAP, actualPh] = fitConcentratedSurrogate(targetMean, 0, nPhases, phfit);
+                % Deterministic: ERLANG ONLY, never the CME fitter, whatever
+                % phfit asks for. A concentrated ME matches the first two
+                % moments far better (SCV 5.7e-3 against Erlang-20's 0.05) but
+                % is not a Markovian generator: its off-diagonal entries are not
+                % rates, so a CTMC built from it does not describe the model.
+                % Measured on test_OQN_DM1 (Det(1) arrivals, Exp(2) service, so
+                % rho = 0.5): the CME surrogate reported U = 0.993 and a
+                % departure rate of 2.0 against a mean interarrival of 1.0,
+                % where JMT gives 0.497, LDES 0.502 and the golden 0.500.
+                % Moment fidelity is worthless if the process is not legal.
+                [MAP, actualPh] = deal(map_erlang(targetMean, nPhases), nPhases);
                 sn = updateSnForMAP(sn, ist, r, MAP, actualPh);
                 continue;
 
@@ -153,6 +171,19 @@ for ist = 1:M
         % queue length while the two-moment ME lands on it. The Bernstein path is
         % kept for phfit='ph', where it carries shape information a two-moment fit
         % cannot, and for the solvers that need a genuine phase-type.
+        % The long-tail fit, when it was asked for and the law has a tail to
+        % fit. It matches the ccdf at points spread over decades rather than
+        % matching two moments, so it is the route for a Pareto, a Weibull with
+        % shape below one or a Lognormal with a large sigma; a light-tailed law
+        % has nothing for it to do and falls through to the fits below.
+        if strcmp(phfit,'hyperexp') && ~isempty(ccdf_func)
+            [MAP, actualPh] = fitLongTailSurrogate(ccdf_func, targetMean);
+            if ~isempty(MAP)
+                sn = updateSnForMAP(sn, ist, r, MAP, actualPh);
+                continue;
+            end
+        end
+
         if strcmp(phfit,'cme') && sn.scv(ist,r) >= 0 && sn.scv(ist,r) < 1
             [MAP, actualPh] = fitConcentratedSurrogate(targetMean, sn.scv(ist,r), nPhases, phfit);
             sn = updateSnForMAP(sn, ist, r, MAP, actualPh);
@@ -172,7 +203,7 @@ end
 % ---------------------------------------------------------------------
 % SPN Transition firing distributions
 % ---------------------------------------------------------------------
-% see _kb/04-networkstruct.md (api/sn/*.m derived-field helpers) for rationale
+% see _kb/04-networkstruct.md (api/sn derived-field helpers) for rationale
 if isfield(sn, 'nodeparam') && ~isempty(sn.nodeparam)
     for ind = 1:sn.nnodes
         if ind > length(sn.nodeparam) || isempty(sn.nodeparam{ind})
@@ -496,6 +527,32 @@ if ~phaseSyncExists
 end
 end
 
+
+function [MAP, nPh] = fitLongTailSurrogate(ccdf_func, targetMean)
+% A hyperexponential fitted to the ccdf across decades (Feldmann and Whitt
+% 1998), returned as its MAP pair and rescaled to the mean the struct carries.
+%
+% Empty when the recursion declines the law: the components have to dominate
+% one another at their own time scales, which a light-tailed law does not
+% provide, and answering with a fit that does not hold is worse than falling
+% through to the two-moment surrogate.
+MAP = []; nPh = 0;
+try
+    fit = hyperexp_fit_longtail(ccdf_func);
+catch
+    return
+end
+p = fit.p(:).';
+lambda = fit.lambda(:).';
+if isempty(p) || any(~isfinite(lambda)) || any(lambda <= 0)
+    return
+end
+n = numel(p);
+D0 = -diag(lambda);
+D1 = diag(lambda) * repmat(p, n, 1);
+MAP = map_scale({D0, D1}, targetMean);
+nPh = n;
+end
 
 function [MAP, nPh] = fitConcentratedSurrogate(targetMean, targetSCV, nPhases, phfit)
 % [MAP, NPH] = FITCONCENTRATEDSURROGATE(TARGETMEAN, TARGETSCV, NPHASES, PHFIT)

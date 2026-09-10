@@ -24,7 +24,10 @@ sched = sn.sched;
 PH = sn.proc;
 
 probSysState = pivec(:)';
-probSysState(probSysState<GlobalConstants.Zero) = 0;
+% clamp removes numerical residues, but an ME stationary vector is genuinely SIGNED, so clamping deletes real mass -- see solver_ctmc_analyzer
+if ~(isfield(sn,'isph') && ~isempty(sn.isph) && ~all(sn.isph(:)))
+    probSysState(probSysState<GlobalConstants.Zero) = 0;
+end
 if sum(probSysState) > 0
     probSysState = probSysState/sum(probSysState);
 end
@@ -37,13 +40,20 @@ RN = NaN*zeros(M,K);
 TN = NaN*zeros(M,K);
 CN = NaN*zeros(1,K);
 
+% Column span of each STATION inside a StateSpace row; see the twin block in
+% solver_ctmc_analyzer.m. sn.space is keyed by STATEFUL index and a stateful
+% node need not be a station (a Cache is stateful and is not), so the running
+% offset walks every stateful node and is read back through stationToStateful.
+sfSpaceShift = zeros(1,sn.nstateful);
+for isf=2:sn.nstateful
+    sfSpaceShift(isf) = sfSpaceShift(isf-1) + size(sn.space{isf-1},2);
+end
 istSpaceShift = zeros(1,M);
+istSpaceWidth = zeros(1,M);
 for ist=1:M
-    if ist==1
-        istSpaceShift(ist) = 0;
-    else
-        istSpaceShift(ist) = istSpaceShift(ist-1) + size(sn.space{ist-1},2);
-    end
+    isf = sn.stationToStateful(ist);
+    istSpaceShift(ist) = sfSpaceShift(isf);
+    istSpaceWidth(ist) = size(sn.space{isf},2);
 end
 
 for k=1:K
@@ -51,16 +61,45 @@ for k=1:K
     XN(k) = probSysState*arvRates(wset,refsf,k);
 end
 
+% see _kb/06-solver-catalog.md (G-network signals) for rationale
+inDropRegion = false(1,M);
+if isfield(sn,'nregions') && sn.nregions > 0
+    for f=1:sn.nregions
+        if sn.regionrule(f) == DropStrategy.DROP
+            memb = any(sn.region{f} ~= -1, 2); % stations constrained by region f
+            memb = memb(:)';
+            inDropRegion(1:min(M,numel(memb))) = inDropRegion(1:min(M,numel(memb))) | memb(1:min(M,numel(memb)));
+        end
+    end
+end
+
 for ist=1:M
     isf = sn.stationToStateful(ist);
     ind = sn.stationToNode(ist);
+    isSource = sn.nodetype(ind) == NodeType.Source;
     for k=1:K
         TN(ist,k) = probSysState*depRates(wset,isf,k);
-        QN(ist,k) = probSysState*StateSpaceAggr(wset,(ist-1)*K+k);
+        if isSource
+            % State.toMarginal encodes an EXT station as nir = Inf, an infinite
+            % reservoir, which is a statement about the state space and not a
+            % queue length. Reading it as one gave Q = Inf at the Source.
+            QN(ist,k) = 0;
+        else
+            QN(ist,k) = probSysState*StateSpaceAggr(wset,(ist-1)*K+k);
+        end
     end
-    if sn.nodetype(ind) ~= NodeType.Source
+    if ~isSource
         % see _kb/06-solver-catalog.md (G-network signals) for rationale
+        % A class that can be DROPPED here must be measured on the CARRIED rate
+        % alone: the offered rate counts arrivals that never entered service, so
+        % max(UNarv,UNdep) would report the offered load as utilization (an
+        % M/M/1/4 with lambda=0.6 gave 0.6 against the true 1-p0=0.566). This
+        % guard is present in solver_ctmc_analyzer and was missing here, so the
+        % two implementations disagreed on every lossy station -- the same drift
+        % recorded for this file's lld/cd branch on 2026-07-17.
+        canDropClass = isinf(sn.njobs(:)') & (isfinite(sn.cap(ist)) | isfinite(sn.classcap(ist,:)) | inDropRegion(ist));
         signalLoss = ctmc_signal_lossy(sn, arvRates, probSysState, wset, isf);
+        canDropClass = canDropClass | signalLoss;
         switch sched(ist)
             case SchedStrategy.INF
                 for k=1:K
@@ -71,9 +110,13 @@ for ist=1:M
                     for k=1:K
                         if ~isempty(PH{ist}{k})
                             % see _kb/06-solver-catalog.md (Utilization conventions) for rationale
-                            UNarv_ik = probSysState*arvRates(wset,isf,k)*map_mean(PH{ist}{k})/S(ist);
                             UNdep_ik = TN(ist,k)*map_mean(PH{ist}{k})/S(ist); % this is valid because CS in LINE is in a separate node
-                            UN(ist,k) = signalLoss(k)*UNdep_ik + (1-signalLoss(k))*max(UNarv_ik,UNdep_ik);
+                            if canDropClass(k)
+                                UN(ist,k) = UNdep_ik;
+                            else
+                                UNarv_ik = probSysState*arvRates(wset,isf,k)*map_mean(PH{ist}{k})/S(ist);
+                                UN(ist,k) = max(UNarv_ik,UNdep_ik);
+                            end
                         end
                     end
                 else % lld/cd/ljd cases
@@ -85,7 +128,7 @@ for ist=1:M
                     end
                     UN(ist,1:K) = 0;
                     for st = wset
-                        [ni,nir] = State.toMarginal(sn, ind, StateSpace(st,(istSpaceShift(ist)+1):(istSpaceShift(ist)+size(sn.space{ist},2))));
+                        [ni,nir] = State.toMarginal(sn, ind, StateSpace(st,(istSpaceShift(ist)+1):(istSpaceShift(ist)+istSpaceWidth(ist))));
                         if ni>0
                             lldnow = 1;
                             if ~isempty(sn.lldscaling) && ist <= size(sn.lldscaling,1)
@@ -102,7 +145,7 @@ for ist=1:M
                 ind = sn.stationToNode(ist);
                 UN(ist,1:K) = 0;
                 for st = wset
-                    [~,~,sir] = State.toMarginal(sn, ind, StateSpace(st,(istSpaceShift(ist)+1):(istSpaceShift(ist)+size(sn.space{ist},2))));
+                    [~,~,sir] = State.toMarginal(sn, ind, StateSpace(st,(istSpaceShift(ist)+1):(istSpaceShift(ist)+istSpaceWidth(ist))));
                     for k=1:K
                         UN(ist,k) = UN(ist,k) + probSysState(st)*sir(k)/S(ist);
                     end
@@ -112,19 +155,36 @@ for ist=1:M
                     for k=1:K
                         if ~isempty(PH{ist}{k})
                             % see _kb/06-solver-catalog.md (Utilization conventions) for rationale
-                            UNarv_ik = probSysState*arvRates(wset,isf,k)*map_mean(PH{ist}{k})/S(ist);
                             UNdep_ik = TN(ist,k)*map_mean(PH{ist}{k})/S(ist); % this is valid because CS in LINE is in a separate node
-                            UN(ist,k) = signalLoss(k)*UNdep_ik + (1-signalLoss(k))*max(UNarv_ik,UNdep_ik);
+                            if canDropClass(k)
+                                UN(ist,k) = UNdep_ik;
+                            else
+                                UNarv_ik = probSysState*arvRates(wset,isf,k)*map_mean(PH{ist}{k})/S(ist);
+                                UN(ist,k) = max(UNarv_ik,UNdep_ik);
+                            end
                         end
                     end
                 else % lld/cd/ljd cases
                     ind = sn.stationToNode(ist);
+                    % the load-dependent station's capacity is its PEAK scaling,
+                    % not its server count, so normalize by ceff not S
+                    ceff = S(ist);
+                    if ~isempty(sn.lldscaling) && ist <= size(sn.lldscaling,1)
+                        ceff = max(ceff, max(sn.lldscaling(ist,:)));
+                    end
                     UN(ist,1:K) = 0;
                     for st = wset
-                        [ni,~,sir] = State.toMarginal(sn, ind, StateSpace(st,(istSpaceShift(ist)+1):(istSpaceShift(ist)+size(sn.space{ist},2))));
+                        [ni,~,sir] = State.toMarginal(sn, ind, StateSpace(st,(istSpaceShift(ist)+1):(istSpaceShift(ist)+istSpaceWidth(ist))));
                         if ni>0
+                            lldnow = 1;
+                            if ~isempty(sn.lldscaling) && ist <= size(sn.lldscaling,1)
+                                lldnow = sn.lldscaling(ist, min(max(sum(ni),1), size(sn.lldscaling,2)));
+                            end
+                            sirtot = sum(sir);
                             for k=1:K
-                                UN(ist,k) = UN(ist,k) + probSysState(st)*sir(k)/S(ist);
+                                if sirtot > 0
+                                    UN(ist,k) = UN(ist,k) + probSysState(st)*(sir(k)/sirtot)*lldnow/ceff;
+                                end
                             end
                         end
                     end
@@ -139,34 +199,33 @@ for ist=1:M
     end
 end
 
-% see _kb/06-solver-catalog.md (Utilization conventions) for rationale
-if ~isempty(sn.cdscaling) && ~any(isinf(sn.njobs))
+% Class-, joint- and global-dependence utilization normalization Util=T*S/peak,
+% using the declared sn.cdscalingpeak, sn.jdscalingpeak and sn.gdscalingpeak;
+% see _kb/06-solver-catalog.md (Utilization conventions) for rationale.
+hasgd = isfield(sn,'gdscaling') && ~isempty(sn.gdscaling);
+if (~isempty(sn.cdscaling) || ~isempty(sn.jdscaling) || hasgd) && ~any(isinf(sn.njobs))
     for ist=1:M
-        if length(sn.cdscaling) >= ist && ~isempty(sn.cdscaling{ist})
-            for k=1:K
-                bmax = sn.cdscalingpeak(ist,k);
-                if isfinite(sn.rates(ist,k)) && sn.rates(ist,k) > 0 && bmax > 0
-                    UN(ist,k) = TN(ist,k) / sn.rates(ist,k) / bmax;
-                else
-                    UN(ist,k) = 0;
-                end
-            end
+        hascd = ~isempty(sn.cdscaling) && length(sn.cdscaling) >= ist && ~isempty(sn.cdscaling{ist});
+        hasjd = ~isempty(sn.jdscaling) && length(sn.jdscaling) >= ist && ~isempty(sn.jdscaling{ist});
+        if ~hascd && ~hasjd && ~hasgd
+            continue
         end
-    end
-end
-
-% Joint-dependence (non-product-form) utilization normalization: Util=T*S/peak
-% using the declared sn.jdscalingpeak, mirroring the class-dependence block.
-if ~isempty(sn.jdscaling) && ~any(isinf(sn.njobs))
-    for ist=1:M
-        if length(sn.jdscaling) >= ist && ~isempty(sn.jdscaling{ist})
-            for k=1:K
-                bmax = sn.jdscalingpeak(ist,k);
-                if isfinite(sn.rates(ist,k)) && sn.rates(ist,k) > 0 && bmax > 0
-                    UN(ist,k) = TN(ist,k) / sn.rates(ist,k) / bmax;
-                else
-                    UN(ist,k) = 0;
-                end
+        for k=1:K
+            % beta_r(n), eta_i(n) and phi(n) scale the SAME rate, so the peaks multiply
+            bmax = 1;
+            if hascd
+                bmax = bmax * sn.cdscalingpeak(ist,k);
+            end
+            if hasjd
+                bmax = bmax * sn.jdscalingpeak(ist,k);
+            end
+            if hasgd
+                bmax = bmax * sn.gdscalingpeak(ist,k);
+            end
+            if isfinite(sn.rates(ist,k)) && sn.rates(ist,k) > 0 && bmax > 0
+                UN(ist,k) = TN(ist,k) / sn.rates(ist,k) / bmax;
+            else
+                UN(ist,k) = 0;
             end
         end
     end

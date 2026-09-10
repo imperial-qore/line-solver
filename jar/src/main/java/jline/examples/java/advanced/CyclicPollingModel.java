@@ -141,8 +141,7 @@ public class CyclicPollingModel {
         
         queue.setPollingType(PollingType.KLIMITED, 1); // Set K-LIMITED polling with K=1
         queue.setSwitchover(oclass1, new Exp(1));
-        // Use Exp(1) for switchover (same as oclass1)
-        queue.setSwitchover(oclass2, new Exp(1));
+        queue.setSwitchover(oclass2, Immediate.getInstance());
         
         // Block 3: topology
         model.addLink(source, queue);
@@ -186,9 +185,8 @@ public class CyclicPollingModel {
         queue.setService(oclass2, Det.fitMean(0.001));
         
         queue.setPollingType(PollingType.EXHAUSTIVE);
-        // Use Exp(1e6) for very fast switchover (approximating immediate)
-        queue.setSwitchover(oclass2, new Exp(1e6));
-        queue.setSwitchover(oclass1, new Exp(1e6));
+        queue.setSwitchover(oclass2, Immediate.getInstance());
+        queue.setSwitchover(oclass1, Immediate.getInstance());
         
         // Block 3: topology
         model.addLink(source, queue);

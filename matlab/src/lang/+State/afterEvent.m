@@ -1,5 +1,12 @@
-function [outspace, outrate, outprob, eventCache] = afterEvent(sn, ind, inspace, event, class, isSimulation, eventCache, ctx, noPromote)
-% [OUTSPACE, OUTRATE, OUTPROB] =  AFTEREVENT(QN, IND, INSPACE, EVENT, CLASS, ISSIMULATION, EVENTCACHE, CTX, NOPROMOTE)
+function [outspace, outrate, outprob, eventCache, outstart, outpreempt] = afterEvent(sn, ind, inspace, event, class, isSimulation, eventCache, ctx, noPromote)
+% [OUTSPACE, OUTRATE, OUTPROB, EVENTCACHE, OUTSTART, OUTPREEMPT] =  AFTEREVENT(QN, IND, INSPACE, EVENT, CLASS, ISSIMULATION, EVENTCACHE, CTX, NOPROMOTE)
+%
+% OUTSTART and OUTPREEMPT are (rows of OUTSPACE) x (classes) integer matrices
+% holding the START and PREEMPT tags of each successor arc: how many class-r
+% jobs begin holding a server on that arc, and how many are pushed back into
+% the buffer by it. They are annotations on the arcs above, not events: no
+% rate, probability or state depends on them, and a caller that asks for only
+% the first four outputs pays nothing for them.
 %
 % CTX (optional): loop-invariant context precomputed by State.afterEventInit
 % on the SAME sn passed here (after any caller-side rewrite of
@@ -20,15 +27,36 @@ if nargin < 9 || isempty(noPromote)
     noPromote = false;
 end
 
+% Initialized here so that every exit carries them, exactly as
+% State.afterEventStation initializes its own outputs: a node type that
+% reaches none of the handlers below has no successor and hence no tags.
+outspace = [];
+outrate = [];
+outprob = [];
+outstart = [];
+outpreempt = [];
+
 % Event cache for faster simulation
 if isSimulation && nargin >= 7 && isobject(eventCache)
     vector = [ind, event, class, double(noPromote), inspace];
     key = mat2str(vector);
-    if eventCache.isKey(key)
-        cachedResult = eventCache(key);
+    if isKey(eventCache, key)
+        cachedResult = eventCache{key};
         outprob = cachedResult{1};
         outspace = cachedResult{2};
         outrate = cachedResult{3};
+        % Nodes with no service facility (Router, Fork, Cache, Transition,
+        % Join) cache three fields: they can start nothing, so their tags are
+        % the zero rows tagPad fills in below.
+        if numel(cachedResult) >= 5
+            outstart = cachedResult{4};
+            outpreempt = cachedResult{5};
+        else
+            outstart = [];
+            outpreempt = [];
+        end
+        outstart = State.tagPad(outstart, size(outspace,1), sn.nclasses);
+        outpreempt = State.tagPad(outpreempt, size(outspace,1), sn.nclasses);
         if size(outspace,1) > 1
             tot_rate = sum(outrate);
             cum_rate = cumsum(outrate) / tot_rate;
@@ -36,6 +64,8 @@ if isSimulation && nargin >= 7 && isobject(eventCache)
             outspace = outspace(firing_ctr,:);
             outrate = sum(outrate);
             outprob = outprob(firing_ctr,:);
+            outstart = outstart(firing_ctr,:);
+            outpreempt = outpreempt(firing_ctr,:);
         end
         return
     end
@@ -48,6 +78,9 @@ end
 % but must bypass the buffer/phase slicing and afterEventStation below)
 if isfield(sn,'isfjaugmented') && sn.isfjaugmented && sn.nodetype(ind) == NodeType.Join
     [outspace, outrate, outprob, eventCache] = State.afterEventJoin(sn, ind, inspace, event, class, isSimulation, eventCache, key);
+    % a Join holds no server: nothing starts or is preempted there
+    outstart = zeros(size(outspace,1), sn.nclasses);
+    outpreempt = zeros(size(outspace,1), sn.nclasses);
     return
 end
 
@@ -148,7 +181,7 @@ if sn.isstation(ind)
         classcap = sn.classcap;
     end
     if K(class) == 0 % if this class is not accepted at the resource
-        eventCache(key) = {outprob, outspace,outrate};
+        eventCache{key} = {outprob, outspace, outrate, outstart, outpreempt};
         return
     end
     V = sum(sn.nvars(ind,:));
@@ -244,7 +277,7 @@ else % stateless node
 end
 
 if sn.isstation(ind)
-    [outspace, outrate, outprob, eventCache] = State.afterEventStation(sn, ind, inspace, event, class, isSimulation, eventCache, ...
+    [outspace, outrate, outprob, eventCache, outstart, outpreempt] = State.afterEventStation(sn, ind, inspace, event, class, isSimulation, eventCache, ...
         M, R, S, phasessz, phaseshift, pie, isf, ismkvmod, ismkvmodclass, lldscaling, lldlimit, cdscaling, ...
         hasOnlyExp, ist, K, Ks, mu, phi, proc, capacity, classcap, V, space_buf, space_srv, space_var, key, noPromote);
 elseif sn.isstateful(ind)
@@ -259,4 +292,10 @@ elseif sn.isstateful(ind)
             [outspace, outrate, outprob, eventCache] = State.afterEventTransition(sn, ind, inspace, K, Ks, event, class, isSimulation, eventCache, R, space_buf, space_srv, space_fired, space_var, key);
     end % switch nodeType
 end
+% Pad the tail: a tag site only writes the rows it touches, and the nodes above
+% that hold no server write nothing at all. From here on the two matrices have
+% exactly one row per successor, so a caller can index them with the same row
+% indices as outspace.
+outstart = State.tagPad(outstart, size(outspace,1), sn.nclasses);
+outpreempt = State.tagPad(outpreempt, size(outspace,1), sn.nclasses);
 end

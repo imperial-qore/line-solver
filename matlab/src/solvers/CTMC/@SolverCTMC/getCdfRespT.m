@@ -9,6 +9,15 @@ end
 if nargin<2 %~exist('R','var')
     R = getAvgRespTHandles(self);
 end
+
+% lang='cpp' takes the tagged-chain law from line-cli (-a cdf). It is the same
+% quantity this function builds below, so the two are comparable curve for
+% curve; recomputing it here would report a MATLAB integration as a C++ one.
+if isfield(self.options,'lang') && strcmp(self.options.lang,'cpp')
+    RD = CPPLINE.cdfRespT(self.name, self.model, self.options);
+    return
+end
+
 sn = self.getStruct;
 RD = cell(sn.nstations, sn.nclasses);
 M = sn.nstations;
@@ -22,7 +31,7 @@ for c=1:sn.nchains
     s = inchain(N(inchain)>0); % tag a class that has non-zero jobs.
     jobclass = self.model.getClassByIndex(s);
     chain = self.model.getClassChain(jobclass);
-    [taggedModel, taggedJob] = ModelAdapter.tagChain(chain,jobclass); % diminish jobclass population by 1
+    [taggedModel, taggedJob] = ModelAdapter.tagChain(self.model,chain,jobclass); % diminish jobclass population by 1
     %taggedModel.stations{:}
     [Q,F,ev] = SolverCTMC(taggedModel,self.options).getGenerator(); % Q: generator, F: filtration, ev: events
     tsn = taggedModel.getStruct;

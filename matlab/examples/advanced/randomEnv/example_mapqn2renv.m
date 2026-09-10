@@ -147,7 +147,7 @@ try
     ctmcoptions.cutoff = 100;
     ctmcoptions.verbose = false;
 
-    envSolverCTMC = ENV(envModel, @(m) CTMC(m, ctmcoptions), options);
+    envSolverCTMC = ENV(envModel, @(m) CTMC(m, 'exact', ctmcoptions), options);
     [QN_ctmc, UN_ctmc, TN_ctmc] = envSolverCTMC.getAvg();
     AvgTableCTMC = envSolverCTMC.getAvgTable();
 

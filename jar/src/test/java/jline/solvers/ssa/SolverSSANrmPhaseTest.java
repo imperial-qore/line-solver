@@ -41,8 +41,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * all-exponential models, in which the dependency graph's arithmetic decode of
  * a state index is still correct and its defects are therefore invisible: the
  * failure mode is a quiet bias that GROWS with distance from exponential (see
- * _kb/log.md [2026-07-17]). The Erlang/HyperExp/Coxian rows are the ones that
- * carry the signal; a green all-exponential suite proves nothing about them.
+ * git show 449847e7b:_kb/log.md [2026-07-17]). The Erlang/HyperExp/Coxian rows
+ * are the ones that carry the signal; a green all-exponential suite proves
+ * nothing about them.
  * </p>
  * <p>
  * Tolerance: at SAMPLES the single-seed noise floor on Q is sd ~= 0.001

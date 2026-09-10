@@ -105,15 +105,11 @@ def solver_ssa_analyzer(
     elif method == 'nrm':
         # see _kb/06-solver-catalog.md (SSA: "NRM engine internals")
         from .nrm import (solver_ssa_nrm, _ALLOWED_SCHED, _fcr_nrm_ok,
-                          _routing_nrm_ok, _impatience_nrm_ok, _phase_nrm_ok,
+                          _impatience_nrm_ok, _phase_nrm_ok,
                           _cache_nrm_ok)
         supported = all(sn.sched[ist] in _ALLOWED_SCHED for ist in range(sn.nstations))
         # see _kb/06-solver-catalog.md (SSA: "NRM engine now supports FCR directly")
         if supported and not _fcr_nrm_ok(sn):
-            supported = False
-        # NRM resolves JSQ/memoryless SQ at firing time; other state-dependent
-        # strategies need the serial afterEvent engine.
-        if supported and not _routing_nrm_ok(sn):
             supported = False
         # QUEUE_LENGTH balking and memoryless reneging only
         if supported and not _impatience_nrm_ok(sn):

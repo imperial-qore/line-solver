@@ -8,7 +8,7 @@ across a serialized (JSON/XML) boundary rather than an in-process object:
 - ``solver_jmt``  -> Java Modelling Tools (JMT.jar) via .jsimg
 - ``solver_lqns`` -> the ``lqns``/``lqsim`` binaries
 - ``solver_qns``  -> the ``qnsolver`` binary (itself calls LQNS)
-- ``solver_ldes`` -> the LINE Discrete Event Simulator (ldes.jar / native
+- ``solver_ldes`` -> the LDES simulation engine (ldes.jar / native
   binary) via ``model.json`` in and ``result.json`` out (fully JSON-mediated)
 
 Kept here to separate results that depend on an external installation from the

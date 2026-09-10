@@ -9,6 +9,7 @@ import jline.GlobalConstants;
 import jline.lang.JobClass;
 import jline.lang.Network;
 import jline.lang.NetworkStruct;
+import jline.lang.NodeParam;
 import jline.lang.constant.NodeType;
 import jline.lang.nodes.Source;
 import jline.io.Ret;
@@ -26,11 +27,13 @@ import java.util.Set;
 
 import org.apache.commons.math3.util.FastMath;
 
+import jline.api.fj.FJ_ordstat_exp;
+import jline.api.sn.SnJoinQuorum;
 import jline.lang.ModelAdapter;
 import jline.lang.nodes.Delay;
 import jline.lang.nodeparam.ForkNodeParam;
+import jline.lang.nodes.Node;
 import jline.lang.processes.Exp;
-import jline.util.Maths;
 
 import static jline.io.InputOutput.line_debug;
 import static jline.io.InputOutput.line_warning;
@@ -71,11 +74,18 @@ public final class FJFixedPoint {
         /**
          * Solves the transformed network.
          *
+         * <p>The transformed MODEL is passed alongside its struct because a
+         * state-based inner solve needs it: SolverFluid's initSol keys sn.state
+         * by the node objects of the model it was built from, so handing it the
+         * original model with the transformed struct would look up stations that
+         * are not in it. A struct-only solver (MVA, NC) can ignore the argument.
+         *
+         * @param net the transformed network, or the original one when it has no fork
          * @param sn the struct of the transformed network
          * @param options the solver options
          * @return the metrics of that solve
          */
-        MVAResult solve(NetworkStruct sn, SolverOptions options);
+        MVAResult solve(Network net, NetworkStruct sn, SolverOptions options);
     }
 
     /** State the fixed point retains across calls, as MATLAB keeps on the solver. */
@@ -118,6 +128,7 @@ public final class FJFixedPoint {
     public static FJOutcome run(Network model, NetworkStruct sn, SolverOptions options,
                                 FJState state, InnerSolve fcn, long T0) {
         int iter = 0;
+        boolean quorumClamped = false;
         if (state == null) {
             state = new FJState();
         }
@@ -200,15 +211,42 @@ public final class FJFixedPoint {
                         if (s > -1) {
                             if (fanout.get(r) > 0) {
                                 if (!nonfjSource.getArrivalProcess(nonfjmodel.getClasses().get(r)).isDisabled()) {
-                                    Exp e = (Exp) nonfjSource.getArrivalProcess(nonfjmodel.getClasses().get(r));
-                                    e.updateRate((fanout.get(r) - 1) * forkLambda.get(r));
+                                    // REBIND rather than Exp.updateRate. The rate
+                                    // reaches sn.rates either way, which is all an
+                                    // MVA or NC inner solve reads, but the fluid
+                                    // drift reads the PHASE representation, and
+                                    // mutating the distribution in place left that
+                                    // at the initial GlobalConstants.FineTol rate:
+                                    // the auxiliary classes then carried no traffic
+                                    // and the fixed point converged on the untouched
+                                    // transformed model.
+                                    nonfjSource.setArrival(nonfjmodel.getClasses().get(r),
+                                            new Exp((fanout.get(r) - 1) * forkLambda.get(r)));
                                 }
                             }
                         }
                     }
                     nonfjmodel.refreshRates(null, null);
+                    // refreshRates writes sn.rates and sn.scv only. An MVA or NC
+                    // inner solve reads the rate, but the fluid drift reads
+                    // sn.mu/sn.phi/sn.proc, and updateRate on an Exp leaves the
+                    // SCV at 1, so refreshProcesses would skip the phase refresh
+                    // and the auxiliary source would keep integrating at its
+                    // initial GlobalConstants.FineTol rate on every pass.
+                    nonfjmodel.refreshProcessPhases(null, null);
+                    nonfjmodel.refreshProcessRepresentations();
                 }
                 sn = nonfjmodel.getStruct(false);
+                if (jline.io.LineConsole.ownsLog()) {
+                    if (QN_1.getNumRows() == QN.getNumRows() && QN_1.getNumCols() == QN.getNumCols()) {
+                        jline.io.LineConsole.step(
+                                "fork-join iteration %d: queue lengths moved by at most %.3e",
+                                forkIter, QN_1.sub(QN).elementMaxAbs());
+                    } else {
+                        jline.io.LineConsole.step(
+                                "fork-join iteration %d: transformed model rebuilt", forkIter);
+                    }
+                }
                 if (forkIter > 2 && QN_1.getNumRows() == QN.getNumRows() && QN_1.getNumCols() == QN.getNumCols()) {
                     // see _kb/06-solver-catalog.md (JAR-only implementation notes: FJFixedPoint mixed absolute/relative convergence test)
                     boolean converged = true;
@@ -257,7 +295,7 @@ public final class FJFixedPoint {
                 forkLoop = false;
             }
 
-            ret = fcn.solve(sn, options);
+            ret = fcn.solve(nonfjmodel != null ? nonfjmodel : model, sn, options);
             if (model.hasFork()) {
                 NetworkStruct nonfjstruct = sn;
                 sn = model.getStruct(false);
@@ -345,17 +383,37 @@ public final class FJFixedPoint {
                                 Matrix ri = findPathsCS(sn, Pcs, f, joinIdx, r,
                                         toMerge, ret.QN, ret.TN, 0,
                                         fjclassmap, fjforkmap, nonfjmodel);
-                                Matrix lambdai = Matrix.ones(ri.getNumRows(), ri.getNumCols()).elementDiv(ri);
-                                double d0 = 0;
-                                int parallel_branches = ri.getNonZeroLength();
-                                for (int pow = 0; pow < parallel_branches; pow++) {
-                                    Matrix nk = Maths.nCk(lambdai, pow + 1);
-                                    nk = nk.sumRows();
-                                    double currentSum = Matrix.ones(nk.getNumRows(), 1).elementDiv(nk).elementSum();
-                                    d0 += FastMath.pow(-1, pow) * currentSum;
-                                }
+                                // tasksPerLink = w sends w IDENTICAL tasks down each link,
+                                // so the join synchronises on w*B siblings and not on B:
+                                // the sibling set is each branch's completion time
+                                // REPLICATED w times, and the order statistic is taken
+                                // over that multiset. Scaling E[X_(k)] by w instead (what
+                                // this did before) is w*H_B/mu where the answer is
+                                // H_(w*B)/mu, which OVER-states the delay by more the
+                                // larger w is. w = 1 replicates to itself, so nothing
+                                // moves there.
+                                int w = forkTasksPerLink(sn, model.getNodes().get(f));
+                                ri = replicate(ri, w);
+                                // The join fires on the k-th sibling completion, k = the
+                                // sibling count on a standard join and the declared quorum
+                                // on a PARTIAL one. The quorum is declared against the
+                                // SIBLING count w*B, which is the replicated length.
+                                int kreq = SnJoinQuorum.snJoinQuorum(sn, model.getNodes().get(joinIdx),
+                                        model.getClasses().get(r), ri.length());
+                                double d0 = FJ_ordstat_exp.fj_ordstat_exp(ri, kreq);
                                 // see _kb/06-solver-catalog.md (JAR-only implementation notes: FJFixedPoint Pcs precompute and sync delay setting)
-                                double syncDelay = d0 * ((ForkNodeParam) sn.nodeparam.get(model.getNodes().get(f))).fanOut - ri.elementSum() / ri.length();
+                                double syncDelay = d0 - ri.elementSum() / ri.length();
+                                if (syncDelay < 0) {
+                                    // The quorum is met BEFORE the branch the transform's own
+                                    // token walks, so the parent ought to leave ahead of it. The
+                                    // MMT cannot express that: its token is a job of the closed
+                                    // chain and must finish its branch, and that closed token is
+                                    // what keeps the branch stable, so it cannot be made open
+                                    // either. The delay floors at zero, which OVER-states the
+                                    // cycle time.
+                                    quorumClamped = true;
+                                    syncDelay = 0;
+                                }
                                 ((Delay) nonfjmodel.getNodes().get(joinIdx)).setService(nonfjmodel.getClasses().get(s), Exp.fitMean(syncDelay));
                                 if (outerForks.get(f, r) != 0) {
                                     ((Delay) nonfjmodel.getNodes().get(joinIdx)).setService(nonfjmodel.getClasses().get(r), Exp.fitMean(syncDelay));
@@ -406,18 +464,27 @@ public final class FJFixedPoint {
                                             idx++;
                                         }
                                     }
-                                    Matrix lambdai = Matrix.ones(1, artificialClasses).elementDiv(ri);
-                                    double d0 = 0;
-                                    int parallel_branches = artificialClasses;
-                                    for (int pow = 0; pow < parallel_branches; pow++) {
-                                        Matrix nk = Maths.nCk(lambdai, pow + 1);
-                                        nk = nk.sumRows();
-                                        double currentSum = Matrix.ones(nk.getNumRows(), 1).elementDiv(nk).elementSum();
-                                        d0 += FastMath.pow(-1, pow) * currentSum;
-                                    }
+                                    // The join fires on the k-th branch completion, k = the
+                                    // branch count on a standard join and the declared quorum
+                                    // on a PARTIAL one.
+                                    int kreq = SnJoinQuorum.snJoinQuorum(sn, model.getNodes().get(joinIdx),
+                                            model.getClasses().get(r), artificialClasses);
+                                    double d0 = FJ_ordstat_exp.fj_ordstat_exp(ri, kreq);
                                     Matrix di = new Matrix(1, artificialClasses);
                                     for (int j = 0; j < artificialClasses; j++) {
-                                        di.set(j, d0 * ((ForkNodeParam) sn.nodeparam.get(model.getNodes().get(f))).fanOut - ri.get(j));
+                                        // Under a quorum the k-th completion can precede a
+                                        // branch's own, and then that branch waits no further.
+                                        // see the mmt branch for why the floor is a boundary of
+                                        // the transform and not a choice.
+                                        // No fanOut factor here: ModelAdapter.ht REFUSES
+                                        // tasksPerLink > 1 by name, so w is 1 on every model
+                                        // that reaches this branch.
+                                        double dij = d0 - ri.get(j);
+                                        if (dij < 0) {
+                                            quorumClamped = true;
+                                            dij = 0;
+                                        }
+                                        di.set(j, dij);
                                     }
                                     double r0 = 0;
                                     for (int j = 0; j < inchain.length(); j++) {
@@ -433,7 +500,7 @@ public final class FJFixedPoint {
                                         }
                                     }
                                     // Update the delays at the join node and at the auxiliary delay
-                                    ((Delay) nonfjmodel.getNodes().get(joinIdx)).setService(nonfjmodel.getClasses().get(r), Exp.fitMean(d0 * ((ForkNodeParam) sn.nodeparam.get(model.getNodes().get(f))).fanOut));
+                                    ((Delay) nonfjmodel.getNodes().get(joinIdx)).setService(nonfjmodel.getClasses().get(r), Exp.fitMean(d0));
                                     idx = 0;
                                     for (int s = 0; s < fjclassmap.length(); s++) {
                                         if (fjclassmap.get(s) == r) {
@@ -589,6 +656,10 @@ public final class FJFixedPoint {
         // The fork-join loop previously exhausted options.iter_max silently, so a
         // non-converged MMT fixed point was returned as a normal result.
         if (model.hasFork()) {
+            if (quorumClamped) {
+                line_warning(mfilename(new Object() {
+                }), "A quorum join fires before the branch the fork-join transformation follows, which it cannot represent: the synchronisation delay is floored at zero, which OVER-states the cycle time and so under-states the throughput. SolverLDES and SolverJMT simulate the quorum on their sample path; SolverCTMC and SolverSSA refuse it, because a quorum fork-join has an unbounded state space.");
+            }
             if (forkLoop && forkIter >= options.iter_max) {
                 line_warning(mfilename(new Object() {
                 }), "The fork-join (mmt) fixed point did not converge in options.iter_max=" + options.iter_max + " iterations; returning the interim solution.");
@@ -604,6 +675,43 @@ public final class FJFixedPoint {
         out.iter = iter;
         out.sn = sn;
         out.state = state;
+        return out;
+    }
+
+    /**
+     * The tasksPerLink of a Fork node, at least 1. A Fork with no nodeparam entry, or
+     * one whose fanOut was never set, emits one task per link.
+     */
+    private static int forkTasksPerLink(NetworkStruct sn, Node forkNode) {
+        if (sn == null || sn.nodeparam == null || forkNode == null) {
+            return 1;
+        }
+        NodeParam param = sn.nodeparam.get(forkNode);
+        if (!(param instanceof ForkNodeParam)) {
+            return 1;
+        }
+        double w = ((ForkNodeParam) param).fanOut;
+        if (Double.isNaN(w) || w < 1) {
+            return 1;
+        }
+        return (int) Math.max(1, Math.round(w));
+    }
+
+    /**
+     * The row vector {@code v} concatenated with itself {@code w} times, which is the
+     * sibling multiset of a fork emitting w identical tasks per link. w = 1 returns a
+     * copy of the input, so nothing moves on an ordinary fork.
+     */
+    private static Matrix replicate(Matrix v, int w) {
+        if (w <= 1 || v == null || v.length() == 0) {
+            return v;
+        }
+        Matrix out = new Matrix(1, v.length() * w);
+        for (int k = 0; k < w; k++) {
+            for (int i = 0; i < v.length(); i++) {
+                out.set(0, k * v.length() + i, v.get(i));
+            }
+        }
         return out;
     }
 }

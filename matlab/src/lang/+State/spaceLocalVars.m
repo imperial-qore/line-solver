@@ -1,5 +1,8 @@
-function space = spaceLocalVars(sn, ind)
-% SPACE = SPACELOCALVARS(QN, IND)
+function space = spaceLocalVars(sn, ind, maxPending)
+% SPACE = SPACELOCALVARS(QN, IND, MAXPENDING)
+%
+% MAXPENDING (optional, default 0) bounds the number of secondary (delayed-hit)
+% requests that a cache node may merge onto a single in-flight fetch.
 
 % Copyright (c) 2012-2026, Imperial College London
 % All rights reserved.
@@ -10,6 +13,10 @@ function space = spaceLocalVars(sn, ind)
 %ist = sn.nodeToStation(ind);
 %isf = sn.nodeToStateful(ind);
 
+if nargin < 3 || isempty(maxPending)
+    maxPending = 0;
+end
+
 space = [];
 
 switch sn.nodetype(ind)
@@ -18,7 +25,8 @@ switch sn.nodetype(ind)
         if isfield(sn.nodeparam{ind}, 'retrievalSystemCapacity')
             rsCap = sn.nodeparam{ind}.retrievalSystemCapacity;
         end
-        space = State.spaceCache(sn.nodeparam{ind}.nitems, sn.nodeparam{ind}.itemcap, rsCap);
+        [~, rcItems] = State.cacheRetrievalClassMap(sn, ind);
+        space = State.spaceCache(sn.nodeparam{ind}.nitems, sn.nodeparam{ind}.itemcap, rsCap, maxPending, rcItems);
 end
 
 for r=1:sn.nclasses

@@ -341,6 +341,17 @@ public class Environment extends Ensemble {
     }
 
     /**
+     * Gets the type classification of the stage at the given index.
+     *
+     * @param stageIdx the index of the stage (0-based)
+     * @return the type of the stage, or an empty string when none was declared
+     * @throws ArrayIndexOutOfBoundsException if stageIdx is out of range
+     */
+    public String getStageType(int stageIdx) {
+        return types[stageIdx] != null ? types[stageIdx] : "";
+    }
+
+    /**
      * Gets the number of stages in this environment.
      *
      * @return the number of stages

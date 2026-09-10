@@ -7,13 +7,6 @@ This example demonstrates:
 - Hit ratio comparison across different strategies
 """
 
-# Ensure native line_solver is used (not python-wrapper)
-import sys
-import os
-_native_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
-if _native_path not in sys.path:
-    sys.path.insert(0, _native_path)
-
 from line_solver import *
 import numpy as np
 

@@ -11,6 +11,19 @@ if strcmp(self.getOptions.lang,'java')
     % native JMT path; the JLINE (lang=java) delegation does not produce them.
     line_error(mfilename,'SolverJMT log-based sampling (sampleSysAggr/getProbSysAggr) is not supported with lang=''java''. Use lang=''matlab'' or SolverCTMC.');
 end
+if strcmp(self.getOptions.lang,'cpp')
+    % SAME REASON, AND IT IS NOT THE STATE. The trajectory is read back from the
+    % per-node CSV logs that `linkAndLog` asks JMT to write, and line-cli's
+    % `-s jmt` arm reports the AvgTable of a jsim run: it neither writes those
+    % logs nor exports the logged copy's Logger nodes, so the delegated
+    % runAnalyzer below simulates a model without them (and, on this example's
+    % four-class chain, fails outright). Pinning the inner solve to
+    % lang='matlab' would answer with a MATLAB trajectory under a lang that is
+    % an assertion about which engine produced it, so the limit is named here.
+    CPPLINE.cppUnsupported(self.name, 'sampleSysAggr/getProbSysAggr', ...
+        ['log-based sampling reads the per-node CSV logs linkAndLog asks JMT to write, and ' ...
+        'line-cli''s -s jmt arm reports an AvgTable rather than writing them']);
+end
 
 if nargin<2 %~exist('numEvents','var')
     numEvents = self.options.samples;

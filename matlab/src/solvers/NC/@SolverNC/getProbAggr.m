@@ -1,4 +1,4 @@
-function Pnir = getProbAggr(self, node, state_a)
+function varargout = getProbAggr(self,varargin)
 % PNIR = GETPROBAGGR(NODE, STATE_A)
 %
 % Probability of a SPECIFIC per-class job distribution at a station.
@@ -13,6 +13,42 @@ function Pnir = getProbAggr(self, node, state_a)
 %
 % Output:
 %   Pnir - Scalar probability in [0,1]
+% The result recorder captures the scalar this getter returned together
+% with the solver that produced it -- see LineResultRecorder. Six of the
+% statepr_* goldens hold exactly this number and nothing else, so recording
+% it is what makes those goldens attributable instead of "the first bare
+% number the example printed". The wrapper exists so that recording happens
+% on EVERY exit path of the implementation below.
+[scope, scopeGuard] = LineResultRecorder.enter(); %#ok<ASGLU>
+[varargout{1:max(nargout,1)}] = getProbAggr_impl(self,varargin{:});
+LineResultRecorder.captureScalar(scope, self, 'probAggr', varargout{1});
+end
+
+function Pnir = getProbAggr_impl(self, node, state_a)
+% GETPROBAGGR_IMPL Implementation of GETPROBAGGR; see the wrapper above.
+
+
+% lang='cpp' answers this from -a prob; a state prior over several rows is
+% refused there by name. See CPPLINE.assertSingleState.
+%
+% ONLY FOR THE MODEL'S OWN STATE. `-a prob` reports every station's marginal at
+% the state model.json carries; a state_a named in the CALL would have to be
+% written onto the node first, and doing that here would edit the caller's model
+% to ask a question about it. So an explicit state_a stays with the native path,
+% where the reference substitutes it into a COPY of sn.
+if isfield(self.options,'lang') && strcmp(self.options.lang,'cpp')
+    if nargin >= 3
+        CPPLINE.cppUnsupported(self.name, 'getProbAggr(node, state_a)', ...
+            ['line-cli reports every station''s marginal at the state the model carries and ' ...
+            'takes no per-call state, so answering a named state_a would mean writing it ' ...
+            'onto the caller''s model first']);
+    end
+    CPPLINE.assertSingleState(self.name, 'getProbAggr', self.model);
+    sncpp = self.model.getStruct();
+    Pnir = CPPLINE.probEntry(CPPLINE.probAggr(self.name, self.model, self.options), ...
+        'ProbAggr', sncpp.nodeToStation(node.index), self.name, 'getProbAggr');
+    return
+end
 
 if GlobalConstants.DummyMode
     Pnir = NaN;

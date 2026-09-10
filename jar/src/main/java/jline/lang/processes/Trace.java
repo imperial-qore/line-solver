@@ -19,4 +19,20 @@ public class Trace extends Replayer {
     public Trace(Object data) {
         super(data);
     }
+
+    /**
+     * "Trace", not the inherited "Replayer".
+     *
+     * getName() stays "Replayer" because it resolves the ProcessType and the
+     * JSON wire type, and a Trace replays samples exactly as a Replayer does.
+     * The registry name is what makes the Trace entry reachable; a solver that
+     * declares only "Replayer" still accepts the model, through the
+     * {@link jline.lang.FeatureSet} generalization table.
+     *
+     * @return the FeatureSet entry naming this distribution
+     */
+    @Override
+    public String getFeatureName() {
+        return "Trace";
+    }
 }

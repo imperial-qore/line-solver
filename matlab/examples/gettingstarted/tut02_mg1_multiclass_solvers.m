@@ -33,10 +33,10 @@ ctmcOptions = CTMC.defaultOptions;
 ctmcOptions.cutoff = 2;
 ctmcOptions.verbose = true;
 ctmcOptions.config.nonmkv = 'none';  % Disable automatic non-Markovian conversion
-ctmcAvgTable2 = CTMC(model, ctmcOptions).avgTable()
+ctmcAvgTable2 = CTMC(model, 'exact', ctmcOptions).avgTable()
 
 ctmcOptions.cutoff = 4;
-ctmcAvgTable4 = CTMC(model, ctmcOptions).avgTable()
+ctmcAvgTable4 = CTMC(model, 'exact', ctmcOptions).avgTable()
 
 mamOptions = MAM.defaultOptions;
 mamOptions.config.nonmkv = 'none';

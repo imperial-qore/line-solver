@@ -1,0 +1,93 @@
+{
+  "class": {
+    "AG": "deterministic",
+    "MVA": "deterministic"
+  },
+  "example": "ag_multiclass_closed",
+  "solvers": {
+    "AG": [
+      {
+        "ArvR": 0.95678,
+        "JobClass": "Class1",
+        "QLen": 1.6243,
+        "ResidT": 1.1946,
+        "RespT": 1.1946,
+        "Station": "Queue1",
+        "Tput": 1.3597,
+        "Util": 0.67984
+      },
+      {
+        "ArvR": 0.70154,
+        "JobClass": "Class2",
+        "QLen": 1.1225,
+        "ResidT": 1.1977,
+        "RespT": 1.1977,
+        "Station": "Queue1",
+        "Tput": 0.93725,
+        "Util": 0.62483
+      },
+      {
+        "ArvR": 1.3597,
+        "JobClass": "Class1",
+        "QLen": 3.6418,
+        "ResidT": 3.8062,
+        "RespT": 3.8062,
+        "Station": "Queue2",
+        "Tput": 0.95678,
+        "Util": 0.95678
+      },
+      {
+        "ArvR": 0.93725,
+        "JobClass": "Class2",
+        "QLen": 1.9846,
+        "ResidT": 2.8289,
+        "RespT": 2.8289,
+        "Station": "Queue2",
+        "Tput": 0.70154,
+        "Util": 0.87692
+      }
+    ],
+    "MVA": [
+      {
+        "ArvR": 0.62574,
+        "JobClass": "Class1",
+        "QLen": 0.63167,
+        "ResidT": 1.0095,
+        "RespT": 1.0095,
+        "Station": "Queue1",
+        "Tput": 0.62574,
+        "Util": 0.31287
+      },
+      {
+        "ArvR": 0.29755,
+        "JobClass": "Class2",
+        "QLen": 0.39711,
+        "ResidT": 1.3346,
+        "RespT": 1.3346,
+        "Station": "Queue1",
+        "Tput": 0.29755,
+        "Util": 0.19837
+      },
+      {
+        "ArvR": 0.62574,
+        "JobClass": "Class1",
+        "QLen": 4.3683,
+        "ResidT": 6.981,
+        "RespT": 6.981,
+        "Station": "Queue2",
+        "Tput": 0.62574,
+        "Util": 0.62574
+      },
+      {
+        "ArvR": 0.29755,
+        "JobClass": "Class2",
+        "QLen": 2.6029,
+        "ResidT": 8.7476,
+        "RespT": 8.7476,
+        "Station": "Queue2",
+        "Tput": 0.29755,
+        "Util": 0.37194
+      }
+    ]
+  }
+}

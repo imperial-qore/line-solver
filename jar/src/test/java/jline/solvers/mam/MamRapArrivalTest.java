@@ -163,6 +163,11 @@ public class MamRapArrivalTest {
     @Test
     public void testPhServiceAnchorsUnchanged() {
         assertEquals(0.3125000000, queueLength(new Exp(0.5), Erlang.fitMeanAndOrder(0.5, 2), 1), 1e-9);
-        assertEquals(0.6964285714, queueLength(new Exp(1.2), Erlang.fitMeanAndOrder(0.5, 2), 2), 1e-9);
+        // M/E2/2. Was 0.6964285714, the single-fast-server surrogate; the exact
+        // MAP/PH/c multiset QBD (2026-08-16) answers it at 0.6462542940, and a
+        // truncated CTMC written out state by state, sharing no code with that QBD,
+        // gives 0.6462542936 at N=300 with 2.9e-16 of mass left in the tail. The
+        // old value was 7.8% high.
+        assertEquals(0.6462542940, queueLength(new Exp(1.2), Erlang.fitMeanAndOrder(0.5, 2), 2), 1e-9);
     }
 }

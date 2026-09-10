@@ -20,13 +20,17 @@ public class Utils {
 
     /**
      * Finds the key corresponding to a target string value in a map.
-     * 
+     *
+     * The miss sentinel is -1, not 0: the callers key these maps by a
+     * LayeredNetworkStruct element index, which is 0-based, so 0 is the first
+     * host rather than "absent".
+     *
      * @param map the map to search
      * @param target the string value to find
-     * @return the key associated with the target value, or 0 if not found
+     * @return the key associated with the target value, or -1 if not found
      */
     public static int findString(Map<Integer, String> map, String target) {
-        int res = 0;
+        int res = -1;
         for (Map.Entry e : map.entrySet()) {
             if (e.getValue().equals(target)) res = (int) e.getKey();
         }

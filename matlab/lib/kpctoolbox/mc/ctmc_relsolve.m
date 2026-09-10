@@ -40,7 +40,10 @@ if nargin<2
     refstate = 1;
 end
 
-if length(Q) > 6000 && (nargin==1 || ~options.force)
+% OPTIONS IS THE THIRD ARGUMENT, so "was it supplied" is nargin<3, not nargin==1.
+% The three guards below all tested for the one-argument call and so dereferenced
+% an undefined options on the documented two-argument call ctmc_relsolve(Q,refstate).
+if length(Q) > 6000 && (nargin<3 || ~options.force)
     fprintf(1,'ctmc_relsolve: the order of Q is large (%d). Press key to continue.\n',length(Q));
     pause;
 end
@@ -116,7 +119,7 @@ while goon
     nnzel = find(sum(abs(Qnnz),1)~=0 & sum(abs(Qnnz),2)'~=0);
     if length(nnzel) < n && ~isReducible
         isReducible = true;
-        if (nargin > 1 && options.verbose == 2) % debug
+        if (nargin > 2 && options.verbose == 2) % debug
             fprintf(1,'ctmc_solve: the infinitesimal generator is reducible.\n');
         end
     end
@@ -144,7 +147,7 @@ if ~isdeployed
     end
 end
 
-if nargin == 1
+if nargin < 3
     p(nnzel)=Qnnz'\ bnnz;
 else
     switch options.method

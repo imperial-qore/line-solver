@@ -35,30 +35,61 @@ for ind=1:self.getNumberOfNodes
         case 'Cache'
             nodeparam{ind} = struct();
             nodeparam{ind}.nitems = 0;
+            ir = node.items.index;   % row of this cache's item set in node.popularity
             nodeparam{ind}.accost = node.accessProb;
             for r=1:self.getNumberOfClasses
-                if length(node.popularity) >= r && isa(node.popularity{r}, 'Distribution') && ~node.popularity{r}.isDisabled
-                    nodeparam{ind}.nitems = max(nodeparam{ind}.nitems,node.popularity{r}.support(2));
+                % popularity is indexed (itemSetIndex, class): address the row
+                % explicitly, since linear indexing only aliases to it when the
+                % cache's item set is the first one in the model, i.e. only in a
+                % single-cache model.
+                if size(node.popularity,1) >= ir && size(node.popularity,2) >= r ...
+                        && isa(node.popularity{ir,r}, 'Distribution') && ~node.popularity{ir,r}.isDisabled
+                    nodeparam{ind}.nitems = max(nodeparam{ind}.nitems,node.popularity{ir,r}.support(2));
                 end
             end
-            % nvars cache width = contents + (retrieval system) per-item occupancy bitmap
+            % nvars cache width = contents + per-item occupancy bitmap (block A) +
+            % per-retrieval-class delayed-hit counts (block B); see State.spaceCache
             if node.retrievalSystemCapacity > 0
                 retrievalBitmapWidth = nodeparam{ind}.nitems;
+                retrievalPendingWidth = numel(node.retrievalClassIndices);
             else
                 retrievalBitmapWidth = 0;
+                retrievalPendingWidth = 0;
             end
-            nvars(ind,2*R+1) = node.totalCacheCapacity + retrievalBitmapWidth;
+            nvars(ind,2*R+1) = node.totalCacheCapacity + retrievalBitmapWidth + retrievalPendingWidth;
             nodeparam{ind}.itemcap = node.itemLevelCap;
+            % per-item storage costs and per-list cost caps (ton21cache Sec. IX)
+            if isprop(node,'itemSize') && ~isempty(node.itemSize)
+                nodeparam{ind}.itemsize = node.itemSize;
+            else
+                nodeparam{ind}.itemsize = [];
+            end
+            if isprop(node,'costCap') && ~isempty(node.costCap)
+                nodeparam{ind}.costcap = node.costCap;
+                nodeparam{ind}.costcapglobal = node.costCapGlobal;
+            else
+                nodeparam{ind}.costcap = [];
+                nodeparam{ind}.costcapglobal = false;
+            end
             nodeparam{ind}.totalCacheCapacity = node.totalCacheCapacity;
             nodeparam{ind}.retrievalSystemCapacity = node.retrievalSystemCapacity;
             nodeparam{ind}.pread = cell(1,self.getNumberOfClasses);
             for r=1:self.getNumberOfClasses
-                if length(node.popularity) < r || ~isa(node.popularity{r}, 'Distribution') || node.popularity{r}.isDisabled
+                if size(node.popularity,1) < ir || size(node.popularity,2) < r ...
+                        || ~isa(node.popularity{ir,r}, 'Distribution') || node.popularity{ir,r}.isDisabled
                     nodeparam{ind}.pread{r} = NaN;
                 else
-                    nodeparam{ind}.pread{r} = node.popularity{r}.evalPMF(1:nodeparam{ind}.nitems);
+                    nodeparam{ind}.pread{r} = node.popularity{ir,r}.evalPMF(1:nodeparam{ind}.nitems);
                 end
             end
+            % item read by each per-item class of a cache network, 0 where the class
+            % is not one; see Cache.setItemReadClasses
+            classitem = zeros(1, self.getNumberOfClasses);
+            if isprop(node,'itemOfClass') && ~isempty(node.itemOfClass)
+                nc = min(numel(node.itemOfClass), numel(classitem));
+                classitem(1:nc) = node.itemOfClass(1:nc);
+            end
+            nodeparam{ind}.classitem = classitem;
             nodeparam{ind}.replacestrat = node.replacestrategy;
             if isprop(node,'admissionProb') && ~isempty(node.admissionProb)
                 nodeparam{ind}.qlru = node.admissionProb;
@@ -96,10 +127,10 @@ for ind=1:self.getNumberOfNodes
                 nodeparam{ind}.retrievalClasses = -ones(max(nodeparam{ind}.nitems,1), K);
             end
             nodeparam{ind}.retrievalClassIndices = node.retrievalClassIndices;
-            nodeparam{ind}.retrievalSystemQueueIndices = containers.Map('KeyType','int32','ValueType','any');
+            nodeparam{ind}.retrievalSystemQueueIndices = configureDictionary('int32','cell');
             keysList = keys(node.retrievalSystemQueueIndices);
             for kk = 1:numel(keysList)
-                nodeparam{ind}.retrievalSystemQueueIndices(keysList{kk}) = node.retrievalSystemQueueIndices(keysList{kk});
+                nodeparam{ind}.retrievalSystemQueueIndices{keysList(kk)} = node.retrievalSystemQueueIndices{keysList(kk)};
             end
 
             % Store actual hit/miss/latency from solver results (if available)
@@ -114,12 +145,84 @@ for ind=1:self.getNumberOfNodes
                 nodeparam{ind}.actualresidt = full(node.server.actualResidT);
             end
         case 'Fork'
+            % fanOut stays the scalar every existing consumer reads. The three
+            % matrices beside it carry the variable forking level: which
+            % destination, which class, how many tasks, drawn from what and
+            % taken with what probability. They are (nnodes x nclasses) and
+            % indexed by DESTINATION NODE, not by link ordinal, so a relink
+            % cannot silently permute them.
+            K = self.getNumberOfClasses;
+            I = self.getNumberOfNodes;
             nodeparam{ind}.fanOut = node.output.tasksPerLink;
+
+            % connected destinations per class, read off the node's own links:
+            % outputStrategy{r}{3}{e}{1} is the destination node object
+            connrc = false(I,K);
+            for r=1:K
+                os = node.output.outputStrategy{r};
+                if length(os) >= 3 && ~isempty(os{3})
+                    for e=1:length(os{3})
+                        connrc(os{3}{e}{1}.index, r) = true;
+                    end
+                end
+            end
+            conn = any(connrc,2);
+
+            fanOutLink = zeros(I,K);
+            fanOutProb = zeros(I,K);
+            fanOutDist = cell(I,K);
+            fanOutLink(connrc) = node.output.tasksPerLink;
+            fanOutProb(connrc) = 1.0;
+
+            % node index of an override's destination name; empty dest means
+            % every connected link of that class
+            destsOf = @(nm) destIndexes(self, nm, conn);
+
+            for e=1:length(node.output.tasksPerLinkByDest)
+                ov = node.output.tasksPerLinkByDest(e);
+                fanOutLink(destsOf(ov.dest), ov.class) = ov.value;
+            end
+            for e=1:length(node.output.branchProb)
+                ov = node.output.branchProb(e);
+                fanOutProb(destsOf(ov.dest), ov.class) = ov.value;
+            end
+            for e=1:length(node.output.tasksPerLinkDist)
+                ov = node.output.tasksPerLinkDist(e);
+                for kdest=destsOf(ov.dest)
+                    fanOutDist{kdest,ov.class} = ov.dist;
+                    % the scalar slot carries the mean, so a consumer that only
+                    % reads fanOutLink still sees E[tasks per link]
+                    fanOutLink(kdest,ov.class) = ov.dist.getMean();
+                end
+            end
+            nodeparam{ind}.fanOutLink = fanOutLink;
+            nodeparam{ind}.fanOutProb = fanOutProb;
+            nodeparam{ind}.fanOutDist = fanOutDist;
+            if ~isempty(node.output.tasksPerLinkDist) || ...
+                    ~isempty(node.output.tasksPerLinkByDest) || ...
+                    ~isempty(node.output.branchProb)
+                % Keep the scalar consistent with the per-link mean so a solver
+                % that has not been taught the matrices degrades to E[.] and not
+                % to a value the fork never emits. The branch probability is
+                % folded in here and NOT into fanOutLink, because JMT and LDES
+                % read the two separately: fanOutLink is the count GIVEN the
+                % branch fires, fanOutProb is whether it fires at all.
+                nz = fanOutLink(connrc) .* fanOutProb(connrc);
+                if ~isempty(nz)
+                    nodeparam{ind}.fanOut = mean(nz(:));
+                end
+            end
         case 'Join'
             nodeparam{ind}.joinStrategy = node.input.joinStrategy;
             nodeparam{ind}.fanIn = cell(1,self.getNumberOfClasses);
+            % fanIn is the JMT numRequired of a STANDARD join (-1 = every
+            % sibling), joinRequired the quorum k of a PARTIAL one: the two
+            % read the same field but are written to different JMT elements,
+            % so both are carried
+            nodeparam{ind}.joinRequired = cell(1,self.getNumberOfClasses);
             for r=1:self.getNumberOfClasses
                 nodeparam{ind}.fanIn{r} = node.input.joinRequired{r};
+                nodeparam{ind}.joinRequired{r} = node.input.joinRequired{r};
             end
         case 'Logger'
             nodeparam{ind}.fileName = node.fileName;
@@ -151,6 +254,10 @@ for ind=1:self.getNumberOfNodes
             end
         case {'Queue','QueueingStation','Delay','DelayStation','Transition'}
             for r=1:self.getNumberOfClasses
+                % A slot never padded to nclasses has no process to classify.
+                if r > numel(node.server.serviceProcess) || isempty(node.server.serviceProcess{r})
+                    continue
+                end
                 switch class(node.server.serviceProcess{r}{3})
                     case {'MAP','MMPP2'} % Markov-modulated: track restart phase (see State.afterEvent ismkvmodclass)
                         nvars(ind,r) = nvars(ind,r) + 1;
@@ -261,6 +368,30 @@ for ind=1:self.getNumberOfNodes
                     nodeparam{ind}{r} = struct();
                 end
                 nodeparam{ind}{r}.outlinks = find(self.sn.connmatrix(ind,:));
+            case RoutingStrategy.SDR
+                % Krzesinski SDR: resolve the declared branch topology from
+                % node objects to node indices. The product-form solvers read
+                % the station-indexed twin from sn.sdr, built in refreshStruct.
+                if isempty(nodeparam) || isempty(nodeparam{ind})
+                    nodeparam{ind}{r} = struct();
+                end
+                decl = node.output.outputStrategy{r}{3}{1};
+                B = numel(decl.branch);
+                sdr = struct();
+                sdr.entry = ind;
+                sdr.departure = decl.departure.index;
+                sdr.branch = cell(1,B);
+                sdr.entryOf = zeros(1,B);
+                sdr.departureOf = zeros(1,B);
+                for b = 2:B
+                    sdr.branch{b} = cellfun(@(x) x.index, decl.branch{b});
+                    sdr.entryOf(b) = decl.entryOf{b}.index;
+                    sdr.departureOf(b) = decl.departureOf{b}.index;
+                end
+                sdr.level = decl.level;
+                sdr.C = decl.C;
+                sdr.d = decl.d;
+                nodeparam{ind}{r}.sdr = sdr;
         end
     end
 end
@@ -358,8 +489,10 @@ if isfield(self.sn,'syncreply') && ~isempty(self.sn.syncreply) && any(self.sn.sy
             end
             if SchedStrategy.toId(self.sn.sched(ist)) ~= SchedStrategy.FCFS
                 line_error(mfilename, sprintf(['Synchronous calls (REPLY signals) are supported only at FCFS ', ...
-                    'stations, but %s uses %s. Holding a server across a call has no representation in the ', ...
-                    'state of the other disciplines.'], self.sn.nodenames{ind}, SchedStrategy.toText(self.sn.sched(ist))));
+                    'stations, but %s uses %s. A held server is encoded as a per-class counter, which is exact ', ...
+                    'only where servers are interchangeable (FCFS) or unlimited (INF); the other disciplines ', ...
+                    'are not yet encoded rather than infeasible. Set this station to FCFS or INF, or simulate ', ...
+                    'the layered model directly with SolverLDES.'], self.sn.nodenames{ind}, SchedStrategy.toText(self.sn.sched(ist))));
             end
             nvars(ind, 2*R+1+r) = 1;
             replyblock(ind, r) = 1;
@@ -475,5 +608,27 @@ while ~isempty(queue)
             queue(end+1) = j; %#ok<AGROW>
         end
     end
+end
+end
+
+function idx = destIndexes(self, destName, conn)
+% IDX = DESTINDEXES(SELF, DESTNAME, CONN)
+%
+% Node indexes an override applies to: the one node called DESTNAME, or every
+% connected destination when DESTNAME is empty. Overrides are keyed by name
+% because a link ordinal renumbers whenever the model is relinked.
+if isempty(destName)
+    idx = find(conn(:))';
+    return
+end
+idx = [];
+for i = 1:self.getNumberOfNodes
+    if strcmp(self.nodes{i}.getName(), destName)
+        idx = i;
+        return
+    end
+end
+if isempty(idx)
+    line_error(mfilename, sprintf('Fork override names destination "%s", which is not a node of this model.', destName));
 end
 end

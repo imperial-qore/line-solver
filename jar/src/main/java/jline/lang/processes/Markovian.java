@@ -9,7 +9,9 @@ import static jline.GlobalConstants.Inf;
 
 import jline.api.mam.*;
 import jline.GlobalConstants;
+import jline.util.ComplexOps;
 import jline.util.Pair;
+import org.apache.commons.math3.complex.Complex;
 import jline.util.matrix.Matrix;
 import jline.util.matrix.MatrixCell;
 import org.apache.commons.math3.util.FastMath;
@@ -79,6 +81,37 @@ public class Markovian extends ContinuousDistribution implements Serializable {
         Matrix e = Matrix.ones(nPhases, 1);
         Matrix sI = Matrix.eye(nPhases).scale(s);
         return pie.mult((sI.sub(A)).inv()).mult(A.scale(-1)).mult(e).value();
+    }
+
+    /**
+     * The transform at a COMPLEX argument, pie (sI - D0)^-1 (-D0 e), which is
+     * the same closed form as the real overload and is ANALYTIC, so it serves
+     * the arguments off the real axis that transform inversion and root location
+     * need. Overrides the CDF sum of {@link Distribution#evalLST(Complex)},
+     * which would be a truncation where this is exact.
+     */
+    @Override
+    public Complex evalLST(Complex s) {
+        final Matrix pie = Map_pie.map_pie(D(0), D(1));
+        final Matrix A = D(0);
+        final int n = nPhases;
+        final Complex[][] M = new Complex[n][n];
+        final Complex[] t = new Complex[n];
+        for (int i = 0; i < n; i++) {
+            double exit = 0.0;
+            for (int j = 0; j < n; j++) {
+                M[i][j] = new Complex((i == j ? s.getReal() : 0.0) - A.get(i, j),
+                        i == j ? s.getImaginary() : 0.0);
+                exit += A.get(i, j);
+            }
+            t[i] = new Complex(-exit, 0.0);
+        }
+        final Complex[] y = ComplexOps.solve(M, t);
+        Complex out = new Complex(0.0, 0.0);
+        for (int i = 0; i < n; i++) {
+            out = out.add(y[i].multiply(pie.get(i)));
+        }
+        return out;
     }
 
     /**
@@ -346,52 +379,52 @@ public class Markovian extends ContinuousDistribution implements Serializable {
         return Map_sample.map_sample(D(0), D(1), n, random);
     }
 
-    // =================== KOTLIN-STYLE PROPERTY ALIASES ===================
+    // =================== PROPERTY ALIASES ===================
     
     /**
-     * Kotlin-style property alias for getMean()
+     * Property alias for getMean
      */
     public double mean() {
         return getMean();
     }
     
     /**
-     * Kotlin-style property alias for getRate()
+     * Property alias for getRate
      */
     public double rate() {
         return getRate();
     }
     
     /**
-     * Kotlin-style property alias for getSCV()
+     * Property alias for getSCV
      */
     public double scv() {
         return getSCV();
     }
     
     /**
-     * Kotlin-style property alias for getSkewness()
+     * Property alias for getSkewness
      */
     public double skewness() {
         return getSkewness();
     }
     
     /**
-     * Kotlin-style property alias for getVar()
+     * Property alias for getVar
      */
     public double var() {
         return getVar();
     }
     
     /**
-     * Kotlin-style property alias for getVariance()
+     * Property alias for getVariance
      */
     public double variance() {
         return getVariance();
     }
     
     /**
-     * Kotlin-style property alias for getACF()
+     * Property alias for getACF
      */
     public Matrix acf(int maxLag) {
         // Create a matrix with lags from 0 to maxLag
@@ -403,84 +436,84 @@ public class Markovian extends ContinuousDistribution implements Serializable {
     }
     
     /**
-     * Kotlin-style property alias for getEmbedded()
+     * Property alias for getEmbedded
      */
     public Matrix embedded() {
         return getEmbedded();
     }
     
     /**
-     * Kotlin-style property alias for getEmbeddedProb()
+     * Property alias for getEmbeddedProb
      */
     public Matrix embeddedProb() {
         return getEmbeddedProb();
     }
     
     /**
-     * Kotlin-style property alias for getIDC()
+     * Property alias for getIDC
      */
     public double idc() {
         return getIDC();
     }
     
     /**
-     * Kotlin-style property alias for getIDI()
+     * Property alias for getIDI
      */
     public double idi() {
         return getIDI();
     }
     
     /**
-     * Kotlin-style property alias for getInitProb()
+     * Property alias for getInitProb
      */
     public Matrix initProb() {
         return getInitProb();
     }
     
     /**
-     * Kotlin-style property alias for getMoments()
+     * Property alias for getMoments
      */
     public List<Double> moments() {
         return getMoments();
     }
     
     /**
-     * Kotlin-style property alias for getMu()
+     * Property alias for getMu
      */
     public Matrix mu() {
         return getMu();
     }
     
     /**
-     * Kotlin-style property alias for getNumberOfPhases()
+     * Property alias for getNumberOfPhases
      */
     public long numberOfPhases() {
         return getNumberOfPhases();
     }
     
     /**
-     * Kotlin-style property alias for getNumberOfPhases()
+     * Property alias for getNumberOfPhases
      */
     public long numPhases() {
         return getNumberOfPhases();
     }
     
     /**
-     * Kotlin-style property alias for getPhi()
+     * Property alias for getPhi
      */
     public Matrix phi() {
         return getPhi();
     }
     
     /**
-     * Kotlin-style property alias for getProcess()
+     * Property alias for getProcess
      */
     public MatrixCell process() {
         return getProcess();
     }
     
     /**
-     * Kotlin-style property alias for getSubgenerator()
+     * Property alias for getSubgenerator
      */
     public Matrix subgenerator() {
         return getSubgenerator();

@@ -32,7 +32,7 @@ for s = 1:length(replStrat)
 
     model.link(P);
 
-    solver{end+1} = CTMC(model,'keep',false,'cutoff',1,'verbose',false);
+    solver{end+1} = CTMC(model, 'exact','keep',false,'cutoff',1,'verbose',false);
     AvgTable{end+1} = solver{end}.getAvgNodeTable;
     hr = cacheNode.getHitRatio;  % per-class vector; read-class entry holds the hit ratio
     if ~isempty(hr)

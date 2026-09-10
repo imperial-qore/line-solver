@@ -49,6 +49,12 @@ function [lNormConst] = getProbNormConstAggr(self)
 % fprintf('Log normalizing constant = %.4f\\n', log_G);
 % @endcode
 
+
+if isfield(self.options,'lang') && strcmp(self.options.lang,'cpp')
+    lNormConst = CPPLINE.normConstAggr(self.name, self.model, self.options);
+    return
+end
+
 if ~isempty(self.result)
     lNormConst = self.result.Prob.logNormConstAggr;
 else

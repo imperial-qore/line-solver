@@ -12,12 +12,15 @@ import java.util.Map;
 import org.apache.commons.math3.util.FastMath;
 
 import jline.GlobalConstants;
+import jline.api.npfqn.Npfqn_traffic_split_rr;
 import jline.api.sn.SnIsOpenModel;
+import jline.api.sn.SnRtStations;
 import jline.lang.NetworkStruct;
 import jline.lang.constant.NodeType;
 import jline.lang.constant.SchedStrategy;
 import jline.solvers.SolverOptions;
 import jline.solvers.mva.MVAResult;
+import jline.solvers.mva.SolverMVA;
 import jline.util.Utils;
 import jline.api.da.Da_fpi;
 import jline.util.matrix.Matrix;
@@ -30,7 +33,9 @@ public final class Solver_qna {
         config.space_max = 1;
 
         int K = sn.nclasses;
-        Matrix rt = sn.rt.copy();
+        // sn.rt and sn.visits are indexed by stateful node: project them onto stations
+        jline.util.Pair<Matrix, Matrix> rtst = SnRtStations.snRtStations(sn);
+        Matrix rt = rtst.getLeft();
         Matrix S = sn.rates.elementPow(-1.0);
         Matrix scv = sn.scv.copy();
         scv.removeNaN();
@@ -38,7 +43,7 @@ public final class Solver_qna {
         int I = sn.nnodes;
         int M = sn.nstations;
         int C = sn.nchains;
-        Matrix V = Matrix.cellsum(sn.visits);
+        Matrix V = rtst.getRight();
         Matrix Q = new Matrix(M, K, M * K);
 
         Matrix U = new Matrix(M, K, M * K);
@@ -47,6 +52,15 @@ public final class Solver_qna {
         Matrix X = new Matrix(1, K, K);
 
         Matrix lambda = new Matrix(1, C, C);
+
+        // One predicate for the gate and the run: SolverMVA.methodFeatureSet
+        // withholds "qna" for a discipline the station update below has no arm for,
+        // and the update refuses it by name rather than leaving that station's row
+        // of Q, U, R and T at zero and returning the table as a solution.
+        String qnaReason = SolverMVA.qnaSchedulingReason(sn);
+        if (!qnaReason.isEmpty()) {
+            throw new RuntimeException(qnaReason);
+        }
 
         int it = 0;
 
@@ -60,13 +74,15 @@ public final class Solver_qna {
         Matrix a2 = new Matrix(M, K, M * K);
         Matrix d2 = new Matrix(M, 1, M);
         Matrix f2 = new Matrix(M * K, M * K, (int) Math.pow((double) (M * K), 2.0));
+        // deterministic (round-robin) split degrees, k=1 where the split is Markovian
+        Matrix kRR = Npfqn_traffic_split_rr.npfqn_traffic_split_rr(sn);
         for (int i = 0; i < M; i++) {
             for (int j = 0; j < M; j++) {
                 if (sn.nodetype.get((int) sn.stationToNode.get(j)) != NodeType.Source) {
                     for (int r = 0; r < K; r++) {
                         for (int s = 0; s < K; s++) {
                             if (rt.get(i * K + r, j * K + s) > 0) {
-                                f2.set(i * K + r, j * K + s, 1);
+                                f2.set(i * K + r, j * K + s, 1 + rt.get(i * K + r, j * K + s) * (1 - kRR.get(i, r)));
                             }
                         }
                     }
@@ -162,13 +178,19 @@ public final class Solver_qna {
                     int ist = (int) sn.nodeToStation.get(ind);
                     if (sn.nodetype.get(ind) != NodeType.Join) {
                         if (sn.sched.get(sn.stations.get(ist)) == SchedStrategy.INF) {
-                            for (int i = 0; i < M; i++) {
-                                for (int r = 0; r < K; r++) {
-                                    for (int s = 0; s < K; s++) {
-                                        d2.set(ist, s, a2.get(ist, s));
-                                    }
-                                }
-                            }
+                            // Departure SCV of a delay. solver_qna.m writes
+                            // d2(ist,s) = a2(ist,s) over every class, which grows a
+                            // vector declared as zeros(M,1) into an M-by-K matrix;
+                            // every downstream read is then the SCALAR d2(ist),
+                            // which linear indexing resolves to the FIRST class
+                            // column. So the value that survives is a2(ist,1), and
+                            // the loops over r and s write nothing else that is
+                            // ever read. d2 is an (M,1) vector here, as the C++
+                            // port also keeps it (solver_qna.h), so the same
+                            // two-index write ran off the end of it the moment a
+                            // second class existed -- which the fork-join
+                            // transform creates on a model written with one.
+                            d2.set(ist, a2.get(ist, 0));
                             for (int c = 0; c < C; c++) {
                                 Matrix inchain = sn.inchain.get(c);
                                 for (int k1 = 0; k1 < inchain.length(); k1++) {
@@ -243,7 +265,8 @@ public final class Solver_qna {
                         for (int r = 0; r < K; r++) {
                             for (int s = 0; s < K; s++) {
                                 if (rt.get(i * K + r, j * K + s) > 0) {
-                                    f2.set(i * K + r, j * K + s, 1 + rt.get(i * K + r, j * K + s) * (d2.get(i) - 1));
+                                    // k-fold convolution then Bernoulli thinning at q=k*p: C^2 = (q/k)*d2+1-q
+                                    f2.set(i * K + r, j * K + s, 1 + rt.get(i * K + r, j * K + s) * (d2.get(i) - kRR.get(i, r)));
                                 }
                             }
                         }

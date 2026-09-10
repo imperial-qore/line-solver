@@ -76,4 +76,23 @@ public class ClusterModel {
         S.fill(1.0);
         return Network.clusterPs(lambda, D, S, RoutingStrategy.RAND);
     }
+
+    /**
+     * Mixed cluster: one open class and one closed class share two PS servers.
+     */
+    public static Network cl_mixed() {
+        Matrix lambda = new Matrix(1, 1);
+        lambda.set(0, 0, 0.5);
+        Matrix N = new Matrix(1, 1);
+        N.set(0, 0, 3);
+        Matrix Z = new Matrix(1, 1);
+        Z.set(0, 0, 1.0);
+        Matrix D = new Matrix(2, 2);
+        D.set(0, 0, 0.5); D.set(0, 1, 1.0 / 1.5);
+        D.set(1, 0, 0.5); D.set(1, 1, 1.0 / 1.5);
+        Matrix S = new Matrix(2, 1, 2);
+        S.fill(1.0);
+        SchedStrategy[] sched = new SchedStrategy[]{SchedStrategy.PS, SchedStrategy.PS};
+        return Network.clusterMixed(lambda, N, Z, D, sched, S, RoutingStrategy.RAND);
+    }
 }

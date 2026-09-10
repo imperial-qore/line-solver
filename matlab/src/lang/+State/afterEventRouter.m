@@ -56,7 +56,7 @@ end
 
 if isSimulation
     if nargin>=8 && isobject(eventCache)
-        eventCache(key) = {outprob, outspace,outrate};
+        eventCache{key} = {outprob, outspace,outrate};
     end
     if size(outspace,1) > 1
         tot_rate = sum(outrate);

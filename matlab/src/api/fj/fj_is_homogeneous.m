@@ -93,6 +93,23 @@ if sn.fj(forkIdx, joinIdx) == 0
     return;
 end
 
+% FJ_codes computes the response-time tail of an AND-join: mainFJ synchronises
+% on the LAST branch and has no parameter for a quorum, so a k-of-n model routed
+% here would come back with the all-join tail under a quorum's name -- the same
+% number for every k. Refuse it by name instead; SolverMAM already refuses the
+% JoinPartial feature, and this guards the api leaf, which is reachable on its
+% own. The black-box route fj_tail_ordstat covers the quorum.
+for r0 = 1:sn.nclasses
+    nsib = nnz(sn.connmatrix(forkIdx,:));
+    if sn_join_quorum(sn, joinIdx, r0, nsib) < nsib
+        fjInfo.errorMsg = sprintf(['Join node %d fires on a quorum for class %d. FJ_codes ' ...
+            'synchronises on every branch and has no quorum, so it cannot answer this ' ...
+            'model; use the forktail method of getPerctRespT, which takes the k-th order ' ...
+            'statistic (fj_tail_ordstat).'], joinIdx, r0);
+        return;
+    end
+end
+
 fjInfo.forkIdx = forkIdx;
 fjInfo.joinIdx = joinIdx;
 

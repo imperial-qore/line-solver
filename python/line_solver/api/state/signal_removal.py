@@ -94,15 +94,27 @@ def signal_batch_pmf(sn, job_class, ntot):
     return kvals, kprobs
 
 
-def _merge_states(space, prob):
+def _merge_states(space, prob, start=None, R=0):
+    """Merge duplicate destination rows. The probabilities add; the START counts
+    are averaged over the merged branches WEIGHTED BY those probabilities, so
+    that prob*count -- the quantity the filtration accumulates -- is conserved.
+    Two removal orders can reach the same state having promoted different
+    classes, so a merged row generally carries a fractional expected count."""
     if len(space) == 0:
-        return space, prob
+        return (space, prob) if start is None else (space, prob, start)
     arr = np.asarray(space, dtype=float)
     uniq, inv = np.unique(arr, axis=0, return_inverse=True)
     p = np.zeros(uniq.shape[0])
+    st = np.zeros((uniq.shape[0], R)) if start is not None else None
     for i, idx in enumerate(np.ravel(inv)):
         p[idx] += prob[i]
-    return [uniq[i, :] for i in range(uniq.shape[0])], list(p)
+        if start is not None:
+            st[idx] += prob[i] * np.asarray(start[i], dtype=float)
+    if start is not None:
+        nz = p > 0
+        st[nz] = st[nz] / p[nz][:, None]
+    out = [uniq[i, :] for i in range(uniq.shape[0])]
+    return (out, list(p)) if start is None else (out, list(p), [st[i] for i in range(st.shape[0])])
 
 
 def _waiting_victims(sched, buf, tgtclasses):
@@ -170,12 +182,15 @@ def _drop_waiting(buf, pos, is_ordered, is_pair, cls):
 
 def _drop_in_service(sched, buf, srv, cls, phase, Ks, S_ist):
     """Remove an in-service job and, at a station that keeps a waiting line,
-    pull the head of line into the freed server."""
+    pull the head of line into the freed server. The third return value is the
+    0-based class that took the server, -1 when none did: that promotion is a
+    START, exactly as a departure promotion is."""
     buf = np.array(buf, dtype=float)
     srv = np.array(srv, dtype=float)
+    promo_cls = -1
     srv[int(Ks[cls]) + phase] -= 1
     if buf.size == 0 or np.sum(srv) >= S_ist:
-        return buf, srv
+        return buf, srv, promo_cls
     if sched in _ordered_sched():
         headpos = next((c for c in range(len(buf) - 1, -1, -1) if buf[c] > 0), -1)
         if headpos >= 0:
@@ -185,6 +200,7 @@ def _drop_in_service(sched, buf, srv, cls, phase, Ks, S_ist):
             buf = np.delete(buf, headpos)
             buf = np.concatenate([[0.0], buf])
             srv[int(Ks[promo - 1])] += 1
+            promo_cls = promo - 1
     elif sched in _pair_sched():
         headpos = -1
         for c in range(0, len(buf) - 1, 2):
@@ -198,24 +214,26 @@ def _drop_in_service(sched, buf, srv, cls, phase, Ks, S_ist):
             buf = np.delete(buf, [headpos, headpos + 1])
             buf = np.concatenate([[0.0, 0.0], buf])
             srv[int(Ks[promo - 1]) + promophase - 1] += 1  # resumes at its stored phase
+            promo_cls = promo - 1
     elif sched in _COUNT_SCHED:
         promo = next((c for c in range(len(buf)) if buf[c] > 0), -1)
         if promo >= 0:
             buf[promo] -= 1
             srv[int(Ks[promo])] += 1
-    return buf, srv
+            promo_cls = promo
+    return buf, srv, promo_cls
 
 
-def _remove_one(sched, buf, srv, var, tgtclasses, policy, K, Ks, S_ist):
+def _remove_one(sched, buf, srv, var, tgtclasses, policy, K, Ks, S_ist, R=0):
     from ...lang.classes import RemovalPolicy
 
-    outspace, outprob = [], []
+    outspace, outprob, outstart = [], [], []
     pos, cls, weight, is_ordered, is_pair = _waiting_victims(sched, buf, tgtclasses)
     scls, sphase, scount = _in_service_victims(srv, tgtclasses, K, Ks)
     nwait = float(np.sum(weight)) if weight else 0.0
     nsrv = float(np.sum(scount)) if scount else 0.0
     if nwait == 0 and nsrv == 0:
-        return outspace, outprob
+        return outspace, outprob, outstart
 
     # FCFS/LCFS rank the waiting line by age, which only an ordered buffer
     # records; a per-class count buffer carries no age, so an age-based policy
@@ -229,7 +247,8 @@ def _remove_one(sched, buf, srv, var, tgtclasses, policy, K, Ks, S_ist):
         b2 = _drop_waiting(buf, pos[pick], is_ordered, is_pair, cls[pick])
         outspace.append(np.concatenate([b2, srv, var]))
         outprob.append(1.0)
-        return outspace, outprob
+        outstart.append(np.zeros(R))  # a waiting victim frees no server
+        return outspace, outprob, outstart
 
     if policy == RemovalPolicy.RANDOM:
         total = nwait + nsrv  # uniform over waiting and in-service jobs alike
@@ -241,39 +260,49 @@ def _remove_one(sched, buf, srv, var, tgtclasses, policy, K, Ks, S_ist):
             b2 = _drop_waiting(buf, pos[w], is_ordered, is_pair, cls[w])
             outspace.append(np.concatenate([b2, srv, var]))
             outprob.append(weight[w] / total)
+            outstart.append(np.zeros(R))
     if policy == RemovalPolicy.RANDOM or nwait == 0:
         for j in range(len(scls)):
-            b2, s2 = _drop_in_service(sched, buf, srv, scls[j], sphase[j], Ks, S_ist)
+            b2, s2, promo = _drop_in_service(sched, buf, srv, scls[j], sphase[j], Ks, S_ist)
             outspace.append(np.concatenate([b2, s2, var]))
             outprob.append(scount[j] / total)
-    return _merge_states(outspace, outprob)
+            st = np.zeros(R)
+            if 0 <= promo < R:
+                st[promo] = 1.0  # the freed server took the head of the waiting line
+            outstart.append(st)
+    return _merge_states(outspace, outprob, outstart, R)
 
 
-def _remove_batch(sched, buf, srv, var, k, tgtclasses, policy, K, Ks, S_ist):
+def _remove_batch(sched, buf, srv, var, k, tgtclasses, policy, K, Ks, S_ist, R=0):
     """Remove k jobs one at a time; sequential uniform draws without replacement
-    reproduce a uniform choice of the removed subset."""
+    reproduce a uniform choice of the removed subset. The START counts of the
+    removals accumulate along each path, since every removal that frees a server
+    may promote a waiting job."""
     nb = len(buf)
     ns = len(srv)
     space = [np.concatenate([buf, srv, var])]
     prob = [1.0]
+    start = [np.zeros(R)]
     for _ in range(int(k)):
-        nextspace, nextprob = [], []
+        nextspace, nextprob, nextstart = [], [], []
         for row in range(len(space)):
             st = space[row]
             b = st[:nb]
             s = st[nb:nb + ns]
             v = st[nb + ns:]
-            sp, pr = _remove_one(sched, b, s, v, tgtclasses, policy, K, Ks, S_ist)
+            sp, pr, ss = _remove_one(sched, b, s, v, tgtclasses, policy, K, Ks, S_ist, R)
             if not sp:
                 # nothing left to remove: the state is already drained
                 nextspace.append(st)
                 nextprob.append(prob[row])
+                nextstart.append(start[row])
             else:
                 for j in range(len(sp)):
                     nextspace.append(sp[j])
                     nextprob.append(prob[row] * pr[j])
-        space, prob = _merge_states(nextspace, nextprob)
-    return space, prob
+                    nextstart.append(start[row] + np.asarray(ss[j], dtype=float))
+        space, prob, start = _merge_states(nextspace, nextprob, nextstart, R)
+    return space, prob, start
 
 
 def handle_signal_arrival(sn, ind, ist, inspace, job_class, sched, K, Ks, S,
@@ -294,9 +323,12 @@ def handle_signal_arrival(sn, ind, ist, inspace, job_class, sched, K, Ks, S,
     srv = np.ravel(space_srv).astype(float)
     var = np.ravel(space_var).astype(float) if space_var.size > 0 else np.array([])
 
+    R = int(getattr(sn, 'nclasses', 0) or 0)
     if is_catastrophe_signal(sn, job_class):
         out = np.concatenate([np.zeros(len(buf)), np.zeros(len(srv)), var])
-        return out.reshape(1, -1), np.array([[-1.0]]), np.array([[1.0]])
+        # the station is emptied: nothing is left to start
+        return (out.reshape(1, -1), np.array([[-1.0]]), np.array([[1.0]]),
+                np.zeros((1, R)), np.zeros((1, R)))
 
     tgt = -1
     st = getattr(sn, 'signaltarget', None)
@@ -310,7 +342,8 @@ def handle_signal_arrival(sn, ind, ist, inspace, job_class, sched, K, Ks, S,
     ntot = int(round(sum(float(s_nir[0, r]) for r in tgtclasses)))
     if not tgtclasses or ntot <= 0:
         out = np.concatenate([buf, srv, var])  # no victim: the signal vanishes
-        return out.reshape(1, -1), np.array([[-1.0]]), np.array([[1.0]])
+        return (out.reshape(1, -1), np.array([[-1.0]]), np.array([[1.0]]),
+                np.zeros((1, R)), np.zeros((1, R)))
 
     kvals, kprobs = signal_batch_pmf(sn, job_class, ntot)
 
@@ -320,26 +353,31 @@ def handle_signal_arrival(sn, ind, ist, inspace, job_class, sched, K, Ks, S,
         policy = pol[job_class]
 
     S_ist = float(S[ist]) if np.ndim(S) > 0 else float(S)
-    outspace, outprob = [], []
+    outspace, outprob, outstart = [], [], []
     for k, pk in zip(kvals, kprobs):
         if pk <= 0:
             continue
         if k <= 0:
             outspace.append(np.concatenate([buf, srv, var]))
             outprob.append(pk)
+            outstart.append(np.zeros(R))
             continue
-        sp, pr = _remove_batch(sched, buf, srv, var, k, tgtclasses, policy, K, Ks, S_ist)
+        sp, pr, ss = _remove_batch(sched, buf, srv, var, k, tgtclasses, policy, K, Ks, S_ist, R)
         for j in range(len(sp)):
             outspace.append(sp[j])
             outprob.append(pk * pr[j])
+            outstart.append(np.asarray(ss[j], dtype=float))
 
-    outspace, outprob = _merge_states(outspace, outprob)
+    outspace, outprob, outstart = _merge_states(outspace, outprob, outstart, R)
     if is_simulation and len(outspace) > 1:
         cum = np.cumsum(outprob) / float(np.sum(outprob))
         rnd = np.random.rand()
         fc = 1 + max([-1] + [i for i in range(len(cum)) if rnd > cum[i]])
-        return np.ravel(outspace[fc]).reshape(1, -1), np.array([[-1.0]]), np.array([[1.0]])
+        return (np.ravel(outspace[fc]).reshape(1, -1), np.array([[-1.0]]), np.array([[1.0]]),
+                np.asarray(outstart[fc], dtype=float).reshape(1, -1), np.zeros((1, R)))
     out = np.vstack([np.ravel(s) for s in outspace])
     orate = -1.0 * np.ones((out.shape[0], 1))
     oprob = np.asarray(outprob, dtype=float).reshape(-1, 1)
-    return out, orate, oprob
+    ostart = np.vstack([np.asarray(x, dtype=float).reshape(1, -1) for x in outstart]) if outstart \
+        else np.zeros((out.shape[0], R))
+    return out, orate, oprob, ostart, np.zeros((out.shape[0], R))

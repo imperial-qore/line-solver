@@ -16,7 +16,7 @@ public final class GenerateService {
         int dim = service_h.getBeta().length();
         int m = services.getTau_st().length();
 
-        Matrix indexes_notbusy = FjCodesUtilsKt.build_index(m, 1);
+        Matrix indexes_notbusy = FjCodesUtils.build_index(m, 1);
         int dim_NB = indexes_notbusy.getNumRows();
 
         int dim_C = C + 1;
@@ -31,12 +31,12 @@ public final class GenerateService {
             t.set(newdim + dim_notbusy - dim_NB + i, 0, services.getSt().get(i, 0));
         }
 
-        FjCodesUtilsKt.setSubMatrix(T, 0, 0, S);
+        FjCodesUtils.setSubMatrix(T, 0, 0, S);
 
         Matrix S_long = new Matrix(dim, dim_NB);
 
         for (int row = 0; row < dim; row++) {
-            double[] countvect = FjCodesUtilsKt.getRowAsArray(service_h.getService_phases(), row);
+            double[] countvect = FjCodesUtils.getRowAsArray(service_h.getService_phases(), row);
 
             for (int i = m; i < 2 * m; i++) {
                 if (countvect[i] > 0.0) {
@@ -45,7 +45,7 @@ public final class GenerateService {
                         tovect[k] = countvect[k];
                     }
 
-                    int col = FjCodesUtilsKt.vectmatch(tovect, indexes_notbusy) - 1;
+                    int col = FjCodesUtils.vectmatch(tovect, indexes_notbusy) - 1;
 
                     if (col >= 0) {
                         double currentVal = S_long.get(row, col);
@@ -56,13 +56,13 @@ public final class GenerateService {
         }
 
         for (int row = 0; row < dim_C - 1; row++) {
-            FjCodesUtilsKt.setSubMatrix(T, row * dim, newdim + row * dim_NB, S_long);
+            FjCodesUtils.setSubMatrix(T, row * dim, newdim + row * dim_NB, S_long);
         }
 
         Matrix S_last = new Matrix(dim, dim_NB);
 
         for (int row = 0; row < dim; row++) {
-            double[] countvect = FjCodesUtilsKt.getRowAsArray(service_h.getService_phases(), row);
+            double[] countvect = FjCodesUtils.getRowAsArray(service_h.getService_phases(), row);
 
             for (int k = 0; k <= 1; k++) {
                 int startIdx = k * m;
@@ -76,7 +76,7 @@ public final class GenerateService {
                             tovect[j] = countvect[otherStart + j];
                         }
 
-                        int col = FjCodesUtilsKt.vectmatch(tovect, indexes_notbusy) - 1;
+                        int col = FjCodesUtils.vectmatch(tovect, indexes_notbusy) - 1;
 
                         if (col >= 0) {
                             double currentVal = S_last.get(row, col);
@@ -87,10 +87,10 @@ public final class GenerateService {
             }
         }
 
-        FjCodesUtilsKt.setSubMatrix(T, (dim_C - 1) * dim, newdim + (dim_C - 1) * dim_NB, S_last);
+        FjCodesUtils.setSubMatrix(T, (dim_C - 1) * dim, newdim + (dim_C - 1) * dim_NB, S_last);
 
         for (int row = 0; row < dim_C; row++) {
-            FjCodesUtilsKt.setSubMatrix(T, newdim + row * dim_NB, newdim + row * dim_NB, services.getST());
+            FjCodesUtils.setSubMatrix(T, newdim + row * dim_NB, newdim + row * dim_NB, services.getST());
         }
 
         Matrix A = new Matrix(m, m);
@@ -105,7 +105,7 @@ public final class GenerateService {
         }
 
         for (int row = 0; row < dim_C - 1; row++) {
-            FjCodesUtilsKt.setSubMatrix(T, newdim + row * dim_NB, newdim + (row + 1) * dim_NB, A);
+            FjCodesUtils.setSubMatrix(T, newdim + row * dim_NB, newdim + (row + 1) * dim_NB, A);
         }
 
         for (int row = newdim; row < newdim + dim_notbusy; row++) {

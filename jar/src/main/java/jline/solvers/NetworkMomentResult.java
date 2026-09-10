@@ -88,10 +88,26 @@ public class NetworkMomentResult {
     public Matrix[] QCov;
 
     /**
+     * The approximate queue-length moment result, or null. Non-null only on the
+     * momlin branch: a closed single-server model whose population lattice makes
+     * the exact recursion unaffordable, or one where momlin was requested by name.
+     * Both moments then carry the Schweitzer-Bard error. It also carries the
+     * cross-station covariance tensor, which the exact branch does not return.
+     */
+    public jline.api.pfqn.mva.Pfqn_momlin.MomlinResult qlenMomlin;
+
+    /**
      * Whether a queue-length recursion was run, i.e. whether the model was closed
      * or mixed rather than purely open.
      */
     public boolean hasQlen() {
-        return qlenMva != null || qlenLdmx != null;
+        return qlenMva != null || qlenLdmx != null || qlenMomlin != null;
+    }
+
+    /**
+     * Whether the queue-length moments are approximate rather than exact.
+     */
+    public boolean isQlenApproximate() {
+        return qlenMomlin != null;
     }
 }

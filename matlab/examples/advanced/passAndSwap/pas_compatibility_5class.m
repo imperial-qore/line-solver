@@ -43,4 +43,4 @@ for r = 1:5
 end
 model.link(P);
 
-AvgTable = CTMC(model, 'cutoff', 3).getAvgTable
+AvgTable = CTMC(model, 'exact', 'cutoff', 3).getAvgTable

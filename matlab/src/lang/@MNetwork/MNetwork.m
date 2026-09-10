@@ -35,6 +35,9 @@ classdef MNetwork < Model
         handles;
         sourceidx; % cached value
         sinkidx; % cached value
+        gdScaling; % network-level globally state-dependent rate scaling phi(n), n the full (M x K) population matrix; see setGlobalDependence
+        gdScalingPeak; % (M x K) declared peak of gdScaling, for Util=T*S/peak normalization
+        gdScalingCutoff; % per-slot open-class truncation used to materialize gdScaling onto the JSON wire; closed classes use their population
     end
 
     properties
@@ -64,6 +67,9 @@ classdef MNetwork < Model
         connections = getConnectionMatrix(self);
         [absorbingStations, absorbingIdxs] = getAbsorbingStations(self) % get absorbing stations
         info = getReducibilityInfo(self) % get reducibility analysis
+        T = findSolver(self, metric, showAll) % solvers and methods that can analyze this model
+        T = findMethod(self, metric, showAll) % alias of findSolver
+        T = help(self, metric, showAll) % alias of findSolver
     end
 
     methods % ergodicity analysis methods
@@ -232,6 +238,10 @@ classdef MNetwork < Model
         lldScaling = getLimitedLoadDependence(self)
         lcdScaling = getLimitedClassDependence(self)
         ljdScaling = getLimitedJointDependence(self)
+        setGlobalDependence(self, phi, peakRate, wireCutoff)
+        gdScaling = getGlobalDependence(self)
+        gdScalingPeak = getGlobalDependencePeak(self)
+        gdScalingCutoff = getGlobalDependenceCutoff(self)
 
         function stationIndex = getStationIndex(self, name)
             % STATIONINDEX = GETSTATIONINDEX(NAME)
@@ -1056,6 +1066,90 @@ classdef MNetwork < Model
             end
             for r = 1:R
                 dispatcher.setRouting(jobclass{r}, dispatching);
+            end
+        end
+
+        function model = clusterMixed(lambda, N, Z, D, strategy, S, dispatching)
+            % MODEL = CLUSTERMIXED(LAMBDA, N, Z, D, STRATEGY, S, DISPATCHING)
+            %
+            % Mixed cluster: open classes flow Source -> Dispatcher ->
+            % Server[1..M] -> Sink, closed classes cycle Think -> Dispatcher ->
+            % Server[1..M] -> Think. Both families share the dispatcher and the
+            % servers.
+            %
+            % lambda(r)   - arrival rate of open class r (r = 1..Ro)
+            % N(r)        - population of closed class r (r = 1..Rc)
+            % Z(r)        - think time of closed class r at the delay
+            % D(i,r)      - mean service time at server i, open classes first
+            %               (columns 1..Ro), closed classes next (Ro+1..Ro+Rc)
+            % strategy{i} - scheduling strategy at server i
+            % S(i)        - number of identical servers at queue i (default: 1)
+            % dispatching - RoutingStrategy applied at the router (default: RAND)
+            if nargin < 6 || isempty(S), S = ones(size(D,1),1); end
+            if nargin < 7, dispatching = RoutingStrategy.RAND; end
+
+            Ro = numel(lambda);
+            Rc = numel(N);
+            [M,R] = size(D);
+            if R ~= Ro + Rc
+                line_error(mfilename,'D must have numel(lambda)+numel(N) columns.');
+            end
+            if numel(Z) ~= Rc
+                line_error(mfilename,'N and Z must have the same length.');
+            end
+
+            model = Network('Cluster');
+
+            source = Source(model, 'Source');
+            think = Delay(model, 'Think');
+            dispatcher = Router(model, 'Dispatcher');
+            servers = cell(M,1);
+            for i = 1:M
+                servers{i} = Queue(model, ['Station', num2str(i)], strategy{i});
+                if S(i) > 1
+                    servers{i}.setNumberOfServers(S(i));
+                end
+            end
+            sink = Sink(model, 'Sink');
+
+            jobclass = cell(R,1);
+            for r = 1:Ro
+                jobclass{r} = OpenClass(model, ['Class', num2str(r)], 0);
+                source.setArrival(jobclass{r}, Exp.fitMean(1/lambda(r)));
+                think.setService(jobclass{r}, Disabled.getInstance());
+                for i = 1:M
+                    servers{i}.setService(jobclass{r}, Exp.fitMean(D(i,r)));
+                end
+            end
+            for c = 1:Rc
+                r = Ro + c;
+                jobclass{r} = ClosedClass(model, ['Class', num2str(r)], N(c), think, 0);
+                think.setService(jobclass{r}, Exp.fitMean(Z(c)));
+                for i = 1:M
+                    servers{i}.setService(jobclass{r}, Exp.fitMean(D(i,r)));
+                end
+            end
+
+            model.addLink(source, dispatcher);
+            model.addLink(think, dispatcher);
+            for i = 1:M
+                model.addLink(dispatcher, servers{i});
+                model.addLink(servers{i}, sink);
+                model.addLink(servers{i}, think);
+            end
+
+            % Class-specific exits: the servers feed the sink for open classes
+            % and the delay for closed ones, so the shared arcs carry explicit
+            % per-class probabilities rather than the default fan-out.
+            for r = 1:R
+                dispatcher.setRouting(jobclass{r}, dispatching);
+                isOpen = r <= Ro;
+                for i = 1:M
+                    servers{i}.setProbRouting(jobclass{r}, sink, double(isOpen));
+                    servers{i}.setProbRouting(jobclass{r}, think, double(~isOpen));
+                end
+                source.setProbRouting(jobclass{r}, dispatcher, double(isOpen));
+                think.setProbRouting(jobclass{r}, dispatcher, double(~isOpen));
             end
         end
 

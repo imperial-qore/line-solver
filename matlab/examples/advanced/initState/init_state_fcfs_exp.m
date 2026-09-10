@@ -25,7 +25,7 @@ options.timespan = [0,40];
 
 %% This part illustrates the execution of different solvers
 solver={};
-solver{end+1} = CTMC(model,options);
+solver{end+1} = CTMC(model, 'exact',options);
 %solver{end+1} = JMT(model,options);
 %solver{end+1} = SSA(model,options);
 solver{end+1} = FLD(model,options);

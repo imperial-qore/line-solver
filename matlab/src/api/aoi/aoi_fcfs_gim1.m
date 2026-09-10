@@ -91,41 +91,43 @@ meanAoI = lambda * E_Y2 / 2 + 1 / mu + lambda * (-dYstar) / eta;
 % E[Apeak] = E[Y] + E[D]
 peakAoI = E_Y + E_D;
 
-% LST of AoI (Theorem 3)
-% This requires solving for sigma(s) at each evaluation point
-lstAoI = @(s) aoi_gim1_lst_eval(s, Y_lst, mu, sigma);
+% LST of AoI (Inoue et al. 2019, Theorem 3), via the general age formula
+%   A*(s) = (lambda/s) * ( T*(s) - Apeak*(s) )
+% the cycle average of exp(-s*age) over a departure interval. In GI/M/1 the
+% system time is EXPONENTIAL at rate eta = mu*(1-sigma), so T*(s) = eta/(s+eta),
+% and Lindley gives W' + Y = max(Y, T) with T ~ Exp(eta) independent of the next
+% interarrival Y, so
+%   E[exp(-s*max(Y,T))] = Y*(s) - (s/(s+eta)) * Y*(s+eta),
+% and the peak adds one fresh Exp(mu) service:
+%   Apeak*(s) = (mu/(s+mu)) * ( Y*(s) - (s/(s+eta)) * Y*(s+eta) ).
+% A*(0) = 1 follows from the defining relation Y*(eta) = sigma.
+%
+% THE PREVIOUS FORM WAS NOT AN LST. It read
+%   (mu*sigma(s)) / (s + mu - mu*sigma(s)) * D*(s),
+% which at s = 0 gives sigma/(1-sigma) rather than 1, and it re-solved sigma(s)
+% by fzero at every evaluation point with a SILENT fallback to sigma(0) on
+% failure. Checked against simulation on E2/M/1: at s = 0.2 the old form gave
+% 0.23056, the form below 0.59319, and the sample path 0.59332.
+lstAoI = @(s) aoi_gim1_lst_eval(s, Y_lst, mu, sigma, lambda);
 
 end
 
-function val = aoi_gim1_lst_eval(s, Y_lst, mu, sigma0)
+function val = aoi_gim1_lst_eval(s, Y_lst, mu, sigma0, lambda)
 %AOI_GIM1_LST_EVAL Evaluate GI/M/1 FCFS AoI LST at point(s) s
 
+    eta = mu * (1 - sigma0);
+    val = zeros(size(s));
+    for i = 1:numel(s)
+        si = s(i);
+        if abs(si) < 1e-12
+            val(i) = 1; % A*(0) = 1 for any proper LST
+            continue
+        end
+        T_s = eta / (si + eta);
+        peak_s = (mu / (si + mu)) * (Y_lst(si) - (si / (si + eta)) * Y_lst(si + eta));
+        val(i) = (lambda / si) * (T_s - peak_s);
+    end
     if isscalar(s)
-        % Find sigma(s): root of Y*(s + mu - mu*sigma) = sigma
-        sig_func = @(sig) Y_lst(s + mu - mu * sig) - sig;
-        try
-            sigma_s = fzero(sig_func, [0.001, 0.999]);
-        catch
-            sigma_s = sigma0;  % Fallback
-        end
-
-        % System delay LST: D*(s) = (1-sigma) * mu / (s + mu - mu*sigma_s)
-        D_s = (1 - sigma0) * mu / (s + mu - mu * sigma_s);
-
-        % AoI LST (Theorem 3)
-        val = (mu * sigma_s) / (s + mu - mu * sigma_s) * D_s;
-    else
-        % Handle array input
-        val = zeros(size(s));
-        for i = 1:numel(s)
-            sig_func = @(sig) Y_lst(s(i) + mu - mu * sig) - sig;
-            try
-                sigma_s = fzero(sig_func, [0.001, 0.999]);
-            catch
-                sigma_s = sigma0;
-            end
-            D_s = (1 - sigma0) * mu / (s(i) + mu - mu * sigma_s);
-            val(i) = (mu * sigma_s) / (s(i) + mu - mu * sigma_s) * D_s;
-        end
+        val = val(1);
     end
 end

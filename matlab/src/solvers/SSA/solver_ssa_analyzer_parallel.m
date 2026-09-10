@@ -1,4 +1,4 @@
-function [XN,UN,QN,RN,TN,CN,tranSysState,tranSync,snc]=solver_ssa_analyzer_parallel(sn, init_state, laboptions)
+function [XN,UN,QN,RN,TN,CN,tranSysState,tranSync,snc,StartN,PreemptN]=solver_ssa_analyzer_parallel(sn, init_state, laboptions)
 % [XN,UN,QN,RN,TN,CN]=SOLVER_SSA_ANALYZER_PARALLEL(SN, INIT_STATE, LABOPTIONS)
 %
 % Worker-count-invariant parallel SSA.
@@ -46,6 +46,8 @@ QNr = cell(1,R);
 RNr = cell(1,R);
 TNr = cell(1,R);
 CNr = cell(1,R);
+StartNr = cell(1,R);
+PreemptNr = cell(1,R);
 sncr = cell(1,R);
 
 parfor r = 1:R
@@ -55,7 +57,7 @@ parfor r = 1:R
     % Deterministic per-replication seed (see header). solver_ssa adds
     % (lab_idx-1) which is 0 inside parfor, so this seed is used verbatim.
     repoptions.seed = baseSeed + r - 1;
-    [XNr{r},UNr{r},QNr{r},RNr{r},TNr{r},CNr{r},sncr{r}] = ...
+    [XNr{r},UNr{r},QNr{r},RNr{r},TNr{r},CNr{r},sncr{r},StartNr{r},PreemptNr{r}] = ...
         run_replica(snc, init_state, repoptions);
 end
 
@@ -66,6 +68,9 @@ RN = cellsum(RNr)/R;
 TN = cellsum(TNr)/R;
 CN = cellsum(CNr)/R;
 XN = cellsum(XNr)/R;
+% the derived rates average across replications like every other estimate
+StartN = cellsum(StartNr)/R;
+PreemptN = cellsum(PreemptNr)/R;
 
 % average cache actual hit/miss probabilities across replications
 for k=1:snc.nclasses
@@ -89,7 +94,7 @@ tranSysState=[];
 tranSync=[];
 end
 
-function [XN,UN,QN,RN,TN,CN,sncl]=run_replica(sn, init_state, repoptions)
+function [XN,UN,QN,RN,TN,CN,sncl,StartN,PreemptN]=run_replica(sn, init_state, repoptions)
 % Run a single SSA replication and reduce it to per-station/class averages.
 % Kept as a local function so the (parfor-unfriendly) nested indexing runs
 % in an ordinary function workspace.
@@ -111,7 +116,7 @@ end
 % see _kb/06-solver-catalog.md for rationale (SSA utilization estimator)
 userCap = sn.cap;
 userClasscap = sn.classcap;
-[probSysState,SSq,arvRates,depRates,~,~,sncl] = solver_ssa(sn, init_state, repoptions, eventCache);
+[probSysState,SSq,arvRates,depRates,~,~,sncl,~,startRates,preemptRates] = solver_ssa(sn, init_state, repoptions, eventCache);
 
 XN = NaN*zeros(1,K);
 UN = NaN*zeros(M,K);
@@ -119,6 +124,8 @@ QN = NaN*zeros(M,K);
 RN = NaN*zeros(M,K);
 TN = NaN*zeros(M,K);
 CN = NaN*zeros(1,K);
+StartN = zeros(M,K);
+PreemptN = zeros(M,K);
 for k=1:K
     refsf = sncl.stationToStateful(sncl.refstat(k));
     XN(k) = probSysState*depRates(:,refsf,k);
@@ -126,17 +133,31 @@ for k=1:K
         isf = sncl.stationToStateful(ist);
         TN(ist,k) = probSysState*depRates(:,isf,k);
         QN(ist,k) = probSysState*SSq(:,(ist-1)*K+k);
+        StartN(ist,k) = probSysState*startRates(:,isf,k);
+        PreemptN(ist,k) = probSysState*preemptRates(:,isf,k);
         switch sncl.sched(ist)
             case SchedStrategy.INF
                 UN(ist,k) = QN(ist,k);
             otherwise
                 % see _kb/06-solver-catalog.md for rationale (SSA utilization estimator)
                 if ~isempty(PH{ist}{k})
+                    % A LOAD-DEPENDENT STATION IS NORMALIZED BY ITS PEAK
+                    % CAPACITY, max(c, max(alpha)), not by the server count: the
+                    % scaling multiplies the nominal rate, so dividing by c
+                    % alone reports the work delivered against a capacity the
+                    % station has already exceeded, and gives a utilization
+                    % ABOVE ONE (measured 1.6529 on a closed Delay+Queue, N=4,
+                    % alpha = [1 1.5 2 2.5], where the answer is 0.6612). Same
+                    % ceff as solver_ssa_analyzer_serial.m and SolverCTMC.
+                    ceff = S(ist);
+                    if ~isempty(sncl.lldscaling) && ist <= size(sncl.lldscaling,1)
+                        ceff = max(ceff, max(sncl.lldscaling(ist,:)));
+                    end
                     % see _kb/06-solver-catalog.md for rationale (SSA utilization estimator)
                     if isinf(sncl.njobs(k)) && (isfinite(userCap(ist)) || isfinite(userClasscap(ist,k)))
-                        UN(ist,k) = TN(ist,k)/rates(ist,k)/S(ist);
+                        UN(ist,k) = TN(ist,k)/rates(ist,k)/ceff;
                     else
-                        UN(ist,k) = probSysState*arvRates(:,ist,k)/rates(ist,k)/S(ist);
+                        UN(ist,k) = probSysState*arvRates(:,ist,k)/rates(ist,k)/ceff;
                     end
                 end
         end

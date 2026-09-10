@@ -10,7 +10,6 @@ import java.util.List;
 public final class Mapqn_qrf_noblo_mmi_ld {
     private Mapqn_qrf_noblo_mmi_ld() {}
 
-    private static final double LOGTOL = 1e-6;
 
     public static Mapqn_solution solve(double[][][][] MAPs, int N, double[][] rt, double[][] alpha) {
         int M = MAPs.length;
@@ -43,7 +42,7 @@ public final class Mapqn_qrf_noblo_mmi_ld {
             for (int h = 0; h < K[i]; h++) {
                 for (int k = 0; k < K[i]; k++) {
                     mu[i][h][k] = D1[h][k];
-                    v[i][k][h] = (h == k) ? 0.0 : D0[h][k];
+                    v[i][h][k] = (h == k) ? 0.0 : D0[h][k]; // (from, to), as mu is
                 }
             }
         }
@@ -115,34 +114,21 @@ public final class Mapqn_qrf_noblo_mmi_ld {
         Mapqn_nlp_solver.ObjectiveFn objective = new Mapqn_nlp_solver.ObjectiveFn() {
             @Override
             public double apply(double[] x) {
-                Double[][][][][][][] p2 = Mapqn_qrf_noblo_mmi.unflattenP2(x, Mf, Nf, KmaxF, MRf);
-                double fobj = 0.0;
-                for (int m = 0; m < MRf; m++) {
-                    for (int i = 0; i < Mf; i++) {
-                        for (int ki = 0; ki < Kf[i]; ki++) {
-                            for (int j = 0; j < Mf; j++) {
-                                if (i != j) {
-                                    for (int kj = 0; kj < Kf[j]; kj++) {
-                                        for (int ni = 1; ni <= Ff[i]; ni++) {
-                                            for (int nj = 1; nj <= Ff[j]; nj++) {
-                                                double pij = p2[i][ni][ki][j][nj][kj][m];
-                                                double pii = p2[i][ni][ki][i][ni][ki][m];
-                                                double pjj = p2[j][nj][kj][j][nj][kj][m];
-                                                fobj += pij * (Math.log(LOGTOL + pij) - Math.log(LOGTOL + pii) - Math.log(LOGTOL + pjj));
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                return fobj;
+                return Mapqn_qrf_noblo_mmi.mmiObjective(x, Mf, Nf, Kf, KmaxF, Ff, MRf);
+            }
+        };
+        Mapqn_nlp_solver.GradientFn gradient = new Mapqn_nlp_solver.GradientFn() {
+            @Override
+            public void apply(double[] x, double[] gradOut) {
+                Mapqn_qrf_noblo_mmi.mmiGradient(x, gradOut, Mf, Nf, Kf, KmaxF, Ff, MRf);
             }
         };
 
-        double[] xOpt = Mapqn_nlp_solver.solve(objective, numVars, Aeq, beq, Aub, bub, lb, ub, x0);
-        return Mapqn_qrf_noblo_mmi.extractResults(xOpt, M, N, K, Kmax, F, MR);
+        double[] start = Mapqn_nlp_solver.feasibleStart(Aeq, beq, Aub, bub, numVars);
+        if (start != null) x0 = start;
+        double[] xOpt = Mapqn_nlp_solver.solve(objective, gradient, numVars,
+                Aeq, beq, Aub, bub, lb, ub, x0);
+        return Mapqn_qrf_noblo_mmi.extractResults(xOpt, M, N, K, Kmax, F, MR, alphaEff);
     }
 
     public static Mapqn_solution solve(double[][][][] MAPs, int N, double[][] rt) {

@@ -38,7 +38,7 @@ classdef MaximizePerformance < opt.Objective
                 ks = keys(result.throughputs);
                 sts = {};
                 for i = 1:numel(ks)
-                    parts = strsplit(ks{i}, '||');
+                    parts = strsplit(char(ks(i)), '||');
                     sts{end+1} = parts{1}; %#ok<AGROW>
                 end
                 sts = unique(sts);

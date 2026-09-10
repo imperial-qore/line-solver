@@ -233,22 +233,25 @@ def solver_nc_conv(sn, options=None):
     import time
     start_time = time.time()
 
+    from ..sn import sn_get_demands_chain, sn_deaggregate_chain_results
+
     M = sn.nstations
-    K = sn.nclasses
-    NK = sn.njobs.flatten().astype(int)
     nservers = sn.nservers.flatten()
 
-    # Compute visits and service times
-    V = sum(v for v in sn.visits.values() if v is not None)
-    ST = np.zeros((M, K))
-    rates = sn.rates
-    for i in range(M):
-        for k in range(K):
-            if rates[i, k] > 0:
-                ST[i, k] = 1.0 / rates[i, k]
-
-    # Demands
-    Ldemand = V * ST
+    # The convolution runs on CHAINS, not classes: a class-switching model splits
+    # one circulating population across several classes, so sn.njobs has zeros in
+    # the classes that hold no reference jobs and the class-level recursion
+    # charges those stations nothing at all. Every other closed NC and MVA path
+    # aggregates the same way and deaggregates at the end.
+    chain_result = sn_get_demands_chain(sn)
+    Lchain = chain_result.Lchain
+    STchain = chain_result.STchain
+    Vchain = chain_result.Vchain
+    alpha = chain_result.alpha
+    Nchain = np.asarray(chain_result.Nchain, dtype=float).flatten()
+    K = sn.nchains
+    NK = np.rint(Nchain).astype(int)
+    Ldemand = Lchain
 
     # Separate delay and queue stations
     is_delay = np.isinf(nservers)
@@ -302,7 +305,7 @@ def solver_nc_conv(sn, options=None):
                 XN[k] = G_Nk / G_N
 
     # Per-station throughput
-    TN = V * XN[np.newaxis, :]
+    TN = Vchain * XN[np.newaxis, :]
 
     # Queue lengths
     QN = np.zeros((M, K))
@@ -371,47 +374,54 @@ def solver_nc_conv(sn, options=None):
                             QN[ist, k] += n[k] * prob
             n = _pprod_next(n, NK)
 
-    # Remaining metrics
-    RN = np.zeros((M, K))
+    # Remaining metrics. RN is the PER-VISIT response time Qchain/Tchain: the
+    # deaggregation below multiplies the visit ratio back in, so dividing by
+    # Xchain would count it twice
     with np.errstate(divide='ignore', invalid='ignore'):
         RN = np.where(TN > 0, QN / TN, 0.0)
 
-    UN = TN * ST
+    UN = TN * STchain
 
     # see _kb/03-api-layer.md for rationale. Effective peak = product of the
     # class- and joint-dependence peaks declared at the station (missing = 1);
     # a jd-only station has NaN in cdscalingpeak, so guard each contribution.
     cd = getattr(sn, 'cdscaling', None)
     jd = getattr(sn, 'jdscaling', None)
+    chains = np.atleast_2d(np.asarray(sn.chains, dtype=float))
     for qi in range(n_queues):
         if cdscaling_conv[qi] is None:
             continue
         ist = queue_idx[qi]
         has_cd_st = cd is not None and ist < len(cd) and cd[ist] is not None
         has_jd_st = jd is not None and ist < len(jd) and jd[ist] is not None
-        for r in range(K):
+        for c in range(K):
+            # The peaks are declared per class, so the chain takes the largest
+            # peak among its classes: utilization is a per-station quantity with
+            # one normalizer.
+            inchain = np.where(chains[c, :] > 0)[0]
             bmax = 1.0
             has_peak = False
             if has_cd_st:
-                bmax *= sn.cdscalingpeak[ist, r]; has_peak = True
+                bmax *= float(np.max(sn.cdscalingpeak[ist, inchain])); has_peak = True
             if has_jd_st:
-                bmax *= sn.jdscalingpeak[ist, r]; has_peak = True
+                bmax *= float(np.max(sn.jdscalingpeak[ist, inchain])); has_peak = True
             if has_peak and bmax > 0:
-                UN[ist, r] = UN[ist, r] / bmax
+                UN[ist, c] = UN[ist, c] / bmax
 
-    CN = np.where(XN > 0, NK / XN, 0.0)
-
+    # Deaggregate the chain solution onto the classes
+    deagg = sn_deaggregate_chain_results(sn, Lchain, None, STchain, Vchain, alpha,
+                                         None, UN, RN, TN, None, XN.reshape(1, -1))
     runtime = time.time() - start_time
 
     result = SolverNCReturn(
-        Q=QN,
-        U=UN,
-        R=RN,
-        T=TN,
-        nchains=sn.nchains if hasattr(sn, 'nchains') else K,
-        X=XN.reshape(1, -1),
+        Q=deagg.Q,
+        U=deagg.U,
+        R=deagg.R,
+        T=deagg.T,
+        nchains=K,
+        X=np.asarray(deagg.X).reshape(1, -1),
         lG=lG,
-        STeff=np.zeros((M, K)),
+        STeff=np.zeros((M, sn.nclasses)),
         it=1,
         runtime=runtime,
         method='conv',

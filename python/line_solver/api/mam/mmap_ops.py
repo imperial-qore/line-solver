@@ -23,7 +23,6 @@ import math
 import numpy as np
 from scipy import linalg
 from typing import List, Tuple, Optional, Union
-import warnings
 
 # Import MAP analysis functions that MMAP operations depend on
 from ...constants import GlobalConstants
@@ -68,7 +67,8 @@ def mmap_normalize(D0: np.ndarray, D_list: List[np.ndarray]) -> Tuple[np.ndarray
     pass result[1:].
 
     The aggregate D1 is recomputed as the sum of the per-class matrices, and
-    the diagonal of D0 closes each row of the generator D0 + D1:
+    the diagonal of D0 closes each row of the generator D0 + D1::
+
         D0[k,k] = -sum_{j!=k} D0[k,j] - sum_j D1[k,j]
 
     Args:
@@ -161,71 +161,79 @@ def mmap_super_safe(mmap_list: List[Tuple[np.ndarray, List[np.ndarray]]],
             agg_D1 = np.zeros((1, 1))
 
         mmaps.append((D0, D_list))
-        try:
-            scv = map_scv(D0, agg_D1)
-        except:
-            scv = 1.0  # Default to 1 if computation fails
-        scv_values.append(scv)
+        # A zero-rate component has an infinite mean, so its SCV is NaN in MATLAB
+        # and ascending sort puts NaN LAST; answer it with +inf, which sorts last
+        # for the same reason, exactly as the C++ port does. Every other component
+        # goes through map_scv unguarded: swallowing its failure into a default of
+        # 1.0 hid the case rather than answering it.
+        if np.abs(agg_D1).sum() < 1e-13:
+            scv_values.append(np.inf)
+        else:
+            scv_values.append(map_scv(D0, agg_D1))
 
     # Sort MMAPs by SCV
     sorted_indices = np.argsort(scv_values)
-    sorted_mmaps = [mmaps[i] for i in sorted_indices]
 
-    # Start with first (simplest) MMAP
-    sup_D0, sup_D_list = sorted_mmaps[0]
-    sup_D0 = np.asarray(sup_D0, dtype=np.float64).copy()
-    sup_D_list = [np.asarray(D, dtype=np.float64).copy() for D in sup_D_list]
+    # Mark provenance. _mmap_super concatenates the marks of its operands in FOLD
+    # order and every caller reads mark k as its own k-th class, so folding
+    # low-SCV first renames the classes whenever the components' SCVs are not
+    # already in caller order (a zero-rate component has SCV NaN or Inf and lands
+    # last). The sort stays a numerical heuristic; the marks are permuted back at
+    # the end. See _kb/03-api-layer.md.
+    markbase = np.cumsum([0] + [len(D_list) for _, D_list in mmaps])
+    outorder = []
 
-    # see _kb/03-api-layer.md for rationale
-    if sup_D0.shape[0] > maxorder:
-        sup_D0, sup_D_list = _mmap_poisson_reduce(sup_D0, sup_D_list)
+    sup_D0 = None
+    sup_D_list = None
+    for src in sorted_indices:
+        cur_D0, cur_D_list = mmaps[src]
+        cur_D0 = np.asarray(cur_D0, dtype=np.float64).copy()
+        cur_D_list = [np.asarray(D, dtype=np.float64).copy() for D in cur_D_list]
 
-    # Iteratively combine remaining MMAPs
-    for i in range(1, len(sorted_mmaps)):
-        next_D0, next_D_list = sorted_mmaps[i]
-        next_D0 = np.asarray(next_D0, dtype=np.float64)
-        next_D_list = [np.asarray(D, dtype=np.float64) for D in next_D_list]
-
-        # Check if direct Kronecker product exceeds maxorder
-        n_sup = sup_D0.shape[0]
-        n_next = next_D0.shape[0]
-
-        if n_sup * n_next > maxorder:
-            # Use simplified versions if needed
-            if n_sup * 2 < maxorder:
-                # Can fit 2-state approximation
-                # For now, use exponential approximation
-                try:
-                    next_D0_approx, next_D_list_approx = _mmap_poisson_reduce(
-                        next_D0, next_D_list)
-                    sup_D0, sup_D_list = _mmap_super(sup_D0, sup_D_list,
-                                                     next_D0_approx, next_D_list_approx,
-                                                     method)
-                except:
-                    # If approximation fails, skip this MMAP
-                    warnings.warn(f"Could not add MMAP {i} to superposition")
-                    continue
+        # Bound the order of each individual flow to maxorder. A single flow
+        # already over budget would otherwise pass through uncapped as the
+        # superposition base and blow up every downstream matrix-analytic solve.
+        if cur_D0.shape[0] > maxorder:
+            if maxorder >= 2:
+                cur_D0, cur_D_list = _mamap2_compress(cur_D0, cur_D_list)
             else:
-                # Use exponential for this MMAP
-                try:
-                    next_D0_approx, next_D_list_approx = _mmap_poisson_reduce(
-                        next_D0, next_D_list)
-                    sup_D0, sup_D_list = _mmap_super(sup_D0, sup_D_list,
-                                                     next_D0_approx, next_D_list_approx,
-                                                     method)
-                except:
-                    warnings.warn(f"Could not add MMAP {i} to superposition")
-                    continue
+                cur_D0, cur_D_list = _mmap_poisson_reduce(cur_D0, cur_D_list)
+
+        if sup_D0 is None:
+            if maxorder == 1:
+                cur_D0, cur_D_list = _mmap_poisson_reduce(cur_D0, cur_D_list)
+            sup_D0, sup_D_list = cur_D0, cur_D_list
         else:
-            # Direct superposition
+            if sup_D0.shape[0] * cur_D0.shape[0] > maxorder:
+                # An order-2 acyclic MAP still fits the budget, so compress to
+                # that rather than to Poisson and keep the flow's variability.
+                if sup_D0.shape[0] * 2 <= maxorder:
+                    cur_D0, cur_D_list = _mamap2_compress(cur_D0, cur_D_list)
+                else:
+                    cur_D0, cur_D_list = _mmap_poisson_reduce(cur_D0, cur_D_list)
             sup_D0, sup_D_list = _mmap_super(sup_D0, sup_D_list,
-                                            next_D0, next_D_list,
-                                            method)
+                                             cur_D0, cur_D_list, method)
+        outorder.extend(range(markbase[src], markbase[src + 1]))
 
-    # Normalize result
-    sup_D0, sup_D_list = mmap_normalize(sup_D0, sup_D_list)
+    # Restore the caller's mark order; "match" keeps one mark per class and
+    # fails the count test, so it is left alone.
+    if len(sup_D_list) == len(outorder) and outorder != sorted(outorder):
+        reordered = [None] * len(outorder)
+        for j, orig in enumerate(outorder):
+            reordered[orig] = sup_D_list[j]
+        sup_D_list = reordered
 
-    return sup_D0, sup_D_list
+    # Normalize result. mmap_normalize takes the AGGREGATE-FIRST layout
+    # [D1, D11, ..., D1C], while everything above (and every caller of this
+    # function, which reconstructs the aggregate as sum(D_list)) uses the
+    # CLASS-ONLY one. Handing it the class-only list made it read mark 1 as the
+    # aggregate and marks 2..C as the classes, so the last class was dropped and
+    # the rest shifted by one: a two-mark superposition came back with mark 2
+    # duplicated into both slots.
+    agg = sum(sup_D_list) if sup_D_list else np.zeros_like(sup_D0)
+    sup_D0, normalized = mmap_normalize(sup_D0, [agg] + sup_D_list)
+
+    return sup_D0, normalized[1:]
 
 
 def _mmap_super(D0_1: np.ndarray, D_list_1: List[np.ndarray],
@@ -302,6 +310,26 @@ def _mmap_poisson_reduce(D0: np.ndarray,
     D0_p = np.array([[-total]])
     D_list_p = [np.array([[float(r)]]) for r in rates]
     return D0_p, D_list_p
+
+
+def _mamap2_compress(D0: np.ndarray,
+                     D_list: List[np.ndarray]
+                     ) -> Tuple[np.ndarray, List[np.ndarray]]:
+    """
+    Compress an MMAP to a second-order acyclic MAMAP(2,m), the reference's own
+    over-budget fallback in mmap_super_safe (mamap2m_fit_gamma_fb_mmap.m).
+
+    Preferred over _mmap_poisson_reduce whenever an order-2 factor still fits the
+    order budget, since Poisson discards the flow's variability entirely. Takes
+    and returns the class-only D_list layout used inside mmap_super_safe.
+    """
+    from ...lib.m3a import mamap2m_fit_gamma_fb_mmap
+    D0 = np.asarray(D0, dtype=np.float64)
+    D_list = [np.asarray(D, dtype=np.float64) for D in D_list]
+    agg = sum(D_list) if D_list else np.zeros_like(D0)
+    fitted = mamap2m_fit_gamma_fb_mmap([D0, agg] + D_list)
+    return np.asarray(fitted[0], dtype=np.float64), \
+        [np.asarray(D, dtype=np.float64) for D in fitted[2:]]
 
 
 def mmap_mark(D0: np.ndarray, D_list: List[np.ndarray],
@@ -1461,6 +1489,40 @@ def mmap_count_var(mmap: List[np.ndarray], t: float) -> np.ndarray:
         vk[k] -= 2 * ck[k, :] @ (I - linalg.expm(D * t)) @ dk[:, k]
 
     return vk
+
+
+def mmap_count_moment(mmap: List[np.ndarray], t: float,
+                      orders: np.ndarray) -> np.ndarray:
+    """
+    Per-class power moments of the counting process at resolution t.
+
+    For class k the marginal counting process is that of the MAP
+    ``{D0 + sum_{j != k} D1_j, D1_k}``: every arrival of another class is an
+    unobserved transition of the marginal process. The moments of that MAP
+    follow from ``map_count_moment``.
+
+    Args:
+        mmap: List of matrices [D0, D1, D2, ..., Dm]
+        t: Time period
+        orders: Orders of the moments to compute
+
+    Returns:
+        (len(orders), m) array; column k holds the moments of class k
+    """
+    from .map_analysis import map_count_moment
+
+    orders = np.asarray(orders, dtype=int).ravel()
+    m = len(mmap) - 2
+    D0 = np.asarray(mmap[0], dtype=np.float64)
+    out = np.zeros((len(orders), m))
+    for k in range(m):
+        D0marg = D0.copy()
+        for j in range(m):
+            if j != k:
+                D0marg = D0marg + np.asarray(mmap[2 + j], dtype=np.float64)
+        D1marg = np.asarray(mmap[2 + k], dtype=np.float64)
+        out[:, k] = np.ravel(map_count_moment(D0marg, D1marg, t, orders))
+    return out
 
 
 def mmap_count_idc(mmap: List[np.ndarray], t: float) -> np.ndarray:

@@ -1,0 +1,70 @@
+{
+  "class": {
+    "MVA": "deterministic"
+  },
+  "example": "cqn_twoqueues_multi",
+  "solvers": {
+    "MVA": [
+      {
+        "ArvR": 0.16667,
+        "JobClass": "Class1",
+        "QLen": 0.16667,
+        "ResidT": 1.0,
+        "RespT": 1.0,
+        "Station": "Delay",
+        "Tput": 0.16667,
+        "Util": 0.16667
+      },
+      {
+        "ArvR": 0.16667,
+        "JobClass": "Class2",
+        "QLen": 0.16667,
+        "ResidT": 1.0,
+        "RespT": 1.0,
+        "Station": "Delay",
+        "Tput": 0.16667,
+        "Util": 0.16667
+      },
+      {
+        "ArvR": 0.16667,
+        "JobClass": "Class1",
+        "QLen": 0.49999,
+        "ResidT": 3.0,
+        "RespT": 3.0,
+        "Station": "Queue1",
+        "Tput": 0.16667,
+        "Util": 0.25
+      },
+      {
+        "ArvR": 0.16667,
+        "JobClass": "Class2",
+        "QLen": 0.49999,
+        "ResidT": 3.0,
+        "RespT": 3.0,
+        "Station": "Queue1",
+        "Tput": 0.16667,
+        "Util": 0.25
+      },
+      {
+        "ArvR": 0.16667,
+        "JobClass": "Class1",
+        "QLen": 9.3333,
+        "ResidT": 56.0,
+        "RespT": 56.0,
+        "Station": "Queue2",
+        "Tput": 0.16667,
+        "Util": 0.5
+      },
+      {
+        "ArvR": 0.16667,
+        "JobClass": "Class2",
+        "QLen": 9.3333,
+        "ResidT": 56.0,
+        "RespT": 56.0,
+        "Station": "Queue2",
+        "Tput": 0.16667,
+        "Util": 0.5
+      }
+    ]
+  }
+}

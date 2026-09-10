@@ -50,6 +50,24 @@ public class MFQAnalyzer implements FluidAnalyzer {
     @Override
     public Matrix getXVecIt() { return xvecIt; }
 
+    /**
+     * The reason MFQ cannot run on this model, or {@code null} when it can.
+     *
+     * MFQ IS A SINGLE-QUEUE METHOD AND FALLS BACK: `solver_fluid_analyzer.m`
+     * warns "MFQ not applicable: ... Falling back to matrix method" and
+     * re-enters `solver_fluid_matrix`. The decision has to be taken by the
+     * CALLER, before the mfq branch of runAnalyzer diverts around the state-space
+     * preparation the matrix method reads (options.init_sol above all), which is
+     * why this is exposed rather than handled inside {@link #analyze}.
+     *
+     * @param sn the model
+     * @return the topology error, or null when MFQ applies
+     */
+    public static String mfqNotApplicableReason(NetworkStruct sn) {
+        TopologyInfo info = new MFQAnalyzer().validateTopology(sn);
+        return info.isValid ? null : info.errorMsg;
+    }
+
     private TopologyInfo validateTopology(NetworkStruct sn) {
         TopologyInfo info = new TopologyInfo();
         boolean hasOpenClass = false;

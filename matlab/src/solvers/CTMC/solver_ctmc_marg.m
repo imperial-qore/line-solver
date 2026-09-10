@@ -19,7 +19,7 @@ if options.keep
     line_printf('\nCTMC generator and state space saved in: ');
     line_printf([fname, '.mat'])
 end
-pi = ctmc_solve_reducible(Q);
+pi = ctmc_stationary(Q, SS, sn, options);
 pi(pi<GlobalConstants.Zero)=0;
 pi = pi/sum(pi);
 

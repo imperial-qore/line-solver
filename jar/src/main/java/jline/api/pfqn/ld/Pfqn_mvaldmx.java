@@ -83,6 +83,23 @@ public final class Pfqn_mvaldmx {
         Matrix E = ret1.E;
         Matrix Eprime = ret1.Eprime;
         int C = closedClasses.size();
+        if (C == 0) {
+            // Purely open network: the closed lattice is the single empty
+            // population, so P(station holds 0 closed jobs)=1 and the sums below
+            // collapse to their n=0 term, which is the effective capacity. The
+            // lattice recursion cannot run it -- pprod on an empty bound never
+            // returns the -1 sentinel -- so it is evaluated in closed form here.
+            Matrix Pc0 = Matrix.ones(M, 1);
+            for (int r : openClasses) {
+                XN.set(r, lambda.get(r));
+                for (int ist = 0; ist < M; ist++) {
+                    QN.set(ist, r, lambda.get(r) * D.get(ist, r) * EC.get(ist, 0));
+                    CN.set(ist, r, D.get(ist, r) * EC.get(ist, 0));
+                    UN.set(ist, r, lambda.get(r) * Eprime.get(ist, 1) / E.get(ist, 1));
+                }
+            }
+            return new Ret.pfqnMVALDMX(XN, QN, UN, CN, lGN, Pc0);
+        }
         Matrix Dc = new Matrix(D.getNumRows(), C);
         Matrix Nc = new Matrix(1, C);
         Matrix Zc = new Matrix(1, C);

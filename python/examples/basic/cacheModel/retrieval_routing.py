@@ -1,12 +1,5 @@
 """Cache with probabilistic per-item routing through a retrieval system."""
 
-# Ensure native line_solver is used (not python-wrapper)
-import sys
-import os
-_native_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
-if _native_path not in sys.path:
-    sys.path.insert(0, _native_path)
-
 import numpy as np
 from line_solver import *
 
@@ -86,7 +79,7 @@ if __name__ == "__main__":
 
     # Simulation
     print('SOLVER: SSA')
-    print(SSA(model, samples=5000, method='serial', seed=1).get_avg_cache_table().to_string(index=False))
+    print(SSA(model, samples=100000, method='serial', seed=1).get_avg_cache_table().to_string(index=False))
     print('SOLVER: LDES')
     print(LDES(model, samples=1000000, seed=1).get_avg_cache_table().to_string(index=False))
 

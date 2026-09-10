@@ -124,10 +124,11 @@ def pfqn_linearizermx(
             else:
                 QN0c = None
 
-        # Call appropriate linearizer for closed classes
-        # Filter out infinite server counts (Delay nodes) when determining max_servers
-        finite_servers = nservers_arr[np.isfinite(nservers_arr)]
-        max_servers = int(np.max(finite_servers)) if len(finite_servers) > 0 else 1
+        # Call appropriate linearizer for closed classes. MATLAB tests
+        # max(nservers(:))==1 without dropping the infinite entries, so an
+        # INF-scheduled station routes to pfqn_linearizerms; the single-server
+        # linearizers ignore `type` and would queue at it.
+        max_servers = np.max(nservers_arr) if nservers_arr.size > 0 else 1
 
         # Reference: MATLAB pfqn_linearizermx.m lines 78-96
         if max_servers == 1:

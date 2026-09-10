@@ -1,5 +1,9 @@
-function [outspace, outrate, outprob] = afterEventStationReply(sn, ind, ist, class, K, Ks, S, pie, space_buf, space_srv, space_var)
-% [OUTSPACE, OUTRATE, OUTPROB] = AFTEREVENTSTATIONREPLY(SN, IND, IST, CLASS, K, KS, S, PIE, SPACE_BUF, SPACE_SRV, SPACE_VAR)
+function [outspace, outrate, outprob, outstart] = afterEventStationReply(sn, ind, ist, class, K, Ks, S, pie, space_buf, space_srv, space_var)
+% [OUTSPACE, OUTRATE, OUTPROB, OUTSTART] = AFTEREVENTSTATIONREPLY(SN, IND, IST, CLASS, K, KS, S, PIE, SPACE_BUF, SPACE_SRV, SPACE_VAR)
+%
+% OUTSTART is the START annotation of each successor row (see State.tagArc):
+% the reply takes the server it just released whenever one is free, which is a
+% service start like any other; a reply that has to queue starts nobody.
 %
 % Arrival of a REPLY signal class at the FCFS station that is holding a server
 % for the matching synchronous call. The reply completes the call:
@@ -38,6 +42,7 @@ end
 outspace = [];
 outrate = [];
 outprob = [];
+outstart = [];
 for row = 1:size(space_srv,1)
     buf = space_buf(row,:);
     srv = space_srv(row,:);
@@ -55,20 +60,23 @@ for row = 1:size(space_srv,1)
         % also keeps sum(srv) <= S, unlike admitting the reply on top of a
         % promoted job.
     end
-    [sp, pr] = sub_joinReply(sn, ind, ist, class, K, Ks, S, pie, buf, srv, var);
+    [sp, pr, st] = sub_joinReply(sn, ind, ist, class, K, Ks, S, pie, buf, srv, var);
     outspace = [outspace; sp]; %#ok<AGROW>
     outprob = [outprob; pr]; %#ok<AGROW>
+    outstart = State.tagArc(outstart, size(outspace,1), size(sp,1), R, st);
 end
 outrate = -1*ones(size(outspace,1),1); % passive action
+outstart = State.tagPad(outstart, size(outspace,1), R);
 end
 
-function [sp, pr] = sub_joinReply(sn, ind, ist, class, K, Ks, S, pie, buf, srv, var)
+function [sp, pr, st] = sub_joinReply(sn, ind, ist, class, K, Ks, S, pie, buf, srv, var)
 % The reply job joins the station: into a free server (enumerating its entry
 % phase) or, if all remaining servers are busy, at the tail of the buffer.
 [~, nb] = State.replyBlocked(sn, ind, var);
 Seff = S(ist) - nb;
 sp = [];
 pr = [];
+st = 0; % class starting service on these rows, 0 = the reply queues
 if sum(srv) < Seff
     pentry = pie{ist}{class};
     for kentry = 1:K(class)
@@ -80,6 +88,7 @@ if sum(srv) < Seff
         sp = [sp; buf, srv_k, var]; %#ok<AGROW>
         pr = [pr; pentry(kentry)]; %#ok<AGROW>
     end
+    st = class; % the reply took a free server
     return
 end
 % All available servers busy: queue at the tail. The FCFS buffer is

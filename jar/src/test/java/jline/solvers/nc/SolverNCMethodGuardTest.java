@@ -174,15 +174,16 @@ public class SolverNCMethodGuardTest {
     }
 
     /**
-     * 'mom' is not implemented by SolverNC and is advertised by neither SolverNC nor
-     * MATLAB's SolverNC. It must be rejected rather than silently produce all-zero
-     * queue lengths via the default analyzer.
+     * 'mom' names nothing in any codebase: the method-of-moments solver and the
+     * method name were both removed, so no solver implements or advertises it. It
+     * must be rejected rather than silently produce all-zero queue lengths via the
+     * default analyzer.
      */
     @Test
     public void testUnadvertisedMomMethodIsRejected() {
         String[] valid = new SolverNC(repairmanM1()).listValidMethods();
         assertFalse(Arrays.asList(valid).contains("mom"),
-                "'mom' must not be advertised by SolverNC (MATLAB does not advertise it either)");
+                "'mom' must not be advertised by SolverNC (no codebase advertises it)");
         assertTrue(Arrays.asList(valid).contains("comom"), "'comom' is advertised");
 
         RuntimeException e = assertThrows(RuntimeException.class,
@@ -198,5 +199,26 @@ public class SolverNCMethodGuardTest {
         // Regression guard: the unknown-method rejection must not catch a valid method.
         assertDoesNotThrow(() -> nc(repairmanM1(), "comom").getAvgQLen());
         assertDoesNotThrow(() -> nc(repairmanM1(), "default").getAvgQLen());
+    }
+
+    /**
+     * 'comomld' used to be whitelisted at the gate without being advertised, which kept
+     * it out of every consumer that enumerates listValidMethods -- the SanityQN harness
+     * among them, so the exact load-dependent normalizing constant had no golden.
+     */
+    @Test
+    public void testComomldIsAdvertisedAndExactOnAProductFormModel() {
+        assertTrue(Arrays.asList(new SolverNC(repairmanM1()).listValidMethods()).contains("comomld"),
+                "'comomld' is a user-selectable method and must be advertised");
+        Matrix ld = nc(repairmanM1(), "comomld").getAvgQLen();
+        Matrix exact = nc(repairmanM1(), "exact").getAvgQLen();
+        assertEquals(exact.getNumRows() * exact.getNumCols(), ld.getNumRows() * ld.getNumCols(),
+                "comomld must return a full queue-length table");
+        for (int i = 0; i < exact.getNumRows(); i++) {
+            for (int r = 0; r < exact.getNumCols(); r++) {
+                assertEquals(exact.get(i, r), ld.get(i, r), 1e-9,
+                        "comomld is exact on a product-form model, station " + i + " class " + r);
+            }
+        }
     }
 }

@@ -149,54 +149,23 @@ switch sn.nodetype(ind)
                     end
                 end
 
-                sizeEstimator = multinomialln(n);
-                sizeEstimator = round(sizeEstimator/log(10));
-                if sizeEstimator > 2
-                    if ~isfield(options,'force') || options.force == false
-                        line_warning(sprintf('State space size is very large: 1e%d states. Cannot generate valid state space. Initializing station $d from a default state.\n',sizeEstimator,ind));
-                        state = inbuf;
-                        return
-                    end
+                % One buffer ordering is enough: this function returns an INITIAL
+                % state, and the trailing unique/flip keeps only the lexicographic
+                % maximum, i.e. the descending-sorted buffer. Enumerating every
+                % permutation first was factorial in the buffer content.
+                if sum(n)>sum(s)
+                    mi_buf = sort(inbuf,'descend'); % class of job in buffer position i
+                else % set an empty buffer
+                    mi_buf = 0;
                 end
-
-                % gen permutation of their positions in the fcfs buffer
-                mi = uniqueperms(inbuf);
-                if isempty(mi)
-                    mi_buf = zeros(1,max(1,sum(n)-S(ist)));
-                    state = zeros(1,sum(K));
-                    state = [mi_buf,state];
-                else
-                    % mi_buf: class of job in buffer position i (0=empty)
-                    if sum(n)>sum(s)
-                        mi_buf = mi(:,1:(sum(n)-sum(s)));
-                    else % set an empty buffer
-                        mi_buf = 0;
-                    end
-                end
-                % mi_srv: class of jobs running in the server of i
-                mi_srv = [];
+                % kstate: number of class r jobs running in each service phase
+                kstate=[];
                 for r=1:R
-                    mi_srv = [mi_srv, r*ones(1,s(r))];
+                    init = State.spaceClosedSingle(K(r),0);
+                    init(1) = s(r);
+                    kstate = State.cartesian(kstate,init);
                 end
-                % si: number of class r jobs that are running
-                si = s;
-                %si = unique(si,'rows');
-                for b=1:size(mi_buf,1)
-                    for k=1:size(si,1)
-                        % determine number of classs r jobs running in phase
-                        % j in server state mi_srv(kjs,:) and build
-                        % state
-                        kstate=[];
-                        for r=1:R
-                            % kstate = State.cartesian(kstate,State.spaceClosedSingle(K(r),si(k,r)));
-                            init = State.spaceClosedSingle(K(r),0);
-                            init(1) = si(k,r);
-                            kstate = State.cartesian(kstate,init);
-                        end
-                        state = [state; repmat(mi_buf(b,:),size(kstate,1),1), kstate];
-                    end
-                end
-                space = state;
+                space = [repmat(mi_buf,size(kstate,1),1), kstate];
             case {SchedStrategy.FCFSPR, SchedStrategy.FCFSPI, SchedStrategy.FCFSPRPRIO, SchedStrategy.FCFSPIPRIO, SchedStrategy.LCFSPR, SchedStrategy.LCFSPI, SchedStrategy.LCFSPRPRIO, SchedStrategy.LCFSPIPRIO, SchedStrategy.EDF}
                 %% TODO
                 if sum(n) == 0
@@ -214,72 +183,32 @@ switch sn.nodetype(ind)
                     end
                 end
 
-                sizeEstimator = multinomialln(n);
-                sizeEstimator = round(sizeEstimator/log(10));
-                if sizeEstimator > 2
-                    if ~isfield(options,'force') || options.force == false
-                        line_warning(sprintf('State space size is very large: 1e%d states. Cannot generate valid state space. Initializing station $d from a default state.\n',sizeEstimator,ind));
-                        state = inbuf;
-                        return
-                    end
+                % As in the FCFS branch, only the lexicographic maximum survives the
+                % trailing unique/flip, so it is built directly: buffer classes in
+                % descending order, each buffered job in its last service phase.
+                if sum(n)>sum(s)
+                    mi_buf = sort(inbuf,'descend'); % class of job in buffer position i
+                else % set an empty buffer
+                    mi_buf = 0;
                 end
-
-                % gen permutation of their positions in the fcfs buffer
-                mi = uniqueperms(inbuf);
-                if isempty(mi)
-                    % Empty buffer: single placeholder slot, built by the SAME interleaved (class,phase) loop below (do not pre-seed, mixes widths)
-                    mi_buf = zeros(1,max(1,sum(n)-S(ist)));
-                else
-                    % mi_buf: class of job in buffer position i (0=empty)
-                    if sum(n)>sum(s)
-                        mi_buf = mi(:,1:(sum(n)-sum(s)));
-                    else % set an empty buffer
-                        mi_buf = 0;
-                    end
-                end
-
-                % mi_srv: class of jobs running in the server of i
-                mi_srv = [];
+                % kstate: number of class r jobs running in each service phase
+                kstate=[];
                 for r=1:R
-                    mi_srv = [mi_srv, r*ones(1,s(r))];
+                    init = State.spaceClosedSingle(K(r),0);
+                    init(1) = s(r);
+                    kstate = State.cartesian(kstate,init);
                 end
-                % si: number of class r jobs that are running
-                si = s;
-                %si = unique(si,'rows');
-                for b=1:size(mi_buf,1)
-                    for k=1:size(si,1)
-                        % determine number of class r jobs running in phase
-                        % j in server state mi_srv(kjs,:) and build
-                        % state
-                        kstate=[];
-                        for r=1:R
-                            % kstate = State.cartesian(kstate,State.spaceClosedSingle(K(r),si(k,r)));
-                            init = State.spaceClosedSingle(K(r),0);
-                            init(1) = si(k,r);
-                            kstate = State.cartesian(kstate,init);
-                        end
-
-                        bkstate = [];
-                        for j=mi_buf(b,:) % for each job in the buffer
-                            if j>0
-                                bkstate = State.cartesian(bkstate,[1:K(j)]');
-                            else
-                                % empty buffer slot: phase placeholder 0, but keep
-                                % accumulating (do not reset) so mixed buffers keep
-                                % one phase column per slot.
-                                bkstate = State.cartesian(bkstate,0);
-                            end
-                        end
-                        bufstate_tmp = State.cartesian(mi_buf(b,:), bkstate);
-                        % here interleave positions of class and phases in
-                        % buf
-                        bufstate = zeros(size(bufstate_tmp));
-                        bufstate(:,1:2:end)=bufstate_tmp(:,1:size(mi_buf,2));
-                        bufstate(:,2:2:end)=bufstate_tmp(:,(size(mi_buf,2)+1):end);
-                        state = [state; State.cartesian(bufstate, kstate)];
+                % buffer slots interleave (class, phase); an empty slot carries phase 0
+                bkstate = zeros(1,numel(mi_buf));
+                for jj=1:numel(mi_buf)
+                    if mi_buf(jj)>0
+                        bkstate(jj) = K(mi_buf(jj));
                     end
                 end
-                space = state;
+                bufstate = zeros(1,2*numel(mi_buf));
+                bufstate(1:2:end) = mi_buf;
+                bufstate(2:2:end) = bkstate;
+                space = State.cartesian(bufstate, kstate);
             case SchedStrategy.PAS
                 % PAS/OI: local state is the ordered class-index list; "started" counts s are immaterial -- see _kb/04-networkstruct.md
                 W = sn.cap(ist);
@@ -297,7 +226,7 @@ switch sn.nodetype(ind)
                             vi=[vi, r*ones(1,n(r))];
                         end
                     end
-                    mi = uniqueperms(vi);
+                    mi = multiset_perms(vi);
                     space = [mi, zeros(size(mi,1), W - size(mi,2))];
                 end
             case {SchedStrategy.SJF, SchedStrategy.LJF}

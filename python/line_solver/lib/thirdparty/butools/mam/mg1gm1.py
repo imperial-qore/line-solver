@@ -252,8 +252,8 @@ def MG1FundamentalMatrix (A, precision=1e-14, maxNumIt=50, method="ShiftPWCR", m
 
     # Step 0
     G = ml.zeros((m,m))
-    Aeven = D[np.remainder(np.kron(np.arange(D.shape[0]/m),np.ones(m)),2)==0,:]
-    Aodd  = D[np.remainder(np.kron(np.arange(D.shape[0]/m),np.ones(m)),2)==1,:]
+    Aeven = D[np.remainder(np.kron(np.arange(D.shape[0]//m),np.ones(m)),2)==0,:]
+    Aodd  = D[np.remainder(np.kron(np.arange(D.shape[0]//m),np.ones(m)),2)==1,:]
     
     Ahatodd = np.vstack((Aeven[m:,:], D[-m:,:]))
     Ahateven = Aodd
@@ -324,7 +324,10 @@ def MG1FundamentalMatrix (A, precision=1e-14, maxNumIt=50, method="ShiftPWCR", m
         while (nAnew > nj*precision or nAhatnew > nj*precision) and nj < maxNumRoot:
     
             nj *= 2
-            stopv = min(nj, Aodd.shape[0]/m)
+            # integer division: stopv indexes rows, and a Python 3 true division
+            # left a float here, so every chain reaching this refinement loop
+            # died on "slice indices must be integers"
+            stopv = min(nj, Aodd.shape[0]//m)
     
             # prepare for FFTs
             temp1=np.reshape(Aodd[:stopv*m,:].T,(m*m,stopv),order='F').T
@@ -379,15 +382,15 @@ def MG1FundamentalMatrix (A, precision=1e-14, maxNumIt=50, method="ShiftPWCR", m
             print("MaxNumRoot reached, accuracy might be affected!")
     
         if nj > 2:
-            Anew = Anew[:m*nj/2,:]
-            Ahatnew = Ahatnew[:m*nj/2,:]
+            Anew = Anew[:m*nj//2,:]
+            Ahatnew = Ahatnew[:m*nj//2,:]
         
         # compute Aodd, Aeven, ...
-        Aeven = Anew[np.remainder(np.kron(np.arange(Anew.shape[0]/m),np.ones(m)),2)==0,:]
-        Aodd = Anew[np.remainder(np.kron(np.arange(Anew.shape[0]/m),np.ones(m)),2)==1,:]
+        Aeven = Anew[np.remainder(np.kron(np.arange(Anew.shape[0]//m),np.ones(m)),2)==0,:]
+        Aodd = Anew[np.remainder(np.kron(np.arange(Anew.shape[0]//m),np.ones(m)),2)==1,:]
         
-        Ahateven = Ahatnew[np.remainder(np.kron(np.arange(Ahatnew.shape[0]/m),np.ones(m)),2)==0,:]
-        Ahatodd = Ahatnew[np.remainder(np.kron(np.arange(Ahatnew.shape[0]/m),np.ones(m)),2)==1,:]
+        Ahateven = Ahatnew[np.remainder(np.kron(np.arange(Ahatnew.shape[0]//m),np.ones(m)),2)==0,:]
+        Ahatodd = Ahatnew[np.remainder(np.kron(np.arange(Ahatnew.shape[0]//m),np.ones(m)),2)==1,:]
         
         if butools.verbose==True:
             if method == "PWCR":
@@ -398,14 +401,14 @@ def MG1FundamentalMatrix (A, precision=1e-14, maxNumIt=50, method="ShiftPWCR", m
         # test stopcriteria
         if method == "PWCR":
             Rnewj = Anew[m:2*m,:]
-            for i in range (3, Anew.shape[0]/m+1):
+            for i in range (3, Anew.shape[0]//m+1):
                 Rnewj = Rnewj + Anew[(i-1)*m:i*m,:]
             Rnewj = la.inv(I-Rnewj)
             Rnewj = Anew[:m,:]*Rnewj
 
             if np.max(np.abs(Rj-Rnewj)) < precision or np.max(np.sum(I-Anew[:m,:]*la.inv(I-Anew[m:2*m,:]),0)) < precision:
                 G = Ahatnew[:m,:]
-                for i in range (2,Ahatnew.shape[0]/m+1):
+                for i in range (2,Ahatnew.shape[0]//m+1):
                     G = G + Rnewj * Ahatnew[(i-1)*m:i*m,:]
                 G = D[:m,:]*la.inv(I-G)
                 break

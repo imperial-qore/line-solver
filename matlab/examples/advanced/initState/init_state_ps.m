@@ -33,7 +33,7 @@ options.samples = 1e5;
 
 disp('This example shows the execution of the solver on a 2-class 2-node class-switching model with specified initial state.')
 % This part illustrates the execution of different solvers
-solver{1} = CTMC(model,options);
+solver{1} = CTMC(model, 'exact',options);
 solver{end+1} = JMT(model,options);
 solver{end+1} = SSA(model,options);
 solver{end+1} = FLD(model,options);

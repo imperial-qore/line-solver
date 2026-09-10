@@ -14,7 +14,7 @@ def gallery_hyperl1_feedback():
     # Block 2: classes
     oclass1 = OpenClass(model, 'Class1')
     source.setArrival(oclass1, HyperExp.fit_mean_and_scv(1, 64))
-    queue.setService(oclass1, Erlang.fit_mean_and_order(0.5, 5))
+    queue.setService(oclass1, Erlang.fit_mean_and_order(0.05, 5))
 
     # Block 3: topology
     P = model.init_routing_matrix()

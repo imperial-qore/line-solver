@@ -5,6 +5,7 @@
 
 package jline.solvers.mva.handlers;
 
+import jline.api.sn.SnIsMm1kLoss;
 import jline.io.Ret;
 import jline.lang.JobClass;
 import jline.lang.Network;
@@ -32,15 +33,18 @@ import jline.util.matrix.Matrix;
 import org.apache.commons.math3.util.FastMath;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static jline.api.sn.SnGetArvRFromTput.snGetArvRFromTput;
 import static jline.api.sn.SnGetResidTFromRespT.snGetResidTFromRespT;
 import static jline.api.sn.SnHasPolling.snHasPolling;
+import static jline.api.sn.SnHasSjn.snHasSjn;
 import static jline.io.InputOutput.*;
 import static jline.solvers.mva.analyzers.Solver_mva_analyzer.solver_mva_analyzer;
 import static jline.solvers.mva.analyzers.Solver_mva_marie_analyzer.solver_mva_marie_analyzer;
@@ -122,19 +126,15 @@ public class MVARunner {
 
         if (this.enableChecks) {
             // see _kb/06-solver-catalog.md for rationale
-            String gateMethod = this.options.method;
-            if ("default".equals(gateMethod)) {
-                boolean allOpen = true;
-                for (int r = 0; r < this.sn.nclasses; r++) {
-                    if (!Double.isInfinite(this.sn.njobs.get(r))) { allOpen = false; break; }
-                }
-                if ((this.sn.nclasses == 1) && allOpen
-                        && jline.api.sn.SnHasBurstyArrival.snHasBurstyArrival(this.sn)) {
-                    gateMethod = "rqna";
-                }
-            }
+            // One resolution rule, shared with SolverMVA.resolveMethod: gating on
+            // a name the analyzer would not dispatch is how a supported model
+            // gets refused.
+            String gateMethod = SolverMVA.resolveMethodForStruct(this.sn, this.options.method);
+            // The struct form of the table, not the name-only one: the M/M/1/K
+            // FiniteCapacity grant is judged on the model, and the dispatch below
+            // claims that shape by shape rather than by name.
             String reason = FeatureSet.supportsReason(
-                    SolverMVA.methodFeatureSet(gateMethod),
+                    SolverMVA.methodFeatureSet(this.sn, gateMethod),
                     this.model.getUsedLangFeatures());
             if (!reason.isEmpty()) {
                 line_error(mfilename(new Object() {
@@ -149,7 +149,7 @@ public class MVARunner {
         FJFixedPoint.FJOutcome fjOut = FJFixedPoint.run(this.model, this.sn, this.options, fjState,
                 new FJFixedPoint.InnerSolve() {
                     @Override
-                    public MVAResult solve(NetworkStruct snIn, SolverOptions opts) {
+                    public MVAResult solve(jline.lang.Network net, NetworkStruct snIn, SolverOptions opts) {
                         return MVARunner.this.dispatch(snIn, opts);
                     }
                 }, T0);
@@ -220,6 +220,12 @@ public class MVARunner {
         this.res.runtime = (System.nanoTime() - T0) / 1000000000.0;
         this.res.iter = iter;
         this.res.logNormConstAggr = ret.logNormConstAggr;
+        // The runner rebuilds the result rather than forwarding the analyzer's, so
+        // a field it does not copy is silently lost. The convergence flag is the
+        // one signal the iteration count cannot replace on the load-dependent
+        // route, where the count aggregates the nested sweeps and saturates the
+        // budget on a solve whose outer residual is exactly zero.
+        this.res.converged = ret.converged;
         if (Solver.timeExceeded(T0, this.options.timeout)) {
             this.res.timedOut = true;
             line_warning(mfilename(new Object() {
@@ -295,6 +301,60 @@ public class MVARunner {
         return true;
     }
 
+    /**
+     * The queue's size-based discipline, or null when it has none.
+     *
+     * <p>SRPT, PSJF, FB, LRPT and SETF are served by the Wierman and
+     * Harchol-Balter response times; the generic AMVA path carries no
+     * size-based term at all.
+     */
+    private SchedStrategy sizeBasedSched(NetworkStruct sn) {
+        for (int i = 0; i < sn.nodetype.size(); i++) {
+            if (sn.nodetype.get(i) != NodeType.Queue) {
+                continue;
+            }
+            int ist = (int) sn.nodeToStation.get(i);
+            if (ist < 0) {
+                continue;
+            }
+            SchedStrategy sched = sn.sched.get(sn.stations.get(ist));
+            if (jline.solvers.mva.analyzers.Solver_mva_qsys_sizebased_analyzer
+                    .isSizeBasedPolicy(sched)) {
+                return sched;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The method names Solver_mva_qsys_analyzer has an arm for.
+     *
+     * ONE PREDICATE FOR THE INTERCEPTION AND THE RUN. The Source-Queue-Sink shape is
+     * claimed by that analyzer, which answers this FIXED list of closed forms and
+     * refuses every other name -- so each general network method listValidMethods
+     * offers on an open model was advertised on the one open shape it could not run
+     * on, and threw "Unsupported method for a model with 1 station and 1 class" the
+     * moment it was asked for: mva, amva, sum, esum, lin, gflin, egflin, qli, fli,
+     * qd and qdlin. They are NETWORK methods, and the general branch solves a
+     * one-queue network exactly as it solves a larger one, so the interception
+     * stands aside for them rather than claiming a model it cannot answer. 'qna'
+     * was the first name found this way and used to be excluded by hand at the call
+     * site; it needs no special case now, having no arm here either.
+     *
+     * Mirrors qsys_serves_method.m and detail::qsys_serves_method in
+     * cpp/include/line/solvers/mva/mva_dispatch.h.
+     */
+    private static final Set<String> QSYS_SERVED_METHODS =
+            new HashSet<String>(Arrays.asList("default", "exact", "erlanga", "mgisrgi",
+                    "gigk.diffusion", "mm1", "mmk", "mg1", "mgi1", "gigk",
+                    "gigk.kingman_approx", "gigk.whitt", "gig1", "gig1.allen", "gig1.kingman",
+                    "gig1.heyman", "gig1.kobayashi", "gig1.klb", "gig1.marchal", "gig1.gelenbe",
+                    "gig1.kimura", "gig1.extremal", "qed", "rqna", "rqt", "gm1", "gim1"));
+
+    private static boolean qsysServesMethod(String method) {
+        return method != null && QSYS_SERVED_METHODS.contains(method);
+    }
+
     private boolean snIsHolQsys(NetworkStruct sn) {
         int source_ist = -1;
         int queue_ist = -1;
@@ -340,11 +400,23 @@ public class MVARunner {
         this.sn = snIn;
         MVAResult ret = new MVAResult();
 
-            if (this.options.method.equals("exact") && !this.model.hasProductFormSolution()) {
+            // OI/PAS are exactly solvable via the order-independent analyzer below,
+            // and a single-station open system never runs the MVA recursion: it goes
+            // to a queueing-system formula (M/G/1 PK, M/M/k, Cobham, matrix-geometric,
+            // ...) that holds outside product form. Both are exempt from the guard.
+            boolean hasOIorPAS = false;
+            for (int i = 0; i < this.sn.nstations; i++) {
+                SchedStrategy s = this.sn.sched.get(this.sn.stations.get(i));
+                if (s == SchedStrategy.OI || s == SchedStrategy.PAS) { hasOIorPAS = true; break; }
+            }
+            boolean isQsys = this.sn.nclosedjobs == 0 && this.sn.nodetype.size() == 3
+                    && (checkNodeTypes(this.sn.nodetype, NodeType.Source, NodeType.Queue, NodeType.Sink)
+                        || checkNodeTypes(this.sn.nodetype, NodeType.Source, NodeType.Cache, NodeType.Sink));
+            if (this.options.method.equals("exact") && !this.model.hasProductFormSolution() && !hasOIorPAS && !isQsys) {
                 line_error(mfilename(new Object() {
                 }), "The exact method requires the model to have a product-form solution. This model does not have one.");
             }
-            if (this.options.method.equals("mva") && !this.model.hasProductFormSolution()) {
+            if (this.options.method.equals("mva") && !this.model.hasProductFormSolution() && !isQsys) {
                 line_warning(mfilename(new Object() {
                 }), "The exact method requires the model to have a product-form solution. This model does not have one. SolverMVA will return an approximation generated by an exact MVA algorithm.");
             }
@@ -352,8 +424,53 @@ public class MVARunner {
             line_debug(this.options.verbose, String.format("MVA analyzer starting: method=%s, nclasses=%d, nclosed=%d, nnodes=%d",
                 method, this.sn.nclasses, this.sn.nclosedjobs, this.sn.nnodes));
 
-            if (this.sn.nclasses == 1 && this.sn.nclosedjobs == 0 && this.sn.nodetype.size() == 3 && checkNodeTypes(this.sn.nodetype, NodeType.Source, NodeType.Queue, NodeType.Sink)) {
-                // Single-class open queueing system
+            boolean hasSjnStation = snHasSjn(this.sn);
+            boolean hasOpenClass = false;
+            for (int r = 0; r < this.sn.njobs.length(); r++) {
+                if (Double.isInfinite(this.sn.njobs.get(r))) { hasOpenClass = true; break; }
+            }
+            if (hasSjnStation && hasOpenClass) {
+                // without the rejection the generic AMVA path would silently solve the station as
+                // if it were size-blind, which is not what SJF means
+                line_error(mfilename(new Object() {
+                }), "SolverMVA supports shortest-job-next (SJF) scheduling only in closed models, "
+                        + "the conditional waiting time equation being a population recursion. Use "
+                        + "SolverLDES, or SolverMVA with SRPT or PSJF for the preemptive size-based "
+                        + "open queue.");
+            }
+
+            if (hasSjnStation) {
+                // closed models with shortest-job-next stations go to the Kant recursion
+                line_debug(this.options.verbose, "Detected closed model with SJN scheduling, calling solver_mva_sjn_analyzer");
+                ret = jline.solvers.mva.analyzers.Solver_mva_sjn_analyzer.solver_mva_sjn_analyzer(this.sn, this.options.copy());
+            } else if (this.sn.nclosedjobs == 0 && this.sn.nodetype.size() == 3
+                    && checkNodeTypes(this.sn.nodetype, NodeType.Source, NodeType.Queue, NodeType.Sink)
+                    && sizeBasedSched(this.sn) != null) {
+                // Open system with size-based scheduling (SRPT, PSJF, FB, LRPT, SETF):
+                // the generic AMVA path has no size-based term and would solve the
+                // station size-blind; see _kb/06-solver-catalog.md
+                SchedStrategy sbs = sizeBasedSched(this.sn);
+                line_debug(this.options.verbose, "Detected size-based scheduling (" + sbs
+                        + "), calling solver_mva_qsys_sizebased_analyzer");
+                ret = jline.solvers.mva.analyzers.Solver_mva_qsys_sizebased_analyzer
+                        .solver_mva_qsys_sizebased_analyzer(this.sn, this.options.copy(), sbs);
+            } else if (this.sn.nclasses == 1 && this.sn.nclosedjobs == 0 && this.sn.nodetype.size() == 3 && checkNodeTypes(this.sn.nodetype, NodeType.Source, NodeType.Queue, NodeType.Sink) && (qsysServesMethod(method) || SnIsMm1kLoss.snIsMm1kLoss(this.sn))) {
+                // Single-class open queueing system.
+                //
+                // CLAIMED ONLY FOR THE NAMES THE ANALYZER ANSWERS,
+                // qsysServesMethod. Anything else -- 'qna', 'mva', 'amva', the
+                // linearizers, the qd family, sum/esum -- falls through to the
+                // network branches below and is solved there, as it is on every
+                // larger open network; this branch used to claim the model for them
+                // and then refuse the method by name. 'rqna' and 'rqt' are served
+                // here: the analyzer answers them with single-queue robust formulas
+                // of their own.
+                //
+                // THE M/M/1/K LOSS SHAPE IS THE EXCEPTION and is claimed whatever
+                // the name. Its branch is chosen by the SHAPE and not by the
+                // method, and finiteCapacityReason exempts exactly this shape for
+                // every method but "exact", so the two have to agree on which
+                // models come here.
                 line_debug(this.options.verbose, "Detected open queueing system (Source-Queue-Sink), calling solver_mva_qsys_analyzer");
                 ret = solver_mva_qsys_analyzer(this.sn, this.options.copy());
             } else if (this.sn.nclasses > 1 && this.sn.nclosedjobs == 0 && this.sn.nodetype.size() == 3 && checkNodeTypes(this.sn.nodetype, NodeType.Source, NodeType.Queue, NodeType.Sink) && snHasPolling(this.sn)) {

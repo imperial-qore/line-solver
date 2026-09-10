@@ -9,12 +9,6 @@ Uses CacheRMF directly to compute:
   - Transient evolution of hit rates via coupled ODE system
 """
 
-import sys
-import os
-_native_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
-if _native_path not in sys.path:
-    sys.path.insert(0, _native_path)
-
 import numpy as np
 from line_solver.solvers.solver_fld.methods.cache import CacheRMF
 

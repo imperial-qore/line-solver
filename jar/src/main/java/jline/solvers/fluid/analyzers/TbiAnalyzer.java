@@ -18,6 +18,7 @@ import org.ejml.ops.DConvertMatrixStruct;
 
 import jline.GlobalConstants;
 import jline.VerboseLevel;
+import jline.api.sn.SnRtStations;
 import jline.lang.JobClass;
 import jline.lang.NetworkStruct;
 import jline.solvers.SolverOptions;
@@ -82,13 +83,12 @@ public class TbiAnalyzer extends ClosingAndStateDepMethodsAnalyzer {
         // NHPP sources carry a rate schedule rather than a {D0, D1} MAP; see
         // ClosingAndStateDepMethodsAnalyzer.solver_fluid_iteration.
         Map<Station, Map<JobClass, MatrixCell>> proc = FluidNhpp.substituteNhppProc(sn, mu, phi);
-        PassageTimeODE pt = new PassageTimeODE(sn, mu, phi, proc, sn.rt, S, options);
+        // station-major routing; sn.rt is indexed by stateful node (see SnRtStations)
+        PassageTimeODE pt = new PassageTimeODE(sn, mu, phi, proc, SnRtStations.snRtStations(sn).getLeft(), S, options);
         int ndim = pt.getDimension();
         Matrix allJumps = pt.getAllJumps();
         Matrix qIndices = pt.getQIndices();
         Matrix Kic = pt.getKic();
-
-        options.stiff = detectStiffnessUsingOstrowski(sn, slowrate);
 
         // Partition stations into cells and build per-cell state masks. The
         // restriction of the jump matrix to a cell's rows retains interior and
@@ -142,9 +142,26 @@ public class TbiAnalyzer extends ClosingAndStateDepMethodsAnalyzer {
         int iter = 0;
         boolean goon = true;
 
+        // Only a finite timespan resolves the transient between the endpoints; the
+        // per-segment waveform still has to be assembled, but retaining every segment
+        // costs O(iter_max * steps) to describe a fixed point (see the closing analyzer)
+        boolean keepTrajectory = Double.isFinite(options.timespan[1]);
+        Matrix xvecInit = this.xvec_it.copy();
+
+        // Wall-clock budget (options.timeout, seconds; Inf = none), as MATLAB
+        // solver_fluid_tbi_iteration.m guards both the segment loop and the sweep loop
+        double maxTime = (Double.isFinite(options.timeout) && options.timeout > 0) ? options.timeout
+                : GlobalConstants.Inf;
+        long startNanos = System.nanoTime();
+
         while ((Double.isFinite(options.timespan[1]) && T < options.timespan[1])
                 || (goon && iter < options.iter_max)) {
             iter++;
+
+            if ((System.nanoTime() - startNanos) / 1e9 > maxTime) {
+                goon = false;
+                break;
+            }
 
             double[] y0 = new double[ndim];
             for (int i = 0; i < ndim; i++) {
@@ -213,7 +230,7 @@ public class TbiAnalyzer extends ClosingAndStateDepMethodsAnalyzer {
 
                 frozenT = tgrid;
                 frozenY = Ynew;
-                if (delta < tbiTol) {
+                if (delta < tbiTol || (System.nanoTime() - startNanos) / 1e9 > maxTime) {
                     break;
                 }
             }
@@ -224,17 +241,19 @@ public class TbiAnalyzer extends ClosingAndStateDepMethodsAnalyzer {
             }
 
             int steps = frozenT.length;
-            DMatrixRMaj denseT = new DMatrixRMaj(steps, 1);
-            DMatrixRMaj denseX = new DMatrixRMaj(steps, ndim);
-            for (int r = 0; r < steps; r++) {
-                denseT.set(r, 0, frozenT[r]);
-                for (int j = 0; j < ndim; j++) {
-                    denseX.set(r, j, FastMath.max(0.0, frozenY[r][j]));
+            if (keepTrajectory) {
+                DMatrixRMaj denseT = new DMatrixRMaj(steps, 1);
+                DMatrixRMaj denseX = new DMatrixRMaj(steps, ndim);
+                for (int r = 0; r < steps; r++) {
+                    denseT.set(r, 0, frozenT[r]);
+                    for (int j = 0; j < ndim; j++) {
+                        denseX.set(r, j, FastMath.max(0.0, frozenY[r][j]));
+                    }
                 }
+                tIterations.add(new Matrix(denseT));
+                xVecIterations.add(new Matrix(denseX));
+                totalSteps += steps;
             }
-            tIterations.add(new Matrix(denseT));
-            xVecIterations.add(new Matrix(denseX));
-            totalSteps += steps;
 
             this.xvec_it = new Matrix(1, ndim);
             for (int j = 0; j < ndim; j++) {
@@ -247,7 +266,18 @@ public class TbiAnalyzer extends ClosingAndStateDepMethodsAnalyzer {
             }
         }
 
-        if (!xVecIterations.isEmpty() && totalSteps > 0) {
+        if (!keepTrajectory) {
+            // QNt/UNt/TNt are read at row 0 (initial condition) and at the last row (fixed
+            // point), so the two endpoints carry the whole contract of an infinite timespan
+            this.xvec_t = new Matrix(2, ndim);
+            for (int j = 0; j < ndim; j++) {
+                this.xvec_t.set(0, j, FastMath.max(0.0, xvecInit.get(0, j)));
+                this.xvec_t.set(1, j, this.xvec_it.get(0, j));
+            }
+            result.t = new Matrix(2, 1);
+            result.t.set(0, 0, options.timespan[0]);
+            result.t.set(1, 0, T);
+        } else if (!xVecIterations.isEmpty() && totalSteps > 0) {
             int nextRow = 0;
             int cols = xVecIterations.get(0).getNumCols();
             DMatrixRMaj denseXvecT = new DMatrixRMaj(totalSteps, cols);
@@ -313,13 +343,15 @@ public class TbiAnalyzer extends ClosingAndStateDepMethodsAnalyzer {
         }
 
         // Station-level coupling weights, aggregated over classes and symmetrized.
+        // station-major routing, hoisted: the reduction inverts a matrix
+        Matrix rtSt = SnRtStations.snRtStations(sn).getLeft();
         double[][] A = new double[M][M];
         for (int i = 0; i < M; i++) {
             for (int j = 0; j < M; j++) {
                 double w = 0.0;
                 for (int c = 0; c < K; c++) {
                     for (int l = 0; l < K; l++) {
-                        w += sn.rt.get(i * K + c, j * K + l);
+                        w += rtSt.get(i * K + c, j * K + l);
                     }
                 }
                 A[i][j] = w;
@@ -422,23 +454,33 @@ public class TbiAnalyzer extends ClosingAndStateDepMethodsAnalyzer {
         double[] next = new double[d];
 
         if (options.stiff) {
-            LSODA solver = (options.tol > GlobalConstants.CoarseTol)
-                    ? options.odesolvers.fastStiffODESolver
-                    : options.odesolvers.accurateStiffODESolver;
+            LSODA solver = options.odesolvers.stiffIntegratorFor(t0, t1, options.tol,
+                    options.tol > GlobalConstants.CoarseTol);
             try {
                 solver.integrate(ode, t0, y0c, t1, next);
-            } catch (RuntimeException e) {
-                if (options.verbose != VerboseLevel.SILENT) {
-                    System.out.println("The initial point is invalid, Fluid solver switching to default initialization.");
+            } catch (RuntimeException firstFailure) {
+                // See ClosingAndStateDepMethodsAnalyzer: the retry from yDefault is the
+                // probe that decides whether the initial point was the cause, so the
+                // message belongs after it succeeds, not before it runs.
+                try {
+                    solver.integrate(ode, t0, gather(yDefault, idx), t1, next);
+                } catch (RuntimeException retryFailure) {
+                    retryFailure.addSuppressed(firstFailure);
+                    throw new RuntimeException("TBI fluid integration failed from BOTH the supplied"
+                            + " initial point and the default initialization over t in ["
+                            + t0 + ", " + t1 + "]; the initial point is NOT implicated."
+                            + " Underlying integrator error: " + retryFailure.getMessage(),
+                            retryFailure);
                 }
-                solver.integrate(ode, t0, gather(yDefault, idx), t1, next);
+                if (options.verbose != VerboseLevel.SILENT) {
+                    System.out.println("The initial point was invalid, Fluid solver switched to default initialization.");
+                }
             }
             return fromLsoda(solver, d);
         }
 
-        FirstOrderIntegrator solver = (options.tol > GlobalConstants.CoarseTol)
-                ? options.odesolvers.fastODESolver
-                : options.odesolvers.accurateODESolver;
+        FirstOrderIntegrator solver = options.odesolvers.integratorFor(t0, t1, options.tol,
+                options.tol > GlobalConstants.CoarseTol);
         solver.clearStepHandlers();
         TransientDataHandler handler = new TransientDataHandler(d);
         solver.addStepHandler(handler);
@@ -451,13 +493,16 @@ public class TbiAnalyzer extends ClosingAndStateDepMethodsAnalyzer {
                 if (e.getMessage() != null && e.getMessage().contains("step size")) {
                     usedStiffFallback = true;
                 } else {
-                    if (options.verbose != VerboseLevel.SILENT) {
-                        System.out.println("The initial point is invalid, Fluid solver switching to default initialization.");
-                    }
                     solver.clearStepHandlers();
                     handler = new TransientDataHandler(d);
                     solver.addStepHandler(handler);
+                    // Message deferred until the retry succeeds: a failure here falls through
+                    // to the stiff fallback below, which means the initial point was NOT
+                    // what went wrong.
                     solver.integrate(ode, t0, gather(yDefault, idx), t1, next);
+                    if (options.verbose != VerboseLevel.SILENT) {
+                        System.out.println("The initial point was invalid, Fluid solver switched to default initialization.");
+                    }
                 }
             }
         } catch (RuntimeException e) {
@@ -465,9 +510,8 @@ public class TbiAnalyzer extends ClosingAndStateDepMethodsAnalyzer {
         }
 
         if (usedStiffFallback) {
-            LSODA stiffSolver = (options.tol > GlobalConstants.CoarseTol)
-                    ? options.odesolvers.fastStiffODESolver
-                    : options.odesolvers.accurateStiffODESolver;
+            LSODA stiffSolver = options.odesolvers.stiffIntegratorFor(t0, t1, options.tol,
+                    options.tol > GlobalConstants.CoarseTol);
             stiffSolver.integrate(ode, t0, y0c, t1, next);
             return fromLsoda(stiffSolver, d);
         }

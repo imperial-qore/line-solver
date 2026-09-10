@@ -74,6 +74,12 @@ class LineOptSolver:
             # see _kb/05-solvers-overview.md (LineOpt) for rationale
             'optimizer': 'evolution',
             'fd_step': 1e-6,          # finite-difference step in encoded space
+            # Step for a differencing that RE-SOLVES a LayeredNetwork: the
+            # SolverLN fixed point is smooth only above its own noise floor
+            # (~1e-7 in a utilization under lang='java'), and penalty_weight
+            # amplifies that noise by 1e6, so a 1e-6 step returns the noise
+            # rather than the derivative. See _kb/05-solvers-overview.md.
+            'fd_step_layered': 1e-4,
             'gradient_restarts': 4,   # multistart count for the gradient path
             # LayeredNetwork (LQN) gradient source (used only when the model is
             # a LayeredNetwork and the gradient path is taken):
@@ -470,7 +476,11 @@ class LineOptSolver:
         derivative). One-sided differences are used near an
         infeasible/unstable boundary where a two-sided value is non-finite.
         """
-        h = float(self._options['fd_step'])
+        # A layered evaluation re-solves an iterative fixed point, so the step
+        # must clear its noise floor (see the 'fd_step_layered' default).
+        h = float(self._options['fd_step_layered']
+                  if getattr(self._evaluator, 'is_layered', False)
+                  else self._options['fd_step'])
         dim = len(x)
         g = np.zeros(dim)
         f0 = None
@@ -661,8 +671,13 @@ class LineOptSolver:
 
         grad = np.zeros(len(x))
         for i, var in enumerate(variables):
-            skeyv = var.sensKey(model)
-            if skeyv is None or skeyv not in sens:
+            # The row key depends on how the LN method named the layer classes
+            # (activity under 'srvn.cs', caller task under 'srvn.ph'), so the
+            # candidates are tried in order rather than assumed.
+            candidates = var.sensKeys(model) if hasattr(var, 'sensKeys') \
+                else [var.sensKey(model)]
+            skeyv = next((k for k in candidates if k is not None and k in sens), None)
+            if skeyv is None:
                 # No sensitivity row for this variable: leave 0 (L-BFGS-B will
                 # still make progress on the others; FD modes cover it fully).
                 continue

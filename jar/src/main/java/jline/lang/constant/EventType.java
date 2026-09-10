@@ -41,6 +41,22 @@ public enum EventType {
     FAILURE,
     /**
      * The server of a station is repaired (goes from down to up).
+     * <p>No START is emitted here on purpose: the supported breakdown model
+     * resumes the job the server was holding rather than restarting it
+     * (downServiceRates degrades the server, it does not evict).</p>
      */
-    REPAIR
+    REPAIR,
+    /**
+     * A job begins, or resumes, holding a server at a station.
+     * <p>Instantaneous tag on the arc of the ARV or DEP transition that causes
+     * it, never the active half of an sn.sync entry: it carries no clock, adds
+     * no state and leaves every numerical result unchanged.</p>
+     */
+    START,
+    /**
+     * A job holding a server is pushed back into the buffer.
+     * <p>Spelled in full because PRE already names the Petri-net pre-arc.
+     * Like START, an instantaneous tag on an existing arc.</p>
+     */
+    PREEMPT
 }

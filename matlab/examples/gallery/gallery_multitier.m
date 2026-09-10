@@ -1,4 +1,5 @@
-% Layered Queueing Network (LQN) - Production 4-Tier J2EE Architecture Model
+function model = gallery_multitier()
+% GALLERY_MULTITIER Layered Queueing Network (LQN) - Production 4-Tier J2EE
 %
 % This example demonstrates a comprehensive 4-layer J2EE system architecture:
 %
@@ -25,8 +26,6 @@
 %
 % This is a reference model for validating LN against complex layered systems.
 % For cache support variant, see: example_layered_production_4tier_cache.m
-
-clear all;
 
 %% Create the model
 model = LayeredNetwork('testLQN3');
@@ -118,28 +117,9 @@ T2.addPrecedence(ActivityPrecedence.Serial(C0, C1));
 % Query path 2: writeOrderData with index update
 T2.addPrecedence(ActivityPrecedence.Serial(C3, C4, C5));
 
-%% SOLVE WITH SOLVERMVA (Layer solver) inside LN
-fprintf('\n=== Solving 4-Tier LQN with LN + MVA ===\n');
-lnoptions = LN.defaultOptions;
-lnoptions.verbose = VerboseLevel.STD;
-mvaopt = MVA.defaultOptions;
-mvaopt.verbose = VerboseLevel.SILENT;
-
-solver = LN(model, @(layer) MVA(layer, mvaopt), lnoptions);
-AvgTable = solver.getAvgTable;
-
-fprintf('\n=== Results ===\n');
-disp(AvgTable);
-
-%% Alternative: Solve with FLD (approximation)
-% Uncomment to compare with fluid approximation
-% fprintf('\n=== Solving 4-Tier LQN with LN + FLD (Approximation) ===\n');
-% lnoptions = LN.defaultOptions;
-% lnoptions.verbose = VerboseLevel.STD;
-% fluidopt = FLD.defaultOptions;
-% fluidopt.verbose = VerboseLevel.SILENT;
+% A gallery entry is a model factory and nothing else: it returns the model and
+% leaves the choice of solver to the caller, so this file ends here. To solve it,
 %
-% solver_fluid = LN(model, @(layer) FLD(layer, fluidopt), lnoptions);
-% AvgTable_fluid = solver_fluid.getAvgTable;
-% disp('Fluid Approximation Results:');
-% disp(AvgTable_fluid);
+%   model = gallery_multitier();
+%   AvgTable = LN(model, @(layer) MVA(layer)).getAvgTable
+end

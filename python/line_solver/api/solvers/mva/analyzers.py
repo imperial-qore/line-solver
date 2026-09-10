@@ -19,12 +19,14 @@ from ...sn import (
     sn_has_product_form,
     sn_has_fractional_populations,
     sn_has_bursty_arrival,
+    sn_rt_stations,
 )
 from ...sn.network_struct import NodeType
-from ...mam import map_lambda, map_idc, map_pie, map_count_idc
-from ...qsys import qsys_gig1_rq
-from ...npfqn import npfqn_traffic_idc
-from .handler import solver_mva, SolverMVAOptions, SolverMVAReturn
+from ...mam import map_lambda, map_idc, map_pie, map_count_idc, map_scv
+from ...qsys import qsys_gig1_rq, qsys_gigk_rqt, qsys_gigk_rqt_gamma
+from ...npfqn import npfqn_traffic_idc, npfqn_traffic_split_rr, npfqn_traffic_rqt
+from .handler import (solver_mva, SolverMVAOptions, SolverMVAReturn,
+                      mva_supports_single_class_open, mva_supports_qna_scheduling)
 from ...io.logging import line_warning_always
 
 
@@ -111,6 +113,45 @@ def _is_mixed_exact_model(sn: NetworkStruct) -> bool:
     return sn_has_product_form(sn)
 
 
+def _has_classdep_routing(sn: NetworkStruct) -> bool:
+    """
+    True when classes are not routed alike, i.e. the routing probabilities
+    differ between job classes -- either because a class switches class on a hop
+    or because two classes leave the same station with different probabilities.
+    False for a single-class model and for a multiclass model in which every
+    class traverses the network identically.
+
+    This is the condition under which per-class visit ratios diverge, so a
+    method that aggregates classes into a per-chain demand vector stops being
+    exact. Used to gate Marie's aggregation-decomposition in SolverMVA. Port of
+    matlab/src/api/sn/sn_has_classdep_routing.m; sn.rt is station-major,
+    (i-1)*K+r, matching sn_refresh_visits.
+    """
+    K = int(sn.nclasses)
+    M = int(sn.nstations)
+    if K <= 1 or sn.rt is None:
+        return False
+    rt = np.asarray(sn.rt, dtype=float)
+    if rt.shape[0] < M * K or rt.shape[1] < M * K:
+        return False
+    tol = 1e-8
+    for i in range(M):
+        for j in range(M):
+            shared = None
+            for r in range(K):
+                # Class switching on a hop makes the routing class-dependent
+                # outright.
+                for t in range(K):
+                    if r != t and rt[i * K + r, j * K + t] > tol:
+                        return True
+                p = rt[i * K + r, j * K + r]
+                if shared is None:
+                    shared = p
+                elif abs(p - shared) > tol:
+                    return True
+    return False
+
+
 def _is_bas_model(sn: NetworkStruct) -> bool:
     """
     Detect a closed single-chain network with Blocking-After-Service (BAS) finite-buffer
@@ -125,6 +166,100 @@ def _is_bas_model(sn: NetworkStruct) -> bool:
         return False  # open class present
     from ...sn.network_struct import DropStrategy
     return bool(np.any(np.asarray(sn.droprule) == int(DropStrategy.BAS)))
+
+
+def _amva_uses_pf_kernels(sn: NetworkStruct) -> bool:
+    """
+    Conservative form of the branch test in solver_amva: True when this model may be solved
+    by the product-form AMVA kernels (the linearizer family and relatives) rather than by
+    solver_amvald. The mixed case is reported True for every resolved method, while the
+    branch itself takes it only for 'lin', so a caller is never told that solver_amvald will
+    run when it might not.
+    """
+    from ...sn import (sn_has_product_form_not_het_fcfs, sn_has_load_dependence,
+                       sn_has_open_classes)
+    has_scaling = ((sn.cdscaling is not None and np.size(sn.cdscaling) > 0) or
+                   (getattr(sn, 'jdscaling', None) is not None and np.size(sn.jdscaling) > 0))
+    return (sn_has_product_form_not_het_fcfs(sn)
+            and not sn_has_load_dependence(sn)
+            and not has_scaling
+            and (not sn_has_open_classes(sn) or sn_has_product_form(sn)))
+
+
+def _il_needs_amva(sn: NetworkStruct, options=None) -> bool:
+    """
+    True when an interlock matrix is supplied but exact MVA cannot honour it. pfqn_mva
+    carries the Eq. (4.7) correction for closed single-server models only, so a mixed or
+    multiserver model with an interlock goes to AMVA, which applies the same correction to
+    the arrival-instant queue length.
+    """
+    IL = getattr(options, 'interlock', None)
+    if IL is None or np.size(IL) == 0:
+        return False
+    njobs = np.asarray(sn.njobs, dtype=float).flatten()
+    if np.any(np.isinf(njobs)):
+        return True
+    nservers = np.asarray(sn.nservers, dtype=float).ravel()
+    finite_servers = nservers[np.isfinite(nservers)]
+    return bool(finite_servers.size > 0 and np.max(finite_servers) > 1.0)
+
+
+def mva_carries_interlock(sn: NetworkStruct, options=None) -> bool:
+    """
+    True when the MVA path this model already dispatches to carries a class-level interlock
+    matrix (Franks 1999, Eq. 4.7) itself, so that supplying one does not silently move the
+    model to a DIFFERENT algorithm.
+
+    Only two kernels implement the correction: pfqn_mva (exact, closed single-server) and the
+    AMVA forward step of solver_amvald. A model that would otherwise be solved by exact
+    multiserver or mixed MVA, or by the product-form AMVA kernels, cannot take the matrix
+    without swapping its algorithm, and the swap is worth far more than the correction it
+    carries: inside SolverLN it can turn a converging Picard iteration into a limit cycle. A
+    caller holding a matrix such a model cannot carry must apply its own correction instead.
+    """
+    method = getattr(options, 'method', None) or 'default'
+    method = str(method).lower()
+    if method.startswith('amva.'):
+        method = method[5:]
+
+    njobs = np.asarray(sn.njobs, dtype=float).flatten()
+    has_open = bool(np.any(np.isinf(njobs)))
+    has_closed = bool(np.any(np.isfinite(njobs) & (njobs > 0)))
+    closed_pops = njobs[np.isfinite(njobs)]
+    closed_pops_integral = bool(np.all(closed_pops == np.floor(closed_pops)))
+    nservers = np.asarray(sn.nservers, dtype=float).ravel()
+    finite_servers = nservers[np.isfinite(nservers)]
+    has_finite_server = finite_servers.size > 0
+    max_finite_servers = float(np.max(finite_servers)) if has_finite_server else None
+
+    # pfqn_mva takes the matrix for a closed single-server model, and for nothing else
+    pfqn_mva_can_take_it = (not has_open and closed_pops_integral
+                            and (max_finite_servers is None or max_finite_servers <= 1.0))
+
+    amva_methods = ('amva', 'bs', 'qd', 'qli', 'fli', 'lin', 'qdlin', 'sqni', 'gflin',
+                    'egflin', 'ab', 'schmidt', 'schmidt-ext', 'tay', 'scat', 'aql', 'qsa',
+                    'lcp', 'chow', 'pamb', 'pami', 'pamt', 'clust', 'dmlin',
+                    'priomva')
+
+    if method in ('exact', 'mva'):
+        return pfqn_mva_can_take_it
+    if method in amva_methods:
+        # Only solver_amvald carries the correction among the AMVA handlers
+        return not _amva_uses_pf_kernels(sn)
+    if method == 'default':
+        if _is_bas_model(sn):
+            return False  # solver_sqd has no interlock term
+        exact_mixed = (has_open and has_closed and has_finite_server
+                       and max_finite_servers == 1.0 and sn_has_product_form(sn)
+                       and closed_pops_integral)
+        exact_small = (sn.nchains <= 4 and float(np.sum(njobs)) <= 20
+                       and sn_has_product_form(sn)
+                       and not sn_has_fractional_populations(sn))
+        if exact_mixed or exact_small:
+            return pfqn_mva_can_take_it
+        return not _amva_uses_pf_kernels(sn)
+    # mvac, sqd, sum, qna, rqna and rqt reach neither kernel
+    return False
 
 
 def solver_sqd(
@@ -263,6 +398,13 @@ def solver_mva_analyzer(
             # Closed single-chain network with Blocking-After-Service finite buffers
             ret = solver_sqd(sn, options)
             method = 'sqd'
+        elif _il_needs_amva(sn, options):
+            # An interlock matrix that exact MVA cannot honour sends the model to AMVA,
+            # which applies the same Eq. (4.7) correction to the arrival-instant queue
+            # length: pfqn_mva carries it for closed single-server models only. Mirrors
+            # matlab/src/solvers/MVA/solver_mva_analyzer.m and the JAR analyzer.
+            ret = solver_amva(sn, options)
+            method = ret.method if hasattr(ret, 'method') else 'amva'
         elif _has_lcfs_lcfspr_config(sn):
             # LCFS/LCFS-PR configuration has product-form solution
             ret = solver_mva(sn, options)
@@ -410,20 +552,48 @@ def solver_amva(
     lin_family = method in ('lin', 'gflin', 'egflin')
     has_cdscaling = (sn.cdscaling is not None and np.size(sn.cdscaling) > 0) or \
                     (getattr(sn, 'jdscaling', None) is not None and np.size(sn.jdscaling) > 0)
+    # mirrors _amva_multiserver_rule (solver_mva.py:2096-2102): dict OR object config
     ms_config = 'default'
     _cfg = getattr(options, 'config', None)
     if isinstance(_cfg, dict):
-        ms_config = _cfg.get('multiserver', 'default')
+        ms_config = _cfg.get('multiserver') or 'default'
+    elif _cfg is not None:
+        ms_config = getattr(_cfg, 'multiserver', None) or 'default'
+    ms_config = str(ms_config).lower()
     _finite_ns = np.asarray(sn.nservers, dtype=float).ravel()
     _finite_ns = _finite_ns[np.isfinite(_finite_ns)]
     max_servers = int(np.max(_finite_ns)) if _finite_ns.size > 0 else 1
 
-    route_amvald = has_open or method in ('qdlin', 'fli', 'qd', 'qli')
-    if lin_family and not has_open:
+    # Interlocked flow (Franks 1999, Eq. 4.7). options.interlock arrives CLASS-indexed and is
+    # translated to the chain basis the handlers work in. Only solver_amvald carries the
+    # correction, so an interlocked model goes there rather than to the closed-form or
+    # linearizer branches, which have no interlock term and would drop it silently. Mirrors
+    # matlab/src/solvers/MVA/solver_amva.m and the JAR Solver_amva.
+    from ...sn import sn_interlock_chain
+    interlock_chain = sn_interlock_chain(sn, getattr(options, 'interlock', None))
+    has_interlock = interlock_chain is not None and np.size(interlock_chain) > 0
+
+    # BCMP type 1 needs class-independent exponential FCFS service; a station whose
+    # per-class means differ is not product form, so it goes to solver_amvald as it
+    # does in MATLAB solver_amva.m. ab / schmidt / schmidt-ext ARE the class-dependent
+    # FCFS algorithms and must not be diverted.
+    from ...sn import sn_has_product_form_not_het_fcfs
+    het_fcfs_own = method in ('ab', 'schmidt', 'schmidt-ext')
+    pf_not_het = sn_has_product_form_not_het_fcfs(sn) or \
+        (het_fcfs_own and sn_has_product_form_not_het_fcfs(sn, check_means=False))
+
+    route_amvald = has_open or has_interlock or method in ('qdlin', 'fli', 'qd', 'qli') \
+        or not pf_not_het
+    # pf_not_het guards the block: a het-FCFS model is settled by the test above and
+    # MATLAB never reaches its lin arm for one (solver_amva.m:397-401 tail instead)
+    if lin_family and not has_open and not has_interlock and pf_not_het:
         if has_cdscaling:
             route_amvald = True
         elif max_servers > 1:
             route_amvald = ms_config in ('default', 'softmin', 'seidmann', 'suri')
+    # that tail remaps these three before calling solver_amvald, which has no arm for them
+    if route_amvald and ms_config in ('conway', 'erlang', 'krzesinski'):
+        ms_config = 'default'
 
     if route_amvald:
         # Use solver_amvald which properly handles mixed models with class switching
@@ -433,6 +603,18 @@ def solver_amva(
             iter_max=options.iter_max if hasattr(options, 'iter_max') and options.iter_max else 100,  # Match MATLAB lineDefaults
             init_sol=getattr(options, 'init_sol', None),
         )
+        # ms_config selects the multiserver rule above, so it must reach amvald too
+        amvald_options.config.multiserver = ms_config
+        # np_priority selects the HOL priority approximation and highvar the high-SCV arm,
+        # exactly as in MATLAB solver_amva.m; without this they never leave the caller
+        if isinstance(_cfg, dict):
+            amvald_options.config.np_priority = str(_cfg.get('np_priority') or 'default').lower()
+            amvald_options.config.highvar = str(_cfg.get('highvar') or 'default').lower()
+        elif _cfg is not None:
+            amvald_options.config.np_priority = str(getattr(_cfg, 'np_priority', None) or 'default').lower()
+            amvald_options.config.highvar = str(getattr(_cfg, 'highvar', None) or 'default').lower()
+        if has_interlock:
+            amvald_options.config.interlock_chain = interlock_chain
 
         # Get SCVchain and refstatchain
         SCVchain = chain_result.SCVchain if hasattr(chain_result, 'SCVchain') and chain_result.SCVchain is not None else np.ones((M, sn.nchains))
@@ -556,7 +738,13 @@ def solver_amva(
         XN, QN, UN, RN, _ = pfqn_bs(L, Nchain, Z, _bs_tol, _bs_imax, Q0, _bs_sched)
         TN = np.tile(XN, (QN.shape[0], 1))
         AN = TN.copy()
-    elif method == 'sqni' and L.shape[0] == 1:
+    elif method == 'sqni':
+        # pfqn_sqni is a closed form for one queueing station with a delay;
+        # falling through reported the generic "not implemented" message.
+        if L.shape[0] != 1:
+            raise ValueError(
+                "solver_amva: SQNI is defined for a single queueing station with "
+                "a delay. Try with the 'default' or 'lin' methods.")
         Q, U, X = pfqn_sqni(L.flatten(), Nchain, Z)
         XN = X
         QN = Q[:1, :]
@@ -627,32 +815,11 @@ def _rqna_proc_to_map(proc_entry):
     """
     if proc_entry is None:
         return None
-    if isinstance(proc_entry, (list, tuple)) and len(proc_entry) >= 2 \
-            and not isinstance(proc_entry[0], dict):
-        D0 = np.atleast_2d(np.asarray(proc_entry[0], dtype=np.float64))
-        D1 = np.atleast_2d(np.asarray(proc_entry[1], dtype=np.float64))
-        return [D0, D1]
-    if isinstance(proc_entry, dict):
-        if 'rate' in proc_entry:
-            r = float(proc_entry['rate'])
-            return [np.array([[-r]]), np.array([[r]])]
-        if 'k' in proc_entry and 'mu' in proc_entry:
-            k = int(proc_entry['k'])
-            mu_p = float(proc_entry['mu'])
-            alpha = np.zeros((1, k)); alpha[0, 0] = 1.0
-            T = np.zeros((k, k))
-            for i in range(k):
-                T[i, i] = -mu_p
-                if i < k - 1:
-                    T[i, i + 1] = mu_p
-            t0 = -T @ np.ones((k, 1))
-            return [T, t0 @ alpha]
-        if 'probs' in proc_entry and 'rates' in proc_entry:
-            p = np.asarray(proc_entry['probs'], dtype=np.float64).reshape(1, -1)
-            mu_h = np.asarray(proc_entry['rates'], dtype=np.float64).ravel()
-            T = np.diag(-mu_h)
-            t0 = -T @ np.ones((mu_h.size, 1))
-            return [T, t0 @ p]
+    # sn.proc stores (D0, D1); proc_to_map also accepts the legacy descriptors.
+    from ...sn.proc_form import proc_to_map
+    D0, D1 = proc_to_map(proc_entry)
+    if D0 is not None:
+        return [np.atleast_2d(D0), np.atleast_2d(D1)]
     raise RuntimeError("RQNA: unsupported process representation %r" % type(proc_entry))
 
 
@@ -689,14 +856,13 @@ def _rqna_geom_map(mapproc, p):
 def _rqna_phat(P, rho, a):
     """Near-immediate feedback probability at station a: probability that a
     customer departing a returns to a before visiting any station with strictly
-    higher traffic intensity (Whitt-You flows paper eq. 3.8/3.9, H={a})."""
-    nq = P.shape[0]
-    Hc = [i for i in range(nq) if rho[i] <= rho[a] + 1e-9 and i != a]
-    if len(Hc) == 0:
-        return P[a, a]
-    Hc = np.array(Hc, dtype=int)
-    F = np.linalg.inv(np.eye(len(Hc)) - P[np.ix_(Hc, Hc)])
-    return P[a, a] + P[a, Hc] @ F @ P[Hc, a]
+    higher traffic intensity (Whitt-You flows paper eq. 3.8/3.9, H={a}).
+
+    Delegated to npfqn_feedback_elim so that the solver and the API function
+    cannot drift apart: they answer the same question, and a private copy of the
+    rule here is how the two came to differ on ties in the first place."""
+    from ...npfqn.feedback_elim import npfqn_feedback_elim
+    return float(npfqn_feedback_elim(P, rho)['feedbackProb'][a])
 
 
 def _rqna_fp_ext_idc_R(t, R, Hc, G, lambda0, c2fun_i, lam0R):
@@ -822,10 +988,12 @@ def solver_rqna(
     if options is None:
         options = SolverMVAOptions()
 
-    if sn.nclasses > 1:
-        raise RuntimeError(
-            "RQNA supports single-class open networks only. Use the 'qna' "
-            "method for multiclass models.")
+    # One predicate for the gate and the run: SolverMVA.supportsModelMethod asks
+    # the same question before the report offers 'rqna', so the sentence a
+    # caller reads here is the sentence that kept the row off the report.
+    _rqna_ok, _rqna_reason = mva_supports_single_class_open(sn, 'rqna')
+    if not _rqna_ok:
+        raise RuntimeError(_rqna_reason)
     if np.any(np.isfinite(sn.njobs)):
         raise RuntimeError("RQNA supports open networks only (no closed classes).")
 
@@ -959,6 +1127,169 @@ def solver_rqna(
     )
 
 
+def solver_rqt(
+    sn: NetworkStruct,
+    options: Optional[SolverMVAOptions] = None
+) -> SolverMVAReturn:
+    """
+    Robust Queueing Network Analyzer (RQNA) of Robust Queueing Theory.
+
+    Estimates the steady-state performance of a single-class open network of
+    FCFS queues with Markovian routing by replacing the stochastic primitives
+    with polyhedral uncertainty sets and taking a worst-case view of each node in
+    isolation. The algorithm is Section 7.2 of the reference: the external
+    streams get Gamma_a = sigma_a, the effective arrival process at each node
+    follows from the network characterization of Theorem 10, the service
+    variability parameter from the adaptation of Section 7.1, and the system time
+    at each node is the worst-case bound of Theorem 3. The published step 3, path
+    enumeration, is not needed here: LINE aggregates per-node system times into
+    per-class response times through the visit ratios.
+
+    The adaptation is regressed against simulation in heavy traffic, so accuracy
+    degrades at low utilization: on M/M/1 the error is about 5% at rho=0.9 but
+    over 50% at rho=0.5.
+
+    Reference: C. Bandi, D. Bertsimas, N. Youssef (2015), "Robust Queueing
+    Theory", Operations Research 63(3), 676-700.
+
+    References:
+        MATLAB: matlab/src/solvers/MVA/solver_rqt.m
+    """
+    start_time = time.time()
+    if options is None:
+        options = SolverMVAOptions()
+
+    # One predicate for the gate and the run: SolverMVA.supportsModelMethod asks
+    # the same question before the report offers 'rqt', so the sentence a caller
+    # reads here is the sentence that kept the row off the report.
+    _rqt_ok, _rqt_reason = mva_supports_single_class_open(sn, 'rqt')
+    if not _rqt_ok:
+        raise RuntimeError(_rqt_reason)
+    if np.any(np.isfinite(sn.njobs)):
+        raise RuntimeError("RQT supports open networks only (no closed classes).")
+
+    M = sn.nstations
+    K = sn.nclasses  # == 1
+
+    Q = np.zeros((M, K))
+    U = np.zeros((M, K))
+    R = np.zeros((M, K))
+    T = np.zeros((M, K))
+    X = np.zeros((1, K))
+
+    # ----- configuration -----
+    regime = 'independent'
+    use_exact = False
+    alpha_a_cfg = None
+    alpha_s_cfg = None
+    cfg = getattr(options, 'config', None)
+
+    def _cfg(name):
+        if isinstance(cfg, dict):
+            return cfg.get(name, None)
+        if cfg is not None and hasattr(cfg, name):
+            return getattr(cfg, name)
+        return None
+
+    if _cfg('rqt_regime') is not None:
+        regime = _cfg('rqt_regime')
+    if _cfg('rqt_exact') is not None:
+        use_exact = bool(_cfg('rqt_exact'))
+    if _cfg('rqt_alpha_a') is not None:
+        alpha_a_cfg = np.atleast_1d(np.asarray(_cfg('rqt_alpha_a'), dtype=float))
+    if _cfg('rqt_alpha_s') is not None:
+        alpha_s_cfg = np.atleast_1d(np.asarray(_cfg('rqt_alpha_s'), dtype=float))
+
+    # ----- identify source and queueing stations -----
+    isSource = np.zeros(M, dtype=bool)
+    schedInf = np.zeros(M, dtype=bool)
+    sched_dict = sn.sched if sn.sched else {}
+    for i in range(M):
+        nd = int(sn.stationToNode[i])
+        isSource[i] = (sn.nodetype[nd] == NodeType.SOURCE)
+        schedInf[i] = (sched_dict.get(i, SchedStrategy.FCFS) == SchedStrategy.INF)
+    srcList = np.where(isSource)[0]
+    if len(srcList) == 0:
+        raise RuntimeError("RQT requires an open network with a Source station.")
+    src = int(srcList[0])
+    qstat = np.where(~isSource)[0]
+    nq = len(qstat)
+
+    rtS = np.asarray(sn.rt, dtype=np.float64)
+
+    # ----- external arrival process -----
+    arv_map = _rqna_proc_to_map(sn.proc[src][0])
+    arv_D0 = np.asarray(arv_map[0], dtype=np.float64)
+    arv_D1 = np.asarray(arv_map[1], dtype=np.float64)
+    lambda_src = map_lambda(arv_D0, arv_D1)
+    sigma_a_src = np.sqrt(map_scv(arv_D0, arv_D1)) / lambda_src
+    alpha_a_src = 2.0 if alpha_a_cfg is None else float(alpha_a_cfg[0])
+
+    # ----- per-node primitives -----
+    nservers = np.asarray(sn.nservers, dtype=float).ravel()
+    mu = np.zeros(nq)
+    sigma_s = np.zeros(nq)
+    nserv = np.ones(nq, dtype=int)
+    alpha_s = np.full(nq, 2.0)
+    lambda0 = np.zeros(nq)
+    Gamma0 = np.zeros(nq)
+    alpha0 = np.full(nq, alpha_a_src)
+    F = np.zeros((nq, nq))
+    for a in range(nq):
+        ia = int(qstat[a])
+        mu[a] = sn.rates[ia, 0]
+        sigma_s[a] = np.sqrt(sn.scv[ia, 0]) / mu[a]
+        if np.isfinite(nservers[ia]) and nservers[ia] > 0:
+            nserv[a] = int(nservers[ia])
+        if alpha_s_cfg is not None:
+            alpha_s[a] = float(alpha_s_cfg[min(a, len(alpha_s_cfg) - 1)])
+        # the source stream reaches node a thinned by q, Theorem 6
+        q = rtS[src, ia]
+        lambda0[a] = lambda_src * q
+        if q > 0:
+            Gamma0[a] = sigma_a_src * (1.0 / q) ** (1.0 / alpha_a_src)
+        for b in range(nq):
+            F[a, b] = rtS[ia, int(qstat[b])]
+
+    # ----- effective arrival processes, Theorem 10 -----
+    lam, Gamma_a, alpha_a = npfqn_traffic_rqt(lambda0, Gamma0, alpha0, F)
+
+    # ----- per-node worst-case analysis -----
+    for a in range(nq):
+        ia = int(qstat[a])
+        T[ia, 0] = lam[a]
+        if lam[a] <= 0:
+            continue
+        if schedInf[ia]:
+            U[ia, 0] = lam[a] / mu[a]
+            Q[ia, 0] = lam[a] / mu[a]
+            R[ia, 0] = 1.0 / mu[a]
+            continue
+        rho = lam[a] / (nserv[a] * mu[a])
+        Gamma_s = qsys_gigk_rqt_gamma(rho, mu[a], Gamma_a[a], sigma_s[a],
+                                      int(nserv[a]), alpha_a[a], regime)
+        Wa, _, Sworst = qsys_gigk_rqt(lam[a], mu[a], Gamma_a[a], Gamma_s,
+                                      int(nserv[a]), alpha_a[a], alpha_s[a])
+        if use_exact:
+            Wa = Sworst
+        R[ia, 0] = Wa
+        U[ia, 0] = rho
+        Q[ia, 0] = lam[a] * Wa                 # Little's law, number in system
+
+    T[src, 0] = lambda_src
+    C_result = np.sum(R, axis=0, keepdims=True)
+    X[0, 0] = lambda_src
+    Q[np.isnan(Q)] = 0
+    U[np.isnan(U)] = 0
+    R[np.isnan(R)] = 0
+    C_result[np.isnan(C_result)] = 0
+
+    return SolverMVAReturn(
+        Q=Q, U=U, R=R, T=T, C=C_result, X=X,
+        lG=np.nan, runtime=time.time() - start_time, method='rqt', it=1
+    )
+
+
 def solver_qna(
     sn: NetworkStruct,
     options: Optional[SolverMVAOptions] = None
@@ -987,12 +1318,21 @@ def solver_qna(
     if options is None:
         options = SolverMVAOptions()
 
+    # One predicate for the gate and the run: SolverMVA.getMethodFeatureSet
+    # withholds 'qna' for a discipline this loop has no arm for, and the loop
+    # refuses it by name rather than leaving that station's row of Q, U, R and T
+    # at zero and returning the table as a solution.
+    _qna_ok, _qna_reason = mva_supports_qna_scheduling(sn)
+    if not _qna_ok:
+        raise RuntimeError(_qna_reason)
+
     K = sn.nclasses
     M = sn.nstations
     C = sn.nchains
 
-    # Extract parameters from network
-    rt = sn.rt if sn.rt is not None else np.zeros((M * K, M * K))
+    # Extract parameters from network. sn.rt and sn.visits are indexed by
+    # stateful node: project them onto stations.
+    rt, V = sn_rt_stations(sn)
     S = 1.0 / (sn.rates + 1e-10)  # Service times (M, K)
     scv = sn.scv.copy() if sn.scv is not None else np.ones((M, K))
     scv[np.isnan(scv)] = 0
@@ -1003,12 +1343,6 @@ def solver_qna(
     R = np.zeros((M, K))
     T = np.zeros((M, K))
     X = np.zeros((1, K))
-
-    # Compute aggregate visit ratios
-    V = np.zeros((M, K))
-    if sn.visits:
-        for c in sn.visits:
-            V += sn.visits[c]
 
     # Chain information
     lambda_chain = np.zeros(C)
@@ -1022,6 +1356,19 @@ def solver_qna(
     a2 = np.zeros((M, K))  # SCVs of arrivals
     d2 = np.zeros(M)  # SCVs of departure processes
     f2 = np.ones((M * K, M * K))  # SCV of each flow pair
+
+    # deterministic (round-robin) split degrees, k=1 where the split is Markovian
+    kRR = npfqn_traffic_split_rr(sn)
+    for ist in range(M):
+        for r in range(K):
+            if kRR[ist, r] <= 1:
+                continue
+            for jst in range(M):
+                for s in range(K):
+                    idx_from = ist * K + r
+                    idx_to = jst * K + s
+                    if idx_from < rt.shape[0] and idx_to < rt.shape[1] and rt[idx_from, idx_to] > 0:
+                        f2[idx_from, idx_to] = 1 + rt[idx_from, idx_to] * (1 - kRR[ist, r])
 
     # Initialize throughputs at source
     for c in range(C):
@@ -1169,7 +1516,8 @@ def solver_qna(
                         idx_from = ist * K + r
                         idx_to = jst * K + s
                         if idx_from < rt.shape[0] and idx_to < rt.shape[1] and rt[idx_from, idx_to] > 0:
-                            f2[idx_from, idx_to] = 1 + rt[idx_from, idx_to] * (d2[ist] - 1)
+                            # k-fold convolution then Bernoulli thinning at q=k*p: C^2 = (q/k)*d2+1-q
+                            f2[idx_from, idx_to] = 1 + rt[idx_from, idx_to] * (d2[ist] - kRR[ist, r])
 
         return Q.copy(), xref
 

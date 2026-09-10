@@ -3,6 +3,10 @@ package jline.examples.java.advanced;
 import jline.lang.Network;
 import jline.solvers.NetworkSolver;
 import jline.solvers.ctmc.CTMC;
+import jline.solvers.fluid.FLD;
+import jline.solvers.ssa.SSA;
+import jline.solvers.mva.MVA;
+import jline.solvers.nc.NC;
 import jline.solvers.wrappers.jmt.JMT;
 import jline.solvers.SolverOptions;
 import java.util.Scanner;
@@ -10,8 +14,8 @@ import java.util.Scanner;
 /**
  * Examples demonstrating initial state configurations in queueing networks.
  * 
- * This class provides Java implementations corresponding to the Kotlin notebooks
- * in jline.examples.kotlin.advanced.initState package.
+ * This class provides Java implementations corresponding to the example notebooks
+ * in jline.examples.java.advanced.initState package.
  */
 public class InitStateExamples {
 
@@ -48,26 +52,18 @@ public class InitStateExamples {
      */
     public static void init_state_fcfs_exp() throws Exception {
         Network model = InitStateModel.init_state_fcfs_exp();
-        
-        NetworkSolver[] solvers = new NetworkSolver[] {
-            new JMT(model, "seed", 12345),
-            new CTMC(model)
-        };
-        
-        for (NetworkSolver solver : solvers) {
-            try {
-                
-                if (solver instanceof JMT) {
-                    SolverOptions options = JMT.defaultOptions();
-                    options.samples = 50000;
-                    ((JMT)solver).setOptions(options);
-                }
-                
-                solver.getAvgTable().print();
-            } catch (Exception e) {
-            }
+
+        try {
+            new CTMC(model, "verbose", 1, "seed", 23000, "samples", 100000).getAvgTable().print();
+        } catch (Exception e) {
+            System.out.println("CTMC failed: " + e.getMessage());
         }
-        
+        try {
+            new FLD(model, "verbose", 1, "seed", 23000, "samples", 100000).getAvgTable().print();
+        } catch (Exception e) {
+            System.out.println("FLD failed: " + e.getMessage());
+        }
+
         pauseForUser();
     }
 
@@ -88,18 +84,18 @@ public class InitStateExamples {
      */
     public static void init_state_fcfs_nonexp() throws Exception {
         Network model = InitStateModel.init_state_fcfs_nonexp();
-        
-        NetworkSolver solver = new JMT(model, "seed", 12345);
-        
+
         try {
-            SolverOptions options = JMT.defaultOptions();
-            options.samples = 50000;
-            ((JMT)solver).setOptions(options);
-            
-            solver.getAvgTable().print();
+            new CTMC(model, "verbose", 1, "seed", 23000, "samples", 100000).getAvgTable().print();
         } catch (Exception e) {
+            System.out.println("CTMC failed: " + e.getMessage());
         }
-        
+        try {
+            new FLD(model, "verbose", 1, "seed", 23000, "samples", 100000).getAvgTable().print();
+        } catch (Exception e) {
+            System.out.println("FLD failed: " + e.getMessage());
+        }
+
         pauseForUser();
     }
 
@@ -120,26 +116,38 @@ public class InitStateExamples {
      */
     public static void init_state_ps() throws Exception {
         Network model = InitStateModel.init_state_ps();
-        
-        NetworkSolver[] solvers = new NetworkSolver[] {
-            new JMT(model, "seed", 12345),
-            new CTMC(model)
-        };
-        
-        for (NetworkSolver solver : solvers) {
-            try {
-                
-                if (solver instanceof JMT) {
-                    SolverOptions options = JMT.defaultOptions();
-                    options.samples = 50000;
-                    ((JMT)solver).setOptions(options);
-                }
-                
-                solver.getAvgTable().print();
-            } catch (Exception e) {
-            }
+
+        try {
+            new CTMC(model, "verbose", 1, "seed", 23000, "samples", 100000).getAvgTable().print();
+        } catch (Exception e) {
+            System.out.println("CTMC failed: " + e.getMessage());
         }
-        
+        try {
+            new JMT(model, "verbose", 1, "seed", 23000, "samples", 100000).getAvgTable().print();
+        } catch (Exception e) {
+            System.out.println("JMT failed: " + e.getMessage());
+        }
+        try {
+            new SSA(model, "verbose", 1, "seed", 23000, "samples", 100000).getAvgTable().print();
+        } catch (Exception e) {
+            System.out.println("SSA failed: " + e.getMessage());
+        }
+        try {
+            new FLD(model, "verbose", 1, "seed", 23000, "samples", 100000).getAvgTable().print();
+        } catch (Exception e) {
+            System.out.println("FLD failed: " + e.getMessage());
+        }
+        try {
+            new MVA(model, "verbose", 1, "seed", 23000, "samples", 100000).getAvgTable().print();
+        } catch (Exception e) {
+            System.out.println("MVA failed: " + e.getMessage());
+        }
+        try {
+            new NC(model, "verbose", 1, "seed", 23000, "samples", 100000).getAvgTable().print();
+        } catch (Exception e) {
+            System.out.println("NC failed: " + e.getMessage());
+        }
+
         pauseForUser();
     }
 

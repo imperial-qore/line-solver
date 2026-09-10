@@ -2,7 +2,7 @@
 End-to-end integration tests against the real LINE solver.
 
 Unlike the rest of the suite (which uses mock LINE objects from conftest.py),
-these tests build an actual line_solver Network, run SolverAuto through the
+these tests build an actual line_solver Network, run SolverAUTO through the
 LineEvaluator, and check that performance metrics are extracted and drive the
 optimizer correctly. They are skipped automatically if line_solver is not
 installed.
@@ -68,7 +68,7 @@ def _encode_servers(c, lo, hi):
 
 
 class TestEvaluatorAgainstRealLine:
-    """The LineEvaluator must populate metrics from a real SolverAuto run."""
+    """The LineEvaluator must populate metrics from a real SolverAUTO run."""
 
     def test_evaluate_populates_metrics(self):
         model, queue, _ = build_model()

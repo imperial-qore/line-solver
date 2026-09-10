@@ -19,6 +19,9 @@ public class AdaPartSampler extends PermSolver {
     private final int maximumSamples;
     private final String mode;
 
+    /** Draw budget of the classic mode; exceeding it throws rather than spins. */
+    private static final int MAX_DRAWS = 1000000;
+
     private final Random random = new Random();
 
     public List<Integer> sampleAccepted = Collections.emptyList();
@@ -32,6 +35,9 @@ public class AdaPartSampler extends PermSolver {
     public AdaPartSampler(Matrix matrix, int maximumAcceptedSamples, long maximumTime,
                           int maximumSamples, String mode, boolean solve) {
         super(matrix);
+        if (matrix.getNumRows() > 0) {
+            PermSupport.requireFullSupport(matrix, "adapart");
+        }
         this.maximumAcceptedSamples = maximumAcceptedSamples;
         this.maximumTime = maximumTime;
         this.maximumSamples = maximumSamples;
@@ -54,7 +60,15 @@ public class AdaPartSampler extends PermSolver {
         long startTime = System.currentTimeMillis();
         List<Integer> acceptedList = new ArrayList<Integer>();
         List<Long> timeList = new ArrayList<Long>();
+        // Bounded independently of the scaling: with perm(A) = 0 the acceptance
+        // probability is 0 and this loop would never terminate. A cap that
+        // RETURNS a number would be a workaround, so it throws.
         while (accepted < maximumAcceptedSamples) {
+            if (total >= MAX_DRAWS) {
+                throw new IllegalArgumentException("Only " + accepted + " of the "
+                        + maximumAcceptedSamples + " required acceptances were obtained in "
+                        + total + " draws. Use the exact engine.");
+            }
             int sample = sample();
             accepted += sample;
             total++;
@@ -121,12 +135,21 @@ public class AdaPartSampler extends PermSolver {
             boolean init = true;
             while ((ub >= zubS || init) && (!"time".equals(mode) || System.currentTimeMillis() - startTime < maximumTime)) {
                 init = false;
-                List<List<Integer>> sList = new ArrayList<List<Integer>>(S);
+                // Only elements with a free column can be refined; expanding a
+                // complete assignment yields no children and stalls the sampler.
+                List<List<Integer>> sList = new ArrayList<List<Integer>>();
+                for (List<Integer> cand : S) {
+                    if (cand.contains(n)) sList.add(cand);
+                }
+                if (sList.isEmpty()) break;
                 List<Integer> sSub = sList.get(random.nextInt(sList.size()));
                 S.remove(sSub);
                 Matrix subMatrix = modifyMatrix(matrix, sSub);
-                double[] selRes = selectColumn(subMatrix, zubS, ub);
-                ub = selRes[0];
+                // Discount the bound of the element actually removed, not the
+                // root bound; see _kb/03-api-layer.md.
+                double subUb = soulesBound(subMatrix);
+                double[] selRes = selectColumn(subMatrix, subUb, ub, sSub);
+                double newUb = selRes[0];
                 int j = (int) selRes[1];
                 for (int i = 0; i < n; i++) {
                     List<Integer> sAdd = new ArrayList<Integer>(sSub);
@@ -135,6 +158,13 @@ public class AdaPartSampler extends PermSolver {
                         S.add(sAdd);
                     }
                 }
+                boolean noProgress = newUb >= ub;
+                ub = newUb;
+                // The Soules bound is tight on matrices with equal entries, so
+                // refinement cannot improve it and "refine until improved" would
+                // never exit. Stop on the first non-improving expansion instead;
+                // a tight bound means the draw is accepted with probability 1.
+                if (noProgress) break;
             }
             int c = computeProbabilities(S, zubS);
             if (c == S.size()) return 0;
@@ -148,9 +178,22 @@ public class AdaPartSampler extends PermSolver {
         return false;
     }
 
-    private double[] selectColumn(Matrix sMatrix, double zubS, double ub) {
+    /**
+     * Picks the column whose expansion minimizes the summed Soules bound.
+     *
+     * Only columns still unassigned in sSub are candidates. Scoring an
+     * already-assigned column just re-derives its own constraint, which always
+     * looks cheapest, so the sampler would re-split the same column forever and
+     * never complete an assignment.
+     */
+    private double[] selectColumn(Matrix sMatrix, double removedUb, double ub,
+                                  List<Integer> sSub) {
         double[] ubi = new double[n];
         for (int i = 0; i < n; i++) {
+            if (sSub.get(i) != n) {
+                ubi[i] = Double.POSITIVE_INFINITY;
+                continue;
+            }
             for (int j = 0; j < n; j++) {
                 List<Integer> L = new ArrayList<Integer>();
                 for (int k = 0; k < n; k++) L.add(n);
@@ -164,7 +207,7 @@ public class AdaPartSampler extends PermSolver {
         for (int i = 1; i < n; i++) {
             if (ubi[i] < minVal) { minVal = ubi[i]; j = i; }
         }
-        double newUb = ub - zubS + ubi[j];
+        double newUb = ub - removedUb + ubi[j];
         return new double[]{newUb, (double) j};
     }
 

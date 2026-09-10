@@ -29,6 +29,15 @@ for i=1:length(self.nodes)
 end
 
 self.classes = self.classes(remaining);
+% RENUMBER the survivors. addJobClass sets index = nClasses+1, so the invariant
+% every consumer relies on is classes{k}.index == k; dropping a class without
+% restoring it leaves a surviving class claiming a position that no longer
+% exists, and Queue.getService/setService then index the one-column service
+% table by the OLD position. The JAR and python twins renumber, so this also
+% removes a silent three-way divergence.
+for k = 1:length(self.classes)
+    self.classes{k}.index = k;
+end
 % The class-switching mask cached by link() is (K x K): leaving it at the
 % old size makes getRoutingMatrix return chains over classes that no longer
 % exist, and refreshRoutingMatrix then indexes sn.refstat out of range

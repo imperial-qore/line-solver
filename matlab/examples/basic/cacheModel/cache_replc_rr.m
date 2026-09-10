@@ -31,7 +31,7 @@ P{missClass, missClass}(cacheNode, sink) =  1.0;
 
 model.link(P);
 %%
-solver{1} = CTMC(model,'keep',false,'cutoff',1);
+solver{1} = CTMC(model, 'exact','keep',false,'cutoff',1);
 AvgTable{1} = solver{1}.getAvgNodeTable; AvgTable{1}
 
 model.reset;

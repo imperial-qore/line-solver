@@ -161,9 +161,11 @@ for f=forkIndexes
             fjclassmap(oclass{end}.index) = nonfjmodel.classes{r}.index;
             fjforkmap(oclass{end}.index) = f;
             s = fjclassmap(oclass{end}.index); % auxiliary class index
-            if model.nodes{f}.output.tasksPerLink > 1
-                line_warning(mfilename, 'There are no synchronisation delays implemented in MMT for multiple tasks per link. Results may be inaccurate.');
-            end
+            % fanout is the SIBLING count, links times tasksPerLink, which is what
+            % the auxiliary open class's rate (fanout-1)*forkLambda must carry: one
+            % sibling is the closed method name's own, the other fanout-1 are open
+            % traffic. NetworkSolver.fjFixedPoint synchronises on the same count by
+            % replicating each branch time tasksPerLink times.
             fanout(oclass{end}.index) = origfanout(f,r)*model.nodes{f}.output.tasksPerLink;
             all_aux_class_indices(end+1) = oclass{end}.index; %#ok<AGROW>
             disableAux = origfanout(f,r) == 0 || ~reachableFromRef(f, r);

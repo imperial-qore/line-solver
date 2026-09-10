@@ -26,7 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * space and summed directly. The oracle knows nothing about normalizing
  * constants, survival identities or moment conversions, so an agreement checks
  * the whole chain rather than a round trip. The identities behind the two
- * routes are proved symbolically in sage/proofs/qlen_tail_moments.py, and the
+ * routes are proved symbolically in io/sage/proofs/qlen_tail_moments.py, and the
  * same tests exist in python/tests/test_pfqn_qlen_moments.py and in
  * test_pfqn_qlen_moments.m in line-test.git.
  */

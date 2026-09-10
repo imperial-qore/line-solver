@@ -2,7 +2,7 @@ classdef BudgetConstraint < opt.Constraint
     % BudgetConstraint  Budget constraint: total cost <= budget.
     properties
         budget
-        costCoefficients   % containers.Map name -> cost
+        costCoefficients   % dictionary name -> cost
     end
     methods
         function obj = BudgetConstraint(budget, costCoefficients, name)
@@ -12,7 +12,7 @@ classdef BudgetConstraint < opt.Constraint
             if nargin >= 2 && ~isempty(costCoefficients)
                 obj.costCoefficients = costCoefficients;
             else
-                obj.costCoefficients = containers.Map('KeyType', 'char', 'ValueType', 'double');
+                obj.costCoefficients = configureDictionary('string', 'double');
             end
         end
         function n = generateName(obj)
@@ -22,8 +22,8 @@ classdef BudgetConstraint < opt.Constraint
             c = 0.0;
             ks = keys(obj.costCoefficients);
             for i = 1:numel(ks)
-                if isKey(variableValues, ks{i})
-                    c = c + obj.costCoefficients(ks{i}) * opt.Objective.numericValue(variableValues(ks{i}));
+                if isKey(variableValues, ks(i))
+                    c = c + obj.costCoefficients(ks(i)) * opt.Objective.numericValue(variableValues{ks(i)});
                 end
             end
         end

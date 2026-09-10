@@ -2,7 +2,7 @@
 
 **Optimization Framework for LINE Queueing Network Models**
 
-line_solver.opt provides a declarative interface for specifying and solving optimization problems on LINE queueing network models. It uses scipy's differential evolution algorithm with LINE's SolverAuto as the model evaluator. Both flat `Network` models and `LayeredNetwork` (LQN) models are supported; LQN models are solved with `SolverLN` and tuned with LQN-specific decision variables (see "LayeredNetwork (LQN) optimization" below).
+line_solver.opt provides a declarative interface for specifying and solving optimization problems on LINE queueing network models. It uses scipy's differential evolution algorithm with LINE's SolverAUTO as the model evaluator. Both flat `Network` models and `LayeredNetwork` (LQN) models are supported; LQN models are solved with `SolverLN` and tuned with LQN-specific decision variables (see "LayeredNetwork (LQN) optimization" below).
 
 ## Features
 

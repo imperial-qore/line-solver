@@ -171,7 +171,7 @@ classdef Layered
         function sens = computeSensitivities(solver)
             % Per-(Station,JobClass) within-layer service-rate partial
             % derivatives from SolverLN.getSensitivityTable, reshaped into a
-            % containers.Map keyed 'Station||JobClass' -> struct with fields
+            % dictionary keyed 'Station||JobClass' -> struct with fields
             % Tput/RespT/QLen/Util (d(metric)/d(service rate)). [] on failure.
             sens = [];
             try
@@ -182,7 +182,7 @@ classdef Layered
             if isempty(SensTable) || height(SensTable) == 0
                 return;
             end
-            sens = containers.Map('KeyType', 'char', 'ValueType', 'any');
+            sens = configureDictionary('string', 'cell');
             for r = 1:height(SensTable)
                 st = SensTable.Station{r};
                 cl = SensTable.JobClass{r};
@@ -191,7 +191,7 @@ classdef Layered
                     'RespT', SensTable.dRespT_dRate(r), ...
                     'QLen', SensTable.dQLen_dRate(r), ...
                     'Util', SensTable.dUtil_dRate(r));
-                sens(key) = entry; %#ok<NASGU>
+                sens{key} = entry;
             end
         end
     end

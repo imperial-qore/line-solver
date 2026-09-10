@@ -41,7 +41,9 @@ if ~exist('tol','var')
     tol = 1e-12;
 end
 if ~exist('maxiter','var')
-    maxiter = 100;
+    % Nonpositive lets ctmc_uniformization size the truncation depth from q*t;
+    % a fixed cap silently truncates the Poisson series for large horizons
+    maxiter = -1;
 end
 [pi,kmax] = ctmc_uniformization(pi0,ctmc_makeinfgen(P),t,tol,maxiter);
 end

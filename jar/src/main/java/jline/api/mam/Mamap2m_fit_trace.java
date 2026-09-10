@@ -61,7 +61,7 @@ public final class Mamap2m_fit_trace {
         double[] F = new double[]{M2}; // Forward moments
         double[] B = backwardMoments;  // Backward moments
 
-        // Returns a Triple in Kotlin; the first element is the MatrixCell.
+        // Returns a 3-tuple whose first element is the MatrixCell.
         return Mamap2m_fit_fb_multiclass.mamap2m_fit_fb_multiclass(dummyMap, classProbs, F, B).mmap;
     }
 

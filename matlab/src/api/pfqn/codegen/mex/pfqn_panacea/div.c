@@ -16,7 +16,7 @@
 #include "rt_nonfinite.h"
 
 /* Variable Definitions */
-static emlrtRTEInfo ac_emlrtRTEI = {
+static emlrtRTEInfo tb_emlrtRTEI = {
     54,    /* lineNo */
     9,     /* colNo */
     "div", /* fName */
@@ -45,7 +45,7 @@ void b_rdivide(const emlrtStack *sp, emxArray_real_T *in1,
   in2_data = in2->data;
   in1_data = in1->data;
   emlrtHeapReferenceStackEnterFcnR2012b((emlrtConstCTX)sp);
-  emxInit_real_T(sp, &b_in2, 2, &ac_emlrtRTEI);
+  emxInit_real_T(sp, &b_in2, 2, &tb_emlrtRTEI);
   if (in1->size[0] == 1) {
     loop_ub = in2->size[0];
   } else {
@@ -59,7 +59,7 @@ void b_rdivide(const emlrtStack *sp, emxArray_real_T *in1,
     b_loop_ub = in1->size[1];
   }
   b_in2->size[1] = b_loop_ub;
-  emxEnsureCapacity_real_T(sp, b_in2, stride_0_0, &ac_emlrtRTEI);
+  emxEnsureCapacity_real_T(sp, b_in2, stride_0_0, &tb_emlrtRTEI);
   b_in2_data = b_in2->data;
   stride_0_0 = (in2->size[0] != 1);
   stride_0_1 = (in2->size[1] != 1);
@@ -79,7 +79,7 @@ void b_rdivide(const emlrtStack *sp, emxArray_real_T *in1,
   stride_0_0 = in1->size[0] * in1->size[1];
   in1->size[0] = loop_ub;
   in1->size[1] = b_loop_ub;
-  emxEnsureCapacity_real_T(sp, in1, stride_0_0, &ac_emlrtRTEI);
+  emxEnsureCapacity_real_T(sp, in1, stride_0_0, &tb_emlrtRTEI);
   in1_data = in1->data;
   for (i = 0; i < b_loop_ub; i++) {
     for (i1 = 0; i1 < loop_ub; i1++) {
@@ -110,7 +110,7 @@ void rdivide(const emlrtStack *sp, emxArray_real_T *in1,
   in2_data = in2->data;
   in1_data = in1->data;
   emlrtHeapReferenceStackEnterFcnR2012b((emlrtConstCTX)sp);
-  emxInit_real_T(sp, &b_in1, 2, &ac_emlrtRTEI);
+  emxInit_real_T(sp, &b_in1, 2, &tb_emlrtRTEI);
   if (in2->size[0] == 1) {
     loop_ub = in1->size[0];
   } else {
@@ -124,7 +124,7 @@ void rdivide(const emlrtStack *sp, emxArray_real_T *in1,
     b_loop_ub = in2->size[1];
   }
   b_in1->size[1] = b_loop_ub;
-  emxEnsureCapacity_real_T(sp, b_in1, stride_0_0, &ac_emlrtRTEI);
+  emxEnsureCapacity_real_T(sp, b_in1, stride_0_0, &tb_emlrtRTEI);
   b_in1_data = b_in1->data;
   stride_0_0 = (in1->size[0] != 1);
   stride_0_1 = (in1->size[1] != 1);
@@ -144,7 +144,7 @@ void rdivide(const emlrtStack *sp, emxArray_real_T *in1,
   stride_0_0 = in1->size[0] * in1->size[1];
   in1->size[0] = loop_ub;
   in1->size[1] = b_loop_ub;
-  emxEnsureCapacity_real_T(sp, in1, stride_0_0, &ac_emlrtRTEI);
+  emxEnsureCapacity_real_T(sp, in1, stride_0_0, &tb_emlrtRTEI);
   in1_data = in1->data;
   for (i = 0; i < b_loop_ub; i++) {
     for (i1 = 0; i1 < loop_ub; i1++) {

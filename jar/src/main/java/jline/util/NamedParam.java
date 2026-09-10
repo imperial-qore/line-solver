@@ -37,10 +37,21 @@ public class NamedParam implements Serializable {
 
     /**
      * Returns the value of this named parameter.
-     * 
+     *
      * @return the parameter value
      */
     public Object getValue() {
         return this.value;
+    }
+
+    /**
+     * Returns the name of this named parameter. A writer outside this package
+     * cannot otherwise describe a distribution by its own parameter names, which
+     * is what the PNML timing block records.
+     *
+     * @return the parameter name
+     */
+    public String getName() {
+        return this.name;
     }
 }

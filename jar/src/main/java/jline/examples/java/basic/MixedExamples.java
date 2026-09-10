@@ -13,13 +13,14 @@ import jline.solvers.mam.MAM;
 import jline.solvers.mva.MVA;
 import jline.solvers.nc.NC;
 import jline.solvers.ssa.SSA;
+import jline.solvers.ldes.LDES;
 import java.util.Scanner;
 
 /**
- * Mixed queueing network examples mirroring the Kotlin notebooks in mixedQN.
+ * Mixed queueing network examples mirroring the example notebooks in mixedQN.
  * <p>
- * This class contains Java implementations that mirror the Kotlin notebook examples
- * found in jar/src/main/kotlin/jline/examples/kotlin/basic/mixedQN/. Each method 
+ * This class contains Java implementations that mirror the example notebooks
+ * found in jar/src/main/java/jline/examples/java/basic/mixedQN/. Each method
  * demonstrates a specific mixed queueing network concept using models from the basic package.
  * <p>
  * The examples cover:
@@ -315,6 +316,12 @@ public class MixedExamples {
             solverMAM.getAvgTable().print();
         } catch (Exception e) {
             System.out.println("MAM solver not available: " + e.getMessage());
+        }
+        try {
+            LDES solverLDES = new LDES(model, "cutoff", 3, "keep", false, "verbose", true, "seed", 23000, "samples", 100000);
+            solverLDES.getAvgTable().print();
+        } catch (Exception e) {
+            System.out.println("LDES solver not available: " + e.getMessage());
         }
         pauseForUser();
     }

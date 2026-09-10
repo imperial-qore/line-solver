@@ -69,36 +69,249 @@ public final class Mapqn_qrf_noblo_mmi {
 
         Mapqn_nlp_solver.ObjectiveFn objective = new Mapqn_nlp_solver.ObjectiveFn() {
             public double apply(double[] x) {
-                Double[][][][][][][] p2 = unflattenP2(x, Mf, Nf, KmaxF, MRf);
-                double fobj = 0.0;
-                for (int m = 0; m < MRf; m++) {
-                    for (int i = 0; i < Mf; i++) {
-                        for (int ki = 0; ki < Kf[i]; ki++) {
-                            for (int j = 0; j < Mf; j++) {
-                                if (i != j) {
-                                    for (int kj = 0; kj < Kf[j]; kj++) {
-                                        for (int ni = 1; ni <= Ff[i]; ni++) {
-                                            for (int nj = 1; nj <= Ff[j]; nj++) {
-                                                double pij = p2[i][ni][ki][j][nj][kj][m];
-                                                double pii = p2[i][ni][ki][i][ni][ki][m];
-                                                double pjj = p2[j][nj][kj][j][nj][kj][m];
-                                                fobj += pij * (Math.log(LOGTOL + pij)
-                                                        - Math.log(LOGTOL + pii) - Math.log(LOGTOL + pjj));
-                                            }
-                                        }
-                                    }
+                return mmiObjective(x, Mf, Nf, Kf, KmaxF, Ff, MRf);
+            }
+        };
+        Mapqn_nlp_solver.GradientFn gradient = new Mapqn_nlp_solver.GradientFn() {
+            public void apply(double[] x, double[] gradOut) {
+                mmiGradient(x, gradOut, Mf, Nf, Kf, KmaxF, Ff, MRf);
+            }
+        };
+
+        double[] start = Mapqn_nlp_solver.feasibleStart(Aeq, beq, Aub, bub, numVars);
+        if (start != null) x0 = start;
+        double[] xOpt = Mapqn_nlp_solver.solve(objective, gradient, numVars,
+                Aeq, beq, Aub, bub, lb, ub, x0);
+
+        return extractResults(xOpt, M, N, K, Kmax, F, MR);
+    }
+
+    /**
+     * Mutual-information objective, read straight off the flat variable vector.
+     *
+     * <p>Shared by {@code qrf.mmi} and {@code qrf.mmi.ld}: the two differ in
+     * their constraint matrices (load dependence enters q), not in the
+     * objective. Working on the flat array avoids rebuilding the seven-level
+     * boxed array on every evaluation, which the line search performs tens of
+     * times per iteration.
+     */
+    public static double mmiObjective(double[] x, int M, int N, int[] K, int Kmax,
+                                      int[] F, int MR) {
+        double fobj = 0.0;
+        for (int m = 0; m < MR; m++) {
+            for (int i = 0; i < M; i++) {
+                for (int ki = 0; ki < K[i]; ki++) {
+                    for (int j = 0; j < M; j++) {
+                        if (i == j) continue;
+                        for (int kj = 0; kj < K[j]; kj++) {
+                            for (int ni = 0; ni <= F[i]; ni++) {   // D1: from n = 0
+                                double pii = x[p2Index(i, ni, ki, i, ni, ki, m, M, N, Kmax, MR)];
+                                double logPii = Math.log(LOGTOL + pii);
+                                for (int nj = 0; nj <= F[j]; nj++) {   // D1: from n = 0
+                                    double pij = x[p2Index(i, ni, ki, j, nj, kj, m, M, N, Kmax, MR)];
+                                    double pjj = x[p2Index(j, nj, kj, j, nj, kj, m, M, N, Kmax, MR)];
+                                    fobj += pij * (Math.log(LOGTOL + pij) - logPii
+                                            - Math.log(LOGTOL + pjj));
                                 }
                             }
                         }
                     }
                 }
-                return fobj;
             }
-        };
+        }
+        return fobj;
+    }
 
-        double[] xOpt = Mapqn_nlp_solver.solve(objective, numVars, Aeq, beq, Aub, bub, lb, ub, x0);
+    /**
+     * Gradient of {@link #mmiObjective}, accumulated into {@code grad}.
+     *
+     * <p>For a term {@code t = pij (log pij - log pii - log pjj)} the three
+     * partials are {@code dt/dpij = log pij - log pii - log pjj + pij/pij'},
+     * {@code dt/dpii = -pij/pii'} and {@code dt/dpjj = -pij/pjj'}, with a
+     * primed denominator standing for the LOGTOL-shifted value. The joint
+     * variable pij is distinct from both marginals because i != j, so no term
+     * aliases its own partials.
+     */
+    public static void mmiGradient(double[] x, double[] grad, int M, int N, int[] K, int Kmax,
+                                   int[] F, int MR) {
+        for (int m = 0; m < MR; m++) {
+            for (int i = 0; i < M; i++) {
+                for (int ki = 0; ki < K[i]; ki++) {
+                    for (int j = 0; j < M; j++) {
+                        if (i == j) continue;
+                        for (int kj = 0; kj < K[j]; kj++) {
+                            for (int ni = 0; ni <= F[i]; ni++) {   // D1: from n = 0
+                                int idxII = p2Index(i, ni, ki, i, ni, ki, m, M, N, Kmax, MR);
+                                double pii = x[idxII];
+                                double logPii = Math.log(LOGTOL + pii);
+                                for (int nj = 0; nj <= F[j]; nj++) {   // D1: from n = 0
+                                    int idxIJ = p2Index(i, ni, ki, j, nj, kj, m, M, N, Kmax, MR);
+                                    int idxJJ = p2Index(j, nj, kj, j, nj, kj, m, M, N, Kmax, MR);
+                                    double pij = x[idxIJ];
+                                    double pjj = x[idxJJ];
+                                    grad[idxIJ] += Math.log(LOGTOL + pij) - logPii
+                                            - Math.log(LOGTOL + pjj) + pij / (LOGTOL + pij);
+                                    grad[idxII] -= pij / (LOGTOL + pii);
+                                    grad[idxJJ] -= pij / (LOGTOL + pjj);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
-        return extractResults(xOpt, M, N, K, Kmax, F, MR);
+    /**
+     * Maximum-entropy objective, returned as the NEGATIVE entropy of the
+     * per-station marginals because the solver MINIMIZES and the AMPL model
+     * states it as {@code maximize H}. Returning {@code +H} (as every port did
+     * until 2026-08-29) selects the minimum-entropy face of the polytope
+     * instead, under a method documented as maximum-entropy.
+     */
+    public static double memObjective(double[] x, int M, int N, int[] K, int Kmax,
+                                      int[] F, int MR) {
+        double fobj = 0.0;
+        for (int m = 0; m < MR; m++) {
+            for (int i = 0; i < M; i++) {
+                for (int k = 0; k < K[i]; k++) {
+                    for (int ni = 1; ni <= F[i]; ni++) {
+                        double p = x[p2Index(i, ni, k, i, ni, k, m, M, N, Kmax, MR)];
+                        fobj += p * Math.log(LOGTOL + p);
+                    }
+                }
+            }
+        }
+        return fobj;
+    }
+
+    /** Gradient of {@link #memObjective}, accumulated into {@code grad}. */
+    public static void memGradient(double[] x, double[] grad, int M, int N, int[] K, int Kmax,
+                                   int[] F, int MR) {
+        for (int m = 0; m < MR; m++) {
+            for (int i = 0; i < M; i++) {
+                for (int k = 0; k < K[i]; k++) {
+                    for (int ni = 1; ni <= F[i]; ni++) {
+                        int idx = p2Index(i, ni, k, i, ni, k, m, M, N, Kmax, MR);
+                        double p = x[idx];
+                        grad[idx] += Math.log(LOGTOL + p) + p / (LOGTOL + p);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Tree-reweighted (Bethe) free entropy at the uniform spanning-tree weight,
+     * the objective of {@code qrf.bethe}.
+     *
+     * <p>With {@code lambda = 1/M} this is
+     * {@code lambda*sum_{i!=j} I(n_i;n_j) - sum_i H(n_i)}, the NEGATIVE of a
+     * tree-reweighted entropy with uniform edge weight {@code rho_ij = 2*lambda}
+     * on the complete station graph. {@code H_rho} is a convex combination of
+     * tree entropies -- hence concave on the local marginal polytope -- exactly
+     * when rho lies in the spanning tree polytope of K_M, whose uniform point is
+     * {@code rho_ij = 2/M}. So {@code lambda = 1/M} is the largest uniform weight
+     * for which minimising this is a CONVEX program: every local optimum is
+     * global and the answer stops depending on the start point. The Bethe weight
+     * {@code lambda = 1/2} is outside that polytope for every M &gt; 2.
+     *
+     * <p>Two differences from {@link #mmiObjective}, both deliberate. The
+     * population loops start at {@code n = 0}, the range the AMPL source states
+     * ({@code ni, nj in 0..F}) and the one {@code mmiObjective} does not use, so
+     * the idle/idle cell is inside the sum; and the entropy term is
+     * {@link #memObjective}'s body over the same restored range, which already
+     * carries the sign a minimiser needs. Neither repair touches {@code qrf.mmi}
+     * or {@code qrf.mem}, whose values are pinned by tests.
+     */
+    public static double betheObjective(double[] x, int M, int N, int[] K, int Kmax,
+                                        int[] F, int MR) {
+        final double lambda = 1.0 / M;
+        double fobj = 0.0;
+        for (int m = 0; m < MR; m++) {
+            for (int i = 0; i < M; i++) {
+                for (int ki = 0; ki < K[i]; ki++) {
+                    for (int j = 0; j < M; j++) {
+                        if (i == j) continue;
+                        for (int kj = 0; kj < K[j]; kj++) {
+                            for (int ni = 0; ni <= F[i]; ni++) {
+                                double pii = x[p2Index(i, ni, ki, i, ni, ki, m, M, N, Kmax, MR)];
+                                double logPii = Math.log(LOGTOL + pii);
+                                for (int nj = 0; nj <= F[j]; nj++) {
+                                    double pij = x[p2Index(i, ni, ki, j, nj, kj, m, M, N, Kmax, MR)];
+                                    double pjj = x[p2Index(j, nj, kj, j, nj, kj, m, M, N, Kmax, MR)];
+                                    fobj += lambda * pij * (Math.log(LOGTOL + pij) - logPii
+                                            - Math.log(LOGTOL + pjj));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for (int m = 0; m < MR; m++) {
+            for (int i = 0; i < M; i++) {
+                for (int k = 0; k < K[i]; k++) {
+                    for (int ni = 0; ni <= F[i]; ni++) {
+                        double p = x[p2Index(i, ni, k, i, ni, k, m, M, N, Kmax, MR)];
+                        fobj += p * Math.log(LOGTOL + p);
+                    }
+                }
+            }
+        }
+        return fobj;
+    }
+
+    /**
+     * Gradient of {@link #betheObjective}, accumulated into {@code grad}.
+     *
+     * <p>{@code df/dp_ij = lambda*(log p_ij' + p_ij/p_ij' - log p_ii' - log p_jj')}
+     * for {@code i != j}, and
+     * {@code df/dp_ii = log p_ii' + p_ii/p_ii' - (lambda/p_ii')*sum_{j!=i,kj,nj}(p_ij + p_ji)},
+     * a primed denominator standing for the LOGTOL-shifted value. The second sum
+     * is accumulated by the scatter below, which visits both orderings of every
+     * pair.
+     */
+    public static void betheGradient(double[] x, double[] grad, int M, int N, int[] K, int Kmax,
+                                     int[] F, int MR) {
+        final double lambda = 1.0 / M;
+        for (int m = 0; m < MR; m++) {
+            for (int i = 0; i < M; i++) {
+                for (int ki = 0; ki < K[i]; ki++) {
+                    for (int j = 0; j < M; j++) {
+                        if (i == j) continue;
+                        for (int kj = 0; kj < K[j]; kj++) {
+                            for (int ni = 0; ni <= F[i]; ni++) {
+                                int idxII = p2Index(i, ni, ki, i, ni, ki, m, M, N, Kmax, MR);
+                                double pii = x[idxII];
+                                double logPii = Math.log(LOGTOL + pii);
+                                for (int nj = 0; nj <= F[j]; nj++) {
+                                    int idxIJ = p2Index(i, ni, ki, j, nj, kj, m, M, N, Kmax, MR);
+                                    int idxJJ = p2Index(j, nj, kj, j, nj, kj, m, M, N, Kmax, MR);
+                                    double pij = x[idxIJ];
+                                    double pjj = x[idxJJ];
+                                    grad[idxIJ] += lambda * (Math.log(LOGTOL + pij) - logPii
+                                            - Math.log(LOGTOL + pjj) + pij / (LOGTOL + pij));
+                                    grad[idxII] -= lambda * pij / (LOGTOL + pii);
+                                    grad[idxJJ] -= lambda * pij / (LOGTOL + pjj);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for (int m = 0; m < MR; m++) {
+            for (int i = 0; i < M; i++) {
+                for (int k = 0; k < K[i]; k++) {
+                    for (int ni = 0; ni <= F[i]; ni++) {
+                        int idx = p2Index(i, ni, k, i, ni, k, m, M, N, Kmax, MR);
+                        double p = x[idx];
+                        grad[idx] += Math.log(LOGTOL + p) + p / (LOGTOL + p);
+                    }
+                }
+            }
+        }
     }
 
     public static int computeNumVars(int M, int N, int Kmax, int MR) {
@@ -145,15 +358,37 @@ public final class Mapqn_qrf_noblo_mmi {
 
     public static Mapqn_solution extractResults(double[] xOpt, int M, int N, int[] K, int Kmax,
                                                 int[] F, int MR) {
+        return extractResults(xOpt, M, N, K, Kmax, F, MR, null);
+    }
+
+    /**
+     * The diagonal marginals of the optimal tensor, plus the ALPHA-WEIGHTED
+     * mean BN_i when a load-dependent scaling is given.
+     *
+     * <p>BN is the mean number of jobs actually in service: E[min(n,c)] at a
+     * c-server station, E[n] at a delay and P(n &gt;= 1) where alpha is 1. It is
+     * what the departure rate is proportional to, since alpha(i,n) scales the
+     * completion rate, so a station's throughput is BN/stime exactly at the
+     * relaxed point. With a null alpha it equals UN, which is why the
+     * alpha-free arms need no separate readout.
+     *
+     * @param alpha (M x N) load-dependent scaling, or null for load independent
+     */
+    public static Mapqn_solution extractResults(double[] xOpt, int M, int N, int[] K, int Kmax,
+                                                int[] F, int MR, double[][] alpha) {
         Double[][][][][][][] p2 = unflattenP2(xOpt, M, N, Kmax, MR);
         double[] UN = new double[M];
         double[] QN = new double[M];
+        double[] BN = new double[M];
         for (int ti = 0; ti < M; ti++) {
             for (int m = 0; m < MR; m++) {
                 for (int ni = 1; ni <= F[ti]; ni++) {
+                    double a = (alpha != null && ni - 1 < alpha[ti].length)
+                            ? alpha[ti][ni - 1] : 1.0;
                     for (int ki = 0; ki < K[ti]; ki++) {
                         UN[ti] += p2[ti][ni][ki][ti][ni][ki][m];
                         QN[ti] += ni * p2[ti][ni][ki][ti][ni][ki][m];
+                        BN[ti] += a * p2[ti][ni][ki][ti][ni][ki][m];
                     }
                 }
             }
@@ -162,6 +397,7 @@ public final class Mapqn_qrf_noblo_mmi {
         for (int i = 0; i < M; i++) {
             vars.put("UN_" + (i + 1), Double.valueOf(UN[i]));
             vars.put("QN_" + (i + 1), Double.valueOf(QN[i]));
+            vars.put("BN_" + (i + 1), Double.valueOf(BN[i]));
         }
         return new Mapqn_solution(0.0, vars);
     }

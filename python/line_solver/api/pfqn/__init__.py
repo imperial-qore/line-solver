@@ -15,16 +15,20 @@ Key algorithms:
 
 from .mva import (
     pfqn_mva,
+    pfqn_mva_ilock,
     pfqn_mva_single_class,
     pfqn_bs,
     pfqn_aql,
     pfqn_sqni,
-    pfqn_qd,
-    pfqn_qdlin,
     pfqn_qli,
     pfqn_fli,
-    pfqn_bsfcfs,
     pfqn_joint,
+    pfqn_jointmarg,
+)
+
+from .cntol import (
+    pfqn_cntol,
+    is_cntol,
 )
 
 from .sens import (
@@ -53,6 +57,18 @@ from .sens_respt import (
     PfqnSensRespt,
 )
 
+from .busyp import (
+    pfqn_busyp,
+)
+
+from .busyp_multiclass import (
+    pfqn_busyp_multiclass,
+)
+
+from .busyp_clw import (
+    pfqn_busyp_clw,
+)
+
 from .respt_ps import (
     pfqn_respt_ps_moments,
     PfqnResptPsMoments,
@@ -79,6 +95,31 @@ from .nc import (
     pfqn_ls,
     pfqn_clw,
     pfqn_clw_lld,
+    pfqn_perm,
+)
+
+from .qsa import (
+    pfqn_qsa,
+)
+
+from .lcp import (
+    pfqn_lcp,
+)
+
+from .chow import (
+    pfqn_chow,
+)
+
+from .pam import (
+    pfqn_pam,
+)
+
+from .clust import (
+    pfqn_clust,
+)
+
+from .dmlin import (
+    pfqn_dmlin,
 )
 
 from .linearizer import (
@@ -95,6 +136,7 @@ from .cftp import (
 from .mvald import (
     pfqn_mvald,
     pfqn_mvams,
+    pfqn_mvams_ilock,
 )
 
 from .mixed import (
@@ -109,10 +151,14 @@ from .bounds import (
     pfqn_xzgsblow,
     pfqn_xzgsbup,
     pfqn_mwrbb,
+    pfqn_harel_bounds,
+    pfqn_harel_lb,
+    pfqn_harel_ub,
 )
 
 from .bound_hierarchies import (
     pfqn_pbh,
+    pfqn_looping,
     pfqn_pbk,
     pfqn_bjbk,
     pfqn_cbh,
@@ -120,14 +166,64 @@ from .bound_hierarchies import (
     pfqn_ssd,
     pfqn_sib,
     pfqn_ldbcmp,
+    pfqn_scb,
+    pfqn_scbgap,
+    pfqn_usumbound,
+    pfqn_minclasses,
 )
 
+from .explicit import (
+    pfqn_explicit,
+)
+from .explicit_ld import (
+    pfqn_explicit_ld,
+)
+from .rgf import (
+    pfqn_rgf,
+    pfqn_rgfmc,
+)
+
+from .gerasimov import (
+    pfqn_gerasimov,
+)
+
+from .nonintegral import (
+    pfqn_dnc,
+    pfqn_nintmva,
+)
+
+from .interval import (
+    pfqn_mva_interval,
+    PfqnMvaIntervalResult,
+)
+
+from .tay import (
+    pfqn_tay,
+)
+
+from .scat import (
+    pfqn_scat,
+)
+
+from .robustness import (
+    pfqn_hst,
+)
+
+from .sjn import (
+    pfqn_mvasjn,
+    pfqn_amvasjn,
+    SjnOptions,
+)
 from .marie import (
     pfqn_marie,
 )
 
 from .asymptotic import (
     pfqn_le,
+    pfqn_lekt,
+    pfqn_lekt_route,
+    pfqn_ble,
+    pfqn_aghq,
     pfqn_cub,
     pfqn_mci,
     pfqn_grnmol,
@@ -143,6 +239,9 @@ from .ncld import (
     pfqn_ld_is,
     pfqn_gld,
     pfqn_gldsingle,
+    pfqn_lldsingle,
+    pfqn_lld,
+    pfqn_xia,
     pfqn_mushift,
     pfqn_comomrm_ld,
     pfqn_fnc,
@@ -153,10 +252,17 @@ from .ncld import (
 
 from .oi import (
     pfqn_ncoi,
+    pfqn_ncjd,
     pfqn_oi_fnc,
     pfqn_oi_insvc,
     pfqn_mvaoi,
+    pfqn_mvajd,
     pfqn_mvaoi_marg,
+)
+
+from .clwjd import (
+    pfqn_clwoi,
+    pfqn_clwjd,
 )
 
 from .pas import (
@@ -177,6 +283,8 @@ from .conv import (
     solver_nc_conv,
 )
 
+from .manjunath import pfqn_manjunath
+
 from .replicas import (
     pfqn_unique,
     pfqn_expand,
@@ -184,6 +292,16 @@ from .replicas import (
     PfqnUniqueResult,
 )
 
+from .sdr import (
+    pfqn_sdrcoeff,
+    pfqn_sdrprob,
+    pfqn_sdr,
+    pfqn_sdrvisits,
+    pfqn_sdrmva,
+)
+
+from .qdamva import pfqn_qdamva
+from .qdlin import pfqn_qdlin
 from .utils import (
     pfqn_lldfun,
     pfqn_mu_ms,
@@ -194,6 +312,7 @@ from .utils import (
     softmin,
     oner,
     multichoose,
+    multichoosecon,
     matchrow,
 )
 
@@ -261,6 +380,17 @@ from .ljd import (
 
 from .kt import (
     pfqn_kt,
+    pfqn_bkt,
+)
+
+from .mcmc import (
+    pfqn_mcmc,
+    PfqnMcmcResult,
+)
+from .bk import (
+    pfqn_bk,
+    pfqn_bkue,
+    pfqn_bklc,
 )
 
 from .ab_amva import (
@@ -275,12 +405,22 @@ from .rd import (
     RdResult,
 )
 
+from .nre import (
+    pfqn_nre,
+    pfqn_nre_full,
+    PfqnNreResult,
+)
+
 from .laplace import (
     pfqn_nrl,
     pfqn_nrp,
     pfqn_lap,
     laplaceapprox,
     num_hess,
+)
+
+from .cyclet import (
+    pfqn_cyclet_ofree,
 )
 
 from .stdf import (
@@ -291,18 +431,21 @@ from .stdf import (
 __all__ = [
     # MVA algorithms
     'pfqn_mva',
+    'pfqn_mva_ilock',
     'pfqn_mva_single_class',
     'pfqn_bs',
+    'pfqn_cntol',
+    'is_cntol',
     'pfqn_aql',
     'pfqn_sqni',
-    'pfqn_qd',
     'pfqn_qdlin',
     'pfqn_qli',
     'pfqn_fli',
-    'pfqn_bsfcfs',
     'pfqn_joint',
+    'pfqn_jointmarg',
     # Normalizing constant algorithms
     'pfqn_ca',
+    'pfqn_manjunath',
     'pfqn_is',
     'pfqn_nc',
     'pfqn_qlen_joint_moments',
@@ -311,9 +454,19 @@ __all__ = [
     'pfqn_panaceald',
     'pfqn_propfair',
     'pfqn_ls',
+    'pfqn_mcmc',
+    'PfqnMcmcResult',
     'pfqn_clw',
     'pfqn_clw_lld',
+    'pfqn_perm',
     # Linearizer algorithms
+    'pfqn_qsa',
+    'pfqn_lcp',
+    'pfqn_chow',
+    'pfqn_looping',
+    'pfqn_pam',
+    'pfqn_clust',
+    'pfqn_dmlin',
     'pfqn_linearizer',
     'pfqn_gflinearizer',
     'pfqn_egflinearizer',
@@ -333,6 +486,9 @@ __all__ = [
     'pfqn_sens_mom',
     'PfqnSensMom',
     'pfqn_sens_respt',
+    'pfqn_busyp',
+    'pfqn_busyp_multiclass',
+    'pfqn_busyp_clw',
     'PfqnSensRespt',
     # Processor-sharing sojourn-time moments (Mitra-Morrison)
     'pfqn_respt_ps_moments',
@@ -342,6 +498,7 @@ __all__ = [
     # Load-dependent MVA
     'pfqn_mvald',
     'pfqn_mvams',
+    'pfqn_mvams_ilock',
     # Mixed MVA
     'pfqn_mvamx',
     # Bounds
@@ -352,8 +509,12 @@ __all__ = [
     'pfqn_xzgsblow',
     'pfqn_xzgsbup',
     'pfqn_mwrbb',
+    'pfqn_harel_bounds',
+    'pfqn_harel_lb',
+    'pfqn_harel_ub',
     # Hierarchical / multiserver / LD bound methods
     'pfqn_pbh',
+    'pfqn_looping',
     'pfqn_pbk',
     'pfqn_bjbk',
     'pfqn_cbh',
@@ -361,9 +522,29 @@ __all__ = [
     'pfqn_ssd',
     'pfqn_sib',
     'pfqn_ldbcmp',
+    'pfqn_scb',
+    'pfqn_scbgap',
+    'pfqn_usumbound',
+    'pfqn_minclasses',
+    'pfqn_explicit',
+    'pfqn_explicit_ld',
+    'pfqn_rgf',
+    'pfqn_rgfmc',
+    'pfqn_gerasimov',
+    'pfqn_dnc',
+    'pfqn_nintmva',
+    'pfqn_mva_interval',
+    'PfqnMvaIntervalResult',
+    'pfqn_tay',
+    'pfqn_scat',
+    'pfqn_hst',
     'pfqn_marie',
     # Asymptotic methods
     'pfqn_le',
+    'pfqn_lekt',
+    'pfqn_lekt_route',
+    'pfqn_ble',
+    'pfqn_aghq',
     'pfqn_cub',
     'pfqn_mci',
     'pfqn_grnmol',
@@ -378,10 +559,16 @@ __all__ = [
     'PfqnNcldmxResult',
     'pfqn_gld',
     'pfqn_gldsingle',
+    'pfqn_lldsingle',
+    'pfqn_lld',
+    'pfqn_xia',
     'pfqn_mushift',
     'pfqn_comomrm_ld',
     'pfqn_fnc',
     'pfqn_ncoi',
+    'pfqn_ncjd',
+    'pfqn_clwoi',
+    'pfqn_clwjd',
     'pfqn_oi_fnc',
     'pfqn_oi_insvc',
     'pfqn_pas_is',
@@ -389,6 +576,7 @@ __all__ = [
     'pas_placement',
     'pas_swap2order',
     'pfqn_mvaoi',
+    'pfqn_mvajd',
     'pfqn_mvaoi_marg',
     'PfqnNcResult',
     'PfqnComomrmLdResult',
@@ -400,14 +588,21 @@ __all__ = [
     'PfqnUniqueResult',
     # Utility functions
     'pfqn_lldfun',
+    'pfqn_qdamva',
     'pfqn_mu_ms',
     'pfqn_nc_sanitize',
     'pfqn_cdfun',
+    'pfqn_sdrcoeff',
+    'pfqn_sdrprob',
+    'pfqn_sdr',
+    'pfqn_sdrvisits',
+    'pfqn_sdrmva',
     'factln',
     'factln_vec',
     'softmin',
     'oner',
     'multichoose',
+    'multichoosecon',
     'matchrow',
     # COMOM methods
     'pfqn_comom',
@@ -447,8 +642,13 @@ __all__ = [
     'ljd_linearize',
     'infradius_h',
     'infradius_hnorm',
-    # Knessl-Tier expansion
+    # Knessl-Tier expansion, and its Stirling-remainder correction
     'pfqn_kt',
+    'pfqn_bkt',
+    # Birman-Kogan saddle point, uniform expansion and load concealment
+    'pfqn_bk',
+    'pfqn_bkue',
+    'pfqn_bklc',
     # Akyildiz-Bolch AMVA
     'pfqn_ab_amva',
     'pfqn_ab_core',
@@ -458,14 +658,22 @@ __all__ = [
     'RdOptions',
     'RdResult',
     # Laplace approximation methods
+    'pfqn_nre',
+    'pfqn_nre_full',
+    'PfqnNreResult',
     'pfqn_nrl',
     'pfqn_nrp',
     'pfqn_lap',
     'laplaceapprox',
     'num_hess',
     # Sojourn time distribution
+    'pfqn_cyclet_ofree',
     'pfqn_stdf',
     'pfqn_stdf_heur',
     # Coupling from the past (exact sampler)
     'pfqn_cftp',
+    # Shortest-job-next stations (Kant 1992)
+    'pfqn_mvasjn',
+    'pfqn_amvasjn',
+    'SjnOptions',
 ]

@@ -45,7 +45,7 @@ def qsys_bmapm1(D: Sequence[np.ndarray], mu: float,
 
     Beyond the usual performance measures the result exposes the intermediate
     matrix-analytic quantities themselves, so that the algorithm can be
-    inspected and taught rather than only its output:
+    inspected and taught rather than only its output::
 
         theta        - stationary vector of the BMAP phase process, sum_k D_k
         lambda       - mean arrival rate, theta * sum_k k*D_k * e
@@ -69,7 +69,8 @@ def qsys_bmapm1(D: Sequence[np.ndarray], mu: float,
         levelProb    - level probabilities pi_n as rows (level 0 first)
         pi0          - probability the system is empty (equals 1-rho exactly)
 
-    Example:
+    Example::
+
         # Example 6.4 of Bolch et al.
         D0 = np.array([[-2, 0.5], [1/3, -3]])
         D1 = np.array([[0.25, 0.5], [1/3, 1.0]])

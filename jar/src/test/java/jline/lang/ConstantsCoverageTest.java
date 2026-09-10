@@ -141,11 +141,14 @@ public class ConstantsCoverageTest {
 
     @Test
     void testSolverType() {
-        // Test all enum values exist
+        // Test all enum values exist. The count is the point of this test: a
+        // solver added to the enum and not named below is a solver nothing here
+        // covers, which is how SolverType.AG went unlisted.
         SolverType[] values = SolverType.values();
-        assertEquals(15, values.length);
+        assertEquals(16, values.length);
 
         // Test specific values
+        assertNotNull(SolverType.AG);
         assertNotNull(SolverType.AUTO);
         assertNotNull(SolverType.BA);
         assertNotNull(SolverType.CTMC);
@@ -170,8 +173,12 @@ public class ConstantsCoverageTest {
         assertEquals("AUTO", SolverType.AUTO.name());
         assertEquals("LDES", SolverType.LDES.name());
 
-        // Test ordinal
-        assertEquals(0, SolverType.AUTO.ordinal());
+        // Test ordinal. Declaration order is not a contract -- AG was added
+        // ahead of AUTO and moved every ordinal by one -- so this asserts that
+        // ordinals FOLLOW the declared order rather than pinning a constant.
+        for (int i = 0; i < values.length; i++) {
+            assertEquals(i, values[i].ordinal());
+        }
     }
 
     // ========== NodeType ==========
@@ -218,14 +225,17 @@ public class ConstantsCoverageTest {
         // Test all enum values exist.
         // 14 was correct as of 892e8fe53, which added SWITCH for polling sync.
         // a0beaa1b4 (retrial policies, BMAP/M/1, orbit table) then added FAILURE
-        // and REPAIR for station breakdown/repair, taking the count to 16. All 16
-        // members are distinct, and each of the three is used to construct a real
-        // Event in Network.java, so this was a stale assertion rather than an
-        // accidental duplicate in the enum.
+        // and REPAIR for station breakdown/repair, taking the count to 16. The
+        // event-tag work added START and PREEMPT, the two instantaneous tags on
+        // an existing ARV/DEP arc, taking it to 18: both are declared in
+        // EventType, both are constructed in Network.java, and neither carries
+        // a clock or a state of its own. Stale assertion again, not a duplicate.
         EventType[] values = EventType.values();
-        assertEquals(16, values.length);
+        assertEquals(18, values.length);
 
         // Test specific values
+        assertNotNull(EventType.START);
+        assertNotNull(EventType.PREEMPT);
         assertNotNull(EventType.INIT);
         assertNotNull(EventType.LOCAL);
         assertNotNull(EventType.ARV);

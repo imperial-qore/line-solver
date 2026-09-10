@@ -18,6 +18,7 @@
 	for (i = 1; i <= neq; i++) \
 		_C(acor)[i] *= r; \
 	_C(hold) = _C(h); \
+	_C(jstart) = 1; \
 }
 
 /*
@@ -35,7 +36,7 @@
 }
 
 
-int stoda(struct lsoda_context_t * ctx, double *y, int jstart)
+int stoda(struct lsoda_context_t * ctx, double *y)
 {
 	int kflag;
 	int             i, i1, j, m;
@@ -96,7 +97,7 @@ int stoda(struct lsoda_context_t * ctx, double *y, int jstart)
 	if (_C(meth) == 2)
 		maxord = mxords;
 
-	if (jstart == 0) {
+	if (_C(jstart) == 0) {
 		_C(nq) = 1;
 		_C(ialth) = 2;
 		_C(rmax) = 10000.;
@@ -128,7 +129,7 @@ int stoda(struct lsoda_context_t * ctx, double *y, int jstart)
 	   If _C(h) or _C(meth) is being changed, _C(ialth) is reset to (_C(nq) + 1) = _C(nq) + 1
 	   to prevent further changes in _C(h) for that many steps.
 	*/
-	if (jstart == -1) {
+	if (_C(jstart) == -1) {
 		_C(ipup) = _C(miter);
 		if (_C(ialth) == 1)
 			_C(ialth) = 2;
@@ -143,7 +144,7 @@ int stoda(struct lsoda_context_t * ctx, double *y, int jstart)
 			scaleh(ctx, rh);
 		}
 	}			/* if ( jstart == -1 )   */
-	if (jstart == -2) {
+	if (_C(jstart) == -2) {
 		if (_C(h) != _C(hold)) {
 			rh = _C(h) / _C(hold);
 			_C(h) = _C(hold);
@@ -190,7 +191,7 @@ int stoda(struct lsoda_context_t * ctx, double *y, int jstart)
 			if (corflag == 2) {
 				kflag = -2;
 				_C(hold) = _C(h);
-				jstart = 1;
+				_C(jstart) = 1;
 				return kflag;
 			}
 		}		/* end inner while ( corrector loop )   */
@@ -308,7 +309,7 @@ int stoda(struct lsoda_context_t * ctx, double *y, int jstart)
 			if (fabs(_C(h)) <= hmin * 1.00001) {
 				kflag = -1;
 				_C(hold) = _C(h);
-				jstart = 1;
+				_C(jstart) = 1;
 				break;
 			}
 			if (kflag > -3) {
@@ -340,7 +341,7 @@ int stoda(struct lsoda_context_t * ctx, double *y, int jstart)
 				if (kflag == -10) {
 					kflag = -1;
 					_C(hold) = _C(h);
-					jstart = 1;
+					_C(jstart) = 1;
 					break;
 				} else {
 					rh = 0.1;

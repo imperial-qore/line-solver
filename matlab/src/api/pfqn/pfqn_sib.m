@@ -134,7 +134,11 @@ if N >= 3
 
     T1l = (N-2)*S2 - 1;
     bl = betaL(NN, level-1);
-    phi_l_n = (T1l + sqrt(max(0, T1l^2 + 4*(N-2)*(S2 + (N-2)*bl))))/(2*level);
+    % eq (3.23) divides by 2*eta, the SAME constant eq (3.22) applies as 0.5/eta
+    % above. The eta is a Greek letter on the scan and was read as the level
+    % index n; with /(2*level) this value never exceeds the Section-2 baseline,
+    % so max() always discarded it and the Theorem-3.6 hierarchy was dead code.
+    phi_l_n = (T1l + sqrt(max(0, T1l^2 + 4*(N-2)*(S2 + (N-2)*bl))))/(2*eta);
     phi_lo = max(phi_lo, phi_l_n);
 end
 

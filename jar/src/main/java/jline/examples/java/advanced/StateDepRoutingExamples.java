@@ -3,14 +3,15 @@ package jline.examples.java.advanced;
 import jline.lang.Network;
 import jline.solvers.NetworkSolver;
 import jline.solvers.wrappers.jmt.JMT;
-import jline.solvers.SolverOptions;
+import jline.solvers.ctmc.CTMC;
+import jline.solvers.ssa.SSA;
 import java.util.Scanner;
 
 /**
  * Examples demonstrating state-dependent routing in queueing networks.
  * 
- * This class provides Java implementations corresponding to the Kotlin notebooks
- * in jline.examples.kotlin.advanced.stateDepRouting package.
+ * This class provides Java implementations corresponding to the example notebooks
+ * in jline.examples.java.advanced.stateDepRouting package.
  */
 public class StateDepRoutingExamples {
 
@@ -47,18 +48,23 @@ public class StateDepRoutingExamples {
      */
     public static void sdroute_closed() throws Exception {
         Network model = StateDepRoutingModel.sdroute_closed();
-        
-        NetworkSolver solver = new JMT(model, "seed", 12345);
-        
+
         try {
-            SolverOptions options = JMT.defaultOptions();
-            options.samples = 100000;
-            ((JMT)solver).setOptions(options);
-            
-            solver.getAvgTable().print();
+            new CTMC(model, "keep", true).getAvgTable().print();
         } catch (Exception e) {
+            System.out.println("CTMC failed: " + e.getMessage());
         }
-        
+        try {
+            new JMT(model, "samples", 100000, "seed", 23000).getAvgTable().print();
+        } catch (Exception e) {
+            System.out.println("JMT failed: " + e.getMessage());
+        }
+        try {
+            new SSA(model, "verbose", true, "samples", 10000, "seed", 23000).getAvgTable().print();
+        } catch (Exception e) {
+            System.out.println("SSA failed: " + e.getMessage());
+        }
+
         pauseForUser();
     }
 
@@ -79,18 +85,18 @@ public class StateDepRoutingExamples {
      */
     public static void sdroute_open() throws Exception {
         Network model = StateDepRoutingModel.sdroute_open();
-        
-        NetworkSolver solver = new JMT(model, "seed", 12345);
-        
+
         try {
-            SolverOptions options = JMT.defaultOptions();
-            options.samples = 100000;
-            ((JMT)solver).setOptions(options);
-            
-            solver.getAvgTable().print();
+            new JMT(model, "seed", 23000).getAvgNodeTable().print();
         } catch (Exception e) {
+            System.out.println("JMT failed: " + e.getMessage());
         }
-        
+        try {
+            new CTMC(model, "cutoff", 5).getAvgNodeTable().print();
+        } catch (Exception e) {
+            System.out.println("CTMC failed: " + e.getMessage());
+        }
+
         pauseForUser();
     }
 
@@ -112,13 +118,12 @@ public class StateDepRoutingExamples {
     public static void sdroute_twoclasses_closed() throws Exception {
         Network model = StateDepRoutingModel.sdroute_twoclasses_closed();
         
-        NetworkSolver solver = new JMT(model, "seed", 12345);
+        // The reference's own seed and run length. They go through the
+        // constructor: setOptions(defaultOptions()) would REPLACE the seed with
+        // 0, which is drawn at random, and the row would differ run to run.
+        NetworkSolver solver = new JMT(model, "seed", 23000, "samples", 100000);
         
         try {
-            SolverOptions options = JMT.defaultOptions();
-            options.samples = 100000;
-            ((JMT)solver).setOptions(options);
-            
             solver.getAvgTable().print();
         } catch (Exception e) {
         }

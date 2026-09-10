@@ -11,7 +11,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Top-level functions for MMAPPH1NPPR analysis (ported from Kotlin).
+ * Top-level functions for MMAPPH1NPPR analysis.
  */
 public final class MMAPPH1NPPR {
 
@@ -353,9 +353,12 @@ public final class MMAPPH1NPPR {
                 if (stCdfPoints != null) {
                     Matrix res = new Matrix(1, 0, 0);
                     for (int o = 0; o < stCdfPoints.length(); o++) {
-                        int t = (int) stCdfPoints.get(o);
+                        // A grid point is a TIME, not an index: the (int) cast
+                        // truncated every abscissa (and 0.5 -> 0 divided by
+                        // zero), so any non-integer grid tabulated a wrong law
+                        double t = stCdfPoints.get(o);
                         int L = erlMaxOrder;
-                        double lambdae = (double) L / (double) t / 2.0;
+                        double lambdae = (double) L / t / 2.0;
                         Matrix Psie = FluidFundamentalMatrices.FluidFundamentalMatrices(
                                 Qspp.add(-lambdae, Matrix.eye(Qspp.getNumRows())),
                                 Qspm, Qsmp,

@@ -53,7 +53,7 @@ if it <= burnin
     % pure Picard burn-in; no averaging or convergence testing yet
     self.maxitererr(it) = Inf;
     if self.options.verbose
-        line_printf(sprintf('Stochastic iteration burn-in %d/%d.', it, burnin));
+        LineStatus.append(' burn-in %d/%d.', it, burnin);
     end
     return
 end
@@ -61,7 +61,8 @@ end
 if isempty(self.stochiter_start)
     self.stochiter_start = it;
     if self.options.verbose
-        line_printf('\b Started Robbins-Monro averaging (stochastic layer solvers detected).');
+        % its own line, not part of the row: see LineStatus.close
+        line_printf('Started Robbins-Monro averaging (stochastic layer solvers detected).\n');
     end
 end
 
@@ -104,8 +105,9 @@ end
 
 self.maxitererr(it) = err;
 if self.options.verbose
-    line_printf(sprintf('RMIterErr=%.6e (tol=%.6e, omega=%.3f, k=%d)', ...
-        err, self.options.iter_tol, self.relax_omega, k));
+    % same row as the timings ITERATE laid down; the row is closed there
+    LineStatus.append(' RMIterErr=%.6e (tol=%.6e, omega=%.3f, k=%d)', ...
+        err, self.options.iter_tol, self.relax_omega, k);
 end
 
 %% Stop when the averaged-iterate drift stays below tolerance

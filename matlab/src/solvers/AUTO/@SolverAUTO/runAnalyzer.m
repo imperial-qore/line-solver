@@ -11,6 +11,13 @@ Solver.resetRandomGeneratorSeed(options.seed);
 
 line_debug('AUTO solver starting: method=%s, lang=%s, model=%s', options.method, options.lang, class(self.model));
 
+% The bridges receive AUTO's selection method name, not the delegate's method: the
+% constructor resets options.method, so without this every mode would arrive as
+% 'default' on the JAR and native-python sides.
+if ~strcmp(options.lang,'matlab') && ~strcmp(self.selectionMode,'default')
+    options.method = self.selectionMode;
+end
+
 % Check if using Java backend
 switch options.lang
     case 'python'
@@ -18,13 +25,42 @@ switch options.lang
         [QN,UN,RN,TN,AN,WN,runtime] = PYLINE.getAvg('SolverAuto', self.model, options);
         self.setAvgResults(QN,UN,RN,TN,AN,WN,[],[],runtime,options.method,NaN);
         return
+    case 'cpp'
+        % The CHOSEN candidate is what runs under lang='cpp'. line-cli's own
+        % `-s auto` re-runs its chooser on the C++ side and can pick a different
+        % engine than the one this heuristic reported, which would leave the
+        % selection this solver announces unattributable to the numbers.
+        line_debug(options, 'AUTO: using lang=cpp, delegating the chosen solver to the C++ line-cli');
+        chosenSolver = self.chooseSolver('getAvg');
+        CPPLINE.solverToken(chosenSolver.getName()); % refuse a wrapper by name
+        if ~chosenSolver.supports(self.model)
+            line_error(mfilename, sprintf(['AUTO chose %s for this model, which does not ' ...
+                'support it; lang=''cpp'' delegates the chosen solver rather than trying ' ...
+                'the candidates in turn, so there is no fallback here. Use lang=''matlab''.'], ...
+                chosenSolver.getName()));
+        end
+        cppOptions = chosenSolver.getOptions();
+        cppOptions.lang = 'cpp';
+        if isfield(options,'arith')
+            cppOptions.arith = options.arith;
+        end
+        runtime = chosenSolver.runAnalyzer(cppOptions);
+        self.result = chosenSolver.result;
+        self.result.('solver') = self.getName();
+        self.result.SelectedSolver = chosenSolver.getName();
+        return
     case 'java'
         % Use Java SolverAUTO
         jmodel = LINE2JLINE(self.model);
         M = jmodel.getNumberOfStations;
         R = jmodel.getNumberOfClasses;
         jsolver = JLINE.SolverAuto(jmodel, options);
-        [QN, UN, RN, WN, AN, TN] = JLINE.arrayListToResults(jsolver.getAvgTable);
+        % getAvgTable(true) is the UNFILTERED grid, and the reshape below needs it:
+        % the no-argument getter DROPS every (station,class) cell whose six metrics
+        % are all zero, so on a model with a disabled pair it returns fewer than M*R
+        % entries and reshape(...,R,M) errors out. MATLAB applies its own filter when
+        % the table is PRINTED, so the bridge must carry the whole grid, zeros included.
+        [QN, UN, RN, WN, AN, TN] = JLINE.arrayListToResults(jsolver.getAvgTable(true));
         runtime = jsolver.result.runtime;
         CN = [];
         XN = [];

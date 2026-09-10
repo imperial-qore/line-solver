@@ -99,7 +99,7 @@ fprintf('\nSolving with CTMC solver...\n\n');
 options = Solver.defaultOptions;
 options.verbose = 0;
 
-solver = CTMC(model, options);
+solver = CTMC(model, 'exact', options);
 
 %% Get Steady-State Expected Rewards
 [R, names] = solver.getAvgReward();

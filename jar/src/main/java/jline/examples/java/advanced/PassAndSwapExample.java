@@ -131,6 +131,7 @@ public class PassAndSwapExample {
     public static NetworkAvgTable mmk() {
         Network model = mmkModel();
         SolverOptions opt = SolverCTMC.defaultOptions();
+        opt.method = "exact";   // pin the state-space path
         opt.cutoff = Matrix.singleton(4);
         return new SolverCTMC(model, opt).getAvgTable();
     }
@@ -139,6 +140,7 @@ public class PassAndSwapExample {
     public static NetworkAvgTable compatibility() {
         Network model = compatibilityModel();
         SolverOptions opt = SolverCTMC.defaultOptions();
+        opt.method = "exact";   // pin the state-space path
         opt.cutoff = Matrix.singleton(3);
         return new SolverCTMC(model, opt).getAvgTable();
     }
@@ -147,6 +149,7 @@ public class PassAndSwapExample {
     public static NetworkAvgTable selfloop() {
         Network model = selfloopModel();
         SolverOptions opt = SolverCTMC.defaultOptions();
+        opt.method = "exact";   // pin the state-space path
         opt.cutoff = Matrix.singleton(3);
         return new SolverCTMC(model, opt).getAvgTable();
     }

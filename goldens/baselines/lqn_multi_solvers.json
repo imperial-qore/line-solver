@@ -1,0 +1,173 @@
+{
+  "class": {
+    "LN": "deterministic",
+    "LQNS": "deterministic"
+  },
+  "example": "lqn_multi_solvers",
+  "solvers": {
+    "LN": [
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": "NaN",
+        "ResidT": "NaN",
+        "RespT": "NaN",
+        "Station": "P1",
+        "Tput": "NaN",
+        "Util": 0.24999
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": "NaN",
+        "ResidT": "NaN",
+        "RespT": "NaN",
+        "Station": "P2",
+        "Tput": "NaN",
+        "Util": 0.74998
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 1.0,
+        "ResidT": 1.0,
+        "RespT": "NaN",
+        "Station": "T1",
+        "Tput": 0.24999,
+        "Util": 0.24999
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.74998,
+        "ResidT": 1.0,
+        "RespT": "NaN",
+        "Station": "T2",
+        "Tput": 0.74998,
+        "Util": 0.74998
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 1.0,
+        "ResidT": "NaN",
+        "RespT": 4.0,
+        "Station": "E1",
+        "Tput": 0.24999,
+        "Util": 0.24999
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.74998,
+        "ResidT": "NaN",
+        "RespT": 1.0,
+        "Station": "E2",
+        "Tput": 0.74998,
+        "Util": 0.74998
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 1.0,
+        "ResidT": 1.0,
+        "RespT": 4.0,
+        "Station": "A1",
+        "Tput": 0.24999,
+        "Util": 0.24999
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.74998,
+        "ResidT": 1.0,
+        "RespT": 1.0,
+        "Station": "A2",
+        "Tput": 0.74998,
+        "Util": 0.74998
+      }
+    ],
+    "LQNS": [
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": "NaN",
+        "ResidT": "NaN",
+        "RespT": "NaN",
+        "Station": "P1",
+        "Tput": "NaN",
+        "Util": 0.24999
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": "NaN",
+        "ResidT": "NaN",
+        "RespT": "NaN",
+        "Station": "P2",
+        "Tput": "NaN",
+        "Util": 0.74998
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 1.0,
+        "ResidT": "NaN",
+        "RespT": "NaN",
+        "Station": "T1",
+        "Tput": 0.24999,
+        "Util": 0.24999
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.74998,
+        "ResidT": "NaN",
+        "RespT": "NaN",
+        "Station": "T2",
+        "Tput": 0.74998,
+        "Util": 0.74998
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 1.0,
+        "ResidT": "NaN",
+        "RespT": 4.0,
+        "Station": "E1",
+        "Tput": 0.24999,
+        "Util": 0.24999
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.74998,
+        "ResidT": "NaN",
+        "RespT": 1.0,
+        "Station": "E2",
+        "Tput": 0.74998,
+        "Util": 0.74998
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 1.0,
+        "ResidT": "NaN",
+        "RespT": 4.0,
+        "Station": "A1",
+        "Tput": 0.24999,
+        "Util": 0.24999
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 0.74998,
+        "ResidT": "NaN",
+        "RespT": 1.0,
+        "Station": "A2",
+        "Tput": 0.74998,
+        "Util": 0.74998
+      }
+    ]
+  }
+}

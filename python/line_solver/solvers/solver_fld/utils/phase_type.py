@@ -60,6 +60,30 @@ class PhaseTypeRepresentation:
             return 1.0
 
 
+def _map_pie_or_first_phase(D0: np.ndarray, D1: np.ndarray) -> np.ndarray:
+    """Arrival-instant phase distribution of (D0, D1), or e_1 if degenerate.
+
+    map_pie is the correct initial vector for any Markovian process: for a PH,
+    where D1 = s*alpha has rank one, it returns alpha, so the acyclic case is
+    unchanged; for a genuine MAP or MMPP2 it is the embedded distribution seen
+    at an arrival, which is not concentrated on phase 1.
+    """
+    n = int(np.asarray(D0).shape[0])
+    try:
+        from ....api.mam import map_pie
+        pie = np.asarray(map_pie(np.asarray(D0, dtype=float),
+                                 np.asarray(D1, dtype=float)), dtype=float).ravel()
+        if pie.size == n and np.all(np.isfinite(pie)) and np.all(pie >= -1e-12):
+            total = float(np.sum(pie))
+            if total > 0:
+                return np.maximum(pie, 0.0) / total
+    except Exception:
+        pass
+    pie = np.zeros(n)
+    pie[0] = 1.0
+    return pie
+
+
 def convert_dict_to_phase_type(
     proc_dict: Dict[str, Any],
     rate: float = 1.0
@@ -84,8 +108,7 @@ def convert_dict_to_phase_type(
             D0 = np.asarray(proc_dict[0])
             D1 = np.asarray(proc_dict[1])
             n_phases = D0.shape[0]
-            pie = np.zeros(n_phases)
-            pie[0] = 1.0
+            pie = _map_pie_or_first_phase(D0, D1)
             if len(proc_dict) >= 3:
                 pie = np.asarray(proc_dict[2]).flatten()
             return PhaseTypeRepresentation(D0=D0, D1=D1, pie=pie, n_phases=n_phases)
@@ -258,7 +281,95 @@ def is_nhpp(sn, i: int, r: int) -> bool:
     return procid[i, r] == ProcessType.NHPP
 
 
-def prepare_phase_type_structures(sn) -> Tuple[Dict, Dict, np.ndarray]:
+def _procid_is(sn, i: int, r: int, *names) -> bool:
+    """Whether sn.procid[i,r] is one of the named ProcessType members."""
+    from ....constants import ProcessType
+
+    procid = getattr(sn, 'procid', None)
+    if procid is None:
+        return False
+    procid = np.asarray(procid, dtype=object)
+    if i >= procid.shape[0] or r >= procid.shape[1]:
+        return False
+    return any(procid[i, r] == getattr(ProcessType, n) for n in names)
+
+
+def is_mapt(sn, i: int, r: int) -> bool:
+    """Whether (station i, class r) carries a time-inhomogeneous MAP."""
+    return _procid_is(sn, i, r, 'MAPT')
+
+
+def is_pht(sn, i: int, r: int) -> bool:
+    """Whether (station i, class r) carries a time-inhomogeneous phase-type."""
+    return _procid_is(sn, i, r, 'PHT')
+
+
+def is_rate_schedule(sn, i: int, r: int) -> bool:
+    """Whether (station i, class r) carries any time-varying process.
+
+    Covers NHPP, MAPt and PHt: their sn.proc slot holds a schedule, not a single
+    (D0, D1) pair, so it must never be read as phase-type matrices directly.
+    """
+    return _procid_is(sn, i, r, 'NHPP', 'MAPT', 'PHT')
+
+
+def schedule_segments(proc_slot, kind: str):
+    """Unpack a MAPt or PHt sn.proc slot into its per-segment matrix pairs.
+
+    The slot is flat, [breakpoints, A_1..A_n, B_1..B_n, cyclic], so that the JAR
+    MatrixCell (which cannot nest) carries the same layout; n follows from the
+    length. For MAPt the pairs are (D0, D1); for PHt they are (alpha, S) and the
+    equivalent MAP pair is (S, s*alpha).
+
+    Returns:
+        (breakpoints, pairs, cyclic) with pairs a list of n (A_k, B_k) tuples.
+    """
+    if proc_slot is None or len(proc_slot) < 4:
+        raise ValueError('%s slot of sn.proc must hold at least one segment' % kind)
+    n = (len(proc_slot) - 2) // 2
+    bp = np.asarray(proc_slot[0], dtype=float).ravel()
+    cyclic = bool(proc_slot[-1])
+    first = [np.atleast_2d(np.asarray(proc_slot[1 + k], dtype=float)) for k in range(n)]
+    second = [np.atleast_2d(np.asarray(proc_slot[1 + n + k], dtype=float)) for k in range(n)]
+    return bp, list(zip(first, second)), cyclic
+
+
+def schedule_map_pair_at(proc_slot, kind: str, seg: int) -> Tuple[np.ndarray, np.ndarray]:
+    """The (D0, D1) MAP pair of segment `seg` of a MAPt or PHt slot."""
+    _, pairs, _ = schedule_segments(proc_slot, kind)
+    a, b = pairs[seg]
+    if kind == 'MAPt':
+        return a, b
+    # PHt: a is a 1-by-h alpha row, b the sub-generator S
+    alpha = np.asarray(a, dtype=float).ravel()
+    S = np.asarray(b, dtype=float)
+    exit_vec = -S.sum(axis=1).reshape(-1, 1)
+    return S, exit_vec @ alpha.reshape(1, -1)
+
+
+def schedule_nominal_pair(proc_slot, kind: str) -> Tuple[np.ndarray, np.ndarray]:
+    """Width-weighted time-average (D0, D1) of a MAPt or PHt slot.
+
+    This nominal is the stationary carrier of the phase structure: the fluid ODE
+    bakes it into the base rates and expresses each segment as a per-event
+    multiplier on it. A convex combination of generators is a generator, so it
+    is itself a valid MAP.
+    """
+    bp, pairs, _ = schedule_segments(proc_slot, kind)
+    widths = np.diff(bp)
+    total = float(np.sum(widths))
+    D0 = None
+    D1 = None
+    for k in range(len(pairs)):
+        d0, d1 = schedule_map_pair_at(proc_slot, kind, k)
+        w = float(widths[k]) / total
+        D0 = w * d0 if D0 is None else D0 + w * d0
+        D1 = w * d1 if D1 is None else D1 + w * d1
+    return D0, D1
+
+
+def prepare_phase_type_structures(sn, segment: Optional[Dict[Tuple[int, int], int]] = None
+                                  ) -> Tuple[Dict, Dict, np.ndarray]:
     """
     Prepare phase-type structures from network struct.
 
@@ -307,6 +418,26 @@ def prepare_phase_type_structures(sn) -> Tuple[Dict, Dict, np.ndarray]:
             # transient") for why an NHPP source substitutes a nominal exp process
             if is_nhpp(sn, i, r):
                 proc_ir = None
+
+            # MAPt/PHt: substitute a stationary carrier with the SAME phase
+            # count, either the segment in force (when the caller asks for one)
+            # or the time-averaged nominal. Collapsing to a single exponential,
+            # as NHPP does, would discard the phase structure the schedule
+            # modulates.
+            kind = 'MAPt' if is_mapt(sn, i, r) else ('PHt' if is_pht(sn, i, r) else None)
+            if kind is not None:
+                seg = None if segment is None else segment.get((i, r))
+                if seg is None:
+                    D0s, D1s = schedule_nominal_pair(proc_ir, kind)
+                else:
+                    D0s, D1s = schedule_map_pair_at(proc_ir, kind, int(seg))
+                ph = PhaseTypeRepresentation(
+                    D0=D0s, D1=D1s, pie=_map_pie_or_first_phase(D0s, D1s),
+                    n_phases=int(D0s.shape[0]))
+                phases[i, r] = ph.n_phases
+                proc_matrix[i][r] = [ph.D0, ph.D1]
+                pie_dict[i][r] = ph.pie
+                continue
 
             # Convert to phase-type
             ph = convert_dict_to_phase_type(proc_ir, rate)
@@ -405,6 +536,12 @@ def compute_q_indices(phases: np.ndarray) -> np.ndarray:
 __all__ = [
     'PhaseTypeRepresentation',
     'is_nhpp',
+    'is_mapt',
+    'is_pht',
+    'is_rate_schedule',
+    'schedule_segments',
+    'schedule_map_pair_at',
+    'schedule_nominal_pair',
     'convert_dict_to_phase_type',
     'prepare_phase_type_structures',
     'extract_mu_phi_from_phase_type',

@@ -84,26 +84,28 @@ public final class Solver_mam {
             }
         }
 
-        // Check for non-FCFS queues
+        // THE TWO RESTRICTIONS OF THIS ANALYZER, RAISED RATHER THAN RETURNED.
+        // Both used to end in a warning and a result: an unsupported discipline
+        // returned zero-by-zero matrices and a closed model fell through the
+        // branch below with QN..XN still at their zero initialization, so
+        // SolverMAM reported an entirely zero table as if it were the answer.
+        // SolverMAM.methodFeatureSet states the same two rules declaratively --
+        // 'dec.mmap' drops SchedStrategy_INF, ClosedClass and SelfLoopingClass
+        // -- so findSolver no longer offers the pair; this is what a caller who
+        // names the method by hand meets.
+        //
+        // FCFSPRPRIO replaces FCFSPRIO in the accepted set: MATLAB solver_mam.m
+        // accepts the preemptive-resume priority discipline (its station ladder
+        // reaches MMAPPH1PRPR), and the non-preemptive FCFSPRIO named here was a
+        // transcription slip that admitted a discipline no MAM analyzer serves.
         for (int ist = 0; ist < sn.nstations; ist++) {
             SchedStrategy sched = sn.sched.get(sn.stations.get(ist));
             if (sched != SchedStrategy.EXT && sched != SchedStrategy.FCFS && sched != SchedStrategy.HOL
-                    && sched != SchedStrategy.FCFSPRIO && sched != SchedStrategy.PS) {
-                if (options.verbose != VerboseLevel.SILENT) {
-                    InputOutput.line_warning(InputOutput.mfilename(new Object()),
-                            "The dec.mmap method does not support non-FCFS queues.");
-                }
-                MAMResult emptyResult = new MAMResult();
-                emptyResult.QN = new Matrix(0, 0);
-                emptyResult.UN = new Matrix(0, 0);
-                emptyResult.RN = new Matrix(0, 0);
-                emptyResult.TN = new Matrix(0, 0);
-                emptyResult.CN = new Matrix(0, 0);
-                emptyResult.XN = new Matrix(0, 0);
-                emptyResult.iter = 0;
-                emptyResult.method = "";
-                emptyResult.runtime = (System.nanoTime() - startTime) / 1000000000.0;
-                return emptyResult;
+                    && sched != SchedStrategy.FCFSPRPRIO && sched != SchedStrategy.PS) {
+                throw new RuntimeException("The dec.mmap method does not support the " + sched
+                        + " scheduling strategy at station " + (ist + 1) + ": the departure-process "
+                        + "fixed point is built for EXT, FCFS, HOL, FCFSPRPRIO and PS stations only. "
+                        + "Use the dec.source method.");
             }
         }
 
@@ -348,10 +350,10 @@ public final class Solver_mam {
                 System.out.println("MAM parametric decomposition completed in " + last_it + " iterations");
             }
         } else {
-            if (options.verbose != VerboseLevel.SILENT) {
-                InputOutput.line_warning(InputOutput.mfilename(new Object()),
-                        "This model is not supported by SolverMAM yet. Returning with no result.");
-            }
+            throw new RuntimeException("The dec.mmap method supports open models only: the "
+                    + "departure-process fixed point iterates on arrival streams that a closed "
+                    + "population does not have. Use the dec.source method, or method 'default', "
+                    + "which routes a closed model to an analyzer that solves it.");
         }
         result.QN = QN;
         result.UN = UN;

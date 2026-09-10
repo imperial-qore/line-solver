@@ -36,14 +36,13 @@ method = 'oi';
 M = sn.nstations;
 K = sn.nclasses;
 
-% ---- reject class switching (OI rank rates are per raw class) --------------
-for c = 1:sn.nchains
-    if numel(sn.inchain{c}) > 1
-        line_error(mfilename, 'solver_nc_oi requires one class per chain (no class switching).');
-    end
-end
-if any(isinf(sn.njobs))
-    line_error(mfilename, 'solver_nc_oi requires a closed queueing network.');
+% ---- the route's own premises (class switching, open chains, a rate lattice,
+% a fork, a missing rank rate) are decided by NC_OI_REFUSAL, which SolverNC's
+% support gate asks too, so a pair the report offers is a pair this analyzer
+% accepts ------------------------------------------------------------------
+oiReason = nc_oi_refusal(sn, 'oi');
+if ~isempty(oiReason)
+    line_error(mfilename, oiReason);
 end
 N = round(sn.njobs(:)');
 

@@ -10,7 +10,7 @@ classdef SubProblemResult < handle
 
     methods
         function obj = SubProblemResult(name, result)
-            obj.variablesFixed = containers.Map('KeyType', 'char', 'ValueType', 'any');
+            obj.variablesFixed = configureDictionary('string', 'cell');
             if nargin >= 1, obj.name = name; end
             if nargin >= 2, obj.result = result; else, obj.result = opt.OptimizationResult(); end
         end

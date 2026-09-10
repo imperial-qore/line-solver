@@ -9,6 +9,9 @@ classdef Cluster < handle
     %   cluster.setDispatching(RoutingStrategy.RAND).setScheduling(SchedStrategy.PS);
     %   model = cluster.build();
     %   table = SolverMVA(model).getAvgTable();
+    %
+    % The cluster is open by default; setClosed makes every class closed and
+    % setMixed combines open and closed classes, open ones first.
 
     properties
         numStations (1, 1) double = 2
@@ -18,6 +21,7 @@ classdef Cluster < handle
         scheduling = SchedStrategy.PS
         dispatching = RoutingStrategy.RAND
         closed (1, 1) logical = false
+        mixed (1, 1) logical = false  % open classes first, then closed ones
         population double = []        % per-class population (closed only)
         thinkTimes double = []        % per-class think time (closed only)
         dispatchProbs = []            % PROB: rows = classes (1 broadcasts), cols = servers
@@ -39,6 +43,22 @@ classdef Cluster < handle
             obj.scheduling   = SchedStrategy.PS;
             obj.dispatching  = RoutingStrategy.RAND;
             obj.closed       = false;
+            obj.mixed        = false;
+        end
+
+        function [R, Ro, Rc] = numClasses(obj)
+            % [R, RO, RC] = NUMCLASSES()  Total, open and closed class counts.
+            if obj.mixed
+                Ro = numel(obj.arrivalRates);
+                Rc = numel(obj.population);
+            elseif obj.closed
+                Ro = 0;
+                Rc = numel(obj.population);
+            else
+                Ro = numel(obj.arrivalRates);
+                Rc = 0;
+            end
+            R = Ro + Rc;
         end
 
         function obj = setNumStations(obj, M)
@@ -164,11 +184,7 @@ classdef Cluster < handle
             %
             % Either a scalar (broadcast), a length-M vector (per-server,
             % broadcast across classes), or a (M x R) matrix.
-            if obj.closed
-                R = numel(obj.population);
-            else
-                R = numel(obj.arrivalRates);
-            end
+            R = obj.numClasses();
             M = obj.numStations;
             if isscalar(scv)
                 obj.serviceScvs = scv * ones(M, R);
@@ -195,6 +211,7 @@ classdef Cluster < handle
 
         function obj = setClosed(obj, population, thinkTime)
             obj.closed = true;
+            obj.mixed = false;
             if isscalar(population)
                 obj.population = population;
                 obj.thinkTimes = thinkTime;
@@ -207,14 +224,34 @@ classdef Cluster < handle
             end
         end
 
+        function obj = setMixed(obj, arrivalRates, population, thinkTime)
+            % SETMIXED  Mixed cluster: open classes coexist with closed ones.
+            %
+            % ARRIVALRATES holds the per-class arrival rates of the open
+            % classes, POPULATION and THINKTIME the per-class population and
+            % think time of the closed classes. Classes are ordered open first,
+            % so serviceRates/serviceSCV matrices have numel(arrivalRates) +
+            % numel(population) columns.
+            if isempty(arrivalRates) || isempty(population)
+                error('a mixed cluster needs at least one open and one closed class');
+            end
+            if any(arrivalRates <= 0)
+                error('arrival rates must be positive');
+            end
+            if numel(population) ~= numel(thinkTime)
+                error('population and thinkTime must have the same length');
+            end
+            obj.arrivalRates = arrivalRates(:)';
+            obj.population = population(:)';
+            obj.thinkTimes = thinkTime(:)';
+            obj.closed = false;
+            obj.mixed = true;
+        end
+
         function model = build(obj)
             % BUILD  Construct the configured Network model.
             M = obj.numStations;
-            if obj.closed
-                R = numel(obj.population);
-            else
-                R = numel(obj.arrivalRates);
-            end
+            R = obj.numClasses();
 
             strategy = cell(M, 1);
             for i = 1:M
@@ -244,7 +281,10 @@ classdef Cluster < handle
                 factoryDispatch = obj.dispatching;
             end
 
-            if obj.closed
+            if obj.mixed
+                model = MNetwork.clusterMixed(obj.arrivalRates, obj.population, ...
+                    obj.thinkTimes, D, strategy, obj.stationCounts, factoryDispatch);
+            elseif obj.closed
                 model = MNetwork.clusterClosed(obj.population, obj.thinkTimes, ...
                     D, strategy, obj.stationCounts, factoryDispatch);
             else
@@ -258,10 +298,10 @@ classdef Cluster < handle
 
         function applyDistributionScvs(obj, model, R)
             jobclasses = model.classes;
-            % Arrival SCVs (open clusters only).
+            % Arrival SCVs (open classes only, which come first in the order).
             if ~obj.closed && ~isempty(obj.arrivalScvs)
                 src = model.getNodeByName('Source');
-                for r = 1:R
+                for r = 1:numel(obj.arrivalRates)
                     scv = obj.arrivalScvs(r);
                     if scv ~= 1
                         src.setArrival(jobclasses{r}, ...
@@ -323,45 +363,45 @@ classdef Cluster < handle
         end
 
         function out = compareDispatching(obj, solverFcn, policies)
-            % OUT = COMPAREDISPATCHING(SOLVERFCN, POLICIES) returns a containers.Map
+            % OUT = COMPAREDISPATCHING(SOLVERFCN, POLICIES) returns a dictionary
             % from each policy in POLICIES to the AvgTable produced by SOLVERFCN(model).
-            out = containers.Map('KeyType', 'char', 'ValueType', 'any');
+            out = configureDictionary('string', 'cell');
             saved = obj.dispatching;
             cleaner = onCleanup(@() obj.restoreDispatching(saved));
             for k = 1:numel(policies)
                 obj.dispatching = policies(k);
-                out(char(string(policies(k)))) = solverFcn(obj.build());
+                out{string(policies(k))} = solverFcn(obj.build());
             end
         end
 
         function out = compareScheduling(obj, solverFcn, disciplines)
-            out = containers.Map('KeyType', 'char', 'ValueType', 'any');
+            out = configureDictionary('string', 'cell');
             saved = obj.scheduling;
             cleaner = onCleanup(@() obj.restoreScheduling(saved));
             for k = 1:numel(disciplines)
                 obj.scheduling = disciplines(k);
-                out(char(string(disciplines(k)))) = solverFcn(obj.build());
+                out{string(disciplines(k))} = solverFcn(obj.build());
             end
         end
 
         function out = sweepArrivalRate(obj, rates, solverFcn)
             if obj.closed
-                error('sweepArrivalRate is only defined for open clusters');
+                error('sweepArrivalRate is only defined for clusters with open classes');
             end
             if numel(obj.arrivalRates) ~= 1
-                error('sweepArrivalRate requires a single class');
+                error('sweepArrivalRate requires a single open class');
             end
-            out = containers.Map('KeyType', 'double', 'ValueType', 'any');
+            out = configureDictionary('double', 'cell');
             saved = obj.arrivalRates;
             cleaner = onCleanup(@() obj.restoreArrivalRates(saved));
             for r = rates(:)'
                 obj.arrivalRates = r;
-                out(r) = solverFcn(obj.build());
+                out{r} = solverFcn(obj.build());
             end
         end
 
         function out = sweepNumStations(obj, counts, solverFcn)
-            out = containers.Map('KeyType', 'double', 'ValueType', 'any');
+            out = configureDictionary('double', 'cell');
             savedM = obj.numStations;
             savedRates = obj.serviceRates;
             savedCounts = obj.stationCounts;
@@ -371,7 +411,7 @@ classdef Cluster < handle
                 obj.numStations = m;
                 obj.serviceRates = repmat(perClass, m, 1);
                 obj.stationCounts = ones(m, 1);
-                out(m) = solverFcn(obj.build());
+                out{m} = solverFcn(obj.build());
             end
         end
     end

@@ -10,7 +10,7 @@ import jline.solvers.mva.MVA;
 import java.util.Scanner;
 
 /**
- * Class switching examples mirroring the Kotlin notebooks in classSwitching.
+ * Class switching examples mirroring the example notebooks in classSwitching.
  */
 public class ClassSwitchExamples {
 

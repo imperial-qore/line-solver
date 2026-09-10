@@ -21,7 +21,7 @@ avgTableFcfs = MVA(cluster.build()).getAvgTable()
 
 %% Block 3: cross-check the same FCFS multi-server model under three simulators
 %  JMT is a Java-based discrete-event simulator that uses an XML model file;
-%  LDES is the LINE Discrete Event Simulator built on the SSJ library and
+%  LDES is LINE's discrete-event simulator built on the SSJ library and
 %  invoked as a subprocess; SSA is LINE's native stochastic simulator
 %  using the next-reaction method. All three produce statistically
 %  equivalent results on this open-class cluster.
@@ -41,8 +41,8 @@ solverFcn = @(m) JMT(m, 'seed', 23000, 'samples', 5000).getAvgTable();
 results = cluster2.compareDispatching(solverFcn, ...
     [RoutingStrategy.RAND, RoutingStrategy.RROBIN]);
 
-keys_ = results.keys;
+keys_ = keys(results);
 for k = 1:numel(keys_)
-    fprintf('\n=== Dispatching: %s ===\n', keys_{k});
-    disp(results(keys_{k}));
+    fprintf('\n=== Dispatching: %s ===\n', keys_(k));
+    disp(results{keys_(k)});
 end

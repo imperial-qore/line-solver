@@ -19,7 +19,8 @@ classdef (Sealed) SchedStrategy
     % - FCFS: First-Come-First-Served (FIFO)
     % - LCFS: Last-Come-First-Served (LIFO/Stack)
     % - PS: Processor Sharing (round-robin with infinitesimal time slices)
-    % - SJF: Shortest Job First (preemptive shortest remaining time)
+    % - SJF: Shortest Job First (non-preemptive, size known on arrival;
+    %        SRPT and PSJF are the preemptive size-based variants)
     % - HOL: Head-of-Line priority (non-preemptive priority)
     % - INF: Infinite server (delay station, no queueing)
     %
@@ -298,8 +299,10 @@ classdef (Sealed) SchedStrategy
                     type = SchedStrategy.PAS;
                 case 'oi'
                     type = SchedStrategy.OI;
-                case 'pp'
-                    % LQNS preemptive priority - maps to FCFS with preemptive resume priority
+                case {'pri','pp'}
+                    % LQNS preemptive priority resume (SCHEDULE_PPR). lqns spells
+                    % it 'pri' (LQIO::SCHEDULE::PPR); 'pp' is the stale lqn-core.xsd
+                    % spelling, absent from the lqns 6.2.31 sources
                     type = SchedStrategy.FCFSPRPRIO;
                 case 'cfs'
                     % LQNS completely fair scheduling - maps to Generalized Processor Sharing

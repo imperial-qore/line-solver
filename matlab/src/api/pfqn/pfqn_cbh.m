@@ -62,7 +62,9 @@ for m = c+1:M                                    % exact convolution of servers 
     end
 end
 if Z > 0                                         % convolve the IS delay exactly: g_Z(j)=Z^j/j!
-    gd = Z.^(0:N) ./ factorial(0:N);
+    % Poisson weight Z^j/j! through logs: the naive ratio overflows for j >~ 171
+    % in double, and j runs to the POPULATION here.
+    gd = exp((0:N)*log(Z) - gammaln((0:N)+1));
     gfull = zeros(1, N+1);
     for n = 0:N
         acc = 0;

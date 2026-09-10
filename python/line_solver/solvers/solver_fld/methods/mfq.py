@@ -331,6 +331,14 @@ class MFQMethod:
             # Solve queue (use analytical M/M/c or BUTools if available)
             QN, UN, RN, TN = self._solve_queue(params)
 
+            # THE CLOSED FORM IS ONE ROW; THE TABLE HAS ONE PER STATION. Returning
+            # the 1 x K block unexpanded put the queue's own metrics on station 0,
+            # which for a Source -> Queue -> Sink model is the SOURCE: the table
+            # read QLen 1.0, Util 0.5, RespT 2.0 against "S" and zeros against
+            # "Q". The JAR and C++ both place them on the queue station and leave
+            # the source carrying only the arrival rate as its throughput.
+            QN, UN, RN, TN = self._to_station_table(QN, UN, RN, TN, params)
+
             # Compute cycle and system throughput metrics
             CN = np.sum(RN, axis=0, keepdims=True) if RN.size > 0 else np.zeros((1, 1))
             XN = np.mean(TN, axis=0, keepdims=True) if TN.size > 0 else np.zeros((1, 1))
@@ -347,6 +355,16 @@ class MFQMethod:
                 method='mfq',
             )
 
+            # ArvR is derived from the throughputs by the same helper every other
+            # fluid branch uses; leaving AN unset made the table fall back to a
+            # different derivation and report an arrival rate AT THE SOURCE,
+            # where MATLAB, the JAR and C++ all report 0.
+            try:
+                from ....api.sn.getters import sn_get_arvr_from_tput
+                result.AN = sn_get_arvr_from_tput(self.sn, TN)
+            except Exception:
+                pass
+
             result.runtime = time.time() - start_time
             return result
 
@@ -354,6 +372,29 @@ class MFQMethod:
             if self.options.verbose:
                 print(f"MFQ method error: {e}")
             raise
+
+    def _to_station_table(self, QN, UN, RN, TN, params):
+        """Lift the single-queue row onto the (nstations x nclasses) table.
+
+        The queue station carries QLen/Util/RespT and its throughput; the source
+        station carries the arrival rate as its throughput and nothing else,
+        which is what SolverFluid (JAR) and solver_fluid.h (C++) both report.
+        """
+        nst = int(getattr(self.sn, 'nstations', 1) or 1)
+        queue_st = params.get('queue_st')
+        source_st = params.get('source_st')
+        if nst <= 1 or queue_st is None:
+            return QN, UN, RN, TN
+        K = QN.shape[1]
+        fQN, fUN = np.zeros((nst, K)), np.zeros((nst, K))
+        fRN, fTN = np.zeros((nst, K)), np.zeros((nst, K))
+        fQN[queue_st, :] = QN[0, :]
+        fUN[queue_st, :] = UN[0, :]
+        fRN[queue_st, :] = RN[0, :]
+        fTN[queue_st, :] = TN[0, :]
+        if source_st is not None:
+            fTN[source_st, :] = TN[0, :]
+        return fQN, fUN, fRN, fTN
 
     def _extract_queue_parameters(self) -> Dict:
         """Extract queue parameters from network structure.
@@ -421,6 +462,8 @@ class MFQMethod:
             'mu_arr': mu_arr,
             'nservers': nservers,
             'nclasses': nclasses,
+            'source_st': source_st,
+            'queue_st': queue_st,
         }
 
     def _solve_queue(self, params: Dict) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:

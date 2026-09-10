@@ -17,6 +17,8 @@ public final class Pfqn_mvams {
 
     /**
      * General purpose script to handle mixed Query Networks with multiserver nodes.
+     * Standard arrival theorem throughout; for the interlocked-flow correction of
+     * Franks (1999), Ch. 4, Eq. (4.7) call {@link Pfqn_mvams_ilock} instead.
      */
     public static Ret.pfqnMVA pfqn_mvams(Matrix lambda, Matrix L, Matrix N, Matrix Z, Matrix mi, Matrix S) {
         Matrix Zlocal = (Z == null || Z.isEmpty()) ? new Matrix(1, L.getNumCols()) : Z.copy();

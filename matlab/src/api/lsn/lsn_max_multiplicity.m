@@ -60,14 +60,14 @@ if length(mult) < n
     mult(end+1:n) = Inf;
 end
 
-isfunction = zeros(n,1);
-if isfield(lsn, 'isfunction') && ~isempty(lsn.isfunction)
-    isfunction(1:length(lsn.isfunction)) = lsn.isfunction(:);
+hassetup = zeros(n,1);
+if isfield(lsn, 'hassetup') && ~isempty(lsn.hassetup)
+    hassetup(1:length(lsn.hassetup)) = lsn.hassetup(:);
 end
 
 for k = 1:n
     i = order(k);
-    if isfunction(i) && inflow(i) > 0
+    if hassetup(i) && inflow(i) > 0
         % see _kb/03-api-layer.md (fj/ and lsn/ additions) for rationale
         outflow(i) = mult(i);
     else

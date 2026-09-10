@@ -166,8 +166,10 @@ def after_event(sn, ind, inspace, event, job_class, is_simulation=False, ctx=Non
         outspace, outrate, outprob = after_event_join(
             sn, ind, inspace, event, job_class, is_simulation)
         if outspace is None:
-            return np.zeros((0, 0)), np.zeros((0, 0)), np.ones((1, 1))
-        return outspace, outrate, outprob
+            return _no_successor(R)
+        # a Join holds no server: nothing starts or is preempted there
+        n = np.atleast_2d(outspace).shape[0]
+        return outspace, outrate, outprob, np.zeros((n, R)), np.zeros((n, R))
 
     # Determine node type and decompose state
     if sn.isstation[ind]:
@@ -177,12 +179,20 @@ def after_event(sn, ind, inspace, event, job_class, is_simulation=False, ctx=Non
         if sn.sched[ist] == SchedStrategy.PAS:
             Vp = int(np.sum(sn.nvars[ind])) if sn.nvars is not None else 0
             from .after_event_station import after_event_station_pas
-            return after_event_station_pas(sn, ind, ist, inspace, event, job_class, R, Vp)
+            outspace, outrate, outprob = after_event_station_pas(
+                sn, ind, ist, inspace, event, job_class, R, Vp)
+            # after_event returns FIVE values since the start/preempt tags were
+            # added; the PAS handler still returns three, and a PAS station
+            # tags nothing (its service is exponential and order-independent,
+            # so no job starts or is preempted at a phase boundary). Padded
+            # here, exactly as the Join branch above pads its own three.
+            n = np.atleast_2d(outspace).shape[0]
+            return outspace, outrate, outprob, np.zeros((n, R)), np.zeros((n, R))
         K = np.array(sn.phasessz[ist], dtype=int)
         Ks = np.array(sn.phaseshift[ist], dtype=int)
 
         if K[job_class] == 0:
-            return np.zeros((0, 0)), np.zeros((0, 0)), np.ones((1, 1))
+            return _no_successor(R)
 
         V = int(np.sum(sn.nvars[ind])) if sn.nvars is not None else 0
         sumK = int(np.sum(K))
@@ -308,8 +318,8 @@ def after_event(sn, ind, inspace, event, job_class, is_simulation=False, ctx=Non
             space_srv = inspace[:, srv_start:srv_end] if srv_end > srv_start else np.zeros((n_rows, R))
             space_buf = np.zeros((n_rows, 0))
             from .after_event_fork import after_event_fork
-            return after_event_fork(
-                sn, ind, event, job_class, space_buf, space_srv, space_var, is_simulation)
+            return _untagged(after_event_fork(
+                sn, ind, event, job_class, space_buf, space_srv, space_var, is_simulation), R)
 
         if nt_val == trans_val:
             # Transition: [idle(nmodes) | phases(sumK) | fired(nmodes) | var(V)]
@@ -349,10 +359,10 @@ def after_event(sn, ind, inspace, event, job_class, is_simulation=False, ctx=Non
                 space_fired = np.zeros((n_rows, nmodes))
 
             from .after_event_transition import after_event_transition
-            return after_event_transition(
+            return _untagged(after_event_transition(
                 sn, ind, event, job_class, inspace,
                 K, Ks, space_buf, space_srv, space_var,
-                space_fired=space_fired)
+                space_fired=space_fired), R)
 
         else:
             # Router, Cache, other: [srv(R) | var]
@@ -366,18 +376,33 @@ def after_event(sn, ind, inspace, event, job_class, is_simulation=False, ctx=Non
 
             if nt_val == router_val:
                 from .after_event_router import after_event_router
-                return after_event_router(
+                return _untagged(after_event_router(
                     sn, ind, event, job_class,
-                    space_buf, space_srv, space_var)
+                    space_buf, space_srv, space_var), R)
 
             elif nt_val == cache_val:
                 from .after_event_cache import after_event_cache
-                return after_event_cache(
+                return _untagged(after_event_cache(
                     sn, ind, event, job_class, R,
-                    space_buf, space_srv, space_var)
+                    space_buf, space_srv, space_var, is_simulation), R)
 
     # Stateless node: no state change
-    return np.zeros((0, 0)), np.zeros((0, 0)), np.ones((1, 1))
+    return _no_successor(R)
+
+
+def _no_successor(R):
+    """The no-successor result, with tag matrices of the right width."""
+    return (np.zeros((0, 0)), np.zeros((0, 0)), np.ones((1, 1)),
+            np.zeros((0, R)), np.zeros((0, R)))
+
+
+def _untagged(res, R):
+    """Widen a three-field handler result with all-zero tags: the node types
+    that reach this path (Router, Fork, Cache, Transition) hold no server, so
+    they can neither start nor preempt a service."""
+    outspace, outrate, outprob = res[0], res[1], res[2]
+    n = np.atleast_2d(outspace).shape[0] if np.asarray(outspace).size > 0 else 0
+    return outspace, outrate, outprob, np.zeros((n, R)), np.zeros((n, R))
 
 
 def after_event_hashed(sn, ind, inhash, event, job_class, hash_maps=None):
@@ -403,26 +428,32 @@ def after_event_hashed(sn, ind, inhash, event, job_class, hash_maps=None):
         - outrate: np.ndarray of rates
         - outprob: np.ndarray of probabilities
     """
+    R = int(getattr(sn, 'nclasses', 0) or 0)
+    empty = (np.array([-1]), np.array([0.0]), np.array([0.0]),
+             np.zeros((0, R)), np.zeros((0, R)))
     if inhash < 0:
-        return np.array([-1]), np.array([0.0]), np.array([0.0])
+        return empty
 
     isf = int(sn.nodeToStateful[ind])
     if isf not in sn.space or sn.space[isf] is None:
-        return np.array([-1]), np.array([0.0]), np.array([0.0])
+        return empty
 
     space = np.atleast_2d(sn.space[isf])
     if inhash >= space.shape[0]:
-        return np.array([-1]), np.array([0.0]), np.array([0.0])
+        return empty
 
     inspace = space[inhash:inhash + 1]
 
-    outspace, outrate, outprob = after_event(sn, ind, inspace, event, job_class)
+    outspace, outrate, outprob, outstart, outpreempt = after_event(
+        sn, ind, inspace, event, job_class)
 
     if outspace.size == 0:
-        return np.array([-1]), np.array([0.0]), np.array([0.0])
+        return empty
 
     outhash = get_hash(sn, ind, outspace, hash_maps)
     outrate = outrate.ravel() if outrate.size > 0 else np.array([0.0])
     outprob = outprob.ravel() if outprob.size > 0 else np.array([0.0])
 
-    return outhash, outrate, outprob
+    # the tags travel alongside the hashed successor: both CTMC and SSA reach
+    # the state machine through here
+    return outhash, outrate, outprob, outstart, outpreempt

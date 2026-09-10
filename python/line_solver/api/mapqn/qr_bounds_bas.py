@@ -79,14 +79,34 @@ def mapqn_qr_bounds_bas(
     _add_thm3_constraints_bas(model, params)
     _add_bound_constraints_bas(model, params)
 
-    # Build objective: sum of diagonal p2 at target queue across all blocking configs
+    # Build objective: UTILIZATION of the target queue, not occupancy.
+    #
+    # This used to sum the diagonal p2 over ALL blocking configurations, i.e.
+    # P(n_i >= 1) including the ones where i is BLOCKED. At a BAS station a
+    # blocked server holds a job it has already finished and does no work, so
+    # that is occupancy and not utilization: on cqn_bas_blocking it reported
+    # U = 1 where the exact utilization is 0.590164, and the error propagated
+    # into the derived throughput through U = X*V*s.
+    #
+    # The e variables already carry the right quantity. UEFF constrains
+    #   e(i,ki) = sum over j, nj, kj and over m with BB(m,i) == 0 of
+    #             p2(j,nj,kj,i,ni,ki,m) for ni >= 1,
+    # so sum_ki e(i,ki) is P(n_i >= 1 and serving). Optimising e rather than
+    # reading it out afterwards is what makes the answer a BOUND instead of an
+    # incidental value at the occupancy-maximising vertex. On an unblocked model
+    # every configuration is unblocked and this collapses back onto the old
+    # objective exactly.
+    #
+    # NO 1/M here, unlike the MATLAB reference. This port emits UEFF as ONE
+    # CONSTRAINT PER (j, i, ki) -- the j loop creates separate rows, each
+    # pinning e to the same marginal -- whereas qrf_bas.m emits one row per
+    # (i, ki) with j summed inside, which leaves its e scaled by M. Same
+    # quantity, different formulation; the scale factor belongs to the
+    # formulation, not to the definition.
     target = objective_queue - 1  # 0-based
     objective_terms = {}
-    for m in range(MR):
-        for ki in range(K[target]):
-            for ni in range(1, F[target] + 1):
-                var_name = f'p2_{target}_{ni}_{ki}_{target}_{ni}_{ki}_{m}'
-                objective_terms[var_name] = 1.0
+    for ki in range(K[target]):
+        objective_terms[f'e_{target}_{ki}'] = 1.0
 
     # see _kb/03-api-layer.md for rationale
     if objective_terms:
@@ -105,20 +125,28 @@ def mapqn_qr_bounds_bas(
         # Update solution with derived variables
         variables = dict(solution.variables)
 
-        # Compute U, Ueff, pb for each queue
+        # Compute U, occupancy, Ueff, pb for each queue
         for i in range(M):
-            total_u = 0.0
+            occupancy = 0.0
             total_e = 0.0
             for m in range(MR):
                 for ki in range(K[i]):
                     for ni in range(1, F[i] + 1):
                         p2_val = variables.get(f'p2_{i}_{ni}_{ki}_{i}_{ni}_{ki}_{m}', 0.0)
-                        total_u += p2_val
-                    e_val = variables.get(f'e_{i}_{ki}', 0.0)
-                    total_e += e_val
-            variables[f'U_{i + 1}'] = total_u
+                        occupancy += p2_val
+            # e is indexed by (i, ki) alone, so it must NOT be summed inside the
+            # configuration loop: doing so multiplied it by MR.
+            for ki in range(K[i]):
+                total_e += variables.get(f'e_{i}_{ki}', 0.0)
+            # U is read from the SAME quantity the objective optimises, so the
+            # objective queue's entry is a genuine bound.
+            variables[f'U_{i + 1}'] = total_e
+            # P(n_i >= 1) over every configuration, blocked included. This is
+            # what U used to hold; kept because it is the quantity the QRF
+            # papers report, but it is no longer what U means.
+            variables[f'occupancy_{i + 1}'] = occupancy
             variables[f'Ueff_{i + 1}'] = total_e
-            variables[f'pb_{i + 1}'] = total_u - total_e
+            variables[f'pb_{i + 1}'] = occupancy - total_e
 
         return MapqnSolution(
             objective_value=obj_value,

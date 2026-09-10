@@ -1,0 +1,196 @@
+{
+  "class": {
+    "FLD": "deterministic",
+    "MVA": "deterministic",
+    "SSA": "stochastic"
+  },
+  "example": "cache_replc_rr",
+  "solvers": {
+    "FLD": [
+      {
+        "ArvR": 0.0,
+        "JobClass": "InitClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 2.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 2.0,
+        "JobClass": "InitClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Cache",
+        "Tput": 0.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "HitClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Cache",
+        "Tput": 1.1246,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "MissClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Cache",
+        "Tput": 0.87542,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 1.1246,
+        "JobClass": "HitClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Sink",
+        "Tput": 0.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.87542,
+        "JobClass": "MissClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Sink",
+        "Tput": 0.0,
+        "Util": 0.0
+      }
+    ],
+    "MVA": [
+      {
+        "ArvR": 0.0,
+        "JobClass": "InitClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 2.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 2.0,
+        "JobClass": "InitClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Cache",
+        "Tput": 0.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "HitClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Cache",
+        "Tput": 1.1127,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "MissClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Cache",
+        "Tput": 0.8873,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 1.1127,
+        "JobClass": "HitClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Sink",
+        "Tput": 0.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.8873,
+        "JobClass": "MissClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Sink",
+        "Tput": 0.0,
+        "Util": 0.0
+      }
+    ],
+    "SSA": [
+      {
+        "ArvR": 0.0,
+        "JobClass": "InitClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 2.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 2.0,
+        "JobClass": "InitClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Cache",
+        "Tput": 0.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "HitClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Cache",
+        "Tput": 1.1695,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "MissClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Cache",
+        "Tput": 0.83053,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 1.1695,
+        "JobClass": "HitClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Sink",
+        "Tput": 0.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.83053,
+        "JobClass": "MissClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Sink",
+        "Tput": 0.0,
+        "Util": 0.0
+      }
+    ]
+  }
+}

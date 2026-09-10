@@ -11,6 +11,7 @@ Port from:
 """
 
 import numpy as np
+import scipy.sparse as sp
 from typing import Optional, Dict, Any, Tuple, List, NamedTuple
 from dataclasses import dataclass
 
@@ -538,6 +539,173 @@ def sn_set_routing(
 # Refresh functions - recompute derived quantities
 # ============================================================================
 
+def _sn_has_server_types(sn: NetworkStruct, ist: int) -> bool:
+    """True when the station declares heterogeneous server types, whose rates live in nodeparam."""
+    param = None
+    if getattr(sn, 'nodeparam', None) is not None:
+        ind = int(sn.stationToNode[ist])
+        try:
+            param = sn.nodeparam[ind]
+        except (KeyError, IndexError, TypeError):
+            param = None
+    if param is None:
+        return False
+    n = param.get('nservertypes', 0) if isinstance(param, dict) else getattr(param, 'nservertypes', 0)
+    return bool(n) and int(n) > 0
+
+
+def _csr_fill_nan_rows(P: sp.csr_matrix) -> None:
+    """
+    Replace NaN routing entries with equal probabilities, in place, on CSR data.
+
+    Sparse twin of the MATLAB per-row NaN fill in sn_refresh_visits.m: a Cache
+    leaves its hit/miss routing NaN until the cache itself is solved, so the
+    probability mass the row is missing is spread equally over its NaN entries.
+    Structural zeros are never NaN, so only the stored entries need scanning.
+    """
+    if not np.isnan(P.data).any():
+        return
+    for row in range(P.shape[0]):
+        s, e = P.indptr[row], P.indptr[row + 1]
+        row_data = P.data[s:e]
+        nan_mask = np.isnan(row_data)
+        n_nan = int(nan_mask.sum())
+        if n_nan == 0:
+            continue
+        non_nan_sum = row_data[~nan_mask].sum()
+        remaining_prob = max(0.0, 1.0 - non_nan_sum)
+        row_data[nan_mask] = remaining_prob / n_nan if remaining_prob > 0 else 0.0
+    P.eliminate_zeros()
+
+
+def _csr_normalize_rows(P: sp.csr_matrix, tol: float) -> np.ndarray:
+    """
+    Scale each row of a CSR matrix by its own sum, in place, and return the sums.
+
+    Fork nodes route to every branch with probability 1, so their rows sum above
+    1 and the chain is not stochastic; the original sums are returned so the
+    caller can detect the fork rows and correct the visit ratios afterwards.
+    """
+    row_sums = np.asarray(P.sum(axis=1)).ravel()
+    for row in range(P.shape[0]):
+        rs = row_sums[row]
+        if rs > tol:
+            s, e = P.indptr[row], P.indptr[row + 1]
+            P.data[s:e] /= rs
+    return row_sums
+
+
+def _csr_threshold_mask(P: sp.csr_matrix, tol: float) -> sp.csr_matrix:
+    """
+    Return the sparsity pattern of the entries of P that exceed tol.
+
+    Sparse twin of the dense `P > tol`, which scipy rejects as inefficient for a
+    nonzero scalar; structural zeros never exceed a positive tol, so only the
+    stored entries need testing.
+    """
+    mask = P.copy()
+    mask.data = (mask.data > tol).astype(np.int8)
+    mask.eliminate_zeros()
+    return mask
+
+
+def sn_refresh_cacheqn_visits(sn: NetworkStruct) -> None:
+    """
+    Relabel every Cache node's self-switch with the split standing on the node,
+    then refresh the visits derived from it.
+
+    RESTORING THE HIT/MISS SPLIT IS NOT ENOUGH, BECAUSE THE VISITS ARE DERIVED
+    FROM IT. `link()` lays down a uniform hit/miss split before any cache has
+    been analyzed; a solver that writes `actualhitprob` back onto the node
+    without this step leaves `rtnodes` -- and so `nodevisits` -- carrying that
+    guess, and the node-level ResidT is then RespT times the wrong visit. Every
+    MATLAB solver that writes a hit probability follows it with `refreshChains`
+    for this reason, and the native analyzers relabel and call
+    `sn_refresh_visits` inline (`solver_nc_cacheqn_analyzer`).
+
+    Intended for the delegating bridges (`lang='java'`, `lang='cpp'`), which
+    take the split from a foreign engine and must reproduce that refresh here.
+    A cache whose node carries no split is left alone rather than zeroed: absent
+    means the engine reported none, and the offered routing is then all there is.
+
+    Args:
+        sn: NetworkStruct object (modified in place)
+    """
+    if sn.rtnodes is None or sn.nodeparam is None:
+        return
+
+    from ..mc.dtmc import dtmc_stochcomp
+
+    K = int(sn.nclasses)
+    I = int(sn.nnodes)
+    touched = False
+
+    for ind in range(I):
+        if sn.nodetype is None or ind >= len(sn.nodetype) or sn.nodetype[ind] != NodeType.CACHE:
+            continue
+        cp = (sn.nodeparam.get(ind) if isinstance(sn.nodeparam, dict)
+              else (sn.nodeparam[ind] if ind < len(sn.nodeparam) else None))
+        if cp is None:
+            continue
+        hitprob = getattr(cp, 'actualhitprob', None)
+        missprob = getattr(cp, 'actualmissprob', None)
+        if hitprob is None or missprob is None:
+            continue
+        # A retrieval system routes the read class into its retrieval classes as
+        # well, so a two-way hit/miss rewrite of that row would DELETE them; its
+        # own analyzer (da_cacheqn_retrieval) owns that routing. Test for a class
+        # actually declared, NOT for the array's size: `retrieval_classes` is an
+        # (items x classes) block of -1 sentinels on every ordinary cache, so a
+        # size test skips every model and the refresh never runs at all.
+        rc = getattr(cp, 'retrieval_classes', None)
+        if rc is not None and np.any(np.asarray(rc) >= 0):
+            continue
+        hitprob = np.atleast_1d(hitprob).flatten()
+        missprob = np.atleast_1d(missprob).flatten()
+        # A delayed hit is a hit that waited: it leaves by the hit class, so the
+        # branch probability is the sum. SolverMVA's retrieval analyzer splits
+        # the same way when it writes the node.
+        delayed = getattr(cp, 'actualdelayedhitprob', None)
+        if delayed is not None:
+            delayed = np.atleast_1d(delayed).flatten()
+        hitclass = np.atleast_1d(getattr(cp, 'hitclass', [])).flatten().astype(int)
+        missclass = np.atleast_1d(getattr(cp, 'missclass', [])).flatten().astype(int)
+
+        for r in range(K):
+            if r >= len(hitclass) or hitclass[r] < 0:
+                continue
+            if r >= len(hitprob) or not np.isfinite(hitprob[r]):
+                continue
+            ph = float(hitprob[r])
+            if delayed is not None and r < len(delayed) and np.isfinite(delayed[r]):
+                ph += float(delayed[r])
+            pm = float(missprob[r]) if r < len(missprob) and np.isfinite(missprob[r]) else 1.0 - ph
+            sn.rtnodes[ind * K + r, :] = 0
+            for jnd in range(I):
+                if sn.connmatrix is None or ind >= sn.connmatrix.shape[0] \
+                        or jnd >= sn.connmatrix.shape[1] or not sn.connmatrix[ind, jnd]:
+                    continue
+                hc = hitclass[r]
+                mc = missclass[r] if r < len(missclass) else -1
+                if 0 <= hc < K:
+                    sn.rtnodes[ind * K + r, jnd * K + hc] = ph
+                if 0 <= mc < K:
+                    sn.rtnodes[ind * K + r, jnd * K + mc] = pm
+            touched = True
+
+    if not touched:
+        return
+
+    stateful_nodes = [i for i in range(I)
+                      if sn.isstateful is None or (i < len(sn.isstateful) and sn.isstateful[i])]
+    idx = np.array([ind * K + k for ind in stateful_nodes for k in range(K)], dtype=int)
+    new_rt = dtmc_stochcomp(sn.rtnodes, idx)
+    sn.rt = new_rt
+    if getattr(sn, 'rt_visits', None) is not None:
+        sn.rt_visits = new_rt.copy()
+    sn_refresh_visits(sn)
+
+
 def sn_refresh_visits(sn: NetworkStruct) -> None:
     """
     Refresh visit ratios from routing matrix.
@@ -565,6 +733,11 @@ def sn_refresh_visits(sn: NetworkStruct) -> None:
     rt_for_visits = getattr(sn, 'rt_visits', None)
     if rt_for_visits is None:
         rt_for_visits = sn.rt
+
+    # the per-chain routing matrices are slices of these, so sparsify once here
+    # and keep sparse storage all the way to the DTMC solve
+    rt_sparse = sp.csr_matrix(rt_for_visits)
+    rtnodes_sparse = sp.csr_matrix(sn.rtnodes) if sn.rtnodes is not None else None
 
     # Initialize visits and nodevisits dictionaries
     sn.visits = {}
@@ -629,34 +802,56 @@ def sn_refresh_visits(sn: NetworkStruct) -> None:
             # Handle bounds checking
             cols = cols[cols < rt_for_visits.shape[1]]
 
-        Pchain = rt_for_visits[np.ix_(cols, cols)] if len(cols) > 0 else np.eye(len(cols))
+        if len(cols) > 0:
+            Pchain = sp.csr_matrix(rt_sparse[cols, :][:, cols])
+        else:
+            Pchain = sp.csr_matrix((0, 0))
 
         # Match MATLAB sn_refresh_visits: replace NaN routing entries before DTMC solve.
-        for row in range(Pchain.shape[0]):
-            nan_cols = np.isnan(Pchain[row, :])
-            if np.any(nan_cols):
-                non_nan_sum = np.nansum(Pchain[row, ~nan_cols])
-                remaining_prob = max(0.0, 1.0 - non_nan_sum)
-                n_nan = np.sum(nan_cols)
-                if n_nan > 0 and remaining_prob > 0:
-                    Pchain[row, nan_cols] = remaining_prob / n_nan
-                else:
-                    Pchain[row, nan_cols] = 0.0
+        _csr_fill_nan_rows(Pchain)
 
-        visited = np.sum(Pchain, axis=1) > FINE_TOL
+        # the routing matrix carries a JMT-oriented uniform fill on DISABLED (node,class) pairs;
+        # a class with no service at a station cannot be there -- see _kb/06-solver-catalog.md
+        served = np.ones(Pchain.shape[0])
+        # ABSENT IS THE EMPTY ARRAY HERE, NOT None: every index map on
+        # NetworkStruct defaults to np.array([]), so an `is not None` test is
+        # always true and the -1 fallback below was unreachable. A struct built
+        # without rates has no disabled (station,class) pair to drop.
+        if sn.rates is not None and np.size(sn.rates) > 0:
+            stf2st = sn.statefulToStation
+            have_stf2st = stf2st is not None and np.size(stf2st) > 0
+            for ist in range(M):
+                sti = int(stf2st[ist]) if (have_stf2st and ist < np.size(stf2st)) else -1
+                if sti < 0 or sti >= sn.nstations:
+                    continue
+                # a Place, and a station declaring server types, carry NaN station rates by construction
+                ntype = sn.nodetype[int(sn.stationToNode[sti])]
+                if ntype in (NodeType.PLACE, NodeType.TRANSITION):
+                    continue
+                if _sn_has_server_types(sn, sti):
+                    continue
+                for ik_idx, ik in enumerate(classes_in_chain):
+                    if not np.isnan(sn.rates[sti, int(ik)]):
+                        continue
+                    idx = ist * nIC + ik_idx
+                    if idx < served.shape[0]:
+                        served[idx] = 0.0
+        if served.size and not served.all():
+            D = sp.diags(served)
+            Pchain = sp.csr_matrix(D @ Pchain @ D)
+            Pchain.eliminate_zeros()
+
+        visited = np.asarray(Pchain.sum(axis=1)).ravel() > 0
 
         # see _kb/03-api-layer.md for rationale
         row_sums = np.ones(Pchain.shape[0])
         if any(nt == NodeType.FORK for nt in sn.nodetype):
-            for row in range(Pchain.shape[0]):
-                rs = np.sum(Pchain[row, :])
-                row_sums[row] = rs
-                if rs > FINE_TOL:
-                    Pchain[row, :] = Pchain[row, :] / rs
+            row_sums = _csr_normalize_rows(Pchain, FINE_TOL)
 
         # Solve traffic equations using DTMC
         if np.sum(visited) > 0:
-            Pchain_visited = Pchain[np.ix_(np.where(visited)[0], np.where(visited)[0])]
+            vidx = np.where(visited)[0]
+            Pchain_visited = Pchain[vidx, :][:, vidx]
 
             # see _kb/03-api-layer.md for rationale
             try:
@@ -715,35 +910,59 @@ def sn_refresh_visits(sn: NetworkStruct) -> None:
             if np.any(nodes_cols >= sn.rtnodes.shape[1]):
                 nodes_cols = nodes_cols[nodes_cols < sn.rtnodes.shape[1]]
 
-            nodes_Pchain = sn.rtnodes[np.ix_(nodes_cols, nodes_cols)] if len(nodes_cols) > 0 else np.eye(len(nodes_cols))
+            if len(nodes_cols) > 0:
+                nodes_Pchain = sp.csr_matrix(rtnodes_sparse[nodes_cols, :][:, nodes_cols])
+            else:
+                nodes_Pchain = sp.csr_matrix((0, 0))
 
             # see _kb/03-api-layer.md for rationale
-            for row in range(nodes_Pchain.shape[0]):
-                nan_cols = np.isnan(nodes_Pchain[row, :])
-                if np.any(nan_cols):
-                    non_nan_sum = np.nansum(nodes_Pchain[row, ~nan_cols])
-                    remaining_prob = max(0.0, 1.0 - non_nan_sum)
-                    n_nan = np.sum(nan_cols)
-                    if n_nan > 0 and remaining_prob > 0:
-                        nodes_Pchain[row, nan_cols] = remaining_prob / n_nan
-                    else:
-                        nodes_Pchain[row, nan_cols] = 0.0
+            _csr_fill_nan_rows(nodes_Pchain)
 
-            nodes_visited = np.sum(nodes_Pchain, axis=1) > FINE_TOL
+            # THE SAME DISABLED-PAIR MASK THE STATION BLOCK APPLIES ABOVE, and it
+            # matters more here: at station level a (station,class) the class
+            # cannot be served at is a dead end, while the node kernel keeps the
+            # class-switch nodes between the stations, so the disabled states
+            # close into a whole spurious CYCLE. A materialised LQN replica is
+            # exactly that -- replica 2's stations still carry replica 1's classes
+            # in rtnodes -- and dtmc_solve_reducible then splits the mass between
+            # the real chain and the phantom one, giving every node of replica 2
+            # a visit in replica 1's classes. See _kb/03-api-layer.md.
+            nodes_served = np.ones(nodes_Pchain.shape[0])
+            if sn.rates is not None and np.size(sn.rates) > 0:
+                nd2st = sn.nodeToStation
+                have_nd2st = nd2st is not None and np.size(nd2st) > 0
+                for ind in range(N):
+                    sti = int(nd2st[ind]) if (have_nd2st and ind < np.size(nd2st)) else -1
+                    if sti < 0 or sti >= sn.nstations:
+                        continue
+                    # a Place, and a station declaring server types, carry NaN station rates by construction
+                    if sn.nodetype[ind] in (NodeType.PLACE, NodeType.TRANSITION):
+                        continue
+                    if _sn_has_server_types(sn, sti):
+                        continue
+                    for ik_idx, ik in enumerate(classes_in_chain):
+                        if not np.isnan(sn.rates[sti, int(ik)]):
+                            continue
+                        idx = ind * nIC + ik_idx
+                        if idx < nodes_served.shape[0]:
+                            nodes_served[idx] = 0.0
+            if nodes_served.size and not nodes_served.all():
+                nodes_D = sp.diags(nodes_served)
+                nodes_Pchain = sp.csr_matrix(nodes_D @ nodes_Pchain @ nodes_D)
+                nodes_Pchain.eliminate_zeros()
+
+            nodes_visited = np.asarray(nodes_Pchain.sum(axis=1)).ravel() > 0
 
             # Normalize for Fork nodes
             # Record original row sums to correct visit ratios after DTMC solve.
             nodes_row_sums = np.ones(nodes_Pchain.shape[0])
             if any(nt == NodeType.FORK for nt in sn.nodetype):
-                for row in range(nodes_Pchain.shape[0]):
-                    rs = np.sum(nodes_Pchain[row, :])
-                    nodes_row_sums[row] = rs
-                    if rs > FINE_TOL:
-                        nodes_Pchain[row, :] = nodes_Pchain[row, :] / rs
+                nodes_row_sums = _csr_normalize_rows(nodes_Pchain, FINE_TOL)
 
             # Solve traffic equations
             if np.sum(nodes_visited) > 0:
-                nodes_Pchain_visited = nodes_Pchain[np.ix_(np.where(nodes_visited)[0], np.where(nodes_visited)[0])]
+                nvidx = np.where(nodes_visited)[0]
+                nodes_Pchain_visited = nodes_Pchain[nvidx, :][:, nvidx]
 
                 # see _kb/03-api-layer.md for rationale
                 try:
@@ -980,7 +1199,8 @@ def sn_nonmarkov_toph(
         ProcessType.COXIAN, ProcessType.COX2, ProcessType.MMPP2,
         ProcessType.IMMEDIATE, ProcessType.DISABLED,
         # see _kb/03-api-layer.md for rationale
-        ProcessType.NHPP
+        ProcessType.NHPP,
+        ProcessType.MAPT, ProcessType.PHT
     }
 
     M = sn.nstations
@@ -1043,29 +1263,37 @@ def sn_nonmarkov_toph(
             # Define PDF function based on distribution type
             pdf_func = None
 
+            # Set only by the families with a closed-form tail, and read only by
+            # the long-tail fit below.
+            ccdf_func = None
+
             if proc_type == ProcessType.GAMMA:
                 if orig_proc is not None and len(orig_proc) >= 2:
                     shape = orig_proc[0]
                     scale = orig_proc[1]
                     pdf_func = lambda x, s=shape, sc=scale: stats.gamma.pdf(x, a=s, scale=sc)
+                    ccdf_func = lambda x, s=shape, sc=scale: float(stats.gamma.sf(x, a=s, scale=sc))
 
             elif proc_type == ProcessType.WEIBULL:
                 if orig_proc is not None and len(orig_proc) >= 2:
                     shape_param = orig_proc[0]  # r
                     scale_param = orig_proc[1]  # alpha
                     pdf_func = lambda x, c=shape_param, sc=scale_param: stats.weibull_min.pdf(x, c=c, scale=sc)
+                    ccdf_func = lambda x, c=shape_param, sc=scale_param: float(stats.weibull_min.sf(x, c=c, scale=sc))
 
             elif proc_type == ProcessType.LOGNORMAL:
                 if orig_proc is not None and len(orig_proc) >= 2:
                     mu = orig_proc[0]
                     sigma = orig_proc[1]
                     pdf_func = lambda x, m=mu, s=sigma: stats.lognorm.pdf(x, s=s, scale=np.exp(m))
+                    ccdf_func = lambda x, m=mu, s=sigma: float(stats.lognorm.sf(x, s=s, scale=np.exp(m)))
 
             elif proc_type == ProcessType.PARETO:
                 if orig_proc is not None and len(orig_proc) >= 2:
                     shape_param = orig_proc[0]  # alpha
                     scale_param = orig_proc[1]  # k (minimum value)
                     pdf_func = lambda x, a=shape_param, sc=scale_param: stats.pareto.pdf(x, b=a, scale=sc)
+                    ccdf_func = lambda x, a=shape_param, sc=scale_param: float(stats.pareto.sf(x, b=a, scale=sc))
 
             elif proc_type == ProcessType.UNIFORM:
                 if orig_proc is not None and len(orig_proc) >= 2:
@@ -1087,6 +1315,18 @@ def sn_nonmarkov_toph(
             # mean queue length while the two-moment ME lands on it. The Bernstein
             # path is kept for phfit='ph', where it carries shape information that
             # a two-moment fit cannot, and for the solvers that need a phase-type.
+            # The long-tail fit, when it was asked for and the law has a tail to
+            # fit. It matches the ccdf at points spread over decades rather than
+            # matching two moments, so it is the route for a Pareto, a Weibull
+            # with shape below one or a Lognormal with a large sigma; a
+            # light-tailed law has nothing for it to do and falls through to the
+            # fits below.
+            if phfit == 'hyperexp' and ccdf_func is not None:
+                MAP_lt, n_lt = _fit_long_tail_surrogate(ccdf_func, target_mean)
+                if MAP_lt is not None:
+                    sn = _update_sn_for_map(sn, ist, r, MAP_lt, n_lt)
+                    continue
+
             target_scv = float(sn.scv[ist, r]) if sn.scv is not None else 1.0
             if phfit == 'cme' and 0.0 <= target_scv < 1.0:
                 MAP, actual_me = _fit_concentrated_surrogate(
@@ -1100,7 +1340,7 @@ def sn_nonmarkov_toph(
                 # Rescale to the target mean: map_scale multiplies the rates
                 # by factor, dividing the mean by factor.
                 cur_mean = map_mean(MAP[0], MAP[1])
-                MAP = map_scale(MAP[0], MAP[1], cur_mean / target_mean)
+                MAP = map_scale(MAP[0], MAP[1], target_mean)
             else:
                 # Generic fallback: same concentrated surrogate as the Det branch,
                 # targeting the SCV recorded in sn.
@@ -1162,7 +1402,7 @@ def sn_nonmarkov_toph(
                         pdf_func = lambda x, _d=dist: float(_d.evalPDF(x))
                         MAP = map_bernstein(pdf_func, n_phases)
                         cur_mean = map_mean(MAP[0], MAP[1])
-                        MAP = map_scale(MAP[0], MAP[1], cur_mean / target_mean)
+                        MAP = map_scale(MAP[0], MAP[1], target_mean)
                     else:
                         MAP = map_erlang(target_mean, n_phases)
 
@@ -1192,6 +1432,33 @@ def sn_nonmarkov_toph(
 
     return sn
 
+
+
+def _fit_long_tail_surrogate(ccdf_func, target_mean):
+    """
+    A hyperexponential fitted to the ccdf across decades (Feldmann and Whitt
+    1998), returned as its MAP pair and rescaled to the mean the struct carries.
+
+    ``(None, 0)`` when the recursion declines the law: the components have to
+    dominate one another at their own time scales, which a light-tailed law does
+    not provide, and answering with a fit that does not hold is worse than
+    falling through to the two-moment surrogate.
+    """
+    from ..mam.hyperexp_longtail import hyperexp_fit_longtail
+    from ..mam import map_scale
+    try:
+        fit = hyperexp_fit_longtail(ccdf_func)
+    except Exception:
+        return None, 0
+    p = np.asarray(fit['p'], dtype=float).ravel()
+    lam = np.asarray(fit['lambda'], dtype=float).ravel()
+    if p.size == 0 or not np.all(np.isfinite(lam)) or np.any(lam <= 0):
+        return None, 0
+    n = p.size
+    D0 = -np.diag(lam)
+    D1 = np.diag(lam) @ np.tile(p, (n, 1))
+    MAP = map_scale(D0, D1, target_mean)
+    return MAP, n
 
 
 def _fit_concentrated_surrogate(target_mean, target_scv, n_phases, phfit):
@@ -1338,6 +1605,49 @@ def _update_sn_for_map(
     return sn
 
 
+def zero_source_metrics(QN, UN, sn):
+    """
+    Zero the queue length and utilization of every Source station.
+
+    A Source holds no jobs and occupies no server, so both are zero BY
+    DISCIPLINE rather than by sign. Applied to the stored result, not to the
+    table, so a caller reading the solver's own arrays sees the same thing the
+    table does. Solvers otherwise leave arbitrary values in that row (measured
+    on an open M/M/1: NC U=1, MAM Q=1, CTMC Q=Inf), which the table layer only
+    ever suppressed incidentally, through a threshold on RESPONSE TIME.
+
+    Args:
+        QN: (nstations, nclasses) queue-length matrix, or None.
+        UN: (nstations, nclasses) utilization matrix, or None.
+        sn: NetworkStruct providing nodetype and nodeToStation.
+
+    Returns:
+        Tuple ``(QN, UN)``. Both are copied, not mutated.
+    """
+    if sn is None:
+        return QN, UN
+    nodetype = getattr(sn, 'nodetype', None)
+    node_to_station = getattr(sn, 'nodeToStation', None)
+    if nodetype is None or node_to_station is None:
+        return QN, UN
+    nodetype = np.asarray(nodetype).flatten()
+    node_to_station = np.asarray(node_to_station).flatten()
+    src = [int(node_to_station[i]) for i in range(min(len(nodetype), len(node_to_station)))
+           if nodetype[i] == NodeType.SOURCE and node_to_station[i] >= 0]
+    if not src:
+        return QN, UN
+    out = []
+    for M in (QN, UN):
+        if M is None:
+            out.append(M)
+            continue
+        M = np.array(M, dtype=float, copy=True)
+        if M.ndim == 2:
+            M[[i for i in src if i < M.shape[0]], :] = 0.0
+        out.append(M)
+    return out[0], out[1]
+
+
 def cap_unstable_open_util(UN, TN, sn):
     """
     Cap the reported utilization of unstable open queueing stations at 1.0.
@@ -1372,6 +1682,19 @@ def cap_unstable_open_util(UN, TN, sn):
     return UN, any_unstable
 
 
+def _station_reneges(sn, i) -> bool:
+    """Whether any class at station ``i`` declares reneging, i.e. a waiting job
+    may abandon. Such a station has a bounded queue at every offered load."""
+    cls = getattr(sn, 'impatienceClass', None)
+    if cls is None:
+        return False
+    arr = np.asarray(cls)
+    if arr.ndim != 2 or i >= arr.shape[0]:
+        return False
+    from ...lang.base import ImpatienceType
+    return bool(np.any(arr[i, :] == int(ImpatienceType.RENEGING)))
+
+
 def _unstable_open_stations(TN, sn):
     """Yield ``(i, rho, rho_tot, open_cls)`` for every finite-server queueing
     station i whose offered load from open classes is >= 1 (saturated).
@@ -1400,12 +1723,33 @@ def _unstable_open_stations(TN, sn):
             sched_name = None
         if sched_name in ('INF', 'EXT'):
             continue  # delay (INF) or source (EXT) station
+        # A STATION CUSTOMERS ABANDON CANNOT BE UNSTABLE, however heavily it is
+        # offered: reneging bounds the queue, the excess leaving instead of
+        # accumulating. rho = T/(c*rate) reaches exactly 1 there -- that is what
+        # a saturated server WITH abandonment looks like -- so without this the
+        # Erlang A queue length that qsys_erlanga and qsys_ggisgi_fluid compute
+        # exactly would be overwritten with Inf.
+        if _station_reneges(sn, i):
+            continue
+        # A load-dependent station serves faster than its nominal rate; without
+        # the peak scaling the test reads the rate at population one and calls a
+        # stable station saturated (e.g. the discrete-time p(n)=p*min(n,s)
+        # server of Daduna's example 2.10).
+        lldpeak = 1.0
+        lld = getattr(sn, 'lldscaling', None)
+        if lld is not None and np.size(lld) > 0:
+            arr = np.asarray(lld, dtype=float)
+            if arr.ndim == 2 and arr.shape[0] > i:
+                row = arr[i, :]
+                row = row[np.isfinite(row) & (row > 0)]
+                if row.size > 0:
+                    lldpeak = float(row.max())
         rho = np.zeros(K)
         has_open = False
         for r in range(K):
             if (i < rates.shape[0] and r < rates.shape[1]
                     and rates[i, r] > 0 and TN[i, r] > 0):
-                rho[r] = TN[i, r] / (c * rates[i, r])
+                rho[r] = TN[i, r] / (c * lldpeak * rates[i, r])
                 if open_cls[r]:
                     has_open = True
         rho_open = float(rho[open_cls].sum())
@@ -1419,12 +1763,15 @@ def saturate_unstable_open_metrics(QN, RN, TN, sn):
     Sanitize per-station metrics at unstable (saturated) open stations.
 
     Analytical open-queue formulas diverge when the offered load rho >= 1:
-    fixed-point algorithms can leave overflow-scale garbage in QN/RN and report
-    the raw arrival rate as throughput. At every saturated station the open
-    classes have unbounded queue length and response time (reported Inf), and
-    the departure rate is limited by the service capacity ``nservers*rate``,
-    so open-class throughputs are rescaled to sum to the capacity share left
-    by the closed classes.
+    fixed-point algorithms leave overflow-scale garbage in QN/RN. At every
+    saturated station the open classes have unbounded queue length and response
+    time, reported Inf.
+
+    THROUGHPUT IS LEFT AS THE ANALYZER COMPUTED IT, i.e. the offered rate, which
+    is what getAvg.m and the JAR both report (measured on
+    test_gallery_hyperl1_feedback: Tput 10, not the service capacity 2). Rescaling
+    it to the capacity was a python-only rule and made the station's Tput and
+    ArvR describe two different flows.
 
     Args:
         QN, RN, TN: (nstations, nclasses) metric matrices (copied, not mutated).
@@ -1442,20 +1789,60 @@ def saturate_unstable_open_metrics(QN, RN, TN, sn):
     any_unstable = False
     for i, rho, _, open_cls in _unstable_open_stations(TN, sn):
         any_unstable = True
-        rho_open = float(rho[open_cls].sum())
-        rho_closed = float(rho[~open_cls].sum())
         # Open classes saturate the station: unbounded backlog.
         for r in range(QN.shape[1]):
             if open_cls[r] and rho[r] > 0:
                 QN[i, r] = np.inf
                 if RN.shape == QN.shape:
                     RN[i, r] = np.inf
-        # Departures cannot exceed the service capacity: rescale open-class
-        # throughput so the station total offered load equals 1.
-        capacity_share = max(0.0, 1.0 - rho_closed)
-        if rho_open > capacity_share and rho_open > 0:
-            factor = capacity_share / rho_open
-            for r in range(TN.shape[1]):
-                if open_cls[r]:
-                    TN[i, r] *= factor
     return QN, RN, TN, any_unstable
+
+
+def sn_rt_stations(sn: NetworkStruct):
+    """Station-to-station routing probabilities and per-station visits.
+
+    ``sn.rt`` and ``sn.visits`` are indexed by STATEFUL node, so a solver that
+    writes traffic equations over stations and indexes them by station index
+    silently reads the wrong rows as soon as the model owns a stateful node
+    that is not a station (Router, Cache, stateful class switch). The returned
+    routing matrix absorbs those nodes,
+
+        Pst = P_AA + P_AB * (I - P_BB)^-1 * P_BA,
+
+    with A the station rows in station order and B the remaining stateful rows,
+    which is exact because a non-station stateful node holds no jobs: it passes
+    every arrival on instantaneously. When every stateful node is a station the
+    result is ``sn.rt`` unchanged.
+
+    Args:
+        sn: NetworkStruct
+
+    Returns:
+        Tuple ``(rt_stations, visits_stations)`` of shapes (M*K, M*K) and (M, K).
+    """
+    K = int(sn.nclasses)
+    M = int(sn.nstations)
+    S = int(sn.nstateful)
+    stationToStateful = np.asarray(sn.stationToStateful).ravel().astype(int)
+
+    is_st = np.zeros(S, dtype=bool)
+    is_st[stationToStateful] = True
+
+    A = np.concatenate([stationToStateful[ist] * K + np.arange(K) for ist in range(M)]) \
+        if M > 0 else np.zeros(0, dtype=int)
+    B = np.concatenate([isf * K + np.arange(K) for isf in range(S) if not is_st[isf]]) \
+        if S > int(is_st.sum()) else np.zeros(0, dtype=int)
+
+    P = np.asarray(sn.rt, dtype=float)
+    if B.size == 0:
+        rtst = P[np.ix_(A, A)]
+    else:
+        rtst = P[np.ix_(A, A)] + P[np.ix_(A, B)] @ np.linalg.solve(
+            np.eye(B.size) - P[np.ix_(B, B)], P[np.ix_(B, A)])
+
+    Vall = np.zeros((S, K))
+    if sn.visits:
+        for c in sn.visits:
+            Vall = Vall + np.asarray(sn.visits[c], dtype=float).reshape(S, K)
+    Vst = Vall[stationToStateful, :]
+    return rtst, Vst

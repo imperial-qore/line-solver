@@ -107,6 +107,29 @@ public final class iltcme {
      * @param method      "cme" (default), "euler", or "gaver"
      * @return array of f(t) values
      */
+    /**
+     * The evaluation budget used when a caller does not name one.
+     *
+     * 41 is the EULER optimum in double precision, and harmless for the other
+     * two methods. Euler's weights carry 10^((n-1)/6) against an ALTERNATING
+     * sum, so accuracy is a race between the series converging and the
+     * cancellation eating the mantissa: on F(s) = 2/(s+2), whose inverse is
+     * 2*exp(-2t), the worst relative error over t in {0.1, 0.5, 1, 2} is 4.4e-3
+     * at 11, 1.6e-10 at 41, 4.7e-8 at 51 and 1.4e+0 at 99 -- where the scale
+     * reaches 2.2e16, past what a double resolves, and the answer goes NEGATIVE.
+     */
+    public static final int DEFAULT_MAX_FN_EVALS = 41;
+
+    /** ilt with the default budget and the default "cme" method. */
+    public static double[] ilt(UnaryOperator<Complex> fun, double[] T) {
+        return ilt(fun, T, DEFAULT_MAX_FN_EVALS, "cme");
+    }
+
+    /** ilt with the default budget. */
+    public static double[] ilt(UnaryOperator<Complex> fun, double[] T, String method) {
+        return ilt(fun, T, DEFAULT_MAX_FN_EVALS, method);
+    }
+
     public static double[] ilt(UnaryOperator<Complex> fun, double[] T, int maxFnEvals, String method) {
         Complex[][] weights = abateWhittWeights(maxFnEvals, method);
         Complex[] eta = weights[0];

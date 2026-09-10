@@ -7,6 +7,19 @@ T0=tic;
 if nargin<2
     options = self.getOptions;
 end
+
+% Chain mode: the generator is user-supplied, so there is no state space to
+% generate and no performance metric to derive, only the stationary vector.
+if self.isChainSolver()
+    [pi, infGen, stateSpace, runtime] = solver_ctmc_chain(self.chainModel, options);
+    self.result = struct();
+    self.result.('solver') = getName(self);
+    self.result.infGen = infGen;
+    self.result.space = stateSpace;
+    self.result.Prob.joint = pi;
+    self.result.runtime = runtime;
+    return
+end
 % Wall-clock time-budget launch marker (see options.timeout / lineTimeoutExceeded)
 options.timeout_tic = T0;
 % Session-level deadline for budget checkpoints in deep utilities that have no
@@ -23,11 +36,14 @@ if pyHandled
     return
 end
 
-% QRF (Quadratic/Linear Reduction) LP-based bounds moved to SolverBA.
-if startsWith(options.method, 'qrf')
-    line_error(mfilename, ['The QRF reduction bounds (method ''%s'') moved to SolverBA. ' ...
-        'Use SolverBA(model,''method'',''%s'') (or the ''qr''/''lr'' aliases).'], ...
-        options.method, options.method);
+% QRF (Quadratic/Linear Reduction) LP-based bounds moved to SolverBA. The text
+% lives in unsupportedMethodReason, which runAnalyzerChecks asks BEFORE it
+% reports an unlisted method, so a caller carrying an old options.method is
+% told where they went rather than only that the method is unsupported. Kept
+% here for the enableChecks=false path, which skips that gate entirely.
+moved = self.unsupportedMethodReason(options.method);
+if ~isempty(moved)
+    line_error(mfilename, moved);
 end
 
 if ~isinf(options.timespan(1)) && (options.timespan(1) == options.timespan(2))
@@ -36,7 +52,7 @@ if ~isinf(options.timespan(1)) && (options.timespan(1) == options.timespan(2))
 end
 
 
-self.runAnalyzerChecks(options);
+verboseGuard = self.runAnalyzerChecks(options); %#ok<NASGU> restores the caller verbosity on return
 % Finite Capacity Region: enforced in solver_ctmc.m by filtering the state space
 % to states within the aggregate per-region job/memory/linear caps (blocking-
 % before-entry). Per-station setCapacity is also honored.
@@ -61,19 +77,89 @@ end
 sn = getStruct(self);
 line_debug(options, 'CTMC: using lang=matlab');
 
+% Chain aggregation, opt-in through options.config.chain_aggregation. The
+% state space of a multiclass model grows with the per-class populations, so
+% collapsing every chain onto a single class is the standard way to make an
+% otherwise intractable model solvable; ModelAdapter.aggregateChains builds the
+% collapsed model and sn_deaggregate_chain_results maps its metrics back, both
+% of which existed with no solver consumer until this branch. The aggregation is
+% EXACT on a product-form model and an approximation otherwise, because one
+% aggregate service law replaces the per-class ones weighted by alpha.
+% Flow-equivalent server aggregation, opt-in through
+% options.config.fes_stations. ModelAdapter.aggregateFES collapses the named
+% station subset into one load-dependent station and the collapsed stations'
+% own metrics are recovered by conditioning on its population; see
+% ctmcFesAggregation. Exact when the subnetwork is product-form.
+if isfield(options.config,'fes_stations') && ~isempty(options.config.fes_stations)
+    [QN,UN,RN,TN,CN,XN] = ctmcFesAggregation(self, sn, options);
+    runtime = toc(T0);
+    T = getAvgTputHandles(self);
+    AN = sn_get_arvr_from_tput(sn, TN, T);
+    self.setAvgResults(QN,UN,RN,TN,AN,[],CN,XN,runtime,[options.method '/fes']);
+    return
+end
+
+if isfield(options.config,'chain_aggregation') && options.config.chain_aggregation ...
+        && sn.nchains < sn.nclasses
+    % Driven by @NetworkSolver/transformSolve, so the aggregate is solved by an
+    % instance of THIS solver rather than a hard-wired SolverCTMC. Clearing the
+    % flag states that the aggregate must not be re-aggregated, rather than
+    % relying on its nchains == nclasses guard to decline.
+    options.config.chain_aggregation = false;
+    options.config.transform = 'chains';
+    tr = transformSolve(self, options);
+    QN = tr.QN; UN = tr.UN; RN = tr.RN; TN = tr.TN; CN = tr.CN; XN = tr.XN;
+    runtime = toc(T0);
+    T = getAvgTputHandles(self);
+    AN = sn_get_arvr_from_tput(sn, TN, T);
+    self.setAvgResults(QN,UN,RN,TN,AN,[],CN,XN,runtime,[options.method '/chainaggr']);
+    return
+end
+
+% The 'mdd' method never builds the explicit generator, so it returns before
+% the state-space path below and leaves result.infGen/space empty by design.
+if strcmpi(options.method, 'mdd')
+    [QN,UN,RN,TN,CN,XN,mddinfo] = solver_ctmc_mdd_analyzer(sn, options, self.model);
+    runtime = toc(T0);
+    self.result.mdd = mddinfo;
+    T = getAvgTputHandles(self);
+    [TN,~,RN] = sn_pn_avg_rates(sn, QN, TN, [], RN);
+    AN = sn_get_arvr_from_tput(sn, TN, T);
+    self.setAvgResults(QN,UN,RN,TN,AN,[],CN,XN,runtime,options.method);
+    if lineTimeoutExceeded(options)
+        self.result.Avg.timedOut = true;
+    end
+    return
+end
+
+% Perfect sampling replaces enumeration: intercepted before the state space is
+% built, so the memory gate below never applies to it.
+if startsWith(lower(options.method), 'cftp')
+    line_debug(options, 'CTMC: using perfect sampling (%s), %d samples', options.method, options.samples);
+    [QN,UN,RN,TN,CN,XN,Xs,Ts,pAggr,SSq] = solver_ctmc_cftp(sn, options);
+    runtime = toc(T0);
+    self.result.space = SSq;
+    self.result.spaceAggr = SSq;
+    self.result.Prob.sampled = pAggr;
+    self.result.cftp.samples = Xs;
+    self.result.cftp.horizon = Ts;
+    T = getAvgTputHandles(self);
+    AN = sn_get_arvr_from_tput(sn, TN, T);
+    self.setAvgResults(QN,UN,RN,TN,AN,[],CN,XN,runtime,options.method);
+    return
+end
+
 % Native fork-join support: solve the tag-augmented copy exactly and fold
 % the auxiliary sibling classes back into the original classes at the end
 isFJ = any(sn.nodetype == NodeType.Fork) || any(sn.nodetype == NodeType.Join);
 if isFJ
-    if ~isinf(options.timespan(1))
-        line_error(mfilename,'Transient analysis of fork-join models is not supported by SolverCTMC.\n');
+    % same predicate supportsModelMethod asks, kept for enableChecks=false
+    [tranOk, tranWhy] = SolverCTMC.transientSupports(sn, options);
+    if ~tranOk
+        line_error(mfilename, tranWhy);
     end
-    sn_orig = sn;
-    Korig = sn.nclasses;
-    [~, fjsn, fjclassmap] = ModelAdapter.fjtag(self.model);
-    sn = fjsn;
+    [sn, fjctx] = solver_tr_fjtag_analyzer(self, 'expand', sn, options);
     options.config.state_space_gen = 'reachable';
-    line_debug(options, 'CTMC: fork-join tag augmentation, %d classes (%d auxiliary), %d fork firings', sn.nclasses, sn.nclasses-Korig, length(sn.fjsync));
 end
 
 % Convert non-Markovian distributions to PH
@@ -102,58 +188,7 @@ if any(isinf(sn.njobs))
 end
 
 % see _kb/06-solver-catalog.md (CTMC section, memory pre-gate) for rationale
-logNstates = 0;
-nkEff = zeros(1,K);
-for k = 1:K
-    if isinf(NK(k))
-        nk = options.cutoff;
-        if numel(nk) > 1; nk = max(nk(:)); end
-    else
-        nk = NK(k);
-    end
-    nkEff(k) = nk;
-    logNstates = logNstates + gammaln(1+nk+M-1) - gammaln(1+M-1) - gammaln(1+nk);
-end
-% see _kb/06-solver-catalog.md (CTMC section, memory pre-gate) for rationale
-if isfield(sn,'phasessz') && ~isempty(sn.phasessz)
-    shareSched = [SchedStrategy.INF, SchedStrategy.PS, SchedStrategy.DPS, ...
-        SchedStrategy.GPS, SchedStrategy.PSPRIO, SchedStrategy.DPSPRIO, ...
-        SchedStrategy.GPSPRIO, SchedStrategy.LPS];
-    for i = 1:min(M, size(sn.phasessz,1))
-        for k = 1:min(K, size(sn.phasessz,2))
-            p = sn.phasessz(i,k);
-            if ~isfinite(p) || p <= 1
-                continue
-            end
-            if sn.sched(i) == SchedStrategy.EXT
-                m = 1;
-            elseif any(sn.sched(i) == shareSched)
-                m = nkEff(k);
-            else
-                m = min(nkEff(k), sn.nservers(i));
-            end
-            if ~isfinite(m)
-                m = nkEff(k);
-            end
-            logNstates = logNstates + gammaln(1+m+p-1) - gammaln(1+p-1) - gammaln(1+m);
-        end
-    end
-end
-% Routing factor: each (node,class) doing RROBIN/WRROBIN adds a pointer over
-% that node's outgoing links.
-if isfield(sn,'routing') && ~isempty(sn.routing) && isfield(sn,'connmatrix') && ~isempty(sn.connmatrix)
-    for ind = 1:min(size(sn.routing,1), size(sn.connmatrix,1))
-        nout = nnz(sn.connmatrix(ind,:));
-        if nout <= 1
-            continue
-        end
-        nrr = sum(sn.routing(ind,:) == RoutingStrategy.RROBIN | ...
-                  sn.routing(ind,:) == RoutingStrategy.WRROBIN);
-        if nrr > 0
-            logNstates = logNstates + nrr * log(nout);
-        end
-    end
-end
+logNstates = ctmc_state_space_logsize(sn, options);
 forceFlag = isfield(options,'force') && ~isempty(options.force) && options.force;
 if isfield(options,'memorySafetyFraction') && ~isempty(options.memorySafetyFraction)
     safetyFraction = options.memorySafetyFraction;
@@ -180,7 +215,7 @@ if isinf(options.timespan(1))
             sn.state{isf} = s0{isf}(maxpos(s0prior{1}),:); % pick one particular initial state
         end
     end
-    [QN,UN,RN,TN,CN,XN,Q,SS,SSq,Dfilt,~,~,sn] = solver_ctmc_analyzer(sn, options);
+    [QN,UN,RN,TN,CN,XN,Q,SS,SSq,Dfilt,~,~,sn,DfiltAux,StartN,PreemptN] = solver_ctmc_analyzer(sn, options);
     if ~isFJ
         % update initial state if this has been corrected by the state space
         % generator (skipped on fork-join models: the analyzed struct is the
@@ -195,6 +230,16 @@ if isinf(options.timespan(1))
                     if isfield(sn.nodeparam{ind}, 'actualresidt')
                         self.model.nodes{sn.statefulToNode(isf)}.setResultResidT(sn.nodeparam{ind}.actualresidt);
                     end
+                    if isfield(sn.nodeparam{ind}, 'actualdelayedhitprob')
+                        self.model.nodes{sn.statefulToNode(isf)}.setResultDelayedHitProb(sn.nodeparam{ind}.actualdelayedhitprob);
+                    end
+                    if isfield(sn.nodeparam{ind}, 'actualitemprob')
+                        self.model.nodes{sn.statefulToNode(isf)}.setResultItemProb(sn.nodeparam{ind}.actualitemprob);
+                    end
+                    if isfield(sn.nodeparam{ind}, 'delayedhitqlen')
+                        self.model.nodes{sn.statefulToNode(isf)}.setResultDelayedHitQLen(...
+                            sn.nodeparam{ind}.delayedhitqlen, sn.nodeparam{ind}.delayedhitqlenfull);
+                    end
                     self.model.refreshChains();
             end
         end
@@ -205,27 +250,18 @@ if isinf(options.timespan(1))
     self.result.spaceAggr = SSq;
     self.result.nodeSpace = sn.space;
     self.result.eventFilt = Dfilt;
+    % Derived START/PREEMPT filtration and its rates. Kept in their own
+    % fields: eventFilt is paired with sn.sync one-to-one and is summed as
+    % D1 in @SolverCTMC/sample.m, so a derived filtration that rides on the
+    % same arcs must not be appended to it.
+    self.result.auxFilt = DfiltAux;
+    self.result.startRate = StartN;
+    self.result.preemptRate = PreemptN;
     runtime = toc(T0);
     sn.space = {};
     T = getAvgTputHandles(self);
     if isFJ
-        [QN,UN,RN,TN,CN,XN] = sn_fj_foldback(QN,UN,RN,TN,CN,XN,fjclassmap,Korig);
-        % A Place counts tokens, not firings: rescale before the arrival rates
-        % are derived, so that everything downstream sees one convention.
-        [TN,~,RN] = sn_pn_avg_rates(sn_orig, QN, TN, [], RN);
-        AN=sn_get_arvr_from_tput(sn_orig, TN, T);
-        % Join stations report the per-sibling waiting time (JMT convention):
-        % QLen over the sibling arrival rate rather than the join firing rate
-        for ist=1:sn_orig.nstations
-            if sn_orig.nodetype(sn_orig.stationToNode(ist)) == NodeType.Join
-                for r=1:Korig
-                    if AN(ist,r) > 0
-                        RN(ist,r) = QN(ist,r)/AN(ist,r);
-                    end
-                end
-            end
-        end
-        self.result.fjclassmap = fjclassmap;
+        [QN,UN,RN,TN,AN,CN,XN] = solver_tr_fjtag_analyzer(self, 'lift', fjctx, QN,UN,RN,TN,CN,XN, T);
     else
         [TN,~,RN] = sn_pn_avg_rates(sn, QN, TN, [], RN);
         AN=sn_get_arvr_from_tput(sn, TN, T);

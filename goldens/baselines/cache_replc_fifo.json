@@ -1,0 +1,299 @@
+{
+  "class": {
+    "CTMC": "deterministic",
+    "FLD": "deterministic",
+    "MVA": "deterministic",
+    "SSA": "stochastic"
+  },
+  "example": "cache_replc_fifo",
+  "solvers": {
+    "CTMC": [
+      {
+        "ArvR": 1.0,
+        "JobClass": "JobClass",
+        "QLen": 1.0,
+        "ResidT": 1.0,
+        "RespT": 1.0,
+        "Station": "Delay",
+        "Tput": 1.0,
+        "Util": 1.0
+      },
+      {
+        "ArvR": 1.0,
+        "JobClass": "JobClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Cache",
+        "Tput": 0.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "HitClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Cache",
+        "Tput": 0.4,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "MissClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Cache",
+        "Tput": 0.6,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "JobClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "CS_Cache_to_Delay",
+        "Tput": 1.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.4,
+        "JobClass": "HitClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "CS_Cache_to_Delay",
+        "Tput": 0.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.6,
+        "JobClass": "MissClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "CS_Cache_to_Delay",
+        "Tput": 0.0,
+        "Util": 0.0
+      }
+    ],
+    "FLD": [
+      {
+        "ArvR": 1.0,
+        "JobClass": "JobClass",
+        "QLen": 1.0,
+        "ResidT": 1.0,
+        "RespT": 1.0,
+        "Station": "Delay",
+        "Tput": 1.0,
+        "Util": 1.0
+      },
+      {
+        "ArvR": 1.0,
+        "JobClass": "JobClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Cache",
+        "Tput": 0.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "HitClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Cache",
+        "Tput": 0.4,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "MissClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Cache",
+        "Tput": 0.6,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "JobClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "CS_Cache_to_Delay",
+        "Tput": 1.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.4,
+        "JobClass": "HitClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "CS_Cache_to_Delay",
+        "Tput": 0.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.6,
+        "JobClass": "MissClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "CS_Cache_to_Delay",
+        "Tput": 0.0,
+        "Util": 0.0
+      }
+    ],
+    "MVA": [
+      {
+        "ArvR": 1.0,
+        "JobClass": "JobClass",
+        "QLen": 1.0,
+        "ResidT": 1.0,
+        "RespT": 1.0,
+        "Station": "Delay",
+        "Tput": 1.0,
+        "Util": 1.0
+      },
+      {
+        "ArvR": 1.0,
+        "JobClass": "JobClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Cache",
+        "Tput": 0.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "HitClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Cache",
+        "Tput": 0.4,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "MissClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Cache",
+        "Tput": 0.6,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "JobClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "CS_Cache_to_Delay",
+        "Tput": 1.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.4,
+        "JobClass": "HitClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "CS_Cache_to_Delay",
+        "Tput": 0.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.6,
+        "JobClass": "MissClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "CS_Cache_to_Delay",
+        "Tput": 0.0,
+        "Util": 0.0
+      }
+    ],
+    "SSA": [
+      {
+        "ArvR": 1.0,
+        "JobClass": "JobClass",
+        "QLen": 1.0,
+        "ResidT": 1.0,
+        "RespT": 1.0,
+        "Station": "Delay",
+        "Tput": 1.0,
+        "Util": 1.0
+      },
+      {
+        "ArvR": 1.0,
+        "JobClass": "JobClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Cache",
+        "Tput": 0.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "HitClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Cache",
+        "Tput": 0.40835,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "MissClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Cache",
+        "Tput": 0.59165,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "JobClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "CS_Cache_to_Delay",
+        "Tput": 1.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.40835,
+        "JobClass": "HitClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "CS_Cache_to_Delay",
+        "Tput": 0.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.59165,
+        "JobClass": "MissClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "CS_Cache_to_Delay",
+        "Tput": 0.0,
+        "Util": 0.0
+      }
+    ]
+  }
+}

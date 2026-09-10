@@ -2,7 +2,7 @@
 Native Python client for the LINE symbolic REST service (SageMath backend).
 
 Same JSON protocol as the JAR (``jline.api.sym``) and MATLAB (``SAGE.m``)
-clients; see ``sage/server.py`` for the endpoints. Uses only the standard
+clients; see ``io/sage/server.py`` for the endpoints. Uses only the standard
 library, so it adds no dependency to the native Python implementation and in
 particular no JVM.
 
@@ -42,9 +42,22 @@ PROBE_PORTS = (8085, 8080)
 STARTUP_TIMEOUT_S = 120
 DEFAULT_TIMEOUT_S = 300
 
+# A service that answers /health can still be unable to COMPUTE. The
+# line-sage-rest image ships a FLINT built for CPUs that have BMI2 and ADX; on
+# an older host the first multi-limb exact operation raises SIGILL, the worker
+# dies mid-request and the call returns no bytes at all. Health is pure Python
+# and keeps answering, so it cannot see this. The canary is the
+# weighted-average softmin form -- what the fluid export actually sends -- and
+# is the smallest expression observed to trigger it; see
+# _kb/11-conventions-and-gotchas.md.
+CANARY_EXPR = "(x*exp(-x) + exp(-1))/(exp(-x) + exp(-1))"
+CANARY_ARG = "0.68999999999999995"
+CANARY_VALUE = 0.82116556904906557
+
 _configured_url = None
 _resolved = None
 _started_container = None
+_usable = {}
 
 
 class SageError(RuntimeError):
@@ -91,6 +104,38 @@ class SageRestEngine:
             return True
         except (urllib.error.URLError, OSError, ValueError, SageError):
             return False
+
+    def is_usable(self):
+        """True if the service answers AND can evaluate.
+
+        Verdicts are cached per URL: this costs one small request the first
+        time a service is considered, and nothing after.
+        """
+        cached = _usable.get(self.base_url)
+        if cached is not None:
+            return cached
+        ok = False
+        try:
+            r = self._request("/api/v1/eval",
+                              {"exprs": [CANARY_EXPR], "values": {"x": CANARY_ARG},
+                               "timeout_s": 30},
+                              timeout=30)
+            values = r.get("values") or []
+            ok = (len(values) == 1 and values[0] is not None
+                  and abs(float(values[0]) - CANARY_VALUE) < 1e-9)
+        except (urllib.error.URLError, OSError, ValueError, TypeError, SageError):
+            # A dead worker closes the connection without a reply, which
+            # surfaces as a transport error rather than a service one. Either
+            # way the backend cannot serve us.
+            ok = False
+        if not ok:
+            import sys
+            sys.stderr.write(
+                "[LINE] Ignoring symbolic backend at %s: it did not return the "
+                "usability canary. On a CPU without BMI2/ADX the image's FLINT "
+                "raises SIGILL mid-request.\n" % self.base_url)
+        _usable[self.base_url] = ok
+        return ok
 
     def info(self):
         return self._request("/api/v1/info", timeout=5)
@@ -235,24 +280,32 @@ def resolve(requested=None):
         return None
     if req.startswith("http://") or req.startswith("https://"):
         engine = SageRestEngine(req)
-        return engine if engine.is_available() else None
+        return engine if engine.is_available() and engine.is_usable() else None
 
     env = os.environ.get(URL_ENV, "").strip()
     if env:
         engine = SageRestEngine(env)
-        if engine.is_available():
+        if engine.is_available() and engine.is_usable():
             return engine
 
-    if _resolved is not None and _resolved.is_available():
+    if _resolved is not None and _resolved.is_available() and _resolved.is_usable():
         return _resolved
 
     for port in PROBE_PORTS:
         engine = SageRestEngine("http://localhost:%d" % port)
-        if _is_sage_service(engine):
+        if _is_sage_service(engine) and engine.is_usable():
             _resolved = engine
             return engine
 
-    image = _find_image() if req.lower() in ("", "auto", "true", "sage") else req
+    search = req.lower() in ("", "auto", "true", "sage")
+    image = _find_image() if search else req
+    # Auto-pull only on an explicit opt-in: the "sage" keyword or a named image.
+    # Bare "auto"/"true"/"" keep sympy unless the image is already local, so
+    # leaving the backend on auto never triggers a pull.
+    if image is None and req.lower() == "sage":
+        image = _pull_image(DOCKER_IMAGES[0])
+    elif not search and image is not None and not _has_local_image(image):
+        image = _pull_image(image)
     if image is None:
         return None
     engine = _start_container(image)
@@ -265,6 +318,30 @@ def _is_sage_service(engine):
         return "sage_version" in engine.info()
     except (urllib.error.URLError, OSError, ValueError, SageError):
         return False
+
+
+def _has_local_image(image):
+    from ..io import docker_util
+    return docker_util.has_local_image(image)
+
+
+def _pull_image(target):
+    """Pull the SAGE image if the Docker storage location has room.
+
+    Returns the tag on success, else None. Storage-guarded via docker_util (the
+    same guard as the LQNS/QNS/JMT wrappers), so an opt-in symbolic request never
+    silently fills the Docker disk; on refusal the caller keeps sympy.
+    """
+    import sys
+    from ..io import docker_util
+    if not docker_util.has_storage_for(target):
+        print("[LINE] Skipping docker pull of %s: insufficient free space at the Docker "
+              "storage location; keeping the native symbolic backend." % target, file=sys.stderr)
+        return None
+    print("[LINE] Pulling Docker image %s (this may take a while)..." % target)
+    if docker_util.pull(target) and docker_util.has_local_image(target):
+        return target
+    return None
 
 
 def _find_image():
@@ -310,7 +387,13 @@ def _start_container(image):
     deadline = time.time() + STARTUP_TIMEOUT_S
     while time.time() < deadline:
         if engine.is_available():
-            return engine
+            if engine.is_usable():
+                return engine
+            # Booted, but its arithmetic dies on this CPU. Keeping it running
+            # would only cost memory, and returning it would hand the caller a
+            # backend that kills every request.
+            stop_container()
+            return None
         time.sleep(0.5)
     stop_container()
     return None

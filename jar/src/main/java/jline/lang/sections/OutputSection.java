@@ -33,6 +33,13 @@ public class OutputSection extends Section implements Serializable {
         return this.outputStrategies;
     }
 
+    @Override
+    public OutputSection copyElement() {
+        OutputSection clone = (OutputSection) super.copyElement();
+        clone.outputStrategies = new ArrayList<OutputStrategy>(this.outputStrategies);
+        return clone;
+    }
+
     public List<OutputStrategy> getOutputStrategyByClass(JobClass jobClass) {
         List<OutputStrategy> res = new ArrayList<OutputStrategy>();
         for (OutputStrategy outputStrategy : outputStrategies) {
@@ -139,33 +146,6 @@ public class OutputSection extends Section implements Serializable {
             return;
         }
         setOutputStrategy(jobClass, RoutingStrategy.DISABLED);
-    }
-
-    /**
-     * Stores RL routing parameters for the given class, replacing any existing
-     * entries for it with a single RL entry. The parameters live on the
-     * OutputStrategy (durable model state) rather than on the NetworkStruct,
-     * which refreshStruct rebuilds; Network.refreshLocalVars copies them into
-     * the per-node NodeParam that sub_rl reads, exactly as it does for SQ.
-     *
-     * @param jobClass        the job class
-     * @param valueFunction   the value function
-     * @param vfShape         per-axis sizes of the tabular value function
-     * @param nodesNeedAction node indices that consult the value function
-     * @param stateSize       0 = tabular, &gt;0 = linear approximation, &lt;0 = JSQ fallback
-     */
-    public void setRLParams(JobClass jobClass, jline.util.matrix.Matrix valueFunction,
-                            int[] vfShape, int[] nodesNeedAction, int stateSize) {
-        java.util.Iterator<OutputStrategy> iter = outputStrategies.iterator();
-        while (iter.hasNext()) {
-            OutputStrategy os = iter.next();
-            if (os.getJobClass().getIndex() == jobClass.getIndex()) {
-                iter.remove();
-            }
-        }
-        OutputStrategy os = new OutputStrategy(jobClass, RoutingStrategy.RL);
-        os.setRlParams(valueFunction, vfShape, nodesNeedAction, stateSize);
-        outputStrategies.add(os);
     }
 
     /** Stores SQ routing parameters (k and memory flag) for the given class. */

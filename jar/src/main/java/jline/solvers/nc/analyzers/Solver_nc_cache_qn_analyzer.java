@@ -13,15 +13,20 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
+import java.util.HashMap;
+import java.util.Map;
+
 import jline.api.cache.Cache_gamma_lp;
 import jline.api.cache.Cache_miss_spm;
 import jline.api.cache.Cache_prob_erec;
+import jline.api.cache.Cache_ttl_lrua;
 import jline.api.mc.Dtmc_stochcomp;
 import jline.api.sn.SnRefreshVisits;
 import jline.io.InputOutput;
 import jline.io.Ret;
 import jline.lang.NetworkStruct;
 import jline.lang.constant.NodeType;
+import jline.lang.constant.ReplacementStrategy;
 import jline.lang.nodeparam.CacheNodeParam;
 import jline.solvers.SolverOptions;
 import jline.solvers.nc.NCResult;
@@ -79,6 +84,12 @@ public final class Solver_nc_cache_qn_analyzer {
         }
         Matrix hitprob = new Matrix(sn.nodetype.size(), K);
         Matrix missprob = new Matrix(sn.nodetype.size(), K);
+        // converged isolated-cache inputs, kept for the per-item occupancy law
+        Map<Integer, Matrix> cacheGamma = new HashMap<Integer, Matrix>();
+        Map<Integer, Matrix> cacheM = new HashMap<Integer, Matrix>();
+        Map<Integer, Matrix[]> cacheLambda = new HashMap<Integer, Matrix[]>();
+        Map<Integer, Matrix[][]> cacheR = new HashMap<Integer, Matrix[][]>();
+        Map<Integer, ReplacementStrategy> cacheStrat = new HashMap<Integer, ReplacementStrategy>();
 
         for (int it = 1; it <= options.iter_max; it++) {
             List<Integer> inputClass = new ArrayList<Integer>();
@@ -142,6 +153,11 @@ public final class Solver_nc_cache_qn_analyzer {
                     }
                 }
                 Matrix gamma = Cache_gamma_lp.cache_gamma_lp(lambda_cache, R).gamma;
+                cacheGamma.put(ind, gamma);
+                cacheM.put(ind, m);
+                cacheLambda.put(ind, lambda_cache);
+                cacheR.put(ind, R);
+                cacheStrat.put(ind, ch.replacestrat);
 
                 if ("exact".equals(options.method)) {
                     Matrix pij = Cache_prob_erec.cache_prob_erec(gamma, m);
@@ -204,6 +220,12 @@ public final class Solver_nc_cache_qn_analyzer {
             }
             sn = SnRefreshVisits.snRefreshVisits(sn, sn.chains, sn.rt, sn.rtnodes);
 
+            // The network solve below REPLACES res, so the isolated-cache method
+            // decided above is lost with it unless it is carried across. Without
+            // this the banner reported the queueing analyzer's method ("exact")
+            // for a run whose cache was solved by the spm approximation.
+            String cacheMethod = res.method;
+
             // Default branch: choose ld vs nc based on scaling
             if (!(sn.lldscaling == null || sn.lldscaling.isEmpty())
                     || !(sn.cdscaling == null || sn.cdscaling.isEmpty())
@@ -211,6 +233,10 @@ public final class Solver_nc_cache_qn_analyzer {
                 res = Solver_ncld_analyzer.solver_ncld_analyzer(sn, options);
             } else {
                 res = Solver_nc_analyzer.solver_nc_analyzer(sn, options);
+            }
+
+            if (cacheMethod != null) {
+                res.method = cacheMethod;
             }
 
             Matrix nodevisits = null;
@@ -258,6 +284,29 @@ public final class Solver_nc_cache_qn_analyzer {
         }
         res.hitProb = hitprob;
         res.missProb = missprob;
+
+        // Per-item occupancy from the converged access factors, as SolverMVA reports it.
+        for (Integer ind : caches) {
+            Matrix gamma = cacheGamma.get(ind);
+            if (gamma == null) {
+                continue;
+            }
+            Matrix m = cacheM.get(ind);
+            int ni = gamma.getNumRows();
+            int hi = m.length();
+            Matrix itemProb;
+            if (cacheStrat.get(ind) == ReplacementStrategy.LRU) {
+                itemProb = Cache_ttl_lrua.cache_ttl_lrua(cacheLambda.get(ind), cacheR.get(ind), m);
+            } else if (ni > 10) {
+                InputOutput.line_warning(InputOutput.mfilename(new Object() {}),
+                        "Per-item cache occupancy (getAvgItemTable) requires the exact algorithm for RR/FIFO and is skipped for caches with more than 10 items (%d items); reporting NaN.", ni);
+                itemProb = new Matrix(ni, hi + 1);
+                itemProb.fill(Double.NaN);
+            } else {
+                itemProb = Cache_prob_erec.cache_prob_erec(gamma, m);
+            }
+            res.cacheItemProb.put(ind, itemProb);
+        }
         return res;
     }
 }

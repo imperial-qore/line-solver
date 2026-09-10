@@ -108,12 +108,17 @@ def test_reply_does_not_reside_at_the_caller(cfg, gold):
     """The reply takes the server it released and is routed on.
 
     Queueing it instead stole service capacity from the caller and cost about
-    5% of the throughput. What is left is the residual of the reply's own
-    Immediate service, X / GlobalConstants.Immediate.
+    5% of the throughput. All that is left is the residual of the reply's own
+    Immediate service, X / GlobalConstants.Immediate, which getAvg reports as
+    zero: a response time below 10*FineTol masks queue length and utilization.
+    Same assertion as the MATLAB and JAR twins.
     """
-    Q, _, _, T = _solve(cfg)
-    residual = T[CLIENT, REPLY] / GlobalConstants.Immediate
-    assert Q[CLIENT, REPLY] == pytest.approx(residual, rel=1e-6)
+    Q, U, R, T = _solve(cfg)
+    # RespT is QN/TN, two independently accumulated sums, so the bound carries a
+    # relative slack: lang='java' lands one ulp above it, native exactly on it.
+    assert R[CLIENT, REPLY] <= (1.0 + 1e-9) / GlobalConstants.Immediate
+    assert Q[CLIENT, REPLY] < 1e-8
+    assert U[CLIENT, REPLY] < 1e-8
 
 
 @pytest.mark.parametrize('cfg,gold', CONFIGS)

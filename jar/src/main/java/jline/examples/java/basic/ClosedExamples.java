@@ -14,14 +14,17 @@ import jline.solvers.mam.MAM;
 import jline.solvers.mva.MVA;
 import jline.solvers.nc.NC;
 import jline.solvers.ssa.SSA;
+import jline.solvers.ldes.LDES;
+import jline.solvers.AvgTable;
+import java.util.function.Supplier;
 
 import java.util.Scanner;
 
 /**
- * Closed queueing network examples mirroring the Kotlin notebooks in closedQN.
+ * Closed queueing network examples mirroring the example notebooks in closedQN.
  * <p>
- * This class contains Java implementations that mirror the Kotlin notebook examples
- * found in jar/src/main/kotlin/jline/examples/kotlin/basic/closedQN/. Each method 
+ * This class contains Java implementations that mirror the example notebooks
+ * found in jar/src/main/java/jline/examples/java/basic/closedQN/. Each method
  * demonstrates a specific closed queueing network concept using models from the basic package.
  * <p>
  * The examples cover:
@@ -36,6 +39,26 @@ public class ClosedExamples {
     
     private static final Scanner scanner = new Scanner(System.in);
     
+
+    /**
+     * Run one solve and print its table, reporting a failure by name instead of
+     * aborting the example.
+     *
+     * <p>WHY THE TWIN DOES NOT SIMPLY THROW. A reference example runs several
+     * solvers in sequence, and a throw from the third would leave the fourth and
+     * fifth uncomputed -- which the cross-codebase parity row reads as several
+     * missing solvers rather than as the one that actually failed. The failure is
+     * still a failure: no table is recorded, so the golden's solver is reported
+     * missing.
+     */
+    private static void show(String label, Supplier<? extends AvgTable> solve) {
+        try {
+            solve.get().print();
+        } catch (Exception e) {
+            System.out.println(label + " failed: " + e.getMessage());
+        }
+    }
+
     private static void pauseForUser() {
         // Skip pause if running in non-interactive mode (e.g., Maven exec)
         if (System.console() == null) {
@@ -107,10 +130,12 @@ public class ClosedExamples {
      */
     public static void cqn_mmpp2_service() throws Exception {
         Network model = ClosedModel.cqn_mmpp2_service();
-        JMT solver = new JMT(model, "seed", 23000, "verbose", 1, "samples", 20000);
-        
-        solver.getAvgTable().print();
-        
+
+        // The reference pins the seed and takes the engine's own run length, then
+        // runs the discrete-event engine at the same seed.
+        show("JMT", () -> new JMT(model, "seed", 23000).getAvgTable());
+        show("LDES", () -> new LDES(model, "seed", 23000).getAvgTable());
+
         pauseForUser();
     }
     
@@ -176,9 +201,14 @@ public class ClosedExamples {
      */
     public static void cqn_repairmen() throws Exception {
         Network model = ClosedModel.cqn_repairmen();
-        MVA solver = new MVA(model);
-        
-        solver.getAvgTable().print();
+        show("CTMC", () -> new CTMC(model).getAvgTable());
+        show("JMT", () -> new JMT(model, "seed", 23000).getAvgTable());
+        show("SSA", () -> new SSA(model, "seed", 23000, "samples", 5000).getAvgTable());
+        show("FLD", () -> new FLD(model).getAvgTable());
+        show("MVA", () -> new MVA(model).getAvgTable());
+        show("NC", () -> new NC(model, "method", "exact").getAvgTable());
+        show("MAM", () -> new MAM(model).getAvgTable());
+        show("LDES", () -> new LDES(model, "seed", 23000, "samples", 5000).getAvgTable());
         
         pauseForUser();
     }
@@ -199,9 +229,12 @@ public class ClosedExamples {
      */
     public static void cqn_repairmen_multi() throws Exception {
         Network model = ClosedModel.cqn_repairmen_multi();
-        MVA solver = new MVA(model);
-        
-        solver.getAvgTable().print();
+        show("CTMC", () -> new CTMC(model).getAvgTable());
+        // THE MULTISERVER RULE IS AN APPROXIMATION, not a setting: the golden holds
+        // the softmin table because that is the one the reference prints first.
+        show("MVA", () -> new MVA(model, "config.multiserver", "softmin").getAvgTable());
+        show("MVA", () -> new MVA(model, "config.multiserver", "seidmann").getAvgTable());
+        show("NC", () -> new NC(model).getAvgTable());
         
         pauseForUser();
     }
@@ -222,9 +255,11 @@ public class ClosedExamples {
      */
     public static void cqn_scheduling_dps() throws Exception {
         Network model = ClosedModel.cqn_scheduling_dps();
-        JMT solver = new JMT(model, "seed", 23000);
-        
-        solver.getAvgTable().print();
+        show("CTMC", () -> new CTMC(model).getAvgTable());
+        show("JMT", () -> new JMT(model, "seed", 23000, "samples", 10000).getAvgTable());
+        show("FLD", () -> new FLD(model).getAvgTable());
+        show("MVA", () -> new MVA(model).getAvgTable());
+        show("LDES", () -> new LDES(model, "seed", 23000, "samples", 10000).getAvgTable());
         
         pauseForUser();
     }
@@ -245,9 +280,14 @@ public class ClosedExamples {
      */
     public static void cqn_threeclass_hyperl() throws Exception {
         Network model = ClosedModel.cqn_threeclass_hyperl();
-        MVA solver = new MVA(model);
-        
-        solver.getAvgTable().print();
+        show("CTMC", () -> new CTMC(model).getAvgTable());
+        show("JMT", () -> new JMT(model, "seed", 23000, "samples", 5000).getAvgTable());
+        show("SSA", () -> new SSA(model, "seed", 23000, "samples", 5000).getAvgTable());
+        show("FLD", () -> new FLD(model).getAvgTable());
+        show("MVA", () -> new MVA(model).getAvgTable());
+        show("NC", () -> new NC(model, "method", "exact").getAvgTable());
+        show("MAM", () -> new MAM(model).getAvgTable());
+        show("LDES", () -> new LDES(model, "seed", 23000, "samples", 5000).getAvgTable());
         
         pauseForUser();
     }
@@ -268,9 +308,8 @@ public class ClosedExamples {
      */
     public static void cqn_twoclass_erl() throws Exception {
         Network model = ClosedModel.cqn_twoclass_erl();
-        MVA solver = new MVA(model);
-        
-        solver.getAvgTable().print();
+        show("JMT", () -> new JMT(model, "seed", 23000).getAvgTable());
+        show("LDES", () -> new LDES(model, "seed", 23000).getAvgTable());
         
         pauseForUser();
     }
@@ -291,9 +330,14 @@ public class ClosedExamples {
      */
     public static void cqn_twoclass_hyperl() throws Exception {
         Network model = ClosedModel.cqn_twoclass_hyperl();
-        MVA solver = new MVA(model);
-        
-        solver.getAvgTable().print();
+        show("CTMC", () -> new CTMC(model).getAvgTable());
+        show("JMT", () -> new JMT(model, "seed", 23000, "samples", 5000).getAvgTable());
+        show("SSA", () -> new SSA(model, "seed", 23000, "samples", 5000).getAvgTable());
+        show("FLD", () -> new FLD(model).getAvgTable());
+        show("MVA", () -> new MVA(model, "method", "exact").getAvgTable());
+        show("NC", () -> new NC(model, "method", "exact").getAvgTable());
+        show("MAM", () -> new MAM(model).getAvgTable());
+        show("LDES", () -> new LDES(model, "seed", 23000, "samples", 5000).getAvgTable());
         
         pauseForUser();
     }

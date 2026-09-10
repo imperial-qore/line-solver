@@ -7,7 +7,6 @@ package jline.api.pfqn;
 
 import jline.api.pfqn.nc.Pfqn_ca;
 import jline.io.Ret;
-import jline.lib.perm.Permanent;
 import jline.util.Maths;
 import jline.util.matrix.Matrix;
 
@@ -49,22 +48,32 @@ public final class Pfqn_joint {
     }
 
     /**
-     * Compute joint probability for total queue lengths (n is M x 1)
+     * Compute joint probability for total queue lengths (n is M x 1).
+     *
+     * Delegated to Pfqn_jointmarg so that the permanent identity lives in one
+     * place; here the think time is a single aggregated delay row, which is the
+     * (M+1)-th station.
      */
     private static double computeTotalQueueLengthProb(Matrix n, Matrix L, Matrix N, Matrix Z, double lGn) {
         boolean hasThinkTime = Z.elementSum() > 0.0;
 
         if (hasThinkTime) {
             double n0 = N.elementSum() - n.elementSum();
-            double Fjoint = fper(Matrix.concatRows(L, Z, null), N,
-                    Matrix.concatRows(n, Matrix.singleton(n0), null));
-            double logFjoint = Math.log(Fjoint);
-            double logFactorial = Maths.factln((int) n0);
-            return Math.exp(logFjoint - lGn - logFactorial);
+            if (n0 < 0) {
+                return 0.0;
+            }
+            Matrix Zrow = Matrix.zeros(1, L.getNumCols());
+            for (int r = 0; r < L.getNumCols(); r++) {
+                double zr = 0.0;
+                for (int zi = 0; zi < Z.getNumRows(); zi++) zr += Z.get(zi, r);
+                Zrow.set(0, r, zr);
+            }
+            Matrix Lext = Matrix.concatRows(L, Zrow, null);
+            Matrix next = Matrix.concatRows(n, Matrix.singleton(n0), null);
+            return Pfqn_jointmarg.pfqn_jointmarg(next, Lext, N,
+                    new int[]{L.getNumRows()}, Double.valueOf(lGn)).pjoint;
         } else {
-            double Fjoint = fper(L, N, n);
-            double logFjoint = Math.log(Fjoint);
-            return Math.exp(logFjoint - lGn);
+            return Pfqn_jointmarg.pfqn_jointmarg(n, L, N, null, Double.valueOf(lGn)).pjoint;
         }
     }
 
@@ -88,7 +97,13 @@ public final class Pfqn_joint {
         if (hasThinkTime) {
             for (int r = 0; r < R; r++) {
                 if (n0.get(0, r) > 0) {
-                    Fjoint += n0.get(0, r) * Math.log(Z.get(0, r));
+                    // Column sum, not row 0: Z may carry one row per delay node,
+                    // and the reference sums it (pfqn_joint.m:66,77 write
+                    // sum(Z)). Reproducing that rather than assuming the caller
+                    // summed; no current caller passes more than one row.
+                    double zr = 0.0;
+                    for (int zi = 0; zi < Z.getNumRows(); zi++) zr += Z.get(zi, r);
+                    Fjoint += n0.get(0, r) * Math.log(zr);
                     Fjoint -= Maths.factln((int) n0.get(0, r));
                 }
             }
@@ -109,57 +124,5 @@ public final class Pfqn_joint {
         }
 
         return Math.exp(Fjoint - lGn);
-    }
-
-    /**
-     * Helper function F_per: computes permanent-based probability term
-     */
-    private static double fper(Matrix L, Matrix N, Matrix m) {
-        int M = L.getNumRows();
-        int R = L.getNumCols();
-
-        Matrix Ak = null;
-        for (int r = 0; r < R; r++) {
-            int nRep = (int) N.get(0, r);
-            Matrix col = Matrix.extractColumn(L, r, null);
-            Matrix replicatedCols = col.repmat(1, nRep);
-            if (Ak == null) {
-                Ak = replicatedCols;
-            } else {
-                Ak = Matrix.concatColumns(Ak, replicatedCols, null);
-            }
-        }
-
-        Matrix A = null;
-        for (int i = 0; i < M; i++) {
-            int mi = (int) m.get(i, 0);
-            if (mi > 0) {
-                Matrix rowToReplicate = Matrix.extractRows(Ak, i, i + 1, null);
-                Matrix replicatedRows = rowToReplicate.repmat(mi, 1);
-                if (A == null) {
-                    A = replicatedRows;
-                } else {
-                    A = Matrix.concatRows(A, replicatedRows, null);
-                }
-            }
-        }
-
-        if (A == null || A.getNumRows() == 0) {
-            return 1.0;
-        }
-
-        if (A.getNumRows() != A.getNumCols()) {
-            return 0.0;
-        }
-
-        Permanent permanent = new Permanent(A, true);
-        double permValue = permanent.value;
-
-        double logProdFactorial = 0.0;
-        for (int r = 0; r < R; r++) {
-            logProdFactorial += Maths.factln((int) N.get(0, r));
-        }
-
-        return permValue / Math.exp(logProdFactorial);
     }
 }

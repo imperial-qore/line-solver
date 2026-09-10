@@ -18,7 +18,9 @@ from .solution import MapqnSolution
 def mapqn_bnd_lr_mva(
     params: MVAVersionParameters,
     objective_queue: int,
-    objective_level: int
+    objective_level: int,
+    sense: str = 'max',
+    objective_var: str = 'UN'
 ) -> MapqnSolution:
     """
     Solve the MVA-based linear reduction bound for MAP queueing networks.
@@ -35,12 +37,21 @@ def mapqn_bnd_lr_mva(
             - muMAP: Service rate matrix for MAP queue [K x K]
             - r: Routing matrix [M x M]
             - v: Level change rate matrix [K x K]
-        objective_queue: Queue index to maximize utilization (1-based).
-        objective_level: Level index to maximize utilization (1-based).
+        objective_queue: Queue index to optimize (1-based).
+        objective_level: Level index to optimize (1-based). Pass 0 to optimize
+            the AGGREGATE over levels, sum_k X(queue, k), which is the quantity
+            the paper's bounds are stated on: U_i(N) = sum_k U_i^k(N) is the
+            utilization of station i, while U_i^k alone is its utilization while
+            the MAP sits in phase k. Optimizing the K terms separately and
+            adding them is also a bound but a strictly looser one, since the
+            phases cannot all peak at once.
+        sense: 'max' (default) or 'min'.
+        objective_var: 'UN' (default) or 'QN', the variable family the
+            objective is taken over.
 
     Returns:
         MapqnSolution containing:
-            - objective_value: Maximum utilization bound
+            - objective_value: The optimal bound
             - variables: All LP variable values
 
     Raises:
@@ -48,7 +59,15 @@ def mapqn_bnd_lr_mva(
         RuntimeError: If LP is infeasible or unbounded.
 
     Reference:
-        Based on AMPL model bnd_mvaversion.mod
+        G. Casale, E. Smirni, "MAP-AMVA: Approximate Mean Value Analysis of
+        Bursty Systems", IEEE/IFIP DSN 2009, pp. 409-418. The LP assembled here
+        is the paper's MAP-AMVA optimization program: the population constraint
+        (1), the utilization bound (2), the MAP phase balance (3), the flow
+        balance (4), the generalized horizontal cut (12), the vertical-cut MVA
+        relation (13) in the linearized form (18)-(19) whose B(j,k,i) variables
+        are the E_i^{j,k} of Theorem 4, and the two auxiliary families
+        QN <= N*UN and sum_w QN >= N*UN. Ported from AMPL model
+        bnd_mvaversion.mod.
     """
     params.validate()
 
@@ -58,8 +77,13 @@ def mapqn_bnd_lr_mva(
 
     if not (1 <= objective_queue <= M):
         raise ValueError(f"Objective queue must be in range 1..{M}")
-    if not (1 <= objective_level <= K):
-        raise ValueError(f"Objective level must be in range 1..{K}")
+    if not (0 <= objective_level <= K):
+        raise ValueError(
+            f"Objective level must be in range 0..{K} (0 aggregates over levels)")
+    if objective_var not in ('UN', 'QN'):
+        raise ValueError(f"objective_var must be 'UN' or 'QN', got '{objective_var}'")
+    if sense not in ('min', 'max'):
+        raise ValueError(f"sense must be 'min' or 'max', got '{sense}'")
 
     model = MapqnLpModel()
 
@@ -69,9 +93,14 @@ def mapqn_bnd_lr_mva(
     # Add all constraints
     _add_constraints_mva(model, params)
 
-    # Solve: maximize UN[objective_queue, objective_level]
-    objective_var = f'UN_{objective_queue}_{objective_level}'
-    solution = model.solve(objective_var, minimize=False)
+    # Objective over one level, or over their sum when objective_level is 0.
+    levels = range(1, K + 1) if objective_level == 0 else [objective_level]
+    c = np.zeros(model.get_num_variables())
+    for k in levels:
+        idx = model.get_variable_index(f'{objective_var}_{objective_queue}_{k}')
+        if idx is not None:
+            c[idx] = 1.0
+    solution = model.solve_with_objective(c, minimize=(sense == 'min'))
 
     return solution
 

@@ -1,5 +1,18 @@
-function [AvgChain,QTc,UTc,RTc,WTc,ATc,TTc] = getAvgChainTable(self,Q,U,R,T)
+function varargout = getAvgChainTable(self,varargin)
 % [AVGCHAIN,QTC,UTC,RTC,WTc,TTC] = GETAVGCHAINTABLE(SELF,Q,U,R,T)
+% The result recorder captures the returned table together with the solver
+% that produced it, so cross-codebase parity is asserted against the values a
+% solver RETURNED rather than the text it printed. Off unless a run asked for
+% it (LineResultRecorder.enable), and then it costs one appdata lookup here.
+% The wrapper exists so that recording happens on EVERY exit path, including
+% the early returns inside the implementation below.
+[scope, scopeGuard] = LineResultRecorder.enter(); %#ok<ASGLU>
+[varargout{1:max(nargout,1)}] = getAvgChainTable_impl(self,varargin{:});
+LineResultRecorder.capture(scope, self, 'chain', varargout{1});
+end
+
+function [AvgChain,QTc,UTc,RTc,WTc,ATc,TTc] = getAvgChainTable_impl(self,Q,U,R,T)
+% GETAVGCHAINTABLE_IMPL Implementation of GETAVGCHAINTABLE; see the wrapper above.
 
 % Copyright (c) 2012-2026, Imperial College London
 % All rights reserved.

@@ -1,0 +1,65 @@
+# The image matlab_docker.sh runs the HOST MATLAB installation inside.
+#
+# It is mathworks/matlab-deps plus the one thing that image cannot supply and
+# the suite cannot do without: a CPython that MATLAB's `py.*` bridge can load.
+# Without it `lang='python'` rows have to run on the host MATLAB, which is how a
+# dispatched run ends up serialized on /tmp/line-matlab.lock with half its rows
+# outside a container -- the state this file exists to make impossible.
+#
+# matlabroot itself is NOT here: it is bind-mounted from the host, so nothing is
+# licensed twice and the image never needs rebuilding for a MATLAB update. The
+# tag tracks the MATLAB RELEASE (line-matlab-deps:r2026a) because the deps base
+# does, and matlab_docker.sh resolves that tag from the installation it found.
+#
+# Build it with matlab/build_matlab_image.sh on every host that runs MATLAB
+# phases; the third-party binaries (lqns, java, ...) and their libraries are
+# bridged from the host at run time instead of being baked in here.
+ARG MATLAB_RELEASE=r2026a
+FROM mathworks/matlab-deps:${MATLAB_RELEASE}
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# python3-dev carries libpython3.x.so, which is what MATLAB's pyenv actually
+# loads -- a bare python3 gives an interpreter MATLAB cannot bind to.
+# liblapack3/libblas3 are for the wheels below, not for LINE's own engines:
+# those are bridged from the host by stage_matlab_docker_libs.sh, because they
+# must be the same build the host binaries were linked against.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 python3-dev python3-pip python3-venv \
+        liblapack3 libblas3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# The native line_solver's own dependencies. Versions are floors, not pins: this
+# image is rebuilt rarely and the tree it runs is mounted from the host, so it
+# must not hold the Python packages back to whatever was current on build day.
+RUN python3 -m pip install --no-cache-dir --break-system-packages \
+        "numpy>=2.3.3" "scipy>=1.16.2" "pandas>=2.3.2" \
+        "networkx>=3.6" "matplotlib>=3.10.6"
+
+# THE LQNS RUNTIME, BAKED IN RATHER THAN BRIDGED. lqns, lqsim and qnsolver are
+# host binaries mounted at run time, and their libraries (liblqio, liblqx,
+# libmva, in /usr/local/lib on this roster) would normally ride in on
+# LD_LIBRARY_PATH with everything else -- except that SolverLQNS runs them as
+# `env -u LD_LIBRARY_PATH lqns ...`, deliberately, to keep MATLAB's own
+# libstdc++ from shadowing theirs (the GLIBCXX strip, see _kb/06). Stripping the
+# variable also strips the only path to the bridged libraries, so the loader
+# fails at exec:
+#   lqns: error while loading shared libraries: liblqio.so.0: cannot open ...
+# and MATLAB reports it as `model.lqxo (No such file or directory)`. Copied into
+# the image and ldconfig'd, they are found the way they are on the host: through
+# the cache, with no environment variable involved. build_matlab_image.sh fills
+# lqns-libs/ from THIS host's installation, which is why the image is built per
+# host rather than pulled.
+#
+# THE C++ ENGINE'S libhighs RIDES IN THE SAME DIRECTORY, and needs to for a
+# different reason: `common/line-cli` is built with LINE_MP_USE_HIGHS on, and the
+# bridge that carries other host libraries (~/line-tools/lib/<host> on
+# LD_LIBRARY_PATH) is unusable for it -- that path is inside a mode-700 home, and
+# matlab_docker.sh refuses to open a home to the daemon by design. So the library
+# has to be IN the image. Without it the M2C parity rows -- MATLAB's model driven
+# through line-cli, the one row type that runs the engine inside this container --
+# all die with `libhighs.so.1: cannot open shared object file` and exit 127,
+# while the CPP and MATLAB rows of the same models pass. Measured 2026-09-07:
+# 7 of 7 M2C rows, no other row type affected.
+COPY lqns-libs/ /usr/local/lib/
+RUN ldconfig

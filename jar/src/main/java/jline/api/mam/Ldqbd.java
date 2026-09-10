@@ -32,8 +32,9 @@ public final class Ldqbd {
                 System.out.println("  R^(" + (n + 1) + ") computed (" + R.get(n).getNumRows() + "x" + R.get(n).getNumCols() + ")");
             }
         }
-        Matrix pi = computeStationaryDist(R, Q0, Q1, Q2, N, options);
-        return new LdqbdResult(R, pi);
+        List<Matrix> piCells = new ArrayList<Matrix>();
+        Matrix pi = computeStationaryDist(R, Q0, Q1, Q2, N, options, piCells);
+        return new LdqbdResult(R, pi, piCells.isEmpty() ? null : piCells);
     }
 
     private static List<Matrix> computeAllRateMatrices(int N, List<Matrix> Q0, List<Matrix> Q1, List<Matrix> Q2,
@@ -99,7 +100,7 @@ public final class Ldqbd {
     }
 
     private static Matrix computeStationaryDist(List<Matrix> R, List<Matrix> Q0, List<Matrix> Q1, List<Matrix> Q2,
-                                                int N, LdqbdOptions options) {
+                                                int N, LdqbdOptions options, List<Matrix> piCellsOut) {
         boolean isScalar = true;
         for (Matrix m : Q1) {
             if (m.length() != 1) { isScalar = false; break; }
@@ -120,6 +121,11 @@ public final class Ldqbd {
             }
             double sum = pi.sumRows(0);
             if (sum > 0) pi.scaleEq(1.0 / sum);
+            for (int n = 0; n <= N; n++) {
+                Matrix cell = new Matrix(1, 1);
+                cell.set(0, 0, pi.get(0, n));
+                piCellsOut.add(cell);
+            }
             return pi;
         } else {
             List<Matrix> piCells = new ArrayList<Matrix>(N + 1);
@@ -149,25 +155,24 @@ public final class Ldqbd {
                 if (total > 0) piCells.get(n).scaleEq(1.0 / total);
                 pi.set(0, n, piCells.get(n).sumRows(0));
             }
+            piCellsOut.addAll(piCells);
             return pi;
         }
     }
 
+    /**
+     * Boundary vector of the level-0 block: the solution of
+     * pi_0 * (Q1^(0) + R^(1) Q2^(1)) = 0.
+     *
+     * That matrix is the generator of the process censored on level 0, so its
+     * stationary distribution IS the boundary vector and CTMC_SOLVE is the right
+     * instrument. A power iteration on A' is not: it converges to the DOMINANT
+     * left direction of A, which is not the null one, and returned a plausible
+     * but wrong vector for every block bigger than 1x1. No caller reached this
+     * branch before the bgchain method, whose level 0 carries the arrival and
+     * environment phases.
+     */
     private static Matrix solveLeftNullSpace(Matrix A) {
-        int n = A.getNumRows();
-        Matrix AT = A.transpose();
-        Matrix pi = new Matrix(1, n);
-        pi.fill(1.0 / n);
-        for (int iter = 0; iter < 100; iter++) {
-            Matrix newPi = pi.mult(AT);
-            double norm = newPi.norm();
-            if (norm > 1e-14) newPi.scaleEq(1.0 / norm);
-            if (pi.sub(newPi).norm() < 1e-10) break;
-            pi = newPi;
-        }
-        pi.absEq();
-        double sum = pi.sumRows(0);
-        if (sum > 0) pi.scaleEq(1.0 / sum);
-        return pi;
+        return jline.api.mc.Ctmc_solve.ctmc_solve(jline.api.mc.Ctmc_makeinfgen.ctmc_makeinfgen(A));
     }
 }

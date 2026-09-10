@@ -107,9 +107,10 @@ def _left_truncation_point(lam: float, tol: float) -> int:
 
 
 def ctmc_foxglynn_weights(lam: float, tol: float = 1e-12,
-                          maxiter: int = -1) -> Tuple[int, int, np.ndarray]:
+                          maxiter: int = -1,
+                          normalize: bool = True) -> Tuple[int, int, np.ndarray]:
     """
-    Fox-Glynn truncation window and normalized Poisson weights.
+    Fox-Glynn truncation window and Poisson weights.
 
     Following Fox-Glynn, the weights are built by the two-sided recursion
     w[k-1] = w[k]*k/lam and w[k+1] = w[k]*lam/(k+1) anchored at the mode, so
@@ -119,10 +120,20 @@ def ctmc_foxglynn_weights(lam: float, tol: float = 1e-12,
     threshold, making Fox and Glynn's rescaling of the mode weight unnecessary
     here. The normalizing sum is accumulated in increasing order of magnitude.
 
+    With normalize left at its default the window is rescaled to sum to one, as
+    Fox and Glynn prescribe, so the truncated tails are redistributed over the
+    window. Passing normalize=False scales the anchor by the true mode
+    probability through a log-gamma instead, returning the Poisson
+    probabilities themselves so that 1 - sum(w) is the discarded tail rather
+    than being absorbed; ctmc_fau needs that, its error being reported as
+    missing mass rather than as a bound.
+
     Args:
         lam: Poisson rate, that is the uniformization constant times the horizon
         tol: Poisson tail-mass truncation tolerance
         maxiter: Cap on the right truncation point; nonpositive leaves it uncapped
+        normalize: Rescale the window to sum to one, rather than returning the
+            true Poisson probabilities
 
     Returns:
         Tuple of (left truncation point, right truncation point, weights)
@@ -143,6 +154,9 @@ def ctmc_foxglynn_weights(lam: float, tol: float = 1e-12,
         w[k - 1 - left] = w[k - left] * k / lam
     for k in range(mode, right):
         w[k + 1 - left] = w[k - left] * lam / (k + 1)
+    if not normalize:
+        log_mode = -lam + mode * math.log(lam) - math.lgamma(mode + 1)
+        return left, right, w * math.exp(log_mode)
     return left, right, w / np.sum(np.sort(w))
 
 

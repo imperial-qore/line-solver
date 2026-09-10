@@ -1,4 +1,4 @@
-function jsimiew(self, options)
+function jsimwView(self, options)
 % JSIMWVIEW(OPTIONS)
 
 % Copyright (c) 2012-2026, Imperial College London

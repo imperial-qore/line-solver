@@ -42,7 +42,14 @@ if size(P,1) == size(P,2)
             case 'Cache'
                 % A cache needs class-switch to distinguish hits/misses unless the model is degenerate
                 isLinearP = false;
-                if self.nodes{ind}.server.hitClass == self.nodes{ind}.server.missClass
+                % Both are sparse and indexed by class, and a retrieval system extends
+                % missClass past hitClass, so compare them zero-padded to one length
+                hitCls_ = full(self.nodes{ind}.server.hitClass(:)).';
+                missCls_ = full(self.nodes{ind}.server.missClass(:)).';
+                L_ = max(length(hitCls_), length(missCls_));
+                hitCls_(end+1:L_) = 0;
+                missCls_(end+1:L_) = 0;
+                if L_ > 0 && all(hitCls_ == missCls_)
                     line_warning(mfilename,'Ambiguous use of hitClass and missClass at cache, it is recommended to use different classes.\n');
                 end
         end
@@ -144,8 +151,8 @@ for ind=1:I
         rcMap = cacheNode.retrievalSystemQueueIndices;
         ks = keys(rcMap);
         for kk=1:numel(ks)
-            r = double(ks{kk}) + 1;      % read class index (1-based; key is index-1)
-            Q = rcMap(ks{kk});           % retrieval-system queue node indices
+            r = double(ks(kk)) + 1;      % read class index (1-based; key is index-1)
+            Q = rcMap{ks(kk)};           % retrieval-system queue node indices
             nQ = numel(Q);
             if isempty(P{r,r})
                 continue
@@ -452,22 +459,79 @@ if self.enableChecks
 end
 
 %% Check that order-independent (OI) stations have a permutation-invariant rate
-if self.enableChecks
-    Nvec = zeros(1, self.getNumberOfClasses);
-    for r = 1:numel(Nvec)
+hasOI = false;
+for ind = 1:I
+    nd = self.nodes{ind};
+    if isa(nd, 'Queue') && SchedStrategy.toId(nd.schedStrategy) == SchedStrategy.OI ...
+            && ~isempty(nd.svcRateFun)
+        hasOI = true; break
+    end
+end
+if self.enableChecks && hasOI
+    K = self.getNumberOfClasses;
+    pop = zeros(1, K);
+    for r = 1:K
         if isa(self.classes{r}, 'ClosedClass')
-            Nvec(r) = self.classes{r}.population;
+            pop(r) = self.classes{r}.population;
         else
-            Nvec(r) = Inf;   % open classes have infinite population
+            pop(r) = Inf;   % open classes have infinite population
         end
     end
+    % The conserved quantity under class switching is the CHAIN population, not
+    % the per-class one: a class reaches counts up to its chain's total, and a
+    % class declared empty and filled only by a switch (a ClassSwitch target, a
+    % Cache hit/miss class) reaches them from a declared population of 0.
+    % Bounding each class by its OWN population leaves reachable microstates
+    % unenumerated -- every mixed one, when that population is 0 -- and the
+    % check then passes vacuously on plainly order-dependent rates. csMatrix is
+    % the class-switching mask link() has just built above; its connected
+    % components are the chains. Without class switching each component is a
+    % single class and Nvec falls back to pop.
+    % a mask of a different width belongs to a different class set (a
+    % fork-join transformation copies the model and then adds classes); ignore
+    % it and fall back to per-class populations, as the chain code does.
+    if ~isempty(self.csMatrix) && isequal(size(self.csMatrix), [K K])
+        cs = self.csMatrix | self.csMatrix';
+    else
+        cs = logical(eye(K));
+    end
+    comp = zeros(1, K);
+    ncomp = 0;
+    for r = 1:K
+        if comp(r) == 0
+            ncomp = ncomp + 1;
+            frontier = r;
+            while ~isempty(frontier)
+                v = frontier(1); frontier(1) = [];
+                if comp(v) ~= 0, continue; end
+                comp(v) = ncomp;
+                frontier = [frontier, find(cs(v,:) & comp == 0)]; %#ok<AGROW>
+            end
+        end
+    end
+    Nvec = zeros(1, K);
+    for r = 1:K
+        Nvec(r) = sum(pop(comp == comp(r)));
+    end
+    % ntot caps the microstate LENGTH: with Nvec now chain-wide, summing it
+    % inside checkPermInvariance would count each chain once per class and admit
+    % microstates longer than the network can produce.
+    ntot = sum(pop);
     for ind = 1:I
         nd = self.nodes{ind};
         if isa(nd, 'Queue') && SchedStrategy.toId(nd.schedStrategy) == SchedStrategy.OI ...
                 && ~isempty(nd.svcRateFun)
-            [ok, badc, partial] = nd.checkPermInvariance(Nvec, nd.cap);
+            [ok, badc, partial] = nd.checkPermInvariance(Nvec, min(nd.cap, ntot));
             if ~ok
                 line_error(mfilename, 'Order-independent (OI) station ''%s'' has a service rate function that is not permutation-invariant: mu(c) differs for a reordering of the microstate %s. Use SchedStrategy.PAS for order-dependent service, or disable this check with model.setChecks(false).', nd.getName(), mat2str(badc));
+            end
+            % (1): per-job rates must be non-negative. Runs second because
+            % permutation invariance is what makes mu a function of the count
+            % vector, which is what the increment test walks.
+            [okm, badm, badr, partialm] = nd.checkRateMonotonicity(Nvec, min(nd.cap, ntot));
+            partial = partial || partialm;
+            if ~okm
+                line_error(mfilename, 'Order-independent (OI) station ''%s'' has a service rate function with a negative per-job service rate: mu(c) DROPS when a class-%d job joins, at microstate %s. An OI rate must satisfy mu(c1..cj) >= mu(c1..c_{j-1}), so that every mu_j(c) is non-negative. A processor-sharing total rate (sum_j mu_{cj})/n has this shape whenever classes have different rates -- use SchedStrategy.PS for that station, or disable this check with model.setChecks(false).', nd.getName(), badr, mat2str(badm));
             elseif partial
                 line_warning(mfilename, 'Order-independent (OI) station ''%s'': the permutation-invariance check was only partial because the reachable population is large; a subset of microstates was verified. To skip this check, call model.setChecks(false) before link().\n', nd.getName());
             end

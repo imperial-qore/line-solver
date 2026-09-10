@@ -151,7 +151,7 @@ public final class Ctmc_gmres {
      * The equilibrated, reordered and preconditioned form of a coefficient matrix. It is
      * built once and solved against any number of right-hand sides.
      */
-    private static final class Prepared {
+    static final class Prepared {
         final int n;
         final Csr csr;
         final int[] perm;
@@ -336,32 +336,32 @@ public final class Ctmc_gmres {
     }
 
     /** Returns out with out[i] = v[perm[i]]. */
-    private static double[] permute(double[] v, int[] perm) {
+    static double[] permute(double[] v, int[] perm) {
         double[] out = new double[v.length];
         for (int i = 0; i < v.length; i++) out[i] = v[perm[i]];
         return out;
     }
 
     /** Returns out with out[perm[i]] = v[i], the inverse of {@link #permute}. */
-    private static double[] unpermute(double[] v, int[] perm) {
+    static double[] unpermute(double[] v, int[] perm) {
         double[] out = new double[v.length];
         for (int i = 0; i < v.length; i++) out[perm[i]] = v[i];
         return out;
     }
 
-    private static Matrix asColumn(double[] v) {
+    static Matrix asColumn(double[] v) {
         Matrix out = new Matrix(v.length, 1);
         for (int i = 0; i < v.length; i++) out.set(i, 0, v[i]);
         return out;
     }
 
-    private static double norm2(double[] v) {
+    static double norm2(double[] v) {
         double s = 0.0;
         for (double vi : v) s += vi * vi;
         return Math.sqrt(s);
     }
 
-    private static double dot(double[] a, double[] b) {
+    static double dot(double[] a, double[] b) {
         double s = 0.0;
         for (int i = 0; i < a.length; i++) s += a[i] * b[i];
         return s;
@@ -373,7 +373,7 @@ public final class Ctmc_gmres {
      * factorization is a row-oriented elimination, so it needs this rather than the CSC
      * layout EJML uses.
      */
-    private static final class Csr {
+    static final class Csr {
         final int n;
         final int[] rowPtr;
         final int[] colIdx;
@@ -497,7 +497,7 @@ public final class Ctmc_gmres {
      * the neighbours of each node appended in order of increasing degree, and the result
      * is reversed.
      */
-    private static final class Rcm {
+    static final class Rcm {
         static int[] order(Csr a) {
             int n = a.n;
             // Symmetric adjacency of the pattern, diagonal excluded.
@@ -576,7 +576,7 @@ public final class Ctmc_gmres {
      * backward triangular sweep, or a Jacobi diagonal when the incomplete factorization
      * breaks down.
      */
-    private static final class Precond {
+    static final class Precond {
         private final Ilut lu;
         private final double[] dinv;
 
@@ -618,7 +618,7 @@ public final class Ctmc_gmres {
      * replaced, which is Saad's remedy and keeps the factorization defined without
      * pivoting.
      */
-    private static final class Ilut {
+    static final class Ilut {
         private final int n;
         private final int[] lPtr;
         private final int[] lCol;

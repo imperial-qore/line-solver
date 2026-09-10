@@ -54,6 +54,37 @@ else
     maxStates = 3e6;
 end
 
+% THE POSITION ENUMERATION IS CAPACITY-BOUND, not just the per-node spaces.
+% capacityc already zeroes a (node, class) pair the class never visits, and
+% spaceGeneratorNodes uses it to prune sn.space -- but the lattice below used to
+% distribute every class over every slot with no bound and let the
+% `any(stateMarg_i > capacityc)` test further down reject the impossible rows one
+% at a time, at one State.fromMarginal call each. On the class-switching chain
+% Source->Q1(A)->Q2(B)->Q3(C) that is (cutoff+1)^(3*3) candidates for
+% (cutoff+1)^3 reachable states. slotcap is capacityc in the SLOT order the
+% position vector uses, which is the non-source stateful nodes in stateful order.
+slotcap = zeros(nstatefulp, sn.nclasses);
+nprecsrc = 0;
+slotok = true;
+for ind = 1:sn.nnodes
+    if sn.nodetype(ind) == NodeType.Source
+        nprecsrc = nprecsrc + 1;
+        continue
+    end
+    if ~sn.isstateful(ind)
+        continue
+    end
+    slot = sn.nodeToStateful(ind) - nprecsrc;
+    if slot < 1 || slot > nstatefulp
+        slotok = false;
+        break
+    end
+    slotcap(slot,:) = capacityc(ind,:);
+end
+if ~slotok
+    slotcap = [];   % a slot went unmapped: do not bound what we cannot see
+end
+
 n = pprod(Np);
 chainStationPos=[];
 while n>=0
@@ -88,7 +119,7 @@ while n>=0
     %      2     0     0     0
     % that are then in the need for a call to unique
     if all(isOpenClass) | (Np(isClosedClass) == n(isClosedClass)) %#ok<OR2>
-        chainStationPos = [chainStationPos; State.spaceClosedMultiCS(nstatefulp,n,sn.chains)];
+        chainStationPos = [chainStationPos; State.spaceClosedMultiCS(nstatefulp,n,sn.chains,slotcap)];
         if size(chainStationPos,1) > maxStates
             line_error(mfilename,'State space too large: population lattice exceeds ctmc_max_states=%g. Increase options.ctmc_max_states or use a different solver.', maxStates);
         end
@@ -143,9 +174,9 @@ for j=1:size(chainStationPos,1)
                     if ~isempty(rsqi)
                         aks = keys(rsqi);
                         for ak = 1:numel(aks)
-                            arrivalClass = aks{ak};            % int32, 0-based arrival class
+                            arrivalClass = aks(ak);            % int32, 0-based arrival class
                             classCol = double(arrivalClass) + 1;
-                            qNodes = rsqi(arrivalClass);
+                            qNodes = rsqi{arrivalClass};
                             for qq = 1:numel(qNodes)
                                 qIdx = qNodes(qq);
                                 qOff = sn.nodeToStateful(qIdx) - sum(sn.nodetype(1:qIdx-1) == NodeType.Source);
@@ -175,7 +206,9 @@ for j=1:size(chainStationPos,1)
                             st = state_i(row,:);
                             validRow = true;
                             itemsInRSstate = [];
-                            for col = (lvs+tcc+1):size(st,2)
+                            % only block A (one column per item) records in-flight
+                            % fetches; block B holds the merged secondary requests
+                            for col = (lvs+tcc+1):(lvs+tcc+size(rc,1))
                                 if st(col) == 0, continue; end
                                 item = col - (lvs+tcc);
                                 for jac = 1:size(rc,2)

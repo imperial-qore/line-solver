@@ -1,4 +1,4 @@
-"""Tandem G-network semantics under SolverMAM (RCAT) and SolverCTMC.
+"""Tandem G-network semantics under SolverAG (RCAT) and SolverCTMC.
 
 Model: Source -> Queue1 -> Queue2 -> Sink, with a signal class routed along the
 same chain. A removal signal fires ONCE, at the first station it reaches, and is
@@ -21,7 +21,7 @@ import os
 import pytest
 
 from line_solver import (Network, Source, Queue, Sink, OpenClass, Signal,
-                         SignalType, SchedStrategy, Exp, SolverMAM, SolverCTMC,
+                         SignalType, SchedStrategy, Exp, SolverAG, SolverMAM, SolverCTMC,
                          SolverLDES)
 
 
@@ -98,10 +98,11 @@ CASES = [
 ]
 
 
-@pytest.mark.parametrize('name,signal_type,lambda_pos,lambda_neg,q1,q2,t1', CASES)
+@pytest.mark.parametrize('name,signal_type,lambda_pos,lambda_neg,q1,q2,t1', CASES,
+                         ids=[c[0] for c in CASES])
 @pytest.mark.parametrize('method', ['inap', 'inapinf'])
 def test_mam_tandem(method, name, signal_type, lambda_pos, lambda_neg, q1, q2, t1):
-    table = SolverMAM(_tandem(lambda_pos, lambda_neg, signal_type), method).getAvgTable()
+    table = SolverAG(_tandem(lambda_pos, lambda_neg, signal_type), method).getAvgTable()
     assert _pick(table, 'Queue1', 'QLen') == pytest.approx(q1, abs=1e-4)
     assert _pick(table, 'Queue2', 'QLen') == pytest.approx(q2, abs=1e-4)
     assert _pick(table, 'Queue1', 'Tput') == pytest.approx(t1, abs=1e-4)
@@ -110,7 +111,8 @@ def test_mam_tandem(method, name, signal_type, lambda_pos, lambda_neg, q1, q2, t
         _pick(table, 'Queue1', 'Tput'), abs=1e-4)
 
 
-@pytest.mark.parametrize('name,signal_type,lambda_pos,lambda_neg,q1,q2,t1', CASES)
+@pytest.mark.parametrize('name,signal_type,lambda_pos,lambda_neg,q1,q2,t1', CASES,
+                         ids=[c[0] for c in CASES])
 @pytest.mark.skipif(bool(_LDES_SKIP_REASON), reason=_LDES_SKIP_REASON)
 def test_ldes_tandem(name, signal_type, lambda_pos, lambda_neg, q1, q2, t1):
     """Sample-path check: the signal is annihilated at Queue1, and a
@@ -124,10 +126,60 @@ def test_ldes_tandem(name, signal_type, lambda_pos, lambda_neg, q1, q2, t1):
         _pick(table, 'Queue1', 'Tput'), abs=0.01)
 
 
-@pytest.mark.parametrize('name,signal_type,lambda_pos,lambda_neg,q1,q2,t1', CASES)
+@pytest.mark.parametrize('name,signal_type,lambda_pos,lambda_neg,q1,q2,t1', CASES,
+                         ids=[c[0] for c in CASES])
 def test_ctmc_tandem(name, signal_type, lambda_pos, lambda_neg, q1, q2, t1):
     table = SolverCTMC(_tandem(lambda_pos, lambda_neg, signal_type), cutoff=14).getAvgTable()
     assert _pick(table, 'Queue1', 'QLen') == pytest.approx(q1, abs=1e-3)
     assert _pick(table, 'Queue2', 'QLen') == pytest.approx(q2, abs=1e-3)
     assert _pick(table, 'Queue2', 'Tput') == pytest.approx(
         _pick(table, 'Queue1', 'Tput'), abs=1e-3)
+
+
+@pytest.mark.parametrize('method', ['default', 'dec.source', 'dec.mmap', 'mna',
+                                    'ldqbd', 'bgchain'])
+def test_mam_methods_refuse_signals(method):
+    """The RCAT builder, which moved to SolverAG, is the only code in LINE that
+    reads sn.issignal. No MAM algorithm reads it, so every MAM method would solve
+    the model with the signals turned into ordinary customers -- and the MAM
+    envelope no longer declares the G-network names at all."""
+    solver = SolverMAM(_tandem(1.0, 0.3, SignalType.NEGATIVE), method)
+    with pytest.raises(RuntimeError, match='G-network signals'):
+        solver.getAvgTable()
+    feats = solver.getMethodFeatureSet(method)
+    assert 'OpenSignal' not in feats
+    assert 'ClosedSignal' not in feats
+    assert 'SignalType_NEGATIVE' not in feats
+
+
+@pytest.mark.parametrize('method', ['inap', 'inapplus', 'inapinf'])
+def test_rcat_methods_keep_the_signal_features(method):
+    solver = SolverAG(_tandem(1.0, 0.3, SignalType.NEGATIVE), method)
+    feats = solver.getMethodFeatureSet(method)
+    assert 'OpenSignal' in feats
+    assert 'SignalType_NEGATIVE' in feats
+    ok, reason = solver.supportsModelMethod(method)
+    assert ok, reason
+
+
+def test_signal_gate_leaves_ordinary_models_alone():
+    """A model with no signal class is untouched by the gate."""
+    model = Network('Tandem')
+    source = Source(model, 'Source')
+    queue1 = Queue(model, 'Queue1', SchedStrategy.FCFS)
+    queue2 = Queue(model, 'Queue2', SchedStrategy.FCFS)
+    sink = Sink(model, 'Sink')
+    pos = OpenClass(model, 'Positive')
+    source.setArrival(pos, Exp(1.0))
+    queue1.setService(pos, Exp(MU1))
+    queue2.setService(pos, Exp(MU2))
+    P = model.initRoutingMatrix()
+    P.set(pos, pos, source, queue1, 1.0)
+    P.set(pos, pos, queue1, queue2, 1.0)
+    P.set(pos, pos, queue2, sink, 1.0)
+    model.link(P)
+
+    # The claim under test is that the gate does not fire, so the model still
+    # reaches the analyzer: Queue1 is the M/M/1 the gate must leave alone.
+    table = SolverMAM(model, 'default').getAvgTable()
+    assert _pick(table, 'Queue1', 'QLen') == pytest.approx(1.0, abs=1e-4)

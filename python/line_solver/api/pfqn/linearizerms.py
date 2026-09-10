@@ -105,6 +105,12 @@ def pfqn_linearizerms(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
     PB = np.zeros((M, 1 + R))
     P = np.zeros((M, max_servers, 1 + R))
     Delta = np.zeros((M, R, R))
+    # Linearizer corrections for the queue-length marginals; without them the
+    # marginals stay at population N while the queue lengths are reduced to
+    # N-e_s, which breaks Q + sum_j (m-1-j) p_j >= m-1 and lets W fall below the
+    # mean service time.
+    DeltaP = np.zeros((M, max_servers, R))
+    DeltaPB = np.zeros((M, R))
 
     # see _kb/03-api-layer.md for rationale
     for r in range(R):
@@ -124,6 +130,12 @@ def pfqn_linearizerms(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
             # Only handle multiserver for finite server counts > 1 (skip Delay nodes with Inf)
             if nservers[ist] > 1 and np.isfinite(nservers[ist]):
                 ns = int(nservers[ist])
+                if pop == 0:
+                    # empty network: the station is idle with probability one
+                    P[ist, 1:ns, s] = 0.0
+                    PB[ist, s] = 0.0
+                    P[ist, 0, s] = 1.0
+                    continue
                 for j in range(1, ns):
                     P[ist, j, s] = 2 * np.sum(Q[ist, :, s]) / (pop * (pop + 1))
 
@@ -144,7 +156,7 @@ def pfqn_linearizerms(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
             # Core iteration
             Q[:, :, s], _, _, P[:, :, s], PB[:, s], iter_count = _core_ms(
                 L, M, R, N_1, Z, nservers, Q[:, :, s], P[:, :, s], PB[:, s],
-                Delta, type_sched, tol, maxiter - totiter
+                Delta, DeltaP, DeltaPB, type_sched, tol, maxiter - totiter
             )
             totiter += iter_count
 
@@ -153,16 +165,29 @@ def pfqn_linearizerms(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
             for r in range(R):
                 for s in range(R):
                     Ns = oner(N, s)
-                    if Ns[r] > 0 and N[r] > 0:
+                    if N[r] <= 0:
+                        Delta[ist, r, s] = 0.0
+                    elif Ns[r] > 0:
                         # Python stores full population at index R (unlike MATLAB which uses index 0)
                         Delta[ist, r, s] = Q[ist, r, s] / Ns[r] - Q[ist, r, R] / N[r]
                     else:
-                        Delta[ist, r, s] = 0.0
+                        # Chandy-Neuse 0/0 convention: F_ir(N-e_s) = 0
+                        Delta[ist, r, s] = -Q[ist, r, R] / N[r]
+
+        # Update the marginal corrections. Probabilities do not scale with the
+        # population, so the analogue of Delta is a plain difference.
+        for ist in range(M):
+            if nservers[ist] > 1 and np.isfinite(nservers[ist]):
+                ns = int(nservers[ist])
+                for s in range(R):
+                    for j in range(ns):
+                        DeltaP[ist, j, s] = P[ist, j, s] - P[ist, j, R]
+                    DeltaPB[ist, s] = PB[ist, s] - PB[ist, R]
 
     # Final Core(N) - Python stores full population at index R
     Q_final, W, X, _, _, iter_count = _core_ms(
         L, M, R, N, Z, nservers, Q[:, :, R], P[:, :, R], PB[:, R],
-        Delta, type_sched, tol, maxiter - totiter
+        Delta, DeltaP, DeltaPB, type_sched, tol, maxiter - totiter
     )
     totiter += iter_count
 
@@ -184,7 +209,7 @@ def pfqn_linearizerms(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
 
     return Q_out, U, R_out, C, X, totiter
 
-def _core_ms(L, M, R, N_1, Z, nservers, Q, P, PB, Delta, type_sched, tol, maxiter):
+def _core_ms(L, M, R, N_1, Z, nservers, Q, P, PB, Delta, DeltaP, DeltaPB, type_sched, tol, maxiter):
     """Core iteration for multiserver linearizer."""
     max_servers = _get_max_finite_servers(nservers)
     iter_count = 0
@@ -195,7 +220,7 @@ def _core_ms(L, M, R, N_1, Z, nservers, Q, P, PB, Delta, type_sched, tol, maxite
         Qlast = Q.copy()
 
         # Estimate
-        Q_1, P_1, PB_1 = _estimate_ms(M, R, N_1, nservers, Q, P, PB, Delta)
+        Q_1, P_1, PB_1 = _estimate_ms(M, R, N_1, nservers, Q, P, PB, Delta, DeltaP, DeltaPB)
 
         # Forward MVA
         Q, W, T, P, PB = _forward_mva_ms(L, M, R, N_1, Z, nservers, type_sched, Q_1, P_1, PB_1)
@@ -205,7 +230,7 @@ def _core_ms(L, M, R, N_1, Z, nservers, Q, P, PB, Delta, type_sched, tol, maxite
 
     return Q, W, T, P, PB, iter_count
 
-def _estimate_ms(M, R, N_1, nservers, Q, P, PB, Delta):
+def _estimate_ms(M, R, N_1, nservers, Q, P, PB, Delta, DeltaP, DeltaPB):
     """Estimate populations for linearizer."""
     max_servers = _get_max_finite_servers(nservers)
 
@@ -219,11 +244,13 @@ def _estimate_ms(M, R, N_1, nservers, Q, P, PB, Delta):
         if nservers[ist] > 1 and np.isfinite(nservers[ist]):
             ns = int(nservers[ist])
             for j in range(ns):
-                for s in range(R + 1):
-                    P_1[ist, j, s] = P[ist, j]
+                P_1[ist, j, 0] = P[ist, j]
+                for s in range(R):
+                    P_1[ist, j, s + 1] = P[ist, j] + DeltaP[ist, j, s]
 
-            for s in range(R + 1):
-                PB_1[ist, s] = PB[ist]
+            PB_1[ist, 0] = PB[ist]
+            for s in range(R):
+                PB_1[ist, s + 1] = PB[ist] + DeltaPB[ist, s]
 
         for r in range(R):
             for s in range(R):
@@ -266,16 +293,13 @@ def _forward_mva_ms(L, M, R, N_1, Z, nservers, type_sched, Q_1, P_1, PB_1):
                 for s in range(R):
                     W[ist, r] += (L[ist, r] / nservers[ist]) * Q_1[ist, s, r + 1]
 
-            # Multiserver probability contributions (only for finite servers > 1)
+            # Partially-idle-server correction. It compensates the 1/m scaling of the
+            # arriving job's OWN service, so it carries L[ist,r]/m and no sum over the
+            # other classes: at N=e_r the terms must collapse to W = L[ist,r].
             if nservers[ist] > 1 and np.isfinite(nservers[ist]):
                 ns = int(nservers[ist])
                 for j in range(ns - 1):
-                    if _is_fcfs(type_sched[ist]):
-                        for s in range(R):
-                            W[ist, r] += L[ist, s] * (nservers[ist] - 1 - j) * P_1[ist, j, r + 1]
-                    else:
-                        for s in range(R):
-                            W[ist, r] += L[ist, r] * (nservers[ist] - 1 - j) * P_1[ist, j, r + 1]
+                    W[ist, r] += (L[ist, r] / nservers[ist]) * (nservers[ist] - 1 - j) * P_1[ist, j, r + 1]
 
     for r in range(R):
         denom = Z[r] + np.sum(W[:, r])
@@ -287,32 +311,42 @@ def _forward_mva_ms(L, M, R, N_1, Z, nservers, type_sched, Q_1, P_1, PB_1):
         for ist in range(M):
             Q[ist, r] = T[r] * W[ist, r]
 
+    # Queue-length marginals. The relations
+    #   p_j = (A p_{j-1} + d_{j-1}) / j,  pB = (A (pB + p_{ns-1}) + dB) / ns,
+    #   p_0 = 1 - pB - sum_j p_j
+    # with A = sum_s X_s L_is the mean number of busy servers and d the population
+    # corrections, are solved in closed form rather than iterated: as a Jacobi
+    # iteration they amplify by A per sweep and diverge once A approaches ns.
     for ist in range(M):
-        # Only handle multiserver for finite server counts > 1 (skip Delay nodes with Inf)
         if nservers[ist] > 1 and np.isfinite(nservers[ist]):
             ns = int(nservers[ist])
-            P[ist, :] = 0
-            for j in range(1, ns):
-                for s in range(R):
-                    # Use s+1 for 3rd dim to match MATLAB's 1+s indexing
-                    P[ist, j] += L[ist, s] * T[s] * P_1[ist, j - 1, s + 1] / j
-
-    for ist in range(M):
-        # Only handle multiserver for finite server counts > 1 (skip Delay nodes with Inf)
-        if nservers[ist] > 1 and np.isfinite(nservers[ist]):
-            ns = int(nservers[ist])
-            PB[ist] = 0
+            A = 0.0
+            d = np.zeros(ns)
+            dB = 0.0
             for s in range(R):
-                # Use s+1 for indices to match MATLAB's 1+s indexing
-                PB[ist] += L[ist, s] * T[s] * (PB_1[ist, s + 1] + P_1[ist, ns - 1, s + 1]) / ns
-
-    for ist in range(M):
-        # Only handle multiserver for finite server counts > 1 (skip Delay nodes with Inf)
-        if nservers[ist] > 1 and np.isfinite(nservers[ist]):
-            ns = int(nservers[ist])
-            P[ist, 0] = 1 - PB[ist]
+                a_s = L[ist, s] * T[s]
+                A += a_s
+                for j in range(ns):
+                    d[j] += a_s * (P_1[ist, j, s + 1] - P_1[ist, j, 0])
+                dB += a_s * (PB_1[ist, s + 1] - PB_1[ist, 0])
+            if A >= ns:
+                raise ValueError(
+                    "pfqn_linearizerms: station %d offers %g busy servers out of %d; "
+                    "the model is saturated and its queue-length marginals do not exist."
+                    % (ist, A, ns))
+            # p_j = alpha[j] * p_0 + beta[j]
+            alpha = np.zeros(ns)
+            beta = np.zeros(ns)
+            alpha[0] = 1.0
             for j in range(1, ns):
-                P[ist, 0] -= P[ist, j]
+                alpha[j] = A * alpha[j - 1] / j
+                beta[j] = (A * beta[j - 1] + d[j - 1]) / j
+            alphaB = A * alpha[ns - 1] / (ns - A)
+            betaB = (A * beta[ns - 1] + dB + d[ns - 1]) / (ns - A)
+            P[ist, 0] = (1 - np.sum(beta[1:ns]) - betaB) / (1 + np.sum(alpha[1:ns]) + alphaB)
+            for j in range(1, ns):
+                P[ist, j] = alpha[j] * P[ist, 0] + beta[j]
+            PB[ist] = alphaB * P[ist, 0] + betaB
 
     return Q, W, T, P, PB
 
@@ -333,16 +367,42 @@ def sprod(R: int, n: int) -> Tuple[int, np.ndarray, np.ndarray, np.ndarray]:
             SD: Upper bounds
             D: Direction vector
     """
-    nvec = np.zeros(R, dtype=int)
-    nvec[0] = n
+    # The first state must be the one sprod_next unranks at 0, or the sweep both
+    # repeats a state and misses another: with nvec[0] = n hardcoded here, R=2
+    # started at (n,0) while rank 0 is (0,n), so (n,0) was counted twice and (0,n)
+    # never. Both ends of the iterator now go through the same unranking.
     SD = np.full(R, n, dtype=int)
     D = np.arange(R, dtype=int)
-    s = 0
-    return s, nvec, SD, D
+    return 0, _sprod_unrank(0, n, R), SD, D
+
+
+def _sprod_unrank(rank: int, n: int, R: int) -> np.ndarray:
+    """The rank-th length-R nonnegative vector summing to n, in stars-and-bars order."""
+    from math import comb
+
+    nvec = np.zeros(R, dtype=int)
+    remaining = n
+    for i in range(R - 1):
+        for k in range(remaining + 1):
+            c = comb(remaining - k + R - i - 2, R - i - 2)
+            if rank < c:
+                nvec[i] = k
+                remaining -= k
+                break
+            rank -= c
+    nvec[R - 1] = remaining
+    return nvec
 
 def sprod_next(s: int, SD: np.ndarray, D: np.ndarray) -> Tuple[int, np.ndarray]:
     """
     Get next state in product space.
+
+    The caller drives this as `while s >= 0: ...; s, nvec = sprod_next(s, SD, D)`,
+    so the returned index IS the iterator: returning anything but the advanced
+    rank makes the loop non-terminating. It used to return the literal 0, so `s`
+    oscillated 0 -> 1 -> 0 and the caller re-decoded state 1 forever (reproducible
+    at R=2, one station). The rank is therefore captured BEFORE the decoding loop,
+    which consumes its own copy.
 
     Args:
         s: Current state index
@@ -352,34 +412,24 @@ def sprod_next(s: int, SD: np.ndarray, D: np.ndarray) -> Tuple[int, np.ndarray]:
     Returns:
         Tuple of (s, nvec) for next state, or (-1, nvec) if exhausted
     """
+    from math import comb
+
     R = len(SD)
-    n = SD[0]
+    n = int(SD[0])
 
     if s < 0:
         return s, np.zeros(R, dtype=int)
 
-    # Count total combinations
-    from scipy.special import comb
-    total = int(comb(n + R - 1, R - 1))
+    # Number of length-R nonnegative vectors summing to n (stars and bars).
+    # math.comb, not scipy.special.comb: this is an exact index bound, and the
+    # float scipy returns loses integrality well before the loop does.
+    total = comb(n + R - 1, R - 1)
 
-    s += 1
+    s = int(s) + 1
     if s >= total:
         return -1, np.zeros(R, dtype=int)
 
-    # Convert s to nvec using stars and bars
-    nvec = np.zeros(R, dtype=int)
-    remaining = n
-    for i in range(R - 1):
-        for k in range(remaining + 1):
-            c = int(comb(remaining - k + R - i - 2, R - i - 2))
-            if s < c:
-                nvec[i] = k
-                remaining -= k
-                break
-            s -= c
-    nvec[R - 1] = remaining
-
-    return 0, nvec
+    return s, _sprod_unrank(s, n, R)
 
 def multinomialln(n: np.ndarray) -> float:
     """Compute log of multinomial coefficient."""
@@ -484,7 +534,7 @@ def pfqn_conwayms(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
             # Core iteration
             Q[:, :, s], W_temp, T_temp, P[:, :, s], PB[:, s], iter_count = _conway_core(
                 L, M, R, N_1, Z, nservers, Q[:, :, s], P[:, :, s], PB[:, s],
-                Delta, W_temp if 'W_temp' in dir() else L.copy(), type_sched, tol, maxiter - totiter
+                Delta, type_sched, tol, maxiter - totiter
             )
             totiter += iter_count
 
@@ -499,10 +549,15 @@ def pfqn_conwayms(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
                     else:
                         Delta[ist, r, s] = 0.0
 
-    # Final Core(N) - Python stores full population at index R
+    # Final Core(N) - Python stores full population at index R.
+    # The budget is the FULL maxiter, as in MATLAB pfqn_conwayms.m:110, not the
+    # remainder the two priming sweeps left. Charging this call for their
+    # iterations truncates the only solve whose result is returned: with the
+    # remainder it stopped after 106 iterations against MATLAB's 1035 and landed
+    # 0.5% away.
     Q_final, W, X, P_final, PB_final, iter_count = _conway_core(
         L, M, R, N, Z, nservers, Q[:, :, R], P[:, :, R], PB[:, R],
-        Delta, L.copy(), type_sched, tol, maxiter - totiter
+        Delta, type_sched, tol, maxiter
     )
     totiter += iter_count
 
@@ -524,11 +579,16 @@ def pfqn_conwayms(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
 
     return Q_out, U, R_out, C, X, totiter
 
-def _conway_core(L, M, R, N_1, Z, nservers, Q, P, PB, Delta, W, type_sched, tol, maxiter):
+def _conway_core(L, M, R, N_1, Z, nservers, Q, P, PB, Delta, type_sched, tol, maxiter):
     """Core iteration for Conway multiserver linearizer."""
     max_servers = _get_max_finite_servers(nservers)
     hasConverged = False
     iter_count = 0
+    # W seeds the first Estimate and is reset per Core call, as in MATLAB Core:
+    # carrying it over from the previous population sweep makes the estimated
+    # throughputs of sweep s depend on the sweep before it.
+    W = L.copy()
+    Wlast = None
 
     while not hasConverged:
         Qlast = Q.copy()
@@ -539,7 +599,15 @@ def _conway_core(L, M, R, N_1, Z, nservers, Q, P, PB, Delta, W, type_sched, tol,
         # Forward MVA
         Q, W, T, P, PB = _conway_forward_mva(L, M, R, N_1, Z, nservers, type_sched, Q_1, P_1, PB_1, T_1)
 
-        if np.linalg.norm(Q - Qlast) < tol or iter_count >= maxiter:
+        # W must enter the test: Q alone is satisfied on the FIRST sweep whenever Q
+        # cannot move (M=1 seeds Q at its own fixed point), and the residence times
+        # returned then are still the seed W=L, so T_1=Q/W is unbounded and the
+        # throughput exceeds the station's own service capacity.
+        moved = np.inf if Wlast is None else max(np.linalg.norm(Q - Qlast),
+                                                 np.linalg.norm(W - Wlast))
+        Wlast = W.copy()
+
+        if moved < tol or iter_count >= maxiter:
             hasConverged = True
 
         iter_count += 1
@@ -574,14 +642,27 @@ def _conway_estimate(M, R, N_1, nservers, Q, P, PB, Delta, W):
                 else:
                     Q_1[ist, r, s] = 0.0
 
-    # Compute T_1
+    # T_1 is Little's law over the queueing part of the cycle, sum_i Q_1 / sum_i W,
+    # and not the ratio at the FIRST station with a positive residence time: the
+    # per-station estimates disagree, so picking one made the answer depend on the
+    # station order. The demand matrix carries no order, so a model symmetric under
+    # permuting classes and stations together must return equal class throughputs,
+    # and with the single-station pick it did not.
     for r in range(R):
         for s in range(R):
             Nr = oner(N_1, r)
+            num = 0.0
+            den = 0.0
             for ist in range(M):
                 if W[ist, s] > 0 and N_1[s] > 0:
-                    T_1[s, r] = Nr[s] * (Q[ist, s] / N_1[s] + Delta[ist, r, s]) / W[ist, s]
-                    break
+                    # Delta is indexed (station, queued class, removed class), as the
+                    # Q_1 loop above uses it: here class s queues and class r is removed.
+                    num += Nr[s] * (Q[ist, s] / N_1[s] + Delta[ist, s, r])
+                    den += W[ist, s]
+            if den > 0:
+                # a reduced-population throughput cannot be negative; a negative one
+                # makes log(F) complex in the XR/XE sums of the forward step
+                T_1[s, r] = max(0.0, num / den)
 
     return Q_1, P_1, PB_1, T_1
 
@@ -690,32 +771,36 @@ def _conway_forward_mva(L, M, R, N_1, Z, nservers, type_sched, Q_1, P_1, PB_1, T
         for ist in range(M):
             Q[ist, r] = T[r] * W[ist, r]
 
-    # Compute marginal probabilities
+    # Queue-length marginals. The relations
+    #   p_j = A*p_{j-1}/j,  pB = A*(pB + p_{ms-1})/ms,  p_0 = 1 - pB - sum_j p_j
+    # with A = sum_s X_s*L_is the mean number of busy servers are solved in closed
+    # form rather than iterated. As a Jacobi iteration they amplify by A per sweep,
+    # and since the convergence test watches Q and W but not P the routine returned
+    # marginals whose mass had run to 334 behind the p_0 = max(0,1-...) floor.
+    # _conway_estimate hands the same marginals to every reduced population, so the
+    # population corrections that pfqn_linearizerms carries here are all zero.
     for ist in range(M):
-        # Only handle multiserver for finite server counts > 1 (skip Delay nodes with Inf)
         if nservers[ist] > 1 and np.isfinite(nservers[ist]):
-            ns = int(nservers[ist])
+            ms = int(nservers[ist])
+            A = 0.0
+            for s in range(R):
+                A += L[ist, s] * T[s]
             P[ist, :] = 0
-            for j in range(1, ns):
-                for c in range(R):
-                    if j > 0:
-                        P[ist, j] += L[ist, c] * T[c] * P_1[ist, j - 1, c] / j
-
-    for ist in range(M):
-        # Only handle multiserver for finite server counts > 1 (skip Delay nodes with Inf)
-        if nservers[ist] > 1 and np.isfinite(nservers[ist]):
-            ns = int(nservers[ist])
-            PB[ist] = 0
-            for c in range(R):
-                PB[ist] += L[ist, c] * T[c] * (PB_1[ist, c] + P_1[ist, ns - 1, c]) / ns
-
-    for ist in range(M):
-        # Only handle multiserver for finite server counts > 1 (skip Delay nodes with Inf)
-        if nservers[ist] > 1 and np.isfinite(nservers[ist]):
-            ns = int(nservers[ist])
-            P[ist, 0] = max(0, 1 - PB[ist])
-            for j in range(1, ns):
-                P[ist, 0] = max(0, P[ist, 0] - P[ist, j])
+            if A >= ms:
+                # Saturated: the closed form is singular and its limit is the
+                # degenerate marginal, every server busy with probability one.
+                # N = m with Z = 0 reaches it exactly, so this is a legal input.
+                PB[ist] = 1.0
+            else:
+                alpha = np.zeros(ms)
+                alpha[0] = 1.0
+                for j in range(1, ms):
+                    alpha[j] = A * alpha[j - 1] / j
+                alphaB = A * alpha[ms - 1] / (ms - A)
+                P[ist, 0] = 1.0 / (1.0 + np.sum(alpha[1:ms]) + alphaB)
+                for j in range(1, ms):
+                    P[ist, j] = alpha[j] * P[ist, 0]
+                PB[ist] = alphaB * P[ist, 0]
 
     return Q, W, T, P, PB
 

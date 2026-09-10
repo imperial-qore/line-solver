@@ -39,6 +39,10 @@ public class GlobalConstants {
     public static final String Version = "3.0.7";
     /** Threshold below which values are considered zero (1e-14) */
     public static final double Zero = 1.0000e-14;
+    /** Magnitude above which an off-diagonal generator entry counts as an arc (1e-12).
+     *  Sign is NOT a criterion: a matrix-exponential generator embeds genuinely negative
+     *  off-diagonal entries, and a sign test would read them as absent arcs. */
+    public static final double ArcTol = 1.0000e-12;
     /** Global verbosity level for solver output */
     public static VerboseLevel Verbose = initVerbose();
 

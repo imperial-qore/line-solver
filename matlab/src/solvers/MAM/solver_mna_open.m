@@ -7,7 +7,8 @@ if ~isfield(config, 'dep_scv')
 end
 
 K = sn.nclasses;
-rt = sn.rt;
+% sn.rt and sn.visits are indexed by stateful node: project them onto stations
+[rt, V] = sn_rt_stations(sn);
 S = 1./sn.rates;
 scv = sn.scv; scv(isnan(scv))=0;
 
@@ -15,7 +16,6 @@ PH = sn.proc;
 I = sn.nnodes;
 M = sn.nstations;
 C = sn.nchains;
-V = cellsum(sn.visits);
 Q = zeros(M,K);
 %QN_1 = Q+Inf;
 
@@ -51,14 +51,16 @@ a2 = zeros(M,K);
 mubar = [];
 c2 = [];
 d2 = zeros(M,1);
-f2 = zeros(M*K,M*K); 
+f2 = zeros(M*K,M*K);
+% deterministic (round-robin) split degrees, k=1 where the split is Markovian
+kRR = npfqn_traffic_split_rr(sn);
 for ist=1:M
     for jst=1:M
         if sn.nodetype(sn.stationToNode(jst)) ~= NodeType.Source
             for r=1:K
                 for s=1:K
                     if rt((ist-1)*K+r, (jst-1)*K+s)>0
-                            f2((ist-1)*K+r, (jst-1)*K+s) = 1; % C^2ij,r
+                            f2((ist-1)*K+r, (jst-1)*K+s) = 1 + rt((ist-1)*K+r, (jst-1)*K+s) * (1-kRR(ist,r)); % C^2ij,r at d2=1
                     end
                  end
              end
@@ -137,18 +139,18 @@ fpopts.config.da_nanstop = true; % legacy while-loop exited on NaN convergence m
                                 end
                             end
                         case SchedStrategy.PS
+                            % TN/UN/QN/RN here were local to the sweep and thrown
+                            % away, so a PS station reported 0; write the results
                             for c=1:C
                                 inchain = sn.inchain{c};
                                 for k=inchain
-                                    TN(ist,k) = lambda(c)*V(ist,k);
-                                    UN(ist,k) = S(ist,k)*TN(ist,k);
+                                    T(ist,k) = lambda(c)*V(ist,k);
+                                    U(ist,k) = S(ist,k)*T(ist,k);
                                 end
-                                %Nc = sum(sn.njobs(inchain)); % closed population
-                                Uden = min([1-GlobalConstants.FineTol,sum(UN(ist,:))]);
+                                Uden = min([1-GlobalConstants.FineTol,sum(U(ist,:))]);
                                 for k=inchain
-                                    %QN(ist,k) = (UN(ist,k)-UN(ist,k)^(Nc+1))/(1-Uden); % geometric bound type approximation
-                                    QN(ist,k) = UN(ist,k)/(1-Uden);
-                                    RN(ist,k) = QN(ist,k)/TN(ist,k);
+                                    Q(ist,k) = U(ist,k)/(1-Uden);
+                                    R(ist,k) = Q(ist,k)/T(ist,k);
                                 end
                             end                    
                         case {SchedStrategy.FCFS}
@@ -225,7 +227,8 @@ fpopts.config.da_nanstop = true; % legacy while-loop exited on NaN convergence m
                 for r=1:K
                     for s=1:K
                         if rt((ist-1)*K+r, (jst-1)*K+s)>0
-                            f2((ist-1)*K+r, (jst-1)*K+s) = 1 + rt((ist-1)*K+r, (jst-1)*K+s) * (d2(ist)-1); 
+                            % k-fold convolution then Bernoulli thinning at q=k*p: C^2 = (q/k)*d2+1-q
+                            f2((ist-1)*K+r, (jst-1)*K+s) = 1 + rt((ist-1)*K+r, (jst-1)*K+s) * (d2(ist)-kRR(ist,r));
                         end
                     end
                 end

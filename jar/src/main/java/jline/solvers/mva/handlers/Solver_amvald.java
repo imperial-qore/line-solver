@@ -155,6 +155,8 @@ public final class Solver_amvald {
         double omicron = 0.5; // under-relaxation parameter
         double outer_iter = 0.0;
         int totiter = 0;
+        jline.io.LineConsole.loop("running the AMVA fixed point (tolerance %s)",
+                Double.toString(tol));
         Matrix QchainOuter_1 = Qchain.copy();
         Matrix XchainOuter_1 = Xchain.copy();
         Matrix UchainOuter_1 = Uchain.copy();
@@ -169,6 +171,9 @@ public final class Solver_amvald {
             QchainOuter_1 = Qchain.copy();
             XchainOuter_1 = Xchain.copy();
             UchainOuter_1 = Uchain.copy();
+            // baseline the tau differences below are taken against; null when no recursion runs
+            Matrix Xchain_ref = ("default".equals(options.method) || "lin".equals(options.method)
+                    || "qdlin".equals(options.method)) ? XchainOuter_1 : null;
 
             if (Double.isFinite(Nt) && Nt > 0) {
                 if ("default".equals(options.method) || "lin".equals(options.method) || "qdlin".equals(options.method)) {
@@ -214,20 +219,26 @@ public final class Solver_amvald {
                             Map<Integer, List<Integer>> nnzclasses_eprio = new HashMap<Integer, List<Integer>>(nnzclasses_s.size());
                             Map<Integer, List<Integer>> nnzclasses_hprio = new HashMap<Integer, List<Integer>>(nnzclasses_s.size());
                             Map<Integer, List<Integer>> nnzclasses_ehprio = new HashMap<Integer, List<Integer>>(nnzclasses_s.size());
+                            Map<Integer, List<Integer>> nnzclasses_lprio = new HashMap<Integer, List<Integer>>(nnzclasses_s.size());
                             for (Integer r : nnzclasses_s) {
                                 double prio = sn.classprio.get(0, r);
                                 List<Integer> eprio_list = new ArrayList<Integer>();
                                 List<Integer> hprio_list = new ArrayList<Integer>();
+                                List<Integer> lprio_list = new ArrayList<Integer>();
                                 for (int i = 0; i < sn.classprio.getNumCols(); i++) {
                                     if (Double.compare(prio, sn.classprio.get(0, i)) == 0) eprio_list.add(i);
                                     else if (Double.compare(prio, sn.classprio.get(0, i)) > 0) hprio_list.add(i);
+                                    else lprio_list.add(i);
                                 }
                                 List<Integer> eprio_common = new ArrayList<Integer>(nnzclasses_s);
                                 List<Integer> hprio_common = new ArrayList<Integer>(nnzclasses_s);
+                                List<Integer> lprio_common = new ArrayList<Integer>(nnzclasses_s);
                                 eprio_common.retainAll(eprio_list);
                                 hprio_common.retainAll(hprio_list);
+                                lprio_common.retainAll(lprio_list);
                                 nnzclasses_eprio.put(r, eprio_common);
                                 nnzclasses_hprio.put(r, hprio_common);
+                                nnzclasses_lprio.put(r, lprio_common);
 
                                 Set<Integer> ehprio_common = new LinkedHashSet<Integer>(eprio_common);
                                 ehprio_common.addAll(hprio_common);
@@ -244,6 +255,7 @@ public final class Solver_amvald {
 
                                 Pair<Matrix, Matrix> ret2 = solver_amvald_forward(gamma,
                                         tau,
+                                        Xchain_ref,
                                         Qchain_s_1,
                                         Xchain_s_1,
                                         Uchain_s_1,
@@ -260,6 +272,7 @@ public final class Solver_amvald {
                                         nnzclasses_eprio,
                                         nnzclasses_hprio,
                                         nnzclasses_ehprio,
+                                        nnzclasses_lprio,
                                         M,
                                         K,
                                         nservers,
@@ -367,20 +380,26 @@ public final class Solver_amvald {
             Map<Integer, List<Integer>> nnzclasses_eprio = new HashMap<Integer, List<Integer>>(nnzclasses_inner.size());
             Map<Integer, List<Integer>> nnzclasses_hprio = new HashMap<Integer, List<Integer>>(nnzclasses_inner.size());
             Map<Integer, List<Integer>> nnzclasses_ehprio = new HashMap<Integer, List<Integer>>(nnzclasses_inner.size());
+            Map<Integer, List<Integer>> nnzclasses_lprio = new HashMap<Integer, List<Integer>>(nnzclasses_inner.size());
             for (Integer r : nnzclasses_inner) {
                 double prio = sn.classprio.get(0, r);
                 List<Integer> eprio_list = new ArrayList<Integer>();
                 List<Integer> hprio_list = new ArrayList<Integer>();
+                List<Integer> lprio_list = new ArrayList<Integer>();
                 for (int i = 0; i < sn.classprio.getNumCols(); i++) {
                     if (Double.compare(prio, sn.classprio.get(0, i)) == 0) eprio_list.add(i);
                     else if (Double.compare(prio, sn.classprio.get(0, i)) > 0) hprio_list.add(i);
+                    else lprio_list.add(i);
                 }
                 List<Integer> eprio_common = new ArrayList<Integer>(nnzclasses_inner);
                 List<Integer> hprio_common = new ArrayList<Integer>(nnzclasses_inner);
+                List<Integer> lprio_common = new ArrayList<Integer>(nnzclasses_inner);
                 eprio_common.retainAll(eprio_list);
                 hprio_common.retainAll(hprio_list);
+                lprio_common.retainAll(lprio_list);
                 nnzclasses_eprio.put(r, eprio_common);
                 nnzclasses_hprio.put(r, hprio_common);
+                nnzclasses_lprio.put(r, lprio_common);
 
                 Set<Integer> ehprio_common = new LinkedHashSet<Integer>(eprio_common);
                 ehprio_common.addAll(hprio_common);
@@ -397,6 +416,7 @@ public final class Solver_amvald {
 
                 Pair<Matrix, Matrix> ret2 = solver_amvald_forward(gamma,
                         tau,
+                        Xchain_ref,
                         Qchain_inner,
                         Xchain_inner,
                         Uchain_inner,
@@ -413,6 +433,7 @@ public final class Solver_amvald {
                         nnzclasses_eprio,
                         nnzclasses_hprio,
                         nnzclasses_ehprio,
+                        nnzclasses_lprio,
                         M,
                         K,
                         nservers,
@@ -424,6 +445,11 @@ public final class Solver_amvald {
                         stations,
                         options);
                 totiter++;
+                if (jline.io.LineConsole.ownsLog()) {
+                    jline.io.LineConsole.iter(totiter,
+                            "AMVA sweep %d: queue-length residual %.3e",
+                            totiter, Qchain_inner.sub(Qchain).elementMaxAbs());
+                }
                 if (totiter > options.iter_max) {
                     break;
                 }
@@ -449,12 +475,18 @@ public final class Solver_amvald {
                                     omicron * Nchain.get(0, r) / Cchain_s.get(0, r) + (1 - omicron) * Xchain_inner.get(0, r));
                         }
                     }
+                    // Xchain(0,r) is fixed for the whole sweep below and Vchain(k,r) is
+                    // read three times per station; each read is a binary search in a CSC
+                    // column. Reading them once changes neither the values nor the order
+                    // the products are evaluated in.
+                    double xchain_r = Xchain.get(0, r);
                     for (int k = 0; k < M; k++) {
+                        double vchain_kr = Vchain.get(k, r);
                         Qchain.set(k, r,
-                                omicron * Xchain.get(0, r) * Vchain.get(k, r) * Wchain.get(k, r) + (1 - omicron) * Qchain_inner.get(k, r));
-                        Tchain.set(k, r, Xchain.get(0, r) * Vchain.get(k, r));
+                                omicron * xchain_r * vchain_kr * Wchain.get(k, r) + (1 - omicron) * Qchain_inner.get(k, r));
+                        Tchain.set(k, r, xchain_r * vchain_kr);
                         Uchain.set(k, r,
-                                omicron * Vchain.get(k, r) * STeff.get(k, r) * Xchain.get(0, r) + (1 - omicron) * Uchain_inner.get(k, r));
+                                omicron * vchain_kr * STeff.get(k, r) * xchain_r + (1 - omicron) * Uchain_inner.get(k, r));
                     }
                 }
             }
@@ -601,6 +633,13 @@ public final class Solver_amvald {
         result.iter = totiter;
         // see _kb/06-solver-catalog.md for rationale
         result.converged = Boolean.valueOf(Qchain.sub(QchainOuter_1).elementMaxAbs() <= tol);
+        if (result.converged.booleanValue()) {
+            jline.io.LineConsole.step("AMVA converged after %d sweeps, residual %.3e within tolerance %s",
+                    totiter, Qchain.sub(QchainOuter_1).elementMaxAbs(), Double.toString(tol));
+        } else {
+            jline.io.LineConsole.step("AMVA stopped after %d sweeps with residual %.3e above tolerance %s",
+                    totiter, Qchain.sub(QchainOuter_1).elementMaxAbs(), Double.toString(tol));
+        }
         return result;
     }
 
@@ -624,6 +663,7 @@ public final class Solver_amvald {
 
     public static Pair<Matrix, Matrix> solver_amvald_forward(List<Matrix> gamma,
                                                              Matrix tau,
+                                                             Matrix Xchain_ref_in,
                                                              Matrix Qchain_in,
                                                              Matrix Xchain_in,
                                                              Matrix Uchain_in,
@@ -640,6 +680,7 @@ public final class Solver_amvald {
                                                              Map<Integer, List<Integer>> nnzclasses_eprio,
                                                              Map<Integer, List<Integer>> nnzclasses_hprio,
                                                              Map<Integer, List<Integer>> nnzclasses_ehprio,
+                                                             Map<Integer, List<Integer>> nnzclasses_lprio,
                                                              int M,
                                                              int K,
                                                              Matrix nservers,
@@ -651,6 +692,11 @@ public final class Solver_amvald {
                                                              List<Station> stations,
                                                              SolverOptions options) {
         Matrix lldscaling;
+
+        // Throughput vector the tau differences were taken against: Xchain_ref + tau(r,:)
+        // is an arrival-instant throughput from one and the same sweep. Adding tau to the
+        // moving inner iterate instead mixes two sweeps and can exceed the service capacity.
+        Matrix Xchain_ref = (Xchain_ref_in == null) ? Xchain_in : Xchain_ref_in;
 
         if (gamma.size() == 0) {
             gamma = new ArrayList<Matrix>();
@@ -743,32 +789,48 @@ public final class Solver_amvald {
             }
         }
 
-        // joint-dependence term eta_i (non-product-form). Evaluated identically
-        // to cdterm; kept separate to preserve the product-form vs joint
-        // distinction (see Pfqn_jdfun). cd and jd are mutually exclusive per
-        // station, so at most one of cdterm/jdterm differs from 1 at any station.
+        // joint-dependence term eta_i (non-product-form). It is NOT evaluated like
+        // cdterm, and cannot be: beta_{k,r} reads only its OWN marginal, so the
+        // phantom +1 cdterm puts on the non-arriving classes is inert there, while
+        // eta reads the WHOLE occupancy row and every coordinate of the evaluation
+        // point matters. The arrival theorem gives the arriving class-r job ONE
+        // extra job of its own class and leaves the others at their full mean, so
+        // the point is eta_k(Q_{k,1}, ..., 1 + delta_r Q_{k,r}, ..., Q_{k,R}), with
+        // only coordinate r shifted. Incrementing every coordinate made the tagged
+        // job count itself once per class and forced full support on a support-rank
+        // eta: on the IS+2xOI order-independent model it inflated the OI-AMVA
+        // misplaced-jobs error from 1.33% to 9.23% at N=(1,1) and from 0.35% to
+        // 5.92% at N=(3,3), the latter worse than the class-dependent closure that
+        // joint dependence exists to beat. python had this right; MATLAB and the JAR
+        // did not. Only cd and jd are mutually exclusive per station, so at most one
+        // of cdterm/jdterm differs from 1 at any station.
+        // See _kb/06-solver-catalog.md (joint-dependence section).
         Matrix jdterm = new Matrix(M, K);
         jdterm.fill(1.0);
-        for (Integer r : nnzclasses) {
-            if (!(jdscaling == null || jdscaling.size() == 0)) {
-                List<SerializableFunction<Matrix, Matrix>> jdscalingList = new ArrayList<SerializableFunction<Matrix, Matrix>>();
-                for (int i = 0; i < M; i++) {
-                    jdscalingList.add(jdscaling != null ? jdscaling.get(stations.get(i)) : null);
-                }
+        if (!(jdscaling == null || jdscaling.size() == 0)) {
+            List<SerializableFunction<Matrix, Matrix>> jdscalingList = new ArrayList<SerializableFunction<Matrix, Matrix>>();
+            for (int i = 0; i < M; i++) {
+                jdscalingList.add(jdscaling.get(stations.get(i)));
+            }
+            for (Integer r : nnzclasses) {
+                // every class s != r stays at its full mean Q_{k,s}
+                Matrix nvec = stationaryQlen.copy();
                 if (Double.isFinite(Nchain_in.get(0, r))) {
-                    Matrix nvec = selfArvlQlenSeenByClosed.elementIncrease(1.0);
-                    if (isLin) {
-                        double Nr = Nchain_in.get(0, r);
-                        for (int k = 0; k < M; k++) {
-                            double gself = (Nr - 1.0) * gamma.get(r).get(r, k);
-                            for (int c = 0; c < K; c++) nvec.set(k, c, nvec.get(k, c) + gself);
+                    double Nr = Nchain_in.get(0, r);
+                    for (int k = 0; k < M; k++) {
+                        double v = 1.0 + selfArvlQlenSeenByClosed.get(k, r);
+                        if (isLin) {
+                            // Linearizer self-fraction correction, on the tagged class only
+                            v = v + (Nr - 1.0) * gamma.get(r).get(r, k);
                         }
+                        nvec.set(k, r, v);
                     }
-                    Matrix.extract(Pfqn_jdfun.pfqn_jdfun(nvec, jdscalingList, M, r), 0, M, 0, 1, jdterm, 0, r);
                 } else {
-                    Matrix.extract(Pfqn_jdfun.pfqn_jdfun(stationaryQlen.elementIncrease(1.0), jdscalingList, M, r),
-                            0, M, 0, 1, jdterm, 0, r);
+                    for (int k = 0; k < M; k++) {
+                        nvec.set(k, r, 1.0 + stationaryQlen.get(k, r));
+                    }
                 }
+                Matrix.extract(Pfqn_jdfun.pfqn_jdfun(nvec, jdscalingList, M, r), 0, M, 0, 1, jdterm, 0, r);
             }
         }
 
@@ -975,7 +1037,7 @@ public final class Solver_amvald {
                                 m++;
                             }
                             totArvlQlenSeenByClosed.set(k, r,
-                                    sum_Qchain_k_r_ephrio - (2 / Nchain_in.get(0, r)) * (Qchain_in.get(k, r) + qlinum / qliden));
+                                    sum_Qchain_k_r_ephrio - (2 / Nchain_in.get(0, r)) * Qchain_in.get(k, r) + qlinum / qliden);
                         }
                     }
                 } else {
@@ -997,7 +1059,7 @@ public final class Solver_amvald {
                                 m++;
                             }
                             totArvlQlenSeenByClosed.set(k, r,
-                                    sum_Qchain_k_r_nnzclasses - (2 / Nchain_in.get(0, r)) * (Qchain_in.get(k, r) + qlinum / qliden));
+                                    sum_Qchain_k_r_nnzclasses - (2 / Nchain_in.get(0, r)) * Qchain_in.get(k, r) + qlinum / qliden);
                         }
                     }
                 }
@@ -1005,9 +1067,41 @@ public final class Solver_amvald {
             }
         }
 
+        /* Interlocked flow (Franks 1999, Eq. 4.7)
+         * A request cannot queue behind work that its own submission caused, so the
+         * arrival-instant queue drops the interlocked share of every other chain. The own-class
+         * term is never removed. The matrix is empty for every model but the layers of
+         * SolverLN, where it comes from the interlock path tables. */
+        if (options.config.interlock_chain != null && !options.config.interlock_chain.isEmpty()) {
+            Matrix ILchain = options.config.interlock_chain;
+            if (ILchain.getNumRows() != K || ILchain.getNumCols() != K) {
+                throw new RuntimeException(String.format(
+                        "solver_amvald: the interlock matrix is %dx%d but the model has %d chains.",
+                        ILchain.getNumRows(), ILchain.getNumCols(), K));
+            }
+            for (int k = 0; k < M; k++) {
+                for (Integer r : nnzclasses) {
+                    double ilqlen = 0.0;
+                    for (Integer sIl : nnzclasses) {
+                        if (!sIl.equals(r)) {
+                            ilqlen += ILchain.get(r, sIl) * Qchain_in.get(k, sIl);
+                        }
+                    }
+                    if (ilqlen > 0) {
+                        totArvlQlenSeenByClosed.set(k, r, Math.max(selfArvlQlenSeenByClosed.get(k, r),
+                                totArvlQlenSeenByClosed.get(k, r) - ilqlen));
+                    }
+                }
+            }
+        }
+
         /* Compute response time */
         for (Integer r : nnzclasses) {
             List<Integer> sd = new ArrayList<Integer>(nnzclasses);
+            // Work of EQUAL OR HIGHER priority queued ahead of the arriving job. The
+            // 1/prioScaling inflation covers only the higher-priority work that OVERTAKES the
+            // job while it waits; the backlog already queued at the arrival instant is a
+            // separate Cobham term; see _kb/06-solver-catalog.md
             List<Integer> sdprio = new ArrayList<Integer>(nnzclasses_ehprio.get(r));
             sd.remove((Integer) r);
             sdprio.remove((Integer) r);
@@ -1032,10 +1126,10 @@ public final class Solver_amvald {
                                     double tmp = 0.0;
                                     for (Integer c : ccl) tmp += Nchain_in.get(0, c) * gamma.get(c).get(r, k);
                                     Wchain.set(k, r,
-                                            multiServerTerm + STeff.get(k, r) * (1 + interpTotArvlQlen.get(k, 0) + tmp - gamma.get(r).get(r, k)));
+                                            multiServerTerm + STeff.get(k, r) * (1 + totArvlQlenSeenByClosed.get(k, r) + tmp - gamma.get(r).get(r, k)));
                                 } else {
                                     Wchain.set(k, r,
-                                            multiServerTerm + STeff.get(k, r) * (1 + interpTotArvlQlen.get(k, 0) + (Nt - 1) * gamma.get(0).get(r, k)));
+                                            multiServerTerm + STeff.get(k, r) * (1 + totArvlQlenSeenByClosed.get(k, r) + (Nt - 1) * gamma.get(0).get(r, k)));
                                 }
                             }
                         } else if ("suri".equals(options.config.multiserver)) {
@@ -1047,10 +1141,10 @@ public final class Solver_amvald {
                                     double tmp = 0.0;
                                     for (Integer c : ccl) tmp += Nchain_in.get(0, c) * gamma.get(c).get(r, k);
                                     Wchain.set(k, r,
-                                            STeff.get(k, r) * (1 + (interpTotArvlQlen.get(k, 0) + tmp - gamma.get(r).get(r, k)) * suriFactor.get(k, 0)));
+                                            STeff.get(k, r) * (1 + (totArvlQlenSeenByClosed.get(k, r) + tmp - gamma.get(r).get(r, k)) * suriFactor.get(k, 0)));
                                 } else {
                                     Wchain.set(k, r,
-                                            STeff.get(k, r) * (1 + (interpTotArvlQlen.get(k, 0) + (Nt - 1) * gamma.get(0).get(r, k)) * suriFactor.get(k, 0)));
+                                            STeff.get(k, r) * (1 + (totArvlQlenSeenByClosed.get(k, r) + (Nt - 1) * gamma.get(0).get(r, k)) * suriFactor.get(k, 0)));
                                 }
                             }
                         } else {
@@ -1062,10 +1156,10 @@ public final class Solver_amvald {
                                     double tmp = 0.0;
                                     for (Integer c : ccl) tmp += Nchain_in.get(0, c) * gamma.get(c).get(r, k);
                                     Wchain.set(k, r,
-                                            Wchain.get(k, r) + STeff.get(k, r) * (1 + interpTotArvlQlen.get(k, 0) + tmp - gamma.get(r).get(r, k)));
+                                            Wchain.get(k, r) + STeff.get(k, r) * (1 + totArvlQlenSeenByClosed.get(k, r) + tmp - gamma.get(r).get(r, k)));
                                 } else {
                                     Wchain.set(k, r,
-                                            STeff.get(k, r) * (1 + interpTotArvlQlen.get(k, 0) + (Nt - 1) * gamma.get(0).get(r, k)));
+                                            STeff.get(k, r) * (1 + totArvlQlenSeenByClosed.get(k, r) + (Nt - 1) * gamma.get(0).get(r, k)));
                                 }
                             }
                         }
@@ -1080,10 +1174,10 @@ public final class Solver_amvald {
                                     double tmp = 0.0;
                                     for (Integer c : ccl) tmp += Nchain_in.get(0, c) * gamma.get(c).get(r, k);
                                     Wchain.set(k, r,
-                                            multiServerTerm + STeff.get(k, r) * (1 + totArvlQlenSeenByClosed.get(k, 0) + tmp - gamma.get(r).get(r, k)));
+                                            multiServerTerm + STeff.get(k, r) * (1 + totArvlQlenSeenByClosed.get(k, r) + tmp - gamma.get(r).get(r, k)));
                                 } else {
                                     Wchain.set(k, r,
-                                            multiServerTerm + STeff.get(k, r) * (1 + totArvlQlenSeenByClosed.get(k, 0) + (Nt - 1) * gamma.get(0).get(r, k)));
+                                            multiServerTerm + STeff.get(k, r) * (1 + totArvlQlenSeenByClosed.get(k, r) + (Nt - 1) * gamma.get(0).get(r, k)));
                                 }
                             }
                         } else if ("suri".equals(options.config.multiserver)) {
@@ -1091,7 +1185,7 @@ public final class Solver_amvald {
                                 Wchain.set(k, r, STeff.get(k, r) * (1 + totArvlQlenSeenByOpen.get(r, k) * suriFactor.get(k, 0)));
                             } else {
                                 Wchain.set(k, r,
-                                        STeff.get(k, r) * (1 + (totArvlQlenSeenByClosed.get(k, 0) + (Nt - 1) * gamma.get(0).get(r, k)) * suriFactor.get(k, 0)));
+                                        STeff.get(k, r) * (1 + (totArvlQlenSeenByClosed.get(k, r) + (Nt - 1) * gamma.get(0).get(r, k)) * suriFactor.get(k, 0)));
                             }
                         } else {
                             double currentWchain = Wchain.get(k, r);
@@ -1103,10 +1197,10 @@ public final class Solver_amvald {
                                     double tmp = 0.0;
                                     for (Integer c : ccl) tmp += Nchain_in.get(0, c) * gamma.get(c).get(r, k);
                                     Wchain.set(k, r,
-                                            currentWchain + STeff.get(k, r) * (1 + totArvlQlenSeenByClosed.get(k, 0) + tmp - gamma.get(r).get(r, k)));
+                                            currentWchain + STeff.get(k, r) * (1 + totArvlQlenSeenByClosed.get(k, r) + tmp - gamma.get(r).get(r, k)));
                                 } else {
                                     Wchain.set(k, r,
-                                            currentWchain + STeff.get(k, r) * (1 + totArvlQlenSeenByClosed.get(k, 0) + (Nt - 1) * gamma.get(0).get(r, k)));
+                                            currentWchain + STeff.get(k, r) * (1 + totArvlQlenSeenByClosed.get(k, r) + (Nt - 1) * gamma.get(0).get(r, k)));
                                 }
                             }
                         }
@@ -1135,7 +1229,7 @@ public final class Solver_amvald {
                         int j = 0;
                         while (j < Uchain_in.getNumCols()) {
                             Uchain_r.set(ii, j,
-                                    (Uchain_in.get(ii, j) / Xchain_in.get(0, j)) * (Xchain_in.get(0, j) + tau.get(r, j)));
+                                    (Uchain_in.get(ii, j) / Xchain_in.get(0, j)) * (Xchain_ref.get(0, j) + tau.get(r, j)));
                             j++;
                         }
                         ii++;
@@ -1222,6 +1316,43 @@ public final class Solver_amvald {
                             }
                         }
                     }
+                } else if (schedK == SchedStrategy.FCFSPRPRIO) {
+                    // Preemptive-resume priority (PRIOMVA). Chandy-Lakshmi [ChaL83]
+                    // applied where it was derived: a job in service IS preempted by a
+                    // higher-priority arrival. Two terms separate this arm from the HOL
+                    // arm below.
+                    //  (a) no non-preemptive residual -- the lower-priority job found in
+                    //      service is preempted, so it delays nobody;
+                    //  (b) the tagged job's OWN service is interrupted too, so it is
+                    //      scaled by 1/(1-sigma_{k-1}) as well as the queued work.
+                    // Together: E[T_k] = E[S_k]/(1-sigma_{k-1}) + <queued>/(1-sigma_{k-1}).
+                    // Port of solver_amvald_forward.m (FCFSPRPRIO arm).
+                    if (STeff.get(k, r) <= 0) continue;
+
+                    if (nservers.get(k, 0) > 1 && !Double.isInfinite(nservers.get(k, 0))) {
+                        throw new RuntimeException(String.format(
+                                "Station %d uses FCFSPRPRIO with %d servers. The preemptive-resume "
+                                        + "priority arm (priomva) is implemented for single-server stations "
+                                        + "only; use SolverCTMC or SolverSSA for multiserver PRS.",
+                                k, (int) nservers.get(k, 0)));
+                    }
+
+                    // higher-priority utilization seen at the arrival instant
+                    double UHigherPrioPr = 0.0;
+                    for (Integer h : nnzclasses_hprio.get(r)) {
+                        UHigherPrioPr += Vchain_in.get(k, h) * STeff.get(k, h) * (Xchain_ref.get(0, h) + tau.get(r, h));
+                    }
+                    double prioScalingPr = FastMath.min(Math.max(options.tol, 1 - UHigherPrioPr), 1 - options.tol);
+
+                    // work of EQUAL OR HIGHER priority already queued ahead
+                    double queuedAhead = STeff.get(k, r)
+                            * (ocl.contains(r) ? stationaryQlen.get(k, r) : selfArvlQlenSeenByClosed.get(k, r));
+                    for (Integer s : nnzclasses_ehprio.get(r)) {
+                        if (s.intValue() == r) continue;
+                        queuedAhead += STeff.get(k, s) * stationaryQlen.get(k, s);
+                    }
+
+                    Wchain.set(k, r, (STeff.get(k, r) + queuedAhead) / prioScalingPr);
                 } else if (schedK == SchedStrategy.HOL || schedK == SchedStrategy.FCFSPRIO) {
                     if (STeff.get(k, r) <= 0) continue;
 
@@ -1231,23 +1362,28 @@ public final class Solver_amvald {
                         int j = 0;
                         while (j < Uchain_in.getNumCols()) {
                             Uchain_r.set(ii, j,
-                                    (Uchain_in.get(ii, j) / Xchain_in.get(0, j)) * (Xchain_in.get(0, j) + tau.get(r, j)));
+                                    (Uchain_in.get(ii, j) / Xchain_in.get(0, j)) * (Xchain_ref.get(0, j) + tau.get(r, j)));
                             j++;
                         }
                         ii++;
                     }
 
+                    // Higher-priority work that OVERTAKES the job while it waits. It is disjoint
+                    // from the sdprio backlog: no higher-priority job is left at the station at
+                    // the instant the tagged job enters service.
                     double prioScaling = 0.0;
+                    // Chandy-Lakshmi [ChaL83], in the arrival-instant utilization form of
+                    // Eager-Lipscomb [EagL88]; "shadow" below is Sevcik [Sev77].
                     if ("default".equals(options.config.np_priority) || "cl".equals(options.config.np_priority)) {
                         double UHigherPrio = 0.0;
                         for (Integer h : nnzclasses_hprio.get(r)) {
-                            UHigherPrio += Vchain_in.get(k, h) * STeff.get(k, h) * (Xchain_in.get(0, h) - Qchain_in.get(k, h) * tau.get(h));
+                            UHigherPrio += Vchain_in.get(k, h) * STeff.get(k, h) * (Xchain_ref.get(0, h) + tau.get(r, h));
                         }
                         prioScaling = FastMath.min(Math.max(options.tol, 1 - UHigherPrio), 1 - options.tol);
                     } else if ("shadow".equals(options.config.np_priority)) {
                         double UHigherPrio = 0.0;
                         for (Integer h : nnzclasses_hprio.get(r)) {
-                            UHigherPrio += Vchain_in.get(k, h) * STeff.get(k, h) * Xchain_in.get(0, h);
+                            UHigherPrio += Vchain_in.get(k, h) * STeff.get(k, h) * Xchain_ref.get(0, h);
                         }
                         prioScaling = FastMath.min(Math.max(options.tol, 1 - UHigherPrio), 1 - options.tol);
                     }
@@ -1284,59 +1420,75 @@ public final class Solver_amvald {
                         Bk.fill(1.0);
                     }
 
+                    // Non-preemptive residual: the job found in service may have strictly lower
+                    // priority and is not preempted, so it is in neither of the sums above
+                    double npResidual = 0.0;
+                    if (!"hvmva".equals(options.config.highvar)) { // hvmva already spans every class
+                        for (Integer l : nnzclasses_lprio.get(r)) {
+                            npResidual += Vchain_in.get(k, l) * STeff.get(k, l) * (Xchain_ref.get(0, l) + tau.get(r, l))
+                                    * STeff.get(k, l) * Bk.get(0, l);
+                        }
+                    }
+                    double sdprioQlen = 0.0;      // equal-priority backlog, unweighted
+                    double sdprioQlenBk = 0.0;    // equal-priority backlog, multiserver weighted
+                    for (Integer sp : sdprio) {
+                        sdprioQlen += STeff.get(k, sp) * stationaryQlen.get(k, sp);
+                        sdprioQlenBk += STeff.get(k, sp) * stationaryQlen.get(k, sp) * Bk.get(0, sp);
+                    }
+
                     if (nservers.get(k, 0) == 1.0 && (((lldscaling != null) && !lldscaling.isEmpty())
                             || ((cdscaling != null) && (cdscaling.size() != 0))
                             || ((jdscaling != null) && (jdscaling.size() != 0)))) {
                         if ("hvmva".equals(options.config.highvar)) {
                             double sum_uchain_r = 0.0;
                             for (Integer s : ccl) sum_uchain_r += Uchain_r.get(k, s);
-                            Wchain.set(k, r, (STeff.get(k, r) / prioScaling) * (1 - sum_uchain_r));
+                            Wchain.set(k, r, STeff.get(k, r) * (1 - sum_uchain_r));
                             for (Integer s : ccl) {
                                 double UHigherPrio_s = 0.0;
                                 for (Integer h : nnzclasses_hprio.get(s)) {
-                                    UHigherPrio_s += Vchain_in.get(k, h) * STeff.get(k, h) * (Xchain_in.get(0, h) - Qchain_in.get(k, h) * tau.get(h));
+                                    UHigherPrio_s += Vchain_in.get(k, h) * STeff.get(k, h) * (Xchain_ref.get(0, h) + tau.get(r, h));
                                 }
                                 double prioScaling_s = FastMath.min(Math.max(options.tol, 1 - UHigherPrio_s), 1 - options.tol);
                                 Wchain.set(k, r,
                                         Wchain.get(k, r) + (STeff.get(k, s) / prioScaling_s) * Uchain_r.get(k, s) * (1 + SCVchain_in.get(k, s)) / 2);
                             }
                         } else {
-                            Wchain.set(k, r, STeff.get(k, r) / prioScaling);
+                            Wchain.set(k, r, STeff.get(k, r));
                         }
 
                         if (ocl.contains(r)) {
                             Wchain.set(k, r,
-                                    Wchain.get(k, r) + (STeff.get(k, r) * stationaryQlen.get(k, r)) / prioScaling);
+                                    Wchain.get(k, r) + (STeff.get(k, r) * stationaryQlen.get(k, r) + sdprioQlen + npResidual) / prioScaling);
                         } else {
                             Wchain.set(k, r,
-                                    Wchain.get(k, r) + (STeff.get(k, r) * selfArvlQlenSeenByClosed.get(k, r)) / prioScaling);
+                                    Wchain.get(k, r) + (STeff.get(k, r) * selfArvlQlenSeenByClosed.get(k, r) + sdprioQlen + npResidual) / prioScaling);
                         }
                     } else {
                         if ("softmin".equals(options.config.multiserver)) {
                             if (ocl.contains(r)) {
                                 Wchain.set(k, r,
-                                        (STeff.get(k, r) / prioScaling) + STeff.get(k, r) * stationaryQlen.get(k, r) * Bk.get(0, r) / prioScaling);
+                                        STeff.get(k, r) + (STeff.get(k, r) * stationaryQlen.get(k, r) * Bk.get(0, r) + sdprioQlenBk + npResidual) / prioScaling);
                             } else {
                                 Wchain.set(k, r,
-                                        (STeff.get(k, r) / prioScaling) + STeff.get(k, r) * selfArvlQlenSeenByClosed.get(k, r) * Bk.get(0, r) / prioScaling);
+                                        STeff.get(k, r) + (STeff.get(k, r) * selfArvlQlenSeenByClosed.get(k, r) * Bk.get(0, r) + sdprioQlenBk + npResidual) / prioScaling);
                             }
                         } else if ("seidmann".equals(options.config.multiserver) || "default".equals(options.config.multiserver)) {
                             if (ocl.contains(r)) {
                                 Wchain.set(k, r,
-                                        (STeff.get(k, r) * (nservers.get(k, 0) - 1) / prioScaling) + (STeff.get(k, r) / prioScaling)
-                                                + (STeff.get(k, r) * stationaryQlen.get(k, r) * Bk.get(0, r)) / prioScaling);
+                                        (STeff.get(k, r) * (nservers.get(k, 0) - 1)) + STeff.get(k, r)
+                                                + (STeff.get(k, r) * stationaryQlen.get(k, r) * Bk.get(0, r) + sdprioQlenBk + npResidual) / prioScaling);
                             } else {
                                 Wchain.set(k, r,
-                                        (STeff.get(k, r) * (nservers.get(k, 0) - 1) / prioScaling) + (STeff.get(k, r) / prioScaling)
-                                                + (STeff.get(k, r) * selfArvlQlenSeenByClosed.get(k, r) * Bk.get(0, r)) / prioScaling);
+                                        (STeff.get(k, r) * (nservers.get(k, 0) - 1)) + STeff.get(k, r)
+                                                + (STeff.get(k, r) * selfArvlQlenSeenByClosed.get(k, r) * Bk.get(0, r) + sdprioQlenBk + npResidual) / prioScaling);
                             }
                         } else if ("suri".equals(options.config.multiserver)) {
                             if (ocl.contains(r)) {
                                 Wchain.set(k, r,
-                                        (STeff.get(k, r) / prioScaling) + (STeff.get(k, r) * stationaryQlen.get(k, r) * suriFactor.get(k, 0)) / prioScaling);
+                                        STeff.get(k, r) + ((STeff.get(k, r) * stationaryQlen.get(k, r) + sdprioQlen) * suriFactor.get(k, 0) + npResidual) / prioScaling);
                             } else {
                                 Wchain.set(k, r,
-                                        (STeff.get(k, r) / prioScaling) + (STeff.get(k, r) * selfArvlQlenSeenByClosed.get(k, r) * suriFactor.get(k, 0)) / prioScaling);
+                                        STeff.get(k, r) + ((STeff.get(k, r) * selfArvlQlenSeenByClosed.get(k, r) + sdprioQlen) * suriFactor.get(k, 0) + npResidual) / prioScaling);
                             }
                         }
                     }
@@ -1345,4 +1497,5 @@ public final class Solver_amvald {
         }
         return new Pair<Matrix, Matrix>(Wchain, STeff);
     }
+
 }

@@ -69,3 +69,44 @@ cubTable = SolverBA(model,'method','cub.upper').getBoundsTable()
 % on the model above they raise an error rather than return a wrong answer.
 fprintf('SolverBA advertises %d methods.\n', ...
     numel(SolverBA(model).listValidMethods()));
+
+%% Block 7: scb, which brackets a DIFFERENT object
+% Every family above brackets the exact solution of the model it is given.
+% scb (Dowdy et al. 1992) does not: it brackets the MULTICLASS system that a
+% single-class model aggregates. The single-class demands an analyst measures
+% are the class demands weighted by the unknown relative class throughputs, so
+% the multiclass system behind them performs at least as well as the aggregate
+% -- its customers segregate and contend less. scb.lower is therefore the
+% EXACT single-class throughput, and scb.upper adds the aggregation gap, which
+% depends only on the population and the device count and never on the demands.
+% Because it brackets a different object, scb is deliberately not an auto.*
+% candidate, and it needs a delay-free single-server model.
+scbModel = Network('ScbDemo');
+s1 = Queue(scbModel,'S1', SchedStrategy.PS);
+s2 = Queue(scbModel,'S2', SchedStrategy.PS);
+s3 = Queue(scbModel,'S3', SchedStrategy.PS);
+scbJobs = ClosedClass(scbModel,'C', 4, s1);
+s1.setService(scbJobs, Exp(1/0.114));   % the paper's Section 2 example
+s2.setService(scbJobs, Exp(1/0.040));
+s3.setService(scbJobs, Exp(1/0.062));
+scbModel.link(Network.serialRouting(s1,s2,s3));
+b = SolverBA(scbModel,'method','scb.upper').getBounds();
+fprintf('\nscb: single-class X = %.4f, any multiclass system behind it runs at most %.4f\n', ...
+    b.Tlower(1), b.Tupper(1));
+fprintf('     (the paper''s multiclass counterpart of this example runs at 8.7615)\n');
+
+% The three companion bounds are demand-free and need no model at all.
+% pfqn_scbgap is the aggregation error budget: it can be attached to any
+% result computed on merged classes, since LINE merges classes into chains
+% routinely. pfqn_usumbound and pfqn_minclasses run the argument backwards,
+% turning a measured sum of utilizations into a lower bound on how many
+% classes the workload must have.
+% The undominated form needs r <= K, which is where Theorem 5 defines it.
+fprintf('\nmerging r of N=8 classes over K=5 devices costs at most:\n');
+for r = [2 3 4 5]
+    fprintf('  r=%d: %5.1f%% in general, %5.1f%% with no dominating class\n', ...
+        r, 100*pfqn_scbgap(8,5,r), 100*pfqn_scbgap(8,5,r,true));
+end
+fprintf('  r=8 (full aggregation): %5.1f%%\n', 100*pfqn_scbgap(8,5));
+fprintf('K=2 devices, N=3 jobs: one class admits sum_k U_k <= %.2f\n', pfqn_usumbound(1,2,3));
+fprintf('  a measured 1.6 therefore needs at least %d classes\n', pfqn_minclasses(1.6,2,3));

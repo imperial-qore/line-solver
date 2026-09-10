@@ -91,6 +91,13 @@ ndim = csum - 1;
 % closing-method event machinery, built once on the full model
 all_jumps = ode_jumps_new(M, K, enabled, q_indices, P, Kic);
 [rateBase, eventIdx] = ode_rate_base(sn, Phi, Mu, PH, M, K, enabled, q_indices, P, Kic, sched, all_jumps);
+% Same reduction the other routes take: a cell of the trajectory-based
+% partition integrates the same drift, so an InfRate coordinate costs it the
+% same and is complemented away here too.
+if fluid_hide_immediate(sn, options)
+    [all_jumps, rateBase, eventIdx] = ...
+        ode_eliminate_immediate(all_jumps, rateBase, eventIdx, sn, options);
+end
 rates_h = @(x) ode_rates_closing(x, M, K, enabled, q_indices, Kic, S, w, sched, rateBase, eventIdx);
 
 % partition stations into cells and build per-cell state masks; the

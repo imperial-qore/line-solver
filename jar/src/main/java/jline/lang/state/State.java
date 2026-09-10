@@ -227,6 +227,34 @@ public class State implements Serializable {
     return FromMarginal.fromMarginalAndStarted(model, ind, new Matrix(n), new Matrix(s));
   }
 
+  /**
+   * Generates the state space of a node from its TOTAL job count, all classes
+   * summed out. The class-summed counterpart of fromMarginal: the union of
+   * fromMarginal over every class split of ntot the node can hold.
+   *
+   * @param model the network model
+   * @param ind   the node index (0-based)
+   * @param ntot  total number of resident jobs, all classes summed
+   * @return the state-space matrix (one row per valid state)
+   */
+  public static Matrix fromMarg(Network model, int ind, int ntot) {
+    return FromMarginal.fromMarg(model.getStruct(true), ind, ntot);
+  }
+
+  /**
+   * Generates the state space of a node from its TOTAL job count and its TOTAL
+   * number of started jobs, both summed over classes.
+   *
+   * @param model the network model
+   * @param ind   the node index (0-based)
+   * @param ntot  total number of resident jobs
+   * @param stot  total number of jobs that have started service
+   * @return the state-space matrix (one row per valid state)
+   */
+  public static Matrix fromMargAndStarted(Network model, int ind, int ntot, int stot) {
+    return FromMarginal.fromMargAndStarted(model.getStruct(true), ind, ntot, stot);
+  }
+
     public final Map<StatefulNode, Matrix> initialState;
     public final Map<StatefulNode, Matrix> priorInitialState;
     
@@ -444,6 +472,11 @@ public class State implements Serializable {
         Matrix outrate = new Matrix(0, 0);
         Matrix outprob = new Matrix(1, 1);
         outprob.fill(1);
+        // START/PREEMPT annotation of the successors. Only a station can start
+        // or preempt a service, so every other node type below leaves these
+        // null, which Ret.EventResult reads as "no tag on any arc".
+        Matrix outstart = null;
+        Matrix outpreempt = null;
 
 
         Matrix ismkvmodclass;
@@ -649,6 +682,10 @@ public class State implements Serializable {
             outspace = stationResult.outspace;
             outrate = stationResult.outrate;
             outprob = stationResult.outprob;
+            // the station handler is the only one that can tag an arc; carry
+            // its START/PREEMPT annotation out with the successors
+            outstart = stationResult.outstart;
+            outpreempt = stationResult.outpreempt;
         } else if (sn.isstateful.get(ind) == 1) {
             switch (sn.nodetype.get(ind)) {
                 case Router:
@@ -689,7 +726,7 @@ public class State implements Serializable {
             outprob.fill(probVal);
         }
 
-        return new Ret.EventResult(outspace, outrate, outprob);
+        return new Ret.EventResult(outspace, outrate, outprob, outstart, outpreempt);
     }
 
     public static Ret.EventResult afterEventHashed(
@@ -710,7 +747,10 @@ public class State implements Serializable {
         } else {
             outhash = State.getHash(sn, ind, outspace);
         }
-        return new Ret.EventResult(outhash, outrate, outprob);
+        // the tags travel alongside the hashed successor: both CTMC and SSA
+        // reach the state machine through here
+        return new Ret.EventResult(outhash, outrate, outprob,
+                afterEventResult.outstart, afterEventResult.outpreempt);
     }
 
     /**
@@ -2025,7 +2065,90 @@ public class State implements Serializable {
         return new Ret.reachableSpaceGeneratorResult(SSq, SSh, updatedSn);
     }
 
+    /**
+     * Canonical ordering of the retrieval classes of a cache node. Block B of the cache
+     * local-variable vector is indexed by this ordering, so that the originating (arrival)
+     * class of a merged secondary request -- hence its hit class -- is recoverable when
+     * the fetch completes.
+     *
+     * @param sn network structure
+     * @param ind cache node index
+     * @return int[3][] holding, in ascending retrieval-class order, the retrieval class
+     *         indices, the 1-based item each serves, and the originating arrival class
+     */
+    public static int[][] cacheRetrievalClassMap(NetworkStruct sn, int ind) {
+        CacheNodeParam np = (CacheNodeParam) sn.nodeparam.get(sn.nodes.get(ind));
+        Matrix rc = np.retrievalClasses;
+        if (rc == null || rc.getNumRows() == 0 || rc.getNumCols() == 0) {
+            return new int[][]{new int[0], new int[0], new int[0]};
+        }
+        List<int[]> triples = new ArrayList<int[]>();
+        for (int k = 0; k < rc.getNumRows(); k++) {
+            for (int c = 0; c < rc.getNumCols(); c++) {
+                int v = (int) rc.get(k, c);
+                if (v >= 0) {
+                    triples.add(new int[]{v, k + 1, c});
+                }
+            }
+        }
+        Collections.sort(triples, new Comparator<int[]>() {
+            public int compare(int[] a, int[] b) {
+                return Integer.compare(a[0], b[0]);
+            }
+        });
+        int[] rcList = new int[triples.size()];
+        int[] rcItems = new int[triples.size()];
+        int[] rcOrig = new int[triples.size()];
+        for (int i = 0; i < triples.size(); i++) {
+            rcList[i] = triples.get(i)[0];
+            rcItems[i] = triples.get(i)[1];
+            rcOrig[i] = triples.get(i)[2];
+        }
+        return new int[][]{rcList, rcItems, rcOrig};
+    }
+
+    /** Weak compositions of total into exactly parts non-negative integers. */
+    private static List<int[]> spaceCacheCompositions(int total, int parts) {
+        List<int[]> out = new ArrayList<int[]>();
+        if (parts == 1) {
+            out.add(new int[]{total});
+            return out;
+        }
+        for (int first = 0; first <= total; first++) {
+            List<int[]> tail = spaceCacheCompositions(total - first, parts - 1);
+            for (int t = 0; t < tail.size(); t++) {
+                int[] row = new int[parts];
+                row[0] = first;
+                System.arraycopy(tail.get(t), 0, row, 1, parts - 1);
+                out.add(row);
+            }
+        }
+        return out;
+    }
+
+    /** Ways of distributing up to maxPending merged requests over s in-flight fetches. */
+    private static List<int[]> spaceCachePendings(int s, int maxPending) {
+        List<int[]> out = new ArrayList<int[]>();
+        if (s == 0) {
+            out.add(new int[0]);
+            return out;
+        }
+        out.add(new int[s]);
+        if (maxPending <= 0) {
+            return out;
+        }
+        for (int total = 1; total <= maxPending; total++) {
+            out.addAll(spaceCacheCompositions(total, s));
+        }
+        return out;
+    }
+
     private static Matrix spaceCache(int n, Matrix m, int retrievalSystemCapacity) {
+        return spaceCache(n, m, retrievalSystemCapacity, 0, new int[0]);
+    }
+
+    private static Matrix spaceCache(int n, Matrix m, int retrievalSystemCapacity,
+                                     int maxPending, int[] retrievalClassItems) {
         Matrix n_matrix = new Matrix(1, n);
         for (int i = 0; i < n; i++) {
             n_matrix.set(i, i + 1);
@@ -2034,7 +2157,13 @@ public class State implements Serializable {
         int totalCacheCapacity = (int) m.sumSubMatrix(0, m.getNumRows(), 0, m.getNumCols());
         // see _kb/04-networkstruct.md (State-space construction conventions) for rationale
         int retrievalWidth = (retrievalSystemCapacity > 0) ? n : 0;
-        int nVars = totalCacheCapacity + retrievalWidth;
+        // Block B is part of the layout whenever a retrieval system exists, so that the
+        // local-variable width matches sn.nvars; maxPending only bounds its counts.
+        int widthB = (retrievalWidth > 0 && retrievalClassItems != null) ? retrievalClassItems.length : 0;
+        if (widthB == 0) {
+            maxPending = 0;
+        }
+        int nVars = totalCacheCapacity + retrievalWidth + widthB;
         Matrix SS = new Matrix(0, nVars);
 
         // Cache contents: every ordered placement of totalCacheCapacity distinct items across the cache slots.
@@ -2070,13 +2199,35 @@ public class State implements Serializable {
                     Matrix retrievalCombo = retrievalCombos.getRow(rci);
                     Matrix bitmap = new Matrix(1, retrievalWidth);
                     bitmap.zero();
+                    Set<Integer> inflight = new HashSet<Integer>();
                     for (int c = 0; c < retrievalCombo.getNumCols(); c++) {
                         int item = (int) retrievalCombo.get(c);
                         bitmap.set(item - 1, 1);
+                        inflight.add(item);
                     }
-                    for (int pi = 0; pi < cachePerms.getNumRows(); pi++) {
-                        Matrix row = Matrix.concatColumns(cachePerms.getRow(pi), bitmap, null);
-                        SS = Matrix.concatRows(SS, row, null);
+                    // Only the retrieval classes of items being fetched can carry merged
+                    // secondary requests; every other block-B slot is zero.
+                    List<Integer> active = new ArrayList<Integer>();
+                    for (int j = 0; j < widthB; j++) {
+                        if (inflight.contains(retrievalClassItems[j])) {
+                            active.add(j);
+                        }
+                    }
+                    List<int[]> pendings = spaceCachePendings(active.size(), maxPending);
+                    for (int bi = 0; bi < pendings.size(); bi++) {
+                        Matrix blockB = new Matrix(1, widthB);
+                        blockB.zero();
+                        int[] pend = pendings.get(bi);
+                        for (int a = 0; a < active.size(); a++) {
+                            blockB.set(active.get(a), pend[a]);
+                        }
+                        for (int pi = 0; pi < cachePerms.getNumRows(); pi++) {
+                            Matrix row = Matrix.concatColumns(cachePerms.getRow(pi), bitmap, null);
+                            if (widthB > 0) {
+                                row = Matrix.concatColumns(row, blockB, null);
+                            }
+                            SS = Matrix.concatRows(SS, row, null);
+                        }
                     }
                 }
             }
@@ -2579,7 +2730,11 @@ public class State implements Serializable {
                                 boolean validRow = true;
 
                                 Set<Integer> itemsInRetrievalSystemState = new HashSet<>();
-                                for (int col = localVarsStartIndex + totalCacheCapacity; col < state.getNumCols(); col++) {
+                                // only block A (one column per item) records in-flight fetches;
+                                // block B holds the merged secondary requests
+                                int blockAEnd = Math.min(state.getNumCols(),
+                                        localVarsStartIndex + totalCacheCapacity + retrievalClasses.getNumRows());
+                                for (int col = localVarsStartIndex + totalCacheCapacity; col < blockAEnd; col++) {
                                     // Retrieval-system occupancy bitmap: a zero bit means the item is not being retrieved
                                     if (state.get(col) == 0) continue;
 
@@ -2767,7 +2922,8 @@ public class State implements Serializable {
                     }
 
                     if (sn.visits != null && checkVisitsValue) {
-                        capacityc.set(ind, r, 0);
+                        // never-revisited station can still HOLD jobs at t=0: an SPN place with no input is TRANSIENT, not absent -- see _kb/11-conventions-and-gotchas.md
+                        capacityc.set(ind, r, initialOccupancy(sn, ind, r));
                     } else if (sn.nodetype.get(ind) != NodeType.Place && sn.proc != null && sn.proc.get(sn.stations.get((int) ist)) != null && sn.proc.get(sn.stations.get((int) ist)).get(sn.jobclasses.get(r)) != null && !sn.proc.get(sn.stations.get((int) ist)).get(sn.jobclasses.get(r)).isEmpty() && sn.proc.get(sn.stations.get((int) ist)).get(sn.jobclasses.get(r)).get(0) != null && sn.proc.get(sn.stations.get((int) ist)).get(sn.jobclasses.get(r)).get(0).hasNaN()) {
                         // Disabled distributions have NaN in proc.get(0)
                         // Skip this check for Place nodes (they hold tokens without service)
@@ -2953,12 +3109,55 @@ public class State implements Serializable {
                         }
                 }
                 if (sn.nodetype.get(ind) != NodeType.Transition) {
-                    Matrix state_bufsrv = FromMarginal.fromMarginalBounds(sn, ind, capacityc.getRow(ind), 1, options);
-                    Matrix state_var = State.spaceLocalVars(sn, ind);
+                    // Truncation level of the delayed-hit block B: a completing fetch releases
+                    // its merged requests into the hit class in one transition, so 1+maxPending
+                    // jobs of that class must fit the per station-class bound the rest of the
+                    // state space is enumerated under.
+                    int maxPending = 0;
+                    int nodeCap = 1;
+                    if (sn.nodetype.get(ind) == NodeType.Cache
+                            && ((CacheNodeParam) sn.nodeparam.get(sn.nodes.get(ind))).retrievalSystemCapacity > 0) {
+                        double closed = 0;
+                        for (int r = 0; r < sn.njobs.getNumCols(); r++) {
+                            if (!Double.isInfinite(sn.njobs.get(r))) {
+                                closed += sn.njobs.get(r);
+                            }
+                        }
+                        if (closed > 0) {
+                            maxPending = (int) closed - 1;
+                        } else {
+                            double cmax = 0;
+                            for (int i = 0; i < cutoff.getNumRows(); i++) {
+                                for (int j = 0; j < cutoff.getNumCols(); j++) {
+                                    if (!Double.isInfinite(cutoff.get(i, j))) {
+                                        cmax = Math.max(cmax, cutoff.get(i, j));
+                                    }
+                                }
+                            }
+                            maxPending = (int) cmax - 1;
+                        }
+                        if (maxPending < 0) {
+                            maxPending = 0;
+                        }
+                        nodeCap = 1 + maxPending;
+                        Matrix hitClassM = ((CacheNodeParam) sn.nodeparam.get(sn.nodes.get(ind))).hitclass;
+                        for (int col = 0; col < hitClassM.getNumCols(); col++) {
+                            int hc = (int) hitClassM.get(0, col);
+                            if (hc >= 0 && hc < capacityc.getNumCols()) {
+                                capacityc.set(ind, hc, nodeCap);
+                            }
+                        }
+                    }
+                    Matrix state_bufsrv = FromMarginal.fromMarginalBounds(sn, ind, capacityc.getRow(ind), nodeCap, options);
+                    Matrix state_var = State.spaceLocalVars(sn, ind, maxPending);
                     Matrix value = Matrix.cartesian(state_bufsrv, state_var);
 
-                    // If the node is a cache, then there are invalid combinations of buffer and variable states
-                    if (sn.nodetype.get(ind) == NodeType.Cache) {
+                    // If the node is a retrieval cache, then there are invalid combinations of
+                    // buffer and variable states. A non-retrieval cache is left untouched, as in
+                    // MATLAB State.spaceGeneratorNodes: its local-variable vector carries no
+                    // retrieval bitmap, so the pruning below would read past the state width.
+                    if (sn.nodetype.get(ind) == NodeType.Cache
+                            && ((CacheNodeParam) sn.nodeparam.get(sn.nodes.get(ind))).retrievalSystemCapacity > 0) {
                         int nItems = ((CacheNodeParam) sn.nodeparam.get(sn.nodes.get(ind))).nitems;
                         int totalCacheCapacity = ((CacheNodeParam) sn.nodeparam.get(sn.nodes.get(ind))).totalCacheCapacity;
                         int retrievalSystemCapacity = ((CacheNodeParam) sn.nodeparam.get(sn.nodes.get(ind))).retrievalSystemCapacity;
@@ -2972,12 +3171,59 @@ public class State implements Serializable {
                             Matrix state = value.getRow(row);
                             // fromMarginal can allow the number of classes in the buffer to be greater than 1, these should
                             // be removed
-                            boolean validRow = !(state.sumSubMatrix(0, 1, 0, localVarsStartIndex) > 1);
+                            // Only one job reads at a time. The single exception is the state a
+                            // completing fetch lands in: one miss-class job (the fetch itself)
+                            // together with the delayed hits it released.
+                            double srvTot = state.sumSubMatrix(0, 1, 0, localVarsStartIndex);
+                            boolean validRow = !(srvTot > 1);
+                            if (!validRow && maxPending > 0) {
+                                Matrix hitClassM2 = ((CacheNodeParam) sn.nodeparam.get(sn.nodes.get(ind))).hitclass;
+                                Set<Integer> hitCols = new HashSet<Integer>();
+                                for (int c2 = 0; c2 < hitClassM2.getNumCols(); c2++) {
+                                    if ((int) hitClassM2.get(0, c2) >= 0) hitCols.add((int) hitClassM2.get(0, c2));
+                                }
+                                Set<Integer> missCols = new HashSet<Integer>();
+                                for (int c2 = 0; c2 < missClass.getNumCols(); c2++) {
+                                    if ((int) missClass.get(0, c2) >= 0) missCols.add((int) missClass.get(0, c2));
+                                }
+                                double otherJobs = 0, missJobs = 0;
+                                for (int c2 = 0; c2 < localVarsStartIndex; c2++) {
+                                    if (missCols.contains(c2)) {
+                                        missJobs += state.get(c2);
+                                    } else if (!hitCols.contains(c2)) {
+                                        otherJobs += state.get(c2);
+                                    }
+                                }
+                                validRow = (otherJobs == 0) && (missJobs <= 1) && (srvTot <= 1 + maxPending);
+                            }
 
                             if (!validRow) continue;
 
+                            int[][] rcMapPrune = State.cacheRetrievalClassMap(sn, ind);
+                            int widthBPrune = (state.getNumCols() - localVarsStartIndex - totalCacheCapacity - nItems == rcMapPrune[1].length)
+                                    ? rcMapPrune[1].length : 0;
+                            if (widthBPrune > 0) {
+                                // a merged secondary request requires its item to be in flight
+                                double npend = 0;
+                                int b0 = localVarsStartIndex + totalCacheCapacity + nItems;
+                                for (int j = 0; j < widthBPrune; j++) {
+                                    double cnt = state.get(b0 + j);
+                                    if (cnt == 0) continue;
+                                    npend += cnt;
+                                    if (state.get(localVarsStartIndex + totalCacheCapacity + rcMapPrune[1][j] - 1) == 0) {
+                                        validRow = false;
+                                        break;
+                                    }
+                                }
+                                if (validRow && npend > maxPending) {
+                                    validRow = false;
+                                }
+                                if (!validRow) continue;
+                            }
+
                             Set<Integer> itemsInRetrievalSystem = new HashSet<>();
-                            for (int col = localVarsStartIndex + totalCacheCapacity; col < state.getNumCols(); col++) {
+                            for (int col = localVarsStartIndex + totalCacheCapacity;
+                                 col < localVarsStartIndex + totalCacheCapacity + nItems; col++) {
                                 // Retrieval-system occupancy bitmap: a zero bit means the item is not being retrieved
                                 if (state.get(col) == 0) continue;
 
@@ -3049,13 +3295,18 @@ public class State implements Serializable {
     }
 
     private static Matrix spaceLocalVars(NetworkStruct sn, int ind) {
+        return spaceLocalVars(sn, ind, 0);
+    }
+
+    private static Matrix spaceLocalVars(NetworkStruct sn, int ind, int maxPending) {
         Matrix space = new Matrix(0, 0);
         switch (sn.nodetype.get(ind)) {
             case Cache:
                 int nItems = ((CacheNodeParam) sn.nodeparam.get(sn.nodes.get(ind))).nitems;
                 Matrix m = ((CacheNodeParam) sn.nodeparam.get(sn.nodes.get(ind))).itemcap;
                 int retrievalSystemCapacity = ((CacheNodeParam) sn.nodeparam.get(sn.nodes.get(ind))).retrievalSystemCapacity;
-                space = State.spaceCache(nItems, m, retrievalSystemCapacity);
+                int[][] rcMap = State.cacheRetrievalClassMap(sn, ind);
+                space = State.spaceCache(nItems, m, retrievalSystemCapacity, maxPending, rcMap[1]);
         }
 
         for (int r = 0; r < sn.nclasses; r++) {
@@ -3097,6 +3348,19 @@ public class State implements Serializable {
      */
     public static Matrix spaceLocalVarsPublic(NetworkStruct sn, int ind) {
         return spaceLocalVars(sn, ind);
+    }
+
+    /**
+     * Make spaceLocalVars method public, at a given delayed-hit truncation level.
+     * Mirrors the three-argument MATLAB {@code State.spaceLocalVars}.
+     *
+     * @param sn         Network structure
+     * @param ind        Node index
+     * @param maxPending secondary requests that may merge onto one in-flight fetch
+     * @return Local variable state space
+     */
+    public static Matrix spaceLocalVarsPublic(NetworkStruct sn, int ind, int maxPending) {
+        return spaceLocalVars(sn, ind, maxPending);
     }
 
     public static class StateMarginalStatistics {
@@ -3149,5 +3413,35 @@ public class State implements Serializable {
         }
     }
 
+
+
+    /**
+     * Class-{@code r} jobs held by node {@code ind} in the DECLARED initial state,
+     * or 0 when no initial state is available.
+     *
+     * <p>Bounds the enumerated local state space from below, so a zero-visit station
+     * that nonetheless starts with jobs keeps its initial marking; the
+     * unreachable-state pruning then removes whatever the chain cannot reach.
+     * See _kb/11-conventions-and-gotchas.md.
+     */
+    private static double initialOccupancy(NetworkStruct sn, int ind, int r) {
+        if (sn.state == null || sn.stateful == null) {
+            return 0.0;
+        }
+        // only a Place holds tokens in a class-indexed row; every other node type
+        // encodes its local state differently, so column r is not an occupancy there
+        if (sn.nodetype.get(ind) != NodeType.Place) {
+            return 0.0;
+        }
+        int isf = (int) sn.nodeToStateful.get(ind);
+        if (isf < 0 || isf >= sn.stateful.size()) {
+            return 0.0;
+        }
+        Matrix row = sn.state.get(sn.stateful.get(isf));
+        if (row == null || row.getNumRows() == 0 || r >= row.getNumCols()) {
+            return 0.0;
+        }
+        return row.get(0, r);
+    }
 
 }

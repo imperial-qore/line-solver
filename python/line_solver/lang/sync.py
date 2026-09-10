@@ -86,6 +86,46 @@ def _make_jsq_prob(sn_ref, node_ind, dest_node):
     return prob_fn
 
 
+def _make_sdr_prob(sn_ref, node_ind, cls_r, dest_node):
+    """Krzesinski (1987) product-form state-dependent routing, eq. (10).
+
+    node_ind is the entry center e of Q(V,V). The probability of proceeding to
+    a branch entry is a function of the total branch and subnetwork populations;
+    the residual mass returns the customer to the departure center d, which is
+    the busy form of waiting of Section 2.5. Mirrors MATLAB sub_sdr.
+    """
+    import numpy as np
+    isf_i = int(sn_ref.nodeToStateful[node_ind])
+    cm = np.asarray(sn_ref.connmatrix)
+    sdr = sn_ref.nodeparam[node_ind][cls_r]['sdr']
+
+    def prob_fn(state_before, state_after):
+        from ..api.state.marginal import toMarginal
+        from ..api.pfqn.sdr import pfqn_sdrprob
+        row = state_before[isf_i] if isf_i >= 0 else None
+        if row is None or np.atleast_2d(row).size == 0:
+            return min(float(cm[node_ind, dest_node]), 1.0)
+        n = np.zeros(int(sn_ref.nnodes))
+        for knd in range(int(sn_ref.nnodes)):
+            ksf = int(sn_ref.nodeToStateful[knd])
+            if ksf < 0:
+                continue
+            blk = np.atleast_2d(state_before[ksf])
+            if blk.size == 0:
+                continue
+            n[knd] = float(np.ravel(toMarginal(sn_ref, knd, blk[0])[0])[0])
+        Pb, Ped = pfqn_sdrprob(sdr, n)
+        p = 0.0
+        for b in range(1, len(sdr['branch'])):
+            if int(sdr['entryOf'][b]) == int(dest_node):
+                p += float(Pb[b])
+        if int(sdr['departure']) == int(dest_node):
+            p += float(Ped)
+        return p
+
+    return prob_fn
+
+
 def _make_sq_prob(sn_ref, node_ind, cls_r, dest_node):
     """Power-of-K-choices routing probability (state-dependent).
 
@@ -133,78 +173,6 @@ def _make_sq_prob(sn_ref, node_ind, cls_r, dest_node):
                     best = i
             pvec[best] += 1.0
         return float(pvec[eligible.index(int(dest_node))] / denom)
-
-    return prob_fn
-
-
-def _make_rl_prob(sn_ref, node_ind, cls_r, dest_node):
-    """Reinforcement-learning routing probability (state-dependent).
-
-    Mirrors MATLAB refreshRoutingMatrix sub_rl: with a tabular value function
-    (stateSize == 0) or a quadratic linear value-function approximation
-    (stateSize > 0), the destination minimizing the post-decision value is
-    selected (ties split uniformly); outside the action space, or when the
-    node carries no RL configuration, the policy degrades to JSQ.
-    """
-    import numpy as np
-    isf_i = int(sn_ref.nodeToStateful[node_ind])
-    cm = np.asarray(sn_ref.connmatrix)
-    linked = [int(x) for x in np.where(cm[node_ind, :] > 0)[0]]
-    np_ir = None
-    if getattr(sn_ref, 'nodeparam', None) is not None and node_ind in sn_ref.nodeparam:
-        entry = sn_ref.nodeparam[node_ind]
-        if isinstance(entry, dict) and isinstance(entry.get(cls_r), dict):
-            np_ir = entry[cls_r]
-    valuefn = np_ir.get('valuefn') if np_ir else None
-    nna = np_ir.get('nodesNeedAction', []) if np_ir else []
-    state_size = int(np_ir.get('stateSize', 0)) if np_ir else 0
-    jsq_fn = _make_jsq_prob(sn_ref, node_ind, dest_node)
-    queue_val = int(NodeType.QUEUE.value) if hasattr(NodeType.QUEUE, 'value') else int(NodeType.QUEUE)
-    nodetype = [int(nt.value) if hasattr(nt, 'value') else int(nt) for nt in sn_ref.nodetype]
-    ind_queue = [i for i, nt in enumerate(nodetype) if nt == queue_val]
-
-    def prob_fn(state_before, state_after):
-        from ..api.state.marginal import toMarginal
-        row = state_before[isf_i] if isf_i >= 0 else None
-        if row is None or np.atleast_2d(row).size == 0:
-            return min(float(cm[node_ind, dest_node]), 1.0)
-        if valuefn is None or node_ind not in nna:
-            return jsq_fn(state_before, state_after)
-        x = np.zeros(len(ind_queue))
-        for qi, knd in enumerate(ind_queue):
-            ksf = int(sn_ref.nodeToStateful[knd])
-            ni = toMarginal(sn_ref, knd, np.atleast_2d(state_before[ksf])[0])[0]
-            x[qi] = float(np.ravel(ni)[0])
-        vf = np.asarray(valuefn)
-        v = {}
-        for knd in linked:
-            tmp = x.copy()
-            for qi, q_nd in enumerate(ind_queue):
-                if q_nd == knd:
-                    tmp[qi] += 1.0
-            if state_size == 0:
-                # Tabular value function: 0-based indexing by post-decision
-                # counts (MATLAB indexes 1-based at counts+1)
-                idx = tmp.astype(int)
-                if np.max(idx) + 1 <= vf.shape[0]:
-                    v[knd] = float(vf[tuple(idx)])
-            else:
-                # Quadratic feature vector [1, x, {x_i*x_j, i<=j}] . coeff'
-                feat = [1.0] + list(tmp)
-                for i in range(len(tmp)):
-                    for j in range(i, len(tmp)):
-                        feat.append(tmp[i] * tmp[j])
-                v[knd] = float(np.dot(np.asarray(feat), np.ravel(vf)))
-        if state_size == 0:
-            in_space = len(v) > 0 and float(np.max(x + 1)) < vf.shape[0]
-        else:
-            in_space = len(v) > 0 and float(np.max(x + 1)) < state_size
-        if in_space:
-            vmin = min(v.values())
-            if int(dest_node) in v and v[int(dest_node)] == vmin:
-                return 1.0 / sum(1 for w in v.values() if w == vmin)
-            return 0.0
-        return jsq_fn(state_before, state_after)
 
     return prob_fn
 
@@ -471,18 +439,22 @@ def refresh_sync(sn) -> List[SyncAction]:
                                     wrrobin_val = int(RoutingStrategy.WRROBIN.value) if hasattr(RoutingStrategy.WRROBIN, 'value') else int(RoutingStrategy.WRROBIN)
                                     jsq_val = int(RoutingStrategy.JSQ.value) if hasattr(RoutingStrategy.JSQ, 'value') else int(RoutingStrategy.JSQ)
                                     sq_val = int(RoutingStrategy.SQ.value) if hasattr(RoutingStrategy.SQ, 'value') else int(RoutingStrategy.SQ)
-                                    rl_val = int(RoutingStrategy.RL.value) if hasattr(RoutingStrategy.RL, 'value') else int(RoutingStrategy.RL)
 
-                                    if rs_val in (jsq_val, sq_val, rl_val):
+                                    sdr_val = int(RoutingStrategy.SDR.value) if hasattr(RoutingStrategy.SDR, 'value') else int(RoutingStrategy.SDR)
+
+                                    if rs_val == sdr_val:
+                                        # see _kb/16-state-dependent-routing.md
+                                        if r != s:
+                                            continue
+                                        prob = _make_sdr_prob(sn, ind, r, jnd)
+                                    elif rs_val in (jsq_val, sq_val):
                                         # see _kb/04-networkstruct.md (refreshGlobalSync / refreshSync) for rationale
                                         if r != s:
                                             continue
                                         if rs_val == jsq_val:
                                             prob = _make_jsq_prob(sn, ind, jnd)
-                                        elif rs_val == sq_val:
-                                            prob = _make_sq_prob(sn, ind, r, jnd)
                                         else:
-                                            prob = _make_rl_prob(sn, ind, r, jnd)
+                                            prob = _make_sq_prob(sn, ind, r, jnd)
                                     elif rs_val in (rrobin_val, wrrobin_val):
                                         # see _kb/04-networkstruct.md (State-space construction conventions) for rationale
                                         def _make_rr_prob(sn_ref, node_ind, cls_r, dest_node):

@@ -14,6 +14,17 @@ public class ResultCTMC extends SolverResult {
     private final double[][][] depRates;
     private final NetworkStruct sn;
     protected Matrix stateSpace;
+    /** Declared initial state carried through stochastic complementation, or null. */
+    private Matrix pi0;
+    /**
+     * Derived START filtration, one (state x state) matrix per (station,
+     * class): the rate at which a transition starts a class-r service at
+     * station i. Kept out of Dfilt, which pairs one-to-one with sn.sync and is
+     * summed as D1 -- a START rides on an arc Dfilt already carries.
+     */
+    private Matrix[][] startFilt;
+    /** Derived PREEMPT filtration, laid out like startFilt. */
+    private Matrix[][] preemptFilt;
 
 
     public ResultCTMC(
@@ -59,5 +70,26 @@ public class ResultCTMC extends SolverResult {
 
     public Matrix getStateSpaceAggr() {
         return stateSpaceAggr;
+    }
+
+    public Matrix[][] getStartFilt() {
+        return startFilt;
+    }
+
+    public Matrix[][] getPreemptFilt() {
+        return preemptFilt;
+    }
+
+    public void setAuxFilt(Matrix[][] startFilt, Matrix[][] preemptFilt) {
+        this.startFilt = startFilt;
+        this.preemptFilt = preemptFilt;
+    }
+
+    public Matrix getPi0() {
+        return pi0;
+    }
+
+    public void setPi0(Matrix pi0) {
+        this.pi0 = pi0;
     }
 }

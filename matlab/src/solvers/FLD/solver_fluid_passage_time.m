@@ -66,6 +66,10 @@ for i = 1:sn.nstations
                     iter = 1;
                     finished = 0;
                     tref = 0;
+                    % The window loop advances y0_c, so the refinement below
+                    % needs the state the whole trajectory STARTED from: it
+                    % re-integrates the curve on the refined grid in one call.
+                    y0_start = y0_c;
                     odeopt = odeset('AbsTol', tol, 'RelTol', tol, 'NonNegative', 1:length(y0_c));
                     while iter <= iter_max && finished == 0
                         trange = [T0, T];
@@ -112,81 +116,99 @@ for i = 1:sn.nstations
                     %% Adaptive CDF Refinement - detect and refine large CDF jumps
                     if fluid_c > 0
                         maxCdfJump = 0.0005; % Maximum allowed CDF jump (0.05%)
-                        maxRefinementIterations = 5; % Limit to prevent infinite loops
-                        refinementIter = 0;
-
-                        keepRefining = true;
-                        while keepRefining && refinementIter < maxRefinementIterations
-                            keepRefining = false;
-                            cdfValues = RT{i,c,2};
-                            for row = 2:length(cdfValues)
-                                cdfJump = cdfValues(row) - cdfValues(row-1);
-                                if cdfJump > maxCdfJump
-                                    refinementIter = refinementIter + 1;
-
-                                    % Refine this interval
-                                    t1 = fullt(row-1);
-                                    t2 = fullt(row);
-                                    numRefinedPoints = 20;
-                                    refinedT = linspace(t1, t2, numRefinedPoints)';
-                                    refinedStates = zeros(numRefinedPoints, size(fully,2));
-
-                                    % Integrate to refined time points
-                                    startState = fully(row-1,:);
-                                    refinedStates(1,:) = startState;
-                                    for rp = 2:numRefinedPoints
-                                        try
-                                            if stiff
-                                                [~, tempState] = ode_solve_stiff(ode_h_c, [t1, refinedT(rp)], startState, odeopt, options);
-                                            else
-                                                [~, tempState] = ode_solve(ode_h_c, [t1, refinedT(rp)], startState, odeopt, options);
-                                            end
-                                            refinedStates(rp,:) = max(0, tempState(end,:));
-                                        catch
-                                            % Linear interpolation fallback
-                                            alpha = (refinedT(rp) - t1) / (t2 - t1);
-                                            refinedStates(rp,:) = fully(row-1,:) + alpha * (fully(row,:) - fully(row-1,:));
-                                        end
-                                    end
-
-                                    % Merge refined points using ODE-computed states
-                                    newFullt = [fullt(1:row-1); refinedT(2:end); fullt(row+1:end)];
-                                    newFully = [fully(1:row-1,:); refinedStates(2:end,:); fully(row+1:end,:)];
-                                    fullt = newFullt;
-                                    fully = newFully;
-
-                                    % Recompute CDF
-                                    RT{i,c,1} = fullt;
-                                    RT{i,c,2} = 1 - sum(fully(:,idxN),2)/fluid_c;
-
-                                    line_printf('INFO: Added %d refined points between t=%.6f and t=%.6f\n', numRefinedPoints, t1, t2);
-                                    keepRefining = true; % Continue refining
-                                    break; % Restart the inner loop with updated arrays
-                                end
+                        maxRefinementRounds = 5; % SWEEPS over the grid, not intervals
+                        maxPoints = 20001;      % bound on work, not on accuracy
+                        numRefinedPoints = 20;
+                        % EVERY offending interval is split in the SAME round, and
+                        % the whole curve is then re-integrated on the new grid in
+                        % ONE call. Refining one interval per round instead spent
+                        % the cap on five intervals and left the jump target unmet:
+                        % cdf_respt_closed_threeclasses came back on 130 points over
+                        % [0,200] and its right-endpoint mean read 1.126 for a
+                        % response time that is exactly Exp(1). Same rule as the C++
+                        % fluid_passage_time and the JAR SolverFluid.passageTime.
+                        for refinementRound = 1:maxRefinementRounds
+                            if numel(fullt) >= maxPoints
+                                break
                             end
+                            cdfValues = RT{i,c,2};
+                            % A ZERO-WIDTH INTERVAL CANNOT BE REFINED: a jump at
+                            % equal times is an atom of the law, not a resolution
+                            % failure, and its linspace points are all one instant.
+                            offending = find(diff(cdfValues(:)) > maxCdfJump & diff(fullt(:)) > 0);
+                            if isempty(offending)
+                                break
+                            end
+                            newt = fullt(:);
+                            for oi = numel(offending):-1:1
+                                row = offending(oi);
+                                extra = linspace(fullt(row), fullt(row+1), numRefinedPoints)';
+                                newt = [newt(1:row); extra(2:end-1); newt(row+1:end)];
+                            end
+                            newt = unique(newt);
+                            if numel(newt) > maxPoints || numel(newt) < 2
+                                break
+                            end
+                            try
+                                if stiff
+                                    [t_ref, y_ref] = ode_solve_stiff(ode_h_c, newt, y0_start, odeopt, options);
+                                else
+                                    [t_ref, y_ref] = ode_solve(ode_h_c, newt, y0_start, odeopt, options);
+                                end
+                            catch
+                                break
+                            end
+                            if size(y_ref,1) ~= numel(newt)
+                                break
+                            end
+                            fullt = t_ref(:);
+                            fully = max(0, y_ref);
+                            RT{i,c,1} = fullt;
+                            RT{i,c,2} = 1 - sum(fully(:,idxN),2)/fluid_c;
+                            line_printf('INFO: refinement round %d took the CDF grid to %d points\n', refinementRound, numel(fullt));
                         end
 
-                        %% Extended Time Interval Logic - extend if first CDF > 1%
+                        %% Horizon extension - extend while the TAIL misses the law
+                        % The test is on the LAST grid point. It used to read the
+                        % FIRST, RT{i,c,2}(1), which is the CDF at the start of the
+                        % horizon: the marked class holds all of fluid_c at t=0 by
+                        % construction, so that value is 0 whatever the horizon is,
+                        % and lengthening the horizon cannot move it. The loop it
+                        % guarded was therefore unreachable, and reachable only into
+                        % harm -- its body REPLACED the refined curve with a fresh
+                        % 2-point-tspan solve, discarding the grid the refinement
+                        % rounds above had just paid for. Extending forward is what
+                        % a missing tail actually needs.
                         maxExtendIterations = 10;
                         extendIter = 0;
-                        while RT{i,c,2}(1) > 0.01 && extendIter < maxExtendIterations
+                        while RT{i,c,2}(end) < 0.99 && extendIter < maxExtendIterations
                             extendIter = extendIter + 1;
-                            extendedT = T * (1 + extendIter);
+                            % CONTINUE the same trajectory from where it stopped and
+                            % APPEND, as the window loop above does: y0_c is the end
+                            % state and tref the elapsed time, and ode_h_c is
+                            % autonomous, so [T0, extendedT] from y0_c is the next
+                            % stretch of the SAME passage. Doubling each round reaches
+                            % a 1024x horizon within the cap instead of 11x.
+                            extendedT = T * (2^extendIter);
 
-                            % Re-run with extended time
                             try
                                 if stiff
                                     [t_ext, y_ext] = ode_solve_stiff(ode_h_c, [T0, extendedT], y0_c, odeopt, options);
                                 else
                                     [t_ext, y_ext] = ode_solve(ode_h_c, [T0, extendedT], y0_c, odeopt, options);
                                 end
-                                fullt = t_ext;
-                                fully = y_ext;
-                                RT{i,c,1} = fullt;
-                                RT{i,c,2} = 1 - sum(fully(:,idxN),2)/fluid_c;
                             catch
                                 break; % Stop extending on error
                             end
+                            if size(y_ext,1) < 2
+                                break
+                            end
+                            fullt = [fullt; t_ext(2:end)+tref];
+                            fully = [fully; max(0, y_ext(2:end,:))];
+                            tref = tref + t_ext(end);
+                            y0_c = y_ext(end,:);
+                            RT{i,c,1} = fullt;
+                            RT{i,c,2} = 1 - sum(fully(:,idxN),2)/fluid_c;
                         end
                     end
 

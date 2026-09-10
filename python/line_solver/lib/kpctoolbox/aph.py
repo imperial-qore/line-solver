@@ -303,31 +303,15 @@ def _map_renewal(MAP: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
 
 
 def _map_normalize(MAP: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
-    """Normalize MAP to be valid.
+    """Make a MAP feasible: the dict-shaped face of api.mam.map_normalize.
 
-    Following MATLAB map_normalize:
-    1. Take real part of all entries
-    2. Zero out all negative entries in both D0 and D1
-    3. Recompute D0 diagonal so each row of D0+D1 sums to zero
+    Delegates rather than repeating the repair. This module, `map_analysis`
+    and `_map_normalize_generator` each carried their own copy of
+    map_normalize.m, and the public one had drifted into rescaling the mean
+    instead; one implementation is what keeps that from happening again.
     """
-    D0 = MAP['D0'].copy()
-    D1 = MAP['D1'].copy()
-    n = D0.shape[0]
-
-    # Take real parts (handles complex values from sqrt of negative numbers)
-    D0 = np.real(D0)
-    D1 = np.real(D1)
-
-    # Zero out negative entries in both matrices
-    D0[D0 < 0] = 0
-    D1[D1 < 0] = 0
-
-    # Recompute D0 diagonal so each row of D0+D1 sums to zero
-    for i in range(n):
-        D0[i, i] = 0
-        row_sum = np.sum(D0[i, :]) + np.sum(D1[i, :])
-        D0[i, i] = -row_sum
-
+    from line_solver.api.mam.map_analysis import map_normalize
+    D0, D1 = map_normalize(MAP['D0'], MAP['D1'])
     return {'D0': D0, 'D1': D1}
 
 
@@ -370,14 +354,19 @@ def aph_fit(e1: float, e2: float, e3: float, nmax: int = 10
 
     while (not n2_feas or not n3_lb_feas or not n3_ub_feas) and n < nmax:
         n += 1
-        pn = ((n + 1) * (n2 - 2) / (3 * n2 * (n - 1))) * \
-             (-2 * np.sqrt(n + 1.0) / np.sqrt(4.0 * (n + 1) - 3 * n * n2) - 1)
-        an = (n2 - 2) / (pn * (1 - n2) + np.sqrt(pn * pn + pn * n * (n2 - 2) / (n - 1)))
-        ln = ((3 + an) * (n - 1) + 2 * an) / ((n - 1) * (1 + an * pn)) - \
-             (2 * an * (n + 1)) / (2 * (n - 1) + an * pn * (n * an + 2 * n - 2))
-        un_1 = un
-        un = (1.0 / (n * n * n2)) * (2 * (n - 2) * (n * n2 - n - 1) *
-             np.sqrt(1 + n * (n2 - 2) / (n - 1)) + (n + 2) * (3 * n * n2 - 2 * n - 2))
+        # The Bobbio-Horvath-Telek bounds ln and un are evaluated at EVERY order n,
+        # including orders whose n2 lies outside the band where the radicands stay
+        # non-negative. There a bound comes out NaN, and the n2 tests below reject
+        # that order on n2 alone, so the NaN never reaches a fitted parameter.
+        with np.errstate(invalid='ignore', divide='ignore'):
+            pn = ((n + 1) * (n2 - 2) / (3 * n2 * (n - 1))) * \
+                 (-2 * np.sqrt(n + 1.0) / np.sqrt(4.0 * (n + 1) - 3 * n * n2) - 1)
+            an = (n2 - 2) / (pn * (1 - n2) + np.sqrt(pn * pn + pn * n * (n2 - 2) / (n - 1)))
+            ln = ((3 + an) * (n - 1) + 2 * an) / ((n - 1) * (1 + an * pn)) - \
+                 (2 * an * (n + 1)) / (2 * (n - 1) + an * pn * (n * an + 2 * n - 2))
+            un_1 = un
+            un = (1.0 / (n * n * n2)) * (2 * (n - 2) * (n * n2 - n - 1) *
+                 np.sqrt(1 + n * (n2 - 2) / (n - 1)) + (n + 2) * (3 * n * n2 - 2 * n - 2))
 
         if n2 >= (n + 1.0) / n and n2 <= (n + 4.0) / (n + 1):
             n2_feas = True
@@ -461,8 +450,10 @@ def aph_fit(e1: float, e2: float, e3: float, nmax: int = 10
         K14 = (6 * K1 * K3 * K4 * K5 + 4 * K2 * K3**2 * n - K1**2 * K4**3 * fit_n2) / \
               (4 * K1**2 * K3**3 * K13 * fit_n2)
         K15 = -K4 / (2 * K3)
-        K16 = np.sqrt(2 * K10 - K11 - K12 - K14)
-        K17 = np.sqrt(2 * K10 - K11 - K12 + K14)
+        # K16, K17 and K22 leave their domain on the branches that do NOT select them,
+        # so each is evaluated only where its own branch reads it.
+        K16 = lambda: np.sqrt(2 * K10 - K11 - K12 - K14)
+        K17 = lambda: np.sqrt(2 * K10 - K11 - K12 + K14)
 
         inner_sqrt18 = 81 * (4 * K5**3 + 4 * K2 * K4 * K5 * n * fit_n2 +
                        K1 * K2 * K4**2 * n * fit_n2**2)**2 - \
@@ -476,20 +467,20 @@ def aph_fit(e1: float, e2: float, e3: float, nmax: int = 10
               K18_cbrt / (6**(2.0/3.0) * K1 * K4 * fit_n2) if K18_cbrt != 0 else 0.0
         K20 = 6 * K1 * K3 * K4 * K5 + 4 * K2 * K3**2 * n - K1**2 * K4**3 * fit_n2
         K21 = K11 + K12 + K5 / (2 * n * K1 * K3)
-        K22 = np.sqrt(3 * K4**2 / (4 * K3**2) - 3 * K5 / (K1 * K3 * fit_n2) +
+        K22 = lambda: np.sqrt(3 * K4**2 / (4 * K3**2) - 3 * K5 / (K1 * K3 * fit_n2) +
               np.sqrt(4 * K21**2 - n * K2 / (fit_n2 * K1**2 * K3)))
 
         if fit_n3 > un_1 and fit_n3 < 3 * fit_n2 / 2:
-            f = K13 + K15 - K17
+            f = K13 + K15 - K17()
         elif fit_n3 == 2 * fit_n2 / 2:
             f = K19
         elif fit_n3 > 3 * fit_n2 / 2 and K20 > 0:
-            f = -K13 + K15 + K16
+            f = -K13 + K15 + K16()
         elif K20 == 0:
-            f = K15 + K22
+            f = K15 + K22()
         else:
             # K20 < 0
-            f = K13 + K15 + K17
+            f = K13 + K15 + K17()
 
         a = 2 * (f - 1) * (n - 1) / ((n - 1) * (fit_n2 * f**2 - 2 * f + 2) - n)
         p = (f - 1) * a
@@ -559,7 +550,7 @@ def _map_scale(MAP: Dict[str, np.ndarray], target_mean: float
     if pi_q.ndim == 1:
         pi_q = pi_q.reshape(1, -1)
     ones_col = np.ones((n, 1))
-    lam = float(pi_q @ D1 @ ones_col)
+    lam = float(np.asarray(pi_q @ D1 @ ones_col).reshape(-1)[0])
 
     if lam > 0:
         current_mean = 1.0 / lam

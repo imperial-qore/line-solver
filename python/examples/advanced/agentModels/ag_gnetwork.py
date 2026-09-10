@@ -1,7 +1,7 @@
 """
 G-Network (Gelenbe Network) with Negative Customers
 
-This example demonstrates MAM with RCAT methods on a G-network with negative customers.
+This example demonstrates SolverAG, the agent-based solver, on a G-network with negative customers.
 Negative customers (signals) remove jobs from queues when they arrive,
 modeling job cancellations or service interrupts.
 
@@ -57,10 +57,10 @@ P.set(negClass, negClass, queue1, queue2, 1.0)
 P.set(negClass, negClass, queue2, sink, 1.0)
 model.link(P)
 
-# Solve with MAM using INAP method
+# Solve with AG using INAP method
 print('=== G-Network with Negative Customers ===\n')
-solver_mam = MAM(model, 'inap')
-avg_table = solver_mam.get_avg_table()
+solver_ag = AG(model, 'inap')
+avg_table = solver_ag.get_avg_table()
 
-print('MAM (method=inap):')
+print('AG (method=inap):')
 print(avg_table)

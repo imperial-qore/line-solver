@@ -1,0 +1,173 @@
+{
+  "class": {
+    "JMT": "stochastic",
+    "LDES": "stochastic"
+  },
+  "example": "mqn_singleserver_ps",
+  "solvers": {
+    "JMT": [
+      {
+        "ArvR": 0.70515,
+        "JobClass": "ClosedClass",
+        "QLen": 98.568,
+        "ResidT": 141.74,
+        "RespT": 141.74,
+        "Station": "Queue1",
+        "Tput": 0.69804,
+        "Util": 0.69772
+      },
+      {
+        "ArvR": 0.30007,
+        "JobClass": "OpenClass",
+        "QLen": 43.069,
+        "ResidT": 143.85,
+        "RespT": 143.85,
+        "Station": "Queue1",
+        "Tput": 0.29886,
+        "Util": 0.3019
+      },
+      {
+        "ArvR": 0.69804,
+        "JobClass": "ClosedClass",
+        "QLen": 0.82325,
+        "ResidT": 1.1341,
+        "RespT": 1.1341,
+        "Station": "Queue2",
+        "Tput": 0.69752,
+        "Util": 0.35985
+      },
+      {
+        "ArvR": 0.29886,
+        "JobClass": "OpenClass",
+        "QLen": 0.48659,
+        "ResidT": 1.618,
+        "RespT": 1.618,
+        "Station": "Queue2",
+        "Tput": 0.29886,
+        "Util": 0.20797
+      },
+      {
+        "ArvR": 0.69752,
+        "JobClass": "ClosedClass",
+        "QLen": 0.39465,
+        "ResidT": 0.55513,
+        "RespT": 0.55513,
+        "Station": "Queue3",
+        "Tput": 0.69751,
+        "Util": 0.23505
+      },
+      {
+        "ArvR": 0.29886,
+        "JobClass": "OpenClass",
+        "QLen": 0.28616,
+        "ResidT": 0.96528,
+        "RespT": 0.96528,
+        "Station": "Queue3",
+        "Tput": 0.29905,
+        "Util": 0.1685
+      },
+      {
+        "ArvR": 0.69751,
+        "JobClass": "ClosedClass",
+        "QLen": 0.21695,
+        "ResidT": 0.30292,
+        "RespT": 0.30292,
+        "Station": "Queue4",
+        "Tput": 0.69752,
+        "Util": 0.17845
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "OpenClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.30007,
+        "Util": 0.0
+      }
+    ],
+    "LDES": [
+      {
+        "ArvR": 0.72038,
+        "JobClass": "ClosedClass",
+        "QLen": 98.566,
+        "ResidT": 137.74,
+        "RespT": 137.74,
+        "Station": "Queue1",
+        "Tput": 0.71161,
+        "Util": 0.70623
+      },
+      {
+        "ArvR": 0.30042,
+        "JobClass": "OpenClass",
+        "QLen": 41.391,
+        "ResidT": 138.15,
+        "RespT": 138.15,
+        "Station": "Queue1",
+        "Tput": 0.2979,
+        "Util": 0.29377
+      },
+      {
+        "ArvR": 0.71662,
+        "JobClass": "ClosedClass",
+        "QLen": 0.82313,
+        "ResidT": 1.154,
+        "RespT": 1.154,
+        "Station": "Queue2",
+        "Tput": 0.71161,
+        "Util": 0.35638
+      },
+      {
+        "ArvR": 0.29876,
+        "JobClass": "OpenClass",
+        "QLen": 0.48701,
+        "ResidT": 1.6329,
+        "RespT": 1.6329,
+        "Station": "Queue2",
+        "Tput": 0.2979,
+        "Util": 0.20879
+      },
+      {
+        "ArvR": 0.71662,
+        "JobClass": "ClosedClass",
+        "QLen": 0.3953,
+        "ResidT": 0.55425,
+        "RespT": 0.55425,
+        "Station": "Queue3",
+        "Tput": 0.71161,
+        "Util": 0.23382
+      },
+      {
+        "ArvR": 0.29876,
+        "JobClass": "OpenClass",
+        "QLen": 0.28671,
+        "ResidT": 0.96092,
+        "RespT": 0.96092,
+        "Station": "Queue3",
+        "Tput": 0.2979,
+        "Util": 0.17041
+      },
+      {
+        "ArvR": 0.71662,
+        "JobClass": "ClosedClass",
+        "QLen": 0.21598,
+        "ResidT": 0.3035,
+        "RespT": 0.3035,
+        "Station": "Queue4",
+        "Tput": 0.71165,
+        "Util": 0.17767
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "OpenClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.3,
+        "Util": 0.0
+      }
+    ]
+  }
+}

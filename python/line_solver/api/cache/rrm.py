@@ -141,11 +141,13 @@ def cache_gamma_lp(lambd: np.ndarray, R: list) -> Tuple[np.ndarray, int, int, in
         R: Routing probability structure (list of lists, R[v][i] is matrix for user v, item i)
 
     Returns:
-        Tuple of (gamma, u, n, h) where:
+        Tuple of (gamma, u, n, h, parent) where:
             - gamma: Item popularity probabilities at each level (n x h)
             - u: Number of users
             - n: Number of items
             - h: Number of cache levels
+            - parent: Parent list of each list, 0-based with -1 for the lists
+              rooted in the miss list (h,)
 
     References:
         Original MATLAB: matlab/src/api/cache/cache_gamma_lp.m
@@ -206,6 +208,102 @@ def cache_gamma_lp(lambd: np.ndarray, R: list) -> Tuple[np.ndarray, int, int, in
                             y += lambd[v, i, t] * R[v][i][t, l]
                     gamma[i, j] *= y
 
+    # tree structure of the lists, read off the routing matrix of item 0
+    # aggregated over users -- the same matrix the gamma loop walks, so a
+    # per-item tree can never be contaminated by another item's matrix
+    Rtot = np.zeros_like(R[0][0])
+    for v in range(u):
+        Rtot = Rtot + R[v][0]
+    parent = np.full(h, -1, dtype=int)
+    for j in range(h):
+        pj = find_parent(Rtot, j + 1)
+        parent[j] = -1 if pj is None else int(pj) - 1
+
+    return gamma, u, n, h, parent
+
+
+def _bfs_path(A: np.ndarray, src: int, dst: int):
+    """Breadth-first shortest path over the strictly positive entries of A."""
+    nn = A.shape[0]
+    if src >= nn or dst >= nn or src < 0 or dst < 0:
+        return []
+    visited = [False] * nn
+    parent = [-1] * nn
+    queue = [src]
+    visited[src] = True
+    while queue:
+        current = queue.pop(0)
+        if current == dst:
+            path = []
+            node = dst
+            while node != -1:
+                path.insert(0, node)
+                node = parent[node]
+            return path
+        for nxt in range(nn):
+            if not visited[nxt] and A[current, nxt] > 0:
+                visited[nxt] = True
+                parent[nxt] = current
+                queue.append(nxt)
+    return []
+
+
+def cache_gamma(lambd: np.ndarray, R: list) -> Tuple[np.ndarray, int, int, int]:
+    """Access factors of a multi-list cache whose lists form a general graph.
+
+    Companion of `cache_gamma_lp`, which requires the access structure to be a
+    tree and walks the unique parent relation. Here the structure is only
+    required to be reachable: the path to list j is the BREADTH-FIRST shortest
+    path in the access graph of item i, so a list with several parents is
+    admissible and the first shortest path found in node order is the one
+    taken. Along that path,
+
+        gamma[i,j] = (sum_v lambd[v,i,0]) prod_edges (a,b) sum_v lambd[v,i,a] R[v][i][a,b]
+
+    THREE DIVERGENCES FROM cache_gamma_lp, all of which change the number, so
+    the two are not substitutes: the destination of column j is node j and not
+    node j+1, so column 0 carries no edge factor at all; the leading factor is
+    the aggregate miss-node request rate rather than one; and each edge factor
+    reads lambd at the SOURCE node a alone rather than summing over every
+    t <= a. Use cache_gamma_lp for the access factors a cache solver consumes.
+
+    The adjacency is read from user 0 only, so a model whose users route an
+    item differently is analysed on the first user's graph. An unreachable list
+    gives gamma[i,j] = 0.
+
+    Args:
+        lambd: (u, n, h+1) request rate of user v for item i while at node t.
+        R: (u, n) list of (h+1, h+1) routing matrices.
+
+    Returns:
+        Tuple of (gamma, u, n, h) with gamma of shape (n, h).
+
+    References:
+        jar/src/main/java/jline/api/cache/Cache_gamma.java
+    """
+    lambd = np.asarray(lambd, dtype=np.float64)
+    u = lambd.shape[0]
+    n = lambd.shape[1]
+    h = lambd.shape[2] - 1
+
+    gamma = np.zeros((n, h))
+    for i in range(n):
+        graph = np.asarray(R[0][i], dtype=np.float64)
+        for j in range(h):
+            path = _bfs_path(graph, 0, j)
+            if not path:
+                continue
+            g = 0.0
+            for v in range(u):
+                g += lambd[v, i, 0]
+            for li in range(1, len(path)):
+                a = path[li - 1]
+                b = path[li]
+                y = 0.0
+                for v in range(u):
+                    y += lambd[v, i, a] * R[v][i][a, b]
+                g *= y
+            gamma[i, j] = g
     return gamma, u, n, h
 
 
@@ -213,4 +311,5 @@ __all__ = [
     'cache_rrm_meanfield_ode',
     'cache_rrm_meanfield',
     'cache_gamma_lp',
+    'cache_gamma',
 ]

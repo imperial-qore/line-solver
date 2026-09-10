@@ -234,6 +234,59 @@ def _expansion_steady_state(x0, p, m, n, h, dim):
     return pi, V
 
 
+def _centered_basis(n):
+    """Orthonormal basis of {u in R^n : sum(u) = 0}, n-by-(n-1)."""
+    if n <= 1:
+        return np.zeros((n, 0))
+    Q, _ = np.linalg.qr(np.eye(n) - np.ones((n, n)) / n)
+    return Q[:, :n - 1]
+
+
+def cache_rmf_lna(x, p, m, n, h, dim):
+    """Stationary covariance of the RANDOM(m) occupancy under the LNA.
+
+    Twin of the MATLAB local `rmf_lna_covariance`: the solution of
+    F'(x) W + W F'(x)' + Q(x) = 0 with the same `_jacobian` and `_noise_matrix`
+    the 1/N correction is built from, so mean and covariance linearise about
+    the identical drift.
+
+    THE SUBSPACE IS THE POINT. The Jacobian is singular twice over, because the
+    cache conserves two things: each item is in exactly one list
+    (sum_k x[i,k] = 1) and each list holds exactly its capacity
+    (sum_i x[i,k] = m[k]). Every jump is a SWAP,
+    l(i,j,k) = (e_i - e_j) tensor (e_{k+1} - e_k), so the fluctuation lives on
+    the tensor product of the zero-sum item space with the zero-sum list space:
+    the double-centred subspace, of dimension (n-1)*h. Restricting to an
+    orthonormal basis of it is exact, and it is what makes the covariance of a
+    deterministic total come out as zero.
+
+    Raises:
+        ValueError: the fixed point is not exponentially stable on that
+            subspace, so there is no stationary covariance.
+    """
+    Fp = _jacobian(x, p, m, n, h, dim)
+    Q = _noise_matrix(x, p, m, n, h, dim)
+    Q = 0.5 * (Q + Q.T)
+
+    Ui = _centered_basis(n)
+    Ul = _centered_basis(h + 1)
+    V = np.kron(Ul, Ui)  # item-major flat index i + k*n
+    if V.shape[1] == 0:
+        return np.zeros((dim, dim))
+
+    Ar = V.T @ Fp @ V
+    Qr = V.T @ Q @ V
+    Qr = 0.5 * (Qr + Qr.T)
+    if np.max(np.real(np.linalg.eigvals(Ar))) >= -np.sqrt(np.finfo(float).eps):
+        raise ValueError('the cache fluid fixed point is not exponentially stable on the '
+                         'reachable subspace, so the occupancy process has no stationary covariance')
+
+    Wr = solve_lyapunov(Ar, -Qr)
+    Wr = 0.5 * (Wr + Wr.T)
+    W = V @ Wr @ V.T
+    return 0.5 * (W + W.T)
+
+
 def cache_miss_rmf(gamma, m, lambd, tspan=None, x0init=None, accost=None):
     """
     RMF (1/N-accurate) miss rates for RANDOM(m) caches.

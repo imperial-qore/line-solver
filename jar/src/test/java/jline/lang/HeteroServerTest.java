@@ -392,4 +392,66 @@ public class HeteroServerTest {
         assertTrue(type2.isCompatible(classB));
         assertTrue(type2.isCompatible(classC));
     }
+
+    // ========== Job Parallelism Tests ==========
+
+    @Test
+    void testServerParallelismDefaultsToOne() {
+        Network model = new Network("ParModel");
+        Source source = new Source(model, "Source");
+        Queue queue = new Queue(model, "Queue", SchedStrategy.FCFS);
+        new Sink(model, "Sink");
+        OpenClass jobs = new OpenClass(model, "Jobs");
+        source.setArrival(jobs, new Exp(1.0));
+
+        assertEquals(1, queue.getServerParallelism(jobs));
+        assertFalse(queue.hasServerParallelism());
+    }
+
+    @Test
+    void testServerParallelismRoundTrips() {
+        Network model = new Network("ParModel");
+        Source source = new Source(model, "Source");
+        Queue queue = new Queue(model, "Queue", SchedStrategy.FCFS);
+        new Sink(model, "Sink");
+        OpenClass jobs = new OpenClass(model, "Jobs");
+        source.setArrival(jobs, new Exp(1.0));
+        queue.setNumberOfServers(4);
+
+        queue.setServerParallelism(jobs, 2);
+        assertEquals(2, queue.getServerParallelism(jobs));
+        assertTrue(queue.hasServerParallelism());
+    }
+
+    @Test
+    void testServerParallelismAboveServerCountIsRefused() {
+        // A job seizing more servers than the station has could never enter
+        // service, so the model is refused rather than deadlocked at run time.
+        Network model = new Network("ParModel");
+        Source source = new Source(model, "Source");
+        Queue queue = new Queue(model, "Queue", SchedStrategy.FCFS);
+        new Sink(model, "Sink");
+        OpenClass jobs = new OpenClass(model, "Jobs");
+        source.setArrival(jobs, new Exp(1.0));
+        queue.setNumberOfServers(2);
+
+        assertThrows(IllegalArgumentException.class, () -> queue.setServerParallelism(jobs, 3));
+        assertThrows(IllegalArgumentException.class, () -> queue.setServerParallelism(jobs, 0));
+    }
+
+    @Test
+    void testServerParallelismIsADeclaredFeature() {
+        Network model = new Network("ParModel");
+        Source source = new Source(model, "Source");
+        Queue queue = new Queue(model, "Queue", SchedStrategy.FCFS);
+        new Sink(model, "Sink");
+        OpenClass jobs = new OpenClass(model, "Jobs");
+        source.setArrival(jobs, new Exp(1.0));
+        queue.setNumberOfServers(4);
+        queue.setService(jobs, new Exp(1.0));
+
+        assertFalse(model.getUsedLangFeatures().inspectFeature("ServerParallelism"));
+        queue.setServerParallelism(jobs, 2);
+        assertTrue(model.getUsedLangFeatures().inspectFeature("ServerParallelism"));
+    }
 }

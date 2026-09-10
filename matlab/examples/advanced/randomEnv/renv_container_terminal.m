@@ -75,7 +75,7 @@ fprintf('Rotterdam container terminal: %d hourly stages, %d carriers, %d cranes.
 
 %% Inner solver: CTMC with a finite transient horizon (required by statevec)
 T = 12;                            % hours; covers the hour-duration CDF tails (>99%)
-ctmcFactory = @(m) CTMC(m, 'timespan', [0,T], 'verbose', false);
+ctmcFactory = @(m) CTMC(m, 'exact', 'timespan', [0,T], 'verbose', false);
 
 baseOpt = Solver.defaultOptions;
 baseOpt.iter_max = 100;

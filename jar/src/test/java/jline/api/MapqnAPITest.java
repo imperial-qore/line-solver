@@ -1007,4 +1007,39 @@ public class MapqnAPITest {
         assertTrue(lb <= ub + 1e-9, "Lower bound must not exceed upper bound");
     }
 
+    /**
+     * The five LP bounds that used to hardcode GoalType.MAXIMIZE now take a
+     * sense. Each is a relaxation, so the pair must bracket the exact
+     * utilization; a lower bound equal to its upper bound would mean the sense
+     * argument is being ignored.
+     */
+    @Test
+    @Timeout(value = 5, unit = TimeUnit.MINUTES)
+    public void testObjectiveSenseBracketsExact() {
+        final double EXACT_U = 2.0 / 3.0;
+        LinearReductionParameters params = symmetricTandemParams();
+
+        double qrMin = Mapqn_bnd_qr.solve(params, 1, 1, "min").getUtilization(1, 1);
+        double qrMax = Mapqn_bnd_qr.solve(params, 1, 1, "max").getUtilization(1, 1);
+        assertTrue(qrMin <= EXACT_U + 1e-6, "QR lower bound must not exceed the exact utilization");
+        assertTrue(qrMax >= EXACT_U - 1e-6, "QR upper bound must dominate the exact utilization");
+        assertEquals(Mapqn_bnd_qr.solve(params, 1, 1).getUtilization(1, 1), qrMax, 1e-9,
+            "The three-argument form must keep its historical maximizing behaviour");
+
+        double lrMin = Mapqn_bnd_lr.solve(params, 1, 1, "min").getUtilization(1, 1);
+        double lrMax = Mapqn_bnd_lr.solve(params, 1, 1, "max").getUtilization(1, 1);
+        assertTrue(lrMin <= EXACT_U + 1e-6, "LR lower bound must not exceed the exact utilization");
+        assertTrue(lrMax >= EXACT_U - 1e-6, "LR upper bound must dominate the exact utilization");
+        assertEquals(EXACT_U, lrMin, 1e-6, "LR is tight on the symmetric tandem");
+        assertEquals(EXACT_U, lrMax, 1e-6, "LR is tight on the symmetric tandem");
+        // Both bounds are TIGHT on this instance: the polytope collapses to the
+        // exact point, as mapqn_bnd_qr.h shows exactly at Rational. A vacuous
+        // [0,1] here is the signature of a missing constraint family.
+        assertEquals(EXACT_U, qrMin, 1e-9, "QR is tight on the symmetric tandem");
+        assertEquals(EXACT_U, qrMax, 1e-9, "QR is tight on the symmetric tandem");
+
+        assertThrows(IllegalArgumentException.class, () -> Mapqn_bnd_qr.solve(params, 1, 1, "MIN"));
+        assertThrows(IllegalArgumentException.class, () -> Mapqn_bnd_lr.solve(params, 1, 1, "minimize"));
+    }
+
 }

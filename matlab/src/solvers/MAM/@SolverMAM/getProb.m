@@ -1,4 +1,4 @@
-function Pstate = getProb(self, node, state)
+function varargout = getProb(self,varargin)
 % PSTATE = GETPROB(NODE, STATE)
 %
 % Returns state probability for the specified node and state
@@ -11,12 +11,48 @@ function Pstate = getProb(self, node, state)
 %
 % Returns:
 %   Pstate - probability of the state, or full probability matrix if state not specified
+% The result recorder captures the scalar this getter returned together
+% with the solver that produced it -- see LineResultRecorder. Six of the
+% statepr_* goldens hold exactly this number and nothing else, so recording
+% it is what makes those goldens attributable instead of "the first bare
+% number the example printed". The wrapper exists so that recording happens
+% on EVERY exit path of the implementation below.
+[scope, scopeGuard] = LineResultRecorder.enter(); %#ok<ASGLU>
+[varargout{1:max(nargout,1)}] = getProb_impl(self,varargin{:});
+LineResultRecorder.captureScalar(scope, self, 'prob', varargout{1});
+end
+
+function Pstate = getProb_impl(self, node, state)
+% GETPROB_IMPL Implementation of GETPROB; see the wrapper above.
+
 
 if nargin < 2
     line_error(mfilename,'getProb requires a node parameter.');
 end
 if nargin < 3
     state = [];
+end
+
+if isfield(self.options,'lang') && strcmp(self.options.lang,'cpp')
+    Pstate = CPPLINE.mamProb(self.name, self.model, self.options, node);
+    if ~isempty(state)
+        if isstruct(state)
+            level = state.level;
+            phase = state.phase;
+        elseif length(state) >= 2
+            level = state(1);
+            phase = state(2);
+        else
+            level = state(1);
+            phase = 1;
+        end
+        if level + 1 > size(Pstate, 1) || phase > size(Pstate, 2) || level < 0 || phase < 1
+            Pstate = 0.0;
+        else
+            Pstate = Pstate(level + 1, phase);
+        end
+    end
+    return
 end
 
 sn = self.getStruct;
@@ -49,7 +85,7 @@ end
 
 % Ensure results are available
 if isempty(self.result)
-    self.run;
+    runAnalyzer(self);
 end
 
 % Get model parameters needed for QBD solution
@@ -123,21 +159,24 @@ if all(isfinite(N))
         pdistr = abs(pdistr);
         pdistr = pdistr / sum(pdistr);
 
-        % Build phase distribution - for simplicity, use the steady-state
-        % phase distribution from the service process
-        % This is an approximation
+        % Phase factor: the TIME-stationary phase distribution map_prob (the
+        % equilibrium of the CTMC D0+D1), NOT map_pie. map_pie is the embedded
+        % equilibrium at DEPARTURE instants, i.e. the phase a service STARTS in;
+        % for an Erlang-2 that is [1 0], so using it gave P(phase 2) = 0 at every
+        % level for a server that spends half its busy time in phase 2. The
+        % level factor stays approximate (phases are still taken independent of
+        % level, where an exact QBD has pi_n = pi_1 R^(n-1)), but the marginal it
+        % multiplies is now a distribution over the phases actually occupied.
         nPhases = size(D0{1}, 1);
         for k=2:K
             nPhases = max(nPhases, size(D0{k}, 1));
         end
 
-        % Construct joint probability matrix: rows = levels, cols = phases
-        % For now, approximate by assuming phases are independent of level
-        % and use the service process steady-state distribution
         avgPie = zeros(1, nPhases);
         for k=1:K
-            if size(pie{k}, 2) == nPhases
-                avgPie = avgPie + pie{k} * T(ist,k) / lambda_total;
+            piq_k = map_prob(PH{ist}{k});
+            if size(piq_k, 2) == nPhases
+                avgPie = avgPie + piq_k * T(ist,k) / lambda_total;
             end
         end
 
@@ -259,7 +298,7 @@ else
             % Multiple classes - superpose MAPs
             superMAP = arrMaps{1};
             for k = 2:K
-                superMAP = map_super({superMAP, arrMaps{k}});
+                superMAP = map_super(superMAP, arrMaps{k});
             end
             % Build MMAP with class marking based on arrival rates
             D_arr{1} = superMAP{1};  % D0

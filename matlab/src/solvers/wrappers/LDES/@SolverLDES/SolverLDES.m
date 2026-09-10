@@ -1,5 +1,5 @@
 classdef SolverLDES < NetworkSolver
-    % SolverLDES LINE Discrete Event Simulator solver using SSJ library
+    % SolverLDES LDES solver using SSJ library
     %
     % SolverLDES implements a discrete-event simulation solver that uses the SSJ
     % (Stochastic Simulation in Java) library to analyze queueing networks.
@@ -80,17 +80,40 @@ classdef SolverLDES < NetworkSolver
             end
         end
 
+        function bool = supportsTransientAnalysis(self) %#ok<MANU>
+            % Transient averages are available (simulation restricted to options.timespan).
+            bool = true;
+        end
+
         function [allMethods] = listValidMethods(self)
             % allMethods = LISTVALIDMETHODS()
-            % List valid methods for this solver
-
-            allMethods = {'default'};
+            % List valid methods for this solver.
+            %
+            % 'parallel' asks the engine for INDEPENDENT REPLICATIONS and the
+            % mean over them, which is what the parallel analyzer is; it is not
+            % a second engine. solveCli turns the name into --replications,
+            % taking options.replications when set and 8 otherwise.
+            allMethods = {'default','parallel'};
         end
 
         function bool = isStochasticMethod(self, method) %#ok<INUSD>
             % BOOL = ISSTOCHASTICMETHOD(METHOD)
             % LDES is a discrete-event simulator; all methods are stochastic.
             bool = true;
+        end
+
+        function [bool, reason] = supportsModelMethod(self, method)
+            % [BOOL, REASON] = SUPPORTSMODELMETHOD(METHOD)
+            % A LayeredNetwork carries no flat feature set, so the base gate
+            % would fall back to supports(model) and lose the reason: ask the
+            % LQN predicate directly. A Network takes the base gate, which
+            % compares getFeatureSet() with what the model uses; 'default' and
+            % 'parallel' drive one engine and share it.
+            if isa(self.model, 'LayeredNetwork')
+                [bool, reason] = ldes_ln_refusal(self.model);
+                return
+            end
+            [bool, reason] = supportsModelMethod@NetworkSolver(self, method);
         end
     end
 
@@ -103,6 +126,12 @@ classdef SolverLDES < NetworkSolver
             featSupported.setTrue({'Sink', 'Source', ...
                 'Queue', 'Delay', ...
                 'Fork', 'Join', 'Forker', 'Joiner', ... % Fork-Join node support
+                'JoinPartial', ... % quorum join: fires at the k-th sibling, stragglers discarded on arrival
+                ... % Variable forking levels: linemodel_save writes fanOutByDest, fanOutDist
+                ... % and fanOutProb, the jar engine reads fanOutLink/fanOutProb/fanOutDist
+                ... % (Solver_ssj.isVariableFork) and the C++ engine fan_out_link/_prob/_dist,
+                ... % both drawing the degree at the fork epoch.
+                'ForkFanoutVector', 'ForkFanoutRandom', 'ForkBranchProbability', ...
                 'Place', 'Transition', ... % Petri net node support
                 'QueueingPlace', ... % Queueing place (QPN embedded queue): FCFS/LCFS/SIRO/INF, renewal service
                 'Linkage', 'Enabling', 'Inhibiting', 'Timing', 'Firing', 'Storage', ... % Petri net section support
@@ -114,6 +143,11 @@ classdef SolverLDES < NetworkSolver
                 'Geometric', ... % Lattice-valued interarrival/service time on {1,2,...} (Geo/Geo/1 and slotted models)
                 'Bernoulli', 'Binomial', 'Poisson', ... % Counting distributions; zero atom becomes an immediate interval (continuous mode only)
                 'NHPP', ... % Piecewise-constant-intensity non-homogeneous Poisson process
+                ... % Time-inhomogeneous MAP: the piecewise-constant (D0,D1) schedule is
+                ... % simulated exactly by carrying the phase across a breakpoint. PHt service
+                ... % is walked from the SERVICE START epoch, so processor sharing, preemption,
+                ... % load dependence and heterogeneous servers are rejected at runtime.
+                'MAPt', 'PHt', ...
                 'Server', 'JobSink', 'RandomSource', ...
                 'InfiniteServer', 'SharedServer', 'ServiceTunnel', 'DelayStation', ... % internal station-section markers
                 'SchedStrategy_FCFS', 'SchedStrategy_INF', ...
@@ -150,10 +184,12 @@ classdef SolverLDES < NetworkSolver
                 'ClassSwitch', 'StatelessClassSwitcher', ... % Class switching node support
                 'Cache', 'CacheClassSwitcher', ... % Cache node support with replacement policies (LRU, FIFO, Strict FIFO, RR)
                 'CacheRetrieval', ...
+                'CacheItemSize', ... % per-item storage costs with per-list cost caps
                 'RoutingStrategy_PROB', 'RoutingStrategy_RAND', ...
                 'RoutingStrategy_RROBIN', 'RoutingStrategy_WRROBIN', ...
                 'RoutingStrategy_JSQ', ... % Join the Shortest Queue
                 'RoutingStrategy_SQ', ... % Power of K Choices routing
+                'RoutingStrategy_SDR', ... % Krzesinski (1987) product-form state-dependent routing
                 'OpenClass', ...
                 'ClosedClass', ...
                 'SelfLoopingClass', ...
@@ -171,19 +207,76 @@ classdef SolverLDES < NetworkSolver
                 'Balking', ...        % Engine reads sn.balkingStrategy / balkingThresholds
                 'Reneging', ...       % Engine collects renegingRate / avgRenegingWaitTime
                 'Retrial', ...        % Engine collects retrialDropped and successful retries
+                'BatchArrival', ...   % Source.setArrivalBatch: linemodel_save writes arrivalBatch, the engine reads sn.arrivalbatch
+                ... % setBreakdown: the server alternates up/down on the breakdownMu/repairMu
+                ... % clocks, a job in service holds its residual work across the outage
+                ... % (preemptive resume), and downServiceRates runs the server at a degraded
+                ... % speed instead of stopping it. Rejected at runtime in slotted mode and
+                ... % with time-inhomogeneous service (MAPt/PHt/NHPP).
+                'Breakdown', ...
+                ... % Queue.addServerType: the engine keeps one pool per server type,
+                ... % assigns each job a type from the pools compatible with its class
+                ... % and serves it at that pool's own rate, so the pools are an exact
+                ... % sample-path feature rather than a flattened nservers. Only the
+                ... % JVM engine (common/ldes.jar) implements them -- the native C++
+                ... % binary refuses the model by name (ldes_engine_reject), which is
+                ... % what makes getLdesRunners fall through to the jar.
+                'HeteroServers', ...
                 'ReplacementStrategy_RR', 'ReplacementStrategy_FIFO', 'ReplacementStrategy_SFIFO', 'ReplacementStrategy_LRU',...
-                'ReplacementStrategy_HLRU','ReplacementStrategy_CLIMB','ReplacementStrategy_QLRU'});
+                'ReplacementStrategy_HLRU','ReplacementStrategy_CLIMB','ReplacementStrategy_QLRU', ...
+                ... % c-server stations (sn.nservers) and finite buffers with their
+                ... % drop rule (sn.cap/classcap, the 'Buffer' marker above) are
+                ... % simulated directly by both engines
+                'MultiServer', 'FiniteCapacity'});
+        end
+
+        function featSupported = getLNFeatureSet()
+            % FEATSUPPORTED = GETLNFEATURESET()
+            % What the LDES layered engine (jline.solvers.ldes over a
+            % LayeredNetwork) accepts; the mirror of the jar's
+            % SolverLDES.getLNFeatureSet, which validates the LQN at run time.
+            % Processors serve FCFS, LCFS, SIRO, HOL, PS and INF; a task the
+            % same set minus PS (it holds threads, it does not divide them, and
+            % the engine refuses a PS task rather than serving it FCFS). Host
+            % demands and think times take the renewal families, the counting
+            % laws, ME, the correlated MAP/MMPP2/RAP and a trace.
+            % ldes_ln_refusal compares an LQN against this set.
+            featSupported = SolverFeatureSet;
+            featSupported.setTrue({'Host', 'Processor', ...
+                'Task', 'Entry', 'Activity', ...
+                'SyncCall', 'AsyncCall', ...
+                'ActivityPrecedence_PRE_SEQ', 'ActivityPrecedence_POST_SEQ', ...
+                'ActivityPrecedence_PRE_AND', 'ActivityPrecedence_POST_AND', ...
+                'ActivityPrecedence_PRE_OR', 'ActivityPrecedence_POST_OR', ...
+                'SchedStrategy_REF', 'SchedStrategy_FCFS', 'SchedStrategy_PS', 'SchedStrategy_INF', ...
+                'SchedStrategy_LCFS', 'SchedStrategy_SIRO', 'SchedStrategy_HOL', ...
+                'SetupDelayOff', ...  % SetupTask: threads power off after the delay-off, pay a setup on wake
+                'HeteroServers', ...  % Processor.addServerType pools, held concretely (refused on a task)
+                'CacheTask', 'ItemEntry', 'Cache', 'ActivityPrecedence_POST_CACHE', ...
+                'ReplacementStrategy_RR', 'ReplacementStrategy_FIFO', 'ReplacementStrategy_SFIFO', ...
+                'ReplacementStrategy_LRU', 'ReplacementStrategy_HLRU', 'ReplacementStrategy_CLIMB', ...
+                'ReplacementStrategy_QLRU', ...
+                'Exp', 'Erlang', 'HyperExp', 'PH', 'APH', 'Coxian', 'Cox2', 'Det', 'Uniform', 'Gamma', ...
+                'Lognormal', 'Weibull', 'Pareto', ...
+                'Immediate', ...      % zero host demand: the activity holds no processor at all
+                'Geometric', 'Bernoulli', 'Binomial', 'Poisson', ...
+                'ME', ...
+                'MAP', 'MMPP2', 'RAP', ... % the modulating phase is carried across executions
+                'Replayer', 'Trace'});
         end
 
         function [bool, featSupported] = supports(model)
             % [BOOL, FEATSUPPORTED] = SUPPORTS(MODEL)
 
             if isa(model, 'LayeredNetwork')
-                % LayeredNetwork models are simulated by the Java LDES
-                % backend (jline.solvers.ldes.SolverLDES), which validates
-                % the LQN feature set at run time.
-                bool = true;
-                featSupported = SolverFeatureSet;
+                % LayeredNetwork models are simulated by the Java LDES backend
+                % (jline.solvers.ldes.SolverLDES), which validates the LQN at
+                % run time against the set getLNFeatureSet mirrors. This used to
+                % answer true unconditionally, so model.help offered 'ldes' on
+                % an LQN with a DPS processor or a PS task that the engine then
+                % refused; ldes_ln_refusal asks the mirror first.
+                bool = ldes_ln_refusal(model);
+                featSupported = SolverLDES.getLNFeatureSet();
                 return;
             end
 
@@ -202,10 +295,31 @@ classdef SolverLDES < NetworkSolver
         function commonDir = getLdesCommonDir()
             % COMMONDIR = GETLDESCOMMONDIR()
             % Directory holding common/jline.jar and the optional native
-            % GraalVM ldes binary. Resolved from the jline.jar entry on the
-            % Java classpath (robust across checkouts and installs), falling
-            % back to ascending from this class file to <root>/common.
+            % ldes binary (C++ since 2026-08-01).
+            %
+            % RESOLVED FROM THIS CLASS FILE FIRST, not from the Java classpath.
+            % javaclasspath('-all') lists the STATIC entries of
+            % <prefdir>/javaclasspath.txt ahead of the dynamic ones, and that
+            % file typically pins one checkout's jline.jar for every MATLAB
+            % session on the machine. Reading the first jline.jar off it
+            % therefore sent every worktree session to the MAIN checkout's
+            % common/, so a locally rebuilt ldes binary was silently ignored
+            % and the run reported the other tree's engine as its own. The
+            % location of this file identifies the running installation
+            % unambiguously, so it is the primary resolution; the classpath
+            % scan remains as the fallback for an install whose layout puts
+            % the jar somewhere other than <root>/common.
             commonDir = '';
+            % .../matlab/src/solvers/wrappers/LDES/@SolverLDES -> <root> is 6 levels up
+            root = fileparts(mfilename('fullpath'));
+            for k = 1:6
+                root = fileparts(root);
+            end
+            cand = fullfile(root, 'common');
+            if exist(cand, 'dir')
+                commonDir = cand;
+                return;
+            end
             try
                 cp = javaclasspath('-all');
             catch
@@ -217,16 +331,6 @@ classdef SolverLDES < NetworkSolver
                     commonDir = pdir;
                     return;
                 end
-            end
-            % Fallback: <repo>/common relative to this file
-            % (.../matlab/src/solvers/wrappers/LDES/@SolverLDES -> <repo> is 6 levels up).
-            root = fileparts(mfilename('fullpath'));
-            for k = 1:6
-                root = fileparts(root);
-            end
-            cand = fullfile(root, 'common');
-            if exist(cand, 'dir')
-                commonDir = cand;
             end
         end
 
@@ -304,7 +408,7 @@ classdef SolverLDES < NetworkSolver
         function runners = getLdesRunners()
             % RUNNERS = GETLDESRUNNERS()
             % Ordered list of command prefixes that run the LDES engine on a
-            % "solve ..." argument list, exchanging only JSON. The native GraalVM
+            % "solve ..." argument list, exchanging only JSON. The native C++
             % binary (common/ldes) is tried first for fast startup; the full-JVM
             % "<java> -jar common/ldes.jar" is the fallback (same shaded engine).
             % The JVM fallback is needed because the AOT native binary lacks some
@@ -329,35 +433,9 @@ classdef SolverLDES < NetworkSolver
             % JAVAEXE = GETJAVAEXE()
             % Resolve a Java launcher: LINE_JAVA, then JAVA_HOME/bin/java, then
             % the JRE bundled with MATLAB, then "java" on PATH. Returns '' if none
-            % is found.
-            javaExe = '';
-            exeName = 'java';
-            if ispc
-                exeName = 'java.exe';
-            end
-            cands = {};
-            envJava = getenv('LINE_JAVA');
-            if ~isempty(envJava)
-                cands{end+1} = envJava; %#ok<AGROW>
-            end
-            javaHome = getenv('JAVA_HOME');
-            if ~isempty(javaHome)
-                cands{end+1} = fullfile(javaHome, 'bin', exeName); %#ok<AGROW>
-            end
-            % JRE bundled with MATLAB (layout varies across releases).
-            mlJre = fullfile(matlabroot, 'sys', 'java', 'jre', computer('arch'), 'jre', 'bin', exeName);
-            cands{end+1} = mlJre; %#ok<AGROW>
-            for i = 1:numel(cands)
-                if exist(cands{i}, 'file') == 2
-                    javaExe = cands{i};
-                    return;
-                end
-            end
-            % Last resort: rely on PATH resolution.
-            [st, ~] = system(sprintf('%s -version', exeName));
-            if st == 0
-                javaExe = exeName;
-            end
+            % is found. One resolver for the whole codebase, so the JMT wrappers
+            % and this one agree on which JVM runs.
+            javaExe = line_java_exe();
         end
 
     end

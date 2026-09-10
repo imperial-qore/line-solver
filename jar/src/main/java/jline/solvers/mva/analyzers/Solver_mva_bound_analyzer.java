@@ -17,7 +17,9 @@ import jline.api.pfqn.mva.Pfqn_bjbk;
 import jline.api.pfqn.mva.Pfqn_ssd;
 import jline.api.pfqn.mva.Pfqn_sib;
 import jline.api.pfqn.mva.Pfqn_ldbcmp;
+import jline.api.pfqn.mva.Pfqn_scb;
 import jline.api.pfqn.mva.Pfqn_mcub;
+import jline.api.pfqn.mva.Pfqn_looping;
 import jline.api.sn.SnGetDemandsChain;
 import jline.api.sn.SnDeaggregateChainResults;
 import jline.io.Ret;
@@ -43,6 +45,9 @@ public final class Solver_mva_bound_analyzer {
         long endTime = startTime;
         int iter = 1;
         String method = options.method;
+        if ("auto.upper".equals(method) || "auto.lower".equals(method)) {
+            return baAuto(sn, options, method);
+        }
         Matrix QN = new Matrix(0, 0);
         Matrix UN = new Matrix(0, 0);
         Matrix RN = new Matrix(0, 0);
@@ -618,8 +623,12 @@ public final class Solver_mva_bound_analyzer {
                 double A2 = D.elementPower(2.0).elementSum();
                 double A1 = D.elementPower(1.0).elementSum();
 
+                // Harel UB(n) is defined for n <= N only; the level-3 coefficient is
+                // not a bound at N < 3, so fall back to UB(2) (Dallery), exact there
+                // since UB(N) = TH(N).
+                double cub3 = (N >= 3) ? (A1 * A2 + A3) / (A1 * A1 + A2) : A2 / A1;
                 CN = new Matrix(1, 1);
-                CN.set(0, 0, Z + A1 + (N - 1) * (A1 * A2 + A3) / (A1 * A1 + A2));
+                CN.set(0, 0, Z + A1 + (N - 1) * cub3);
                 XN = new Matrix(1, 1);
                 XN.set(0, 0, Maths.min(1 / Dmax, N / CN.value()));
                 TN = new Matrix(V.getNumRows(), 1);
@@ -630,11 +639,15 @@ public final class Solver_mva_bound_analyzer {
                         i++;
                     }
                 }
+                // RN is undefined in the literature for this bound, so it carries
+                // the ABA PESSIMISTIC residence: an upper method must publish an
+                // upper-consistent R, else QN = TN*RN lands below exact
+                // (E[n_i] <= N*U_i makes N/mu_i a valid residence bound).
                 RN = new Matrix(sn.rates.getNumRows(), 1);
                 {
                     int i = 0;
                     while (i < RN.getNumRows()) {
-                        RN.set(i, 0, 1.0 / sn.rates.get(i));
+                        RN.set(i, 0, N / sn.rates.get(i));
                         i++;
                     }
                 }
@@ -705,8 +718,11 @@ public final class Solver_mva_bound_analyzer {
                 double AN = D.elementPower(N).elementSum();
                 double A1 = D.elementPower(1.0).elementSum();
 
+                // (N-1)*(AN/A1)^(1/(N-1)) -> 0 as N -> 1, leaving the exact
+                // single-job cycle time; evaluated directly it divides by zero
+                double cterm = (N == 1) ? 0.0 : (N - 1) * FastMath.pow(AN / A1, 1 / (N - 1));
                 CN = new Matrix(1, 1);
-                CN.set(0, 0, Z + A1 + (N - 1) * FastMath.pow(AN / A1, 1 / (N - 1)));
+                CN.set(0, 0, Z + A1 + cterm);
                 XN = new Matrix(1, 1);
                 XN.set(0, 0, N / CN.value());
                 TN = new Matrix(V.getNumRows(), 1);
@@ -807,7 +823,10 @@ public final class Solver_mva_bound_analyzer {
                     while (i < sn.sched.size()) {
                         if (sn.sched.get(sn.stations.get(i)) == SchedStrategy.INF) {
                             RN.set(i, 0, 1.0 / sn.rates.get(i));
-                            QN.set(i, 0, XN.value() * RN.get(i, 0));
+                            // TN, not XN: the delay is visited V(i) times per
+                            // cycle, and dropping that factor lets QN exceed
+                            // the population
+                            QN.set(i, 0, TN.get(i, 0) * RN.get(i, 0));
                         } else {
                             QN.set(i, 0, Pfqn_qzgbup.pfqn_qzgbup(D, N, Z, k));
                             RN.set(i, 0, QN.get(i, 0) / XNlow / V.get(i));
@@ -894,7 +913,10 @@ public final class Solver_mva_bound_analyzer {
                     while (i < sn.sched.size()) {
                         if (sn.sched.get(sn.stations.get(i)) == SchedStrategy.INF) {
                             RN.set(i, 0, 1.0 / sn.rates.get(i));
-                            QN.set(i, 0, XN.value() * RN.get(i, 0));
+                            // TN, not XN: the delay is visited V(i) times per
+                            // cycle, and dropping that factor lets QN exceed
+                            // the population
+                            QN.set(i, 0, TN.get(i, 0) * RN.get(i, 0));
                         } else {
                             QN.set(i, 0, Pfqn_qzgblow.pfqn_qzgblow(D, N, Z, k));
                             RN.set(i, 0, QN.get(i, 0) / XNup / V.get(i));
@@ -982,8 +1004,14 @@ public final class Solver_mva_bound_analyzer {
                     XN.set(0, 0, throughputBound);
                 }
 
+                // Same fill as every other bound family here: the optimistic
+                // side charges the full-contention residence time N/mu, the
+                // pessimistic side the no-contention 1/mu, and the cycle time
+                // is the ABA one at that side. Harel forbids think times, so Z
+                // is zero in both expressions.
+                boolean upperSide = "harel.upper".equals(method);
                 CN = new Matrix(1, 1);
-                CN.set(0, 0, ((double) N) / XN.value());
+                CN.set(0, 0, upperSide ? N * rho.elementSum() : rho.elementSum());
 
                 TN = new Matrix(V.getNumRows(), 1);
                 {
@@ -997,7 +1025,7 @@ public final class Solver_mva_bound_analyzer {
                 {
                     int i = 0;
                     while (i < RN.getNumRows()) {
-                        RN.set(i, 0, 1.0 / sn.rates.get(i));
+                        RN.set(i, 0, upperSide ? N / sn.rates.get(i) : 1.0 / sn.rates.get(i));
                         i++;
                     }
                 }
@@ -1111,15 +1139,11 @@ public final class Solver_mva_bound_analyzer {
                         double xc = Xchain.get(0, c);
                         Tchain.set(i, c, xc * Vchain.get(i, c));
                         Uchain.set(i, c, xc * Lchain.get(i, c));   // utilization law
-                        if (isdelay[i]) {
-                            Qchain.set(i, c, xc * Lchain.get(i, c));
-                        } else {
-                            int k = rowToQ[i];
-                            double w = upper ? Sq.get(k, c) : rbb.Wlo.get(k, c);
-                            Qchain.set(i, c, xc * Vchain.get(i, c) * w);
-                        }
                     }
                 }
+                // Neither the no-contention residence Sq nor the Theorem-1
+                // residence Wlo yields a queue length on the declared side.
+                baChainQfill(Qchain, Uchain, Xchain, Lchain, Nchain, isdelay, upper);
 
                 Ret.snDeaggregateChainResults dre = SnDeaggregateChainResults.snDeaggregateChainResults(
                         sn, Lchain, null, STchain, Vchain, alpha, Qchain, Uchain, null, Tchain, null, Xchain);
@@ -1157,6 +1181,20 @@ public final class Solver_mva_bound_analyzer {
                     throw new RuntimeException(String.format("Method '%s' requires the asymptotic regime N >= Qhat (Qhat=%.4f > N=%d).", method, xb[2], (int) N));
                 }
                 X = xb[0]; up = false;
+            } else if (method.startsWith("scb")) {
+                // Single-class bounds of Dowdy et al. (1992). THE BRACKETED OBJECT IS
+                // NOT THIS MODEL: scb brackets the multiclass system that this
+                // single-class model aggregates, so scb.lower is the EXACT single-class
+                // throughput and scb.upper adds the demand-free Expression-(3) gap.
+                // That is why scb is absent from BA_AUTO_* -- mixing it with families
+                // that bracket this model's own solution would compare two different
+                // quantities.
+                baRejectMultiserver(sn, method);
+                if (Zt > 0) {
+                    throw new RuntimeException("Method '" + method + "' supports Z=0 (no delay station) only; Theorem 3 rests on the delay-free balanced-network throughput.");
+                }
+                double[] xb = Pfqn_scb.pfqn_scb(D, (int) N);
+                X = up ? xb[1] : xb[0];
             } else {
                 baRejectMultiserver(sn, method);
                 double[] xb;
@@ -1192,6 +1230,11 @@ public final class Solver_mva_bound_analyzer {
             }
             if (sn.nclosedjobs <= 0 || isOpen) {
                 throw new RuntimeException("Method '" + method + "' supports fully closed networks only.");
+            }
+            for (int i = 0; i < sn.nservers.getNumRows(); i++) {
+                if (sn.sched.get(sn.stations.get(i)) != SchedStrategy.INF && sn.nservers.get(i) > 1) {
+                    throw new RuntimeException("Method '" + method + "' does not support multi-server stations (use 'ssd').");
+                }
             }
             Ret.snGetDemands cr = SnGetDemandsChain.snGetDemandsChain(sn);
             Matrix Lchain = cr.Dchain;
@@ -1229,9 +1272,71 @@ public final class Solver_mva_bound_analyzer {
                     double xc = Xchain.get(0, c);
                     Tchain.set(i, c, xc * Vchain.get(i, c));
                     Uchain.set(i, c, xc * Lchain.get(i, c));
-                    Qchain.set(i, c, xc * Lchain.get(i, c));
                 }
             }
+            baChainQfill(Qchain, Uchain, Xchain, Lchain, Nchain, isdelay, up);
+            Ret.snDeaggregateChainResults dre = SnDeaggregateChainResults.snDeaggregateChainResults(
+                    sn, Lchain, null, STchain, Vchain, alpha, Qchain, Uchain, null, Tchain, null, Xchain);
+            QN = dre.Q; UN = dre.U; RN = dre.R; TN = dre.T; CN = dre.C; XN = dre.X;
+            lG = Double.NaN;
+            endTime = System.nanoTime();
+        }
+
+        // Eager Looping: the multiclass bracket that initializes the
+        // multiple-class PBH. Pessimistic side from the heap-inflated response
+        // time, optimistic side from the response-time lower bound.
+        if ("looping.upper".equals(method) || "looping.lower".equals(method)) {
+            boolean isOpen = false;
+            for (int r = 0; r < sn.njobs.getNumCols(); r++) {
+                if (Double.isInfinite(sn.njobs.get(0, r))) isOpen = true;
+            }
+            if (sn.nclosedjobs <= 0 || isOpen) {
+                throw new RuntimeException("Method '" + method + "' supports fully closed networks only.");
+            }
+            for (int i = 0; i < sn.nservers.getNumRows(); i++) {
+                if (sn.sched.get(sn.stations.get(i)) != SchedStrategy.INF && sn.nservers.get(i) > 1) {
+                    throw new RuntimeException("Method '" + method + "' does not support multi-server stations (use 'ssd').");
+                }
+            }
+            Ret.snGetDemands cr = SnGetDemandsChain.snGetDemandsChain(sn);
+            Matrix Lchain = cr.Dchain;
+            Matrix STchain = cr.STchain;
+            Matrix Vchain = cr.Vchain;
+            Matrix alpha = cr.alpha;
+            Matrix Nchain = cr.Nchain;
+            int M = sn.nstations;
+            int Cc = sn.nchains;
+            boolean[] isdelay = new boolean[M];
+            int Kq = 0;
+            for (int i = 0; i < M; i++) {
+                isdelay[i] = (sn.sched.get(sn.stations.get(i)) == SchedStrategy.INF);
+                if (!isdelay[i]) Kq++;
+            }
+            Matrix Lq = new Matrix(Kq, Cc);
+            Matrix Zc = new Matrix(1, Cc);
+            int kk = 0;
+            for (int i = 0; i < M; i++) {
+                if (isdelay[i]) {
+                    for (int c = 0; c < Cc; c++) Zc.set(0, c, Zc.get(0, c) + Lchain.get(i, c));
+                } else {
+                    for (int c = 0; c < Cc; c++) Lq.set(kk, c, Lchain.get(i, c));
+                    kk++;
+                }
+            }
+            Pfqn_looping.Result lp = Pfqn_looping.pfqn_looping(Lq, Nchain, Zc);
+            boolean up = "looping.upper".equals(method);
+            Matrix Xchain = up ? lp.Xup : lp.Xlo;
+            Matrix Tchain = new Matrix(M, Cc);
+            Matrix Uchain = new Matrix(M, Cc);
+            Matrix Qchain = new Matrix(M, Cc);
+            for (int c = 0; c < Cc; c++) {
+                for (int i = 0; i < M; i++) {
+                    double xc = Xchain.get(0, c);
+                    Tchain.set(i, c, xc * Vchain.get(i, c));
+                    Uchain.set(i, c, xc * Lchain.get(i, c));
+                }
+            }
+            baChainQfill(Qchain, Uchain, Xchain, Lchain, Nchain, isdelay, up);
             Ret.snDeaggregateChainResults dre = SnDeaggregateChainResults.snDeaggregateChainResults(
                     sn, Lchain, null, STchain, Vchain, alpha, Qchain, Uchain, null, Tchain, null, Xchain);
             QN = dre.Q; UN = dre.U; RN = dre.R; TN = dre.T; CN = dre.C; XN = dre.X;
@@ -1252,6 +1357,31 @@ public final class Solver_mva_bound_analyzer {
         res.iter = iter;
         res.method = method;
         return res;
+    }
+
+    // Per-chain queue lengths from a chain-throughput bound, on the declared
+    // side. Lower: Q_ic >= U_ic, since the station holds a class-c job whenever
+    // it serves one. Upper: E[n_ic] <= N_c*P(station busy) = N_c*min(1,sum_c
+    // U_ic), and a delay station queues nothing, so there Q_ic = X_c*L_ic.
+    private static void baChainQfill(Matrix Qchain, Matrix Uchain, Matrix Xchain,
+                                     Matrix Lchain, Matrix Nchain, boolean[] isdelay,
+                                     boolean isUpper) {
+        int M = Qchain.getNumRows();
+        int C = Qchain.getNumCols();
+        for (int i = 0; i < M; i++) {
+            double utot = 0.0;
+            for (int c = 0; c < C; c++) utot += Uchain.get(i, c);
+            if (utot > 1.0) utot = 1.0;
+            for (int c = 0; c < C; c++) {
+                if (isdelay[i]) {
+                    Qchain.set(i, c, Xchain.get(0, c) * Lchain.get(i, c));
+                } else if (isUpper) {
+                    Qchain.set(i, c, Nchain.get(0, c) * utot);
+                } else {
+                    Qchain.set(i, c, Uchain.get(i, c));
+                }
+            }
+        }
     }
 
     // Map a SchedStrategy to a Majumdar-Woodside discipline code:
@@ -1279,12 +1409,77 @@ public final class Solver_mva_bound_analyzer {
         }
     }
 
+    // Candidate lists for the AUTO composite. Noniterative families only: the
+    // level-parameterized hierarchies (pbh/cbh/pbk/bjbk/sib) and the LP
+    // reductions are excluded because their cost is not O(K) and their accuracy
+    // is a user choice, not a fixed property.
+    private static final String[] BA_AUTO_UPPER = {"aba.upper", "bjb.upper", "pb.upper",
+            "gb.upper", "sb.upper", "mwba.upper", "ssd.upper", "cub.upper"};
+    private static final String[] BA_AUTO_LOWER = {"aba.lower", "bjb.lower", "pb.lower",
+            "gb.lower", "sb.lower", "mwba.lower", "ssd.lower", "mbjb.lower", "ldbcmp.lower"};
+
+    /**
+     * AUTO composite: evaluate every noniterative bound and keep the tightest
+     * side. Feasibility is probed by execution -- a candidate that rejects the
+     * model (multiserver, delay station, regime gate) throws and is skipped --
+     * so the list stays correct as families are added.
+     *
+     * @param sn      network structure (single-class closed)
+     * @param options caller options; only the method is overridden per candidate
+     * @param method  "auto.upper" or "auto.lower"
+     * @return per-station metrics built from the tightest feasible bound
+     */
+    private static MVAResult baAuto(NetworkStruct sn, SolverOptions options, String method) {
+        long tstart = System.nanoTime();
+        if (sn.nclasses != 1 || sn.nclosedjobs <= 0) {
+            throw new RuntimeException("Method '" + method + "' supports single-class closed networks only.");
+        }
+        Matrix V = sn.visits.get(0);
+        double N = (double) sn.nclosedjobs;
+        double Zt = baThink(sn, V);
+        Matrix D = baQueueDemands(sn, V);
+        boolean up = method.endsWith(".upper");
+        String[] cand = up ? BA_AUTO_UPPER : BA_AUTO_LOWER;
+        double Xbest = Double.NaN;
+        for (int c = 0; c < cand.length; c++) {
+            SolverOptions oc = options.copy();
+            oc.method = cand[c];
+            double Xc;
+            try {
+                MVAResult r = solver_mva_bound_analyzer(sn, oc);
+                if (r.XN == null || r.XN.isEmpty()) continue;
+                Xc = r.XN.get(0, 0);
+            } catch (RuntimeException e) {
+                continue;
+            }
+            if (!Double.isFinite(Xc) || Xc <= 0) continue;
+            if (Double.isNaN(Xbest) || (up && Xc < Xbest) || (!up && Xc > Xbest)) {
+                Xbest = Xc;
+            }
+        }
+        if (Double.isNaN(Xbest)) {
+            throw new RuntimeException("Method '" + method + "' found no feasible bound for this model.");
+        }
+        Matrix[] fill = baFill(sn, V, N, Xbest, Zt, D, up);
+        MVAResult res = new MVAResult();
+        res.QN = fill[0]; res.UN = fill[1]; res.RN = fill[2]; res.TN = fill[3]; res.CN = fill[4];
+        res.XN = new Matrix(1, 1);
+        res.XN.set(0, 0, Xbest);
+        res.AN = new Matrix(0, 0);
+        res.WN = new Matrix(0, 0);
+        res.logNormConstAggr = -N * FastMath.log(Xbest);
+        res.runtime = (System.nanoTime() - tstart) / 1000000000.0;
+        res.iter = 1;
+        res.method = method;
+        return res;
+    }
+
     // ---- SolverBA single-class hierarchical bound helpers ----
 
     private static boolean isScHierMethod(String m) {
         return m.startsWith("pbh") || m.startsWith("cbh") || m.startsWith("pbk")
                 || m.startsWith("bjbk") || m.startsWith("ssd") || m.startsWith("sib")
-                || m.startsWith("ldbcmp");
+                || m.startsWith("scb") || m.startsWith("ldbcmp");
     }
 
     // Aggregate think time: sum over infinite-server (delay) stations of V/rate.
@@ -1355,7 +1550,10 @@ public final class Solver_mva_bound_analyzer {
             }
             RN.set(i, 0, r);
             QN.set(i, 0, t * r);
-            UN.set(i, 0, isINF ? (t * r) : (t / rate));
+            // Utilization law per SERVER: without the nservers divisor a
+            // multiserver station reports U > 1 (ssd/ldbcmp/auto reach here)
+            double c = Math.max(1.0, sn.nservers.get(i));
+            UN.set(i, 0, isINF ? (t * r) : (t / (c * rate)));
         }
         Matrix CN = new Matrix(1, 1);
         CN.set(0, 0, isUpper ? (Zt + N * D.elementSum()) : (Zt + D.elementSum()));

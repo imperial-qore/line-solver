@@ -3,7 +3,7 @@
 Every value here was produced by the MATLAB reference
 (`matlab/src/lang/processes/*.m`) and agrees with native Python to machine
 precision; the JAR agrees where it implements the same method. The algebra
-behind these fitters is proved in `sage/proofs/distribution_fitters.py`.
+behind these fitters is proved in `io/sage/proofs/distribution_fitters.py`.
 
 Two things this catches that a round trip cannot:
 - a fitter that goes MISSING in one codebase (several of these did not exist in
@@ -58,11 +58,37 @@ CASES = [
 ]
 
 
-@pytest.mark.parametrize("label,factory,mean,scv", CASES)
+@pytest.mark.parametrize("label,factory,mean,scv", CASES,
+                         ids=[c[0] for c in CASES])
 def test_matches_the_matlab_reference(label, factory, mean, scv):
     m, s = _mean_scv(factory())
     assert m == pytest.approx(mean, rel=1e-9)
     assert s == pytest.approx(scv, rel=1e-9)
+
+
+def test_erlang_order_is_ceil_not_round():
+    """The Erlang order is ceil(1/SCV), the first achievable SCV at or below the
+    request, in MATLAB (`Erlang.m:145`), the JAR and the C++ port. Native Python
+    used `round`, which differs whenever 1/SCV is not an integer AND its
+    fractional part is below a half -- SCV=0.4 gave 2 phases against MATLAB's 3,
+    SCV=0.7 and SCV=0.9 gave 1 phase, i.e. an exponential, against MATLAB's 2.
+    A different phase count is a different law, so every solver downstream
+    answered a different model and nothing raised."""
+    assert Erlang.fit_mean_and_scv(1.0, 0.4).getNumberOfPhases() == 3
+    assert Erlang.fit_mean_and_scv(1.0, 0.7).getNumberOfPhases() == 2
+    assert Erlang.fit_mean_and_scv(1.0, 0.9).getNumberOfPhases() == 2
+    assert Erlang.fit_mean_and_scv(1.0, 0.3).getNumberOfPhases() == 4
+    # The exactly-achievable SCVs are unchanged, which is why no golden moved.
+    for k in (1, 2, 3, 4, 5, 10):
+        d = Erlang.fit_mean_and_scv(2.0, 1.0 / k)
+        assert d.getNumberOfPhases() == k
+        assert d.getMean() == pytest.approx(2.0, rel=1e-12)
+    # The realized SCV is at or below the request, never above it.
+    for scv in (0.4, 0.7, 0.9, 0.3, 0.05):
+        assert _mean_scv(Erlang.fit_mean_and_scv(1.0, scv))[1] <= scv + 1e-12
+    # An Erlang cannot have SCV > 1; MATLAB errors and so does this.
+    with pytest.raises(ValueError):
+        Erlang.fit_mean_and_scv(1.0, 4.0)
 
 
 def test_weibull_uses_the_justus_shape():
@@ -104,3 +130,15 @@ def test_coxian_fit_central_matches_the_third_moment():
     # Second argument is the VARIANCE, as in MATLAB/JAR fitCentral(MEAN,VAR,SKEW).
     scaled = Coxian.fit_central(2, 4 * 0.99, 1.999)
     assert scaled.getVar() / 4.0 == pytest.approx(0.99, rel=1e-9)
+
+
+def test_immediate_scv_matches_matlab_and_the_jar():
+    """SCV of an Immediate service is 1, not the 0 its Det base returns. The
+    variance over a zero mean is undefined, and MATLAB `Immediate.getSCV` and
+    the JAR both settle it at 1, so `sn.scv` would otherwise diverge wherever a
+    class is served immediately."""
+    from line_solver.distributions.continuous import Det, Immediate
+    assert Immediate().getSCV() == 1.0
+    assert Immediate.getInstance().getSCV() == 1.0
+    assert Immediate().getMean() == 0.0
+    assert Det(0.0).getSCV() == 0.0

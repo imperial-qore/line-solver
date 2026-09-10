@@ -1,8 +1,8 @@
-function [UN,QN,p2opt,lp]=qrf_noblo_mmi_linear(MAPs,N,rt,alpha,lponly) 
+function [UN,QN,BN,p2opt,lp]=qrf_noblo_mmi_linear(MAPs,N,rt,alpha,lponly)
 % LPONLY (optional): when true, return the assembled linear system in LP
 % without solving, so the polytope can be tested for feasibility directly.
 % Feasibility -- not an fmincon iterate -- is the decisive oracle for this
-% constraint system (see _kb/log.md, 2026-07-19).
+% constraint system (see git show 449847e7b:_kb/log.md, 2026-07-19).
 %%%  PARAMETERS  %%%
 %  f; % finite capacity queue
 %  M, integer, > 0; % number of queues
@@ -24,6 +24,9 @@ function [UN,QN,p2opt,lp]=qrf_noblo_mmi_linear(MAPs,N,rt,alpha,lponly)
 %var e {i = 1:M, k = 1:K(i)} >=0;
 
 M = length(MAPs);
+if nargin < 4 || isempty(alpha)
+    alpha = ones(M, N); % load independent, as the three ports already default it
+end
 MR = 1;
 MM = 0;
 F = repmat(N,M,1);
@@ -55,9 +58,9 @@ for i=1:M
     for h=1:size(MAPs{i}{1},1)
         for k=1:size(MAPs{i}{1},1)
             if h==k
-                v(i,k,h)=0; 
+                v(i,h,k)=0; 
             else
-                v(i,k,h)=MAPs{i}{1}(h,k);
+                v(i,h,k)=MAPs{i}{1}(h,k); % (from,to), as mu is: v(i,k,h) reverses an Erlang
             end
         end
     end
@@ -105,15 +108,42 @@ if nargin >= 5 && ~isempty(lponly) && lponly
     UN = []; QN = []; p2opt = [];
     return
 end
-%[xopt, fopt] = fmincon(@(x) mmi(x),x0,A,b,Aeq,beq,x0*0,x0*0+1,[],options);
 % Start on the polytope: from an infeasible start fmincon exhausts its
 % iteration budget restoring feasibility and returns a point outside the
 % polytope. The matrices are already assembled here, so the phase-1 LP is
 % direct; cf. qrf_noblo_start for the callback-based variants and for why
 % this is a quadprog and not a linprog.
 lpopts = optimset('Display','off','MaxIter',1000,'TolFun',1e-12,'TolCon',1e-12);
-x0 = quadprog(speye(n), zeros(n,1), A, b, Aeq, beq, ...
+% Drop dependent equality rows first, as qrf_noblo_start does: sub_qrfcon
+% emits a rank-deficient Aeq on small populations, and quadprog then returns
+% NO point at all on a polytope that is in fact feasible (seen on a 2-station
+% N=1 model, where the python twin solves it). The residual check below is
+% still made against the FULL system.
+keep = qrf_independent_rows(Aeq);
+AeqR = Aeq(keep,:);
+beqR = beq(keep);
+if rank(full([AeqR beqR])) > numel(keep)
+    error('qrf_noblo_mmi_linear:inconsistent', ...
+          'QRF no-blocking equality system is inconsistent');
+end
+x0 = quadprog(speye(n), zeros(n,1), A, b, AeqR, beqR, ...
               zeros(n,1), ones(n,1), [], lpopts);
+% THE LP FALLBACK IS NOT OPTIONAL. quadprog stalls on these equality systems:
+% on the 2-station Erlang-2 cycle at N=2 the minimum-norm QP stops at an
+% equality residual of 7.9e+00 on a polytope that qrf_noblo_mem,
+% qrf_noblo_mmi_ld and all three ports solve, and this arm then refused a model
+% it can serve. A pure phase-1 LP over the SAME matrices lands on the polytope.
+% qrf_noblo_start.m carries exactly this fallback; this file inlines its own
+% phase 1 because it already holds the matrices, and that is how it lost it.
+% 'interior-point' must be named: the R2025a default errors with
+% "Unrecognized field name optimstatus".
+if isempty(x0) || qrf_lp_residual(x0, AeqR, beqR, A, b, zeros(n,1), ones(n,1)) > 1e-8
+    lpOpts = optimoptions('linprog', 'Display', 'off', 'Algorithm', 'interior-point');
+    xLp = linprog(zeros(n,1), A, b, AeqR, beqR, zeros(n,1), ones(n,1), lpOpts);
+    if ~isempty(xLp) && all(isfinite(xLp))
+        x0 = xLp;
+    end
+end
 % Judge the phase 1 by the residual, not the exit flag; see qrf_noblo_start.
 if isempty(x0)
     error('qrf_noblo_mmi_linear:infeasible', ...
@@ -129,17 +159,30 @@ if req > 1e-8 || rub > 1e-8
            '(max equality residual %.3e, max inequality residual %.3e)'], req, rub);
 end
 
-[xopt, fopt] = fmincon(@(x) mem(x),x0,A,b,Aeq,beq,x0*0,x0*0+1,[],options);
+% The objective is MMI. The 'linear' in this file's name is about HOW the
+% constraints are built -- emitted directly as Aeq/beq and A/b instead of
+% being recovered from the residual callback -- not about which they are and
+% not about the objective. Until 2026-08-29 this line called mem(), with
+% mmi() surviving only in the commented-out line above, so the method named
+% for mutual-information minimisation returned an entropy extremum, and the
+% python, JAR and C++ ports mirrored it.
+[xopt, fopt] = fmincon(@(x) mmi(x),x0,A,b,Aeq,beq,x0*0,x0*0+1,[],options);
 [p2opt,~] = sub_qrfvar(xopt);
 
 for ti=1:M
     UN(ti) = 0;
     QN(ti) = 0;
+    BN(ti) = 0;
     for m=1:MR
         for ni=1+(1:F(ti))
             for ki=1:K(ti)
                 UN(ti) = UN(ti) + p2opt(ti,ni,ki,ti,ni,ki, m);
                 QN(ti) = QN(ti) + (ni-1)*p2opt(ti,ni,ki,ti,ni,ki, m); % rescaled back ni
+                % BN is the alpha-weighted marginal mean: E[min(n,c)] at a
+                % c-server station, E[n] at a delay, P(n>=1) where alpha is 1.
+                % It is what the departure rate is proportional to, so the
+                % station throughput is BN/stime exactly -- see sn_to_qrf_alpha.
+                BN(ti) = BN(ti) + alpha(ti,ni-1)*p2opt(ti,ni,ki,ti,ni,ki, m);
             end
         end
     end
@@ -161,8 +204,8 @@ end
                     for j = 1:M
                         if i~=j
                             for kj = 1:K(j)
-                                for ni = 1+(1:F(i))
-                                    for nj = 1+(1:F(j))
+                                for ni = 1+(0:F(i))
+                                    for nj = 1+(0:F(j))
                                          fobj = fobj + p2(i,ni,ki,j,nj,kj,m)*(log(1e-6+p2(i,ni,ki,j,nj,kj,m))-log(1e-6+p2(i,ni,ki,i,ni,ki,m))-log(1e-6+p2(j,nj,kj,j,nj,kj,m)));
                                     end
                                 end
@@ -177,13 +220,18 @@ end
     function fobj = mem(x)
         % MEM
         %maximize H: -sum {m in 1..MR} sum {i in 1..M} sum {k in 1..K[i]} sum {ni in 1..F[i]} p2[i,ni,k,i,ni,k,m]*log(1e-6+p2[i,ni,k,i,ni,k,m]);
+        %
+        % Returned NEGATED, i.e. as -H, because fmincon MINIMIZES and the AMPL
+        % objective above is a MAXIMIZE. Returning +H picks the minimum-entropy
+        % point of the polytope, the opposite face, under a method documented as
+        % maximum-entropy; that is what every port did until 2026-08-29.
         [p2,~] = sub_qrfvar(x);
         fobj = 0;
         for m = 1:MR
             for i = 1:M
                 for k = 1:K(i)
                     for ni = 1+(1:F(i))
-                        fobj = fobj - p2(i,ni,k,i,ni,k,m)*log(1e-6 + p2(i,ni,k,i,ni,k,m));
+                        fobj = fobj + p2(i,ni,k,i,ni,k,m)*log(1e-6 + p2(i,ni,k,i,ni,k,m));
                     end
                 end
             end
@@ -196,14 +244,25 @@ end
     end
 
     function [p2,e] = sub_qrfvar(x)
+        % THE PHASE LOOPS RUN TO MAX(K), NOT TO K(j)/K(i), AND THAT IS THE
+        % LAYOUT, not a slack. DELTAP2 and DELTAE below address x with
+        % MAX(K)-PADDED strides, and N above counts a padded vector, so a
+        % compact fill here would read x in a different order than the
+        % constraint rows were written in. The two agree only when every K(i)
+        % is max(K): on a ragged model (an Erlang-2 station beside an
+        % exponential one) every family indexed the wrong columns and the arm
+        % returned UN = [0,0]. Padded is also what the JAR (P2INDEX) and C++
+        % (QRF_NUM_VARS) ports use. The padded slots k > K(j) appear in no
+        % constraint and in no objective, so they are free in [0,1] and the
+        % minimum-norm phase 1 leaves them at zero.
         ctr = 1;
         p2 = zeros(M,N+1,max(K),M,N+1,max(K),MR);
         for j = 1:M
             for nj = 1+(0:N)
-                for k = 1:K(j)
+                for k = 1:max(K)
                     for i = 1:M
                         for ni = 1+(0:N)
-                            for h = 1:K(i)
+                            for h = 1:max(K)
                                 for m = 1:MR
                                     p2(j,nj,k,i,ni,h,m) = x(ctr);
                                     ctr = ctr + 1;
@@ -216,7 +275,7 @@ end
         end
         e = zeros(M,max(K));
         for i=1:M
-            for k=1:K(i)
+            for k=1:max(K)
                 e(i,k) = x(ctr);
                 ctr = ctr + 1;
             end

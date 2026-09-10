@@ -14,13 +14,14 @@ import jline.solvers.mam.MAM;
 import jline.solvers.mva.MVA;
 import jline.solvers.nc.NC;
 import jline.solvers.ssa.SSA;
+import jline.solvers.ldes.LDES;
 import java.util.Scanner;
 
 /**
- * Open queueing network examples mirroring the Kotlin notebooks in openQN.
+ * Open queueing network examples mirroring the example notebooks in openQN.
  * <p>
- * This class contains Java implementations that mirror the Kotlin notebook examples
- * found in jar/src/main/kotlin/jline/examples/kotlin/basic/openQN/. Each method 
+ * This class contains Java implementations that mirror the example notebooks
+ * found in jar/src/main/java/jline/examples/java/basic/openQN/. Each method
  * demonstrates a specific open queueing network concept using models from the basic package.
  * <p>
  * The examples cover:
@@ -63,6 +64,28 @@ public class OpenExamples {
      * 
      * @throws Exception if any solver fails
      */
+    /**
+     * Non-homogeneous Poisson arrivals (oqn_nhpp.ipynb).
+     *
+     * <p>The golden holds the discrete-event row; the transient fluid solve
+     * beside it is what the reference prints second.
+     */
+    public static void oqn_nhpp() throws Exception {
+        Network model = OpenNHPPModel.oqn_nhpp();
+
+        try {
+            new LDES(model, "seed", 1234, "samples", 100000).getAvgTable().print();
+        } catch (Exception e) {
+            System.out.println("LDES failed: " + e.getMessage());
+        }
+        try {
+            new FLD(model, "timespan", new double[]{0, 12}, "verbose", 0).getAvgTable().print();
+        } catch (Exception e) {
+            System.out.println("FLD failed: " + e.getMessage());
+        }
+        pauseForUser();
+    }
+
     public static void oqn_basic() throws Exception {
         Network model = OpenModel.oqn_basic();
         
@@ -110,6 +133,18 @@ public class OpenExamples {
         } catch (Exception e) {
             System.out.println("Solver failed: " + e.getMessage());
         }
+        
+        try {
+            new MAM(model).getAvgTable().print();
+        } catch (Exception e) {
+            System.out.println("Solver failed: " + e.getMessage());
+        }
+        
+        try {
+            new LDES(model, "seed", 23000, "samples", 200000).getAvgTable().print();
+        } catch (Exception e) {
+            System.out.println("Solver failed: " + e.getMessage());
+        }
         pauseForUser();
     }
     
@@ -138,8 +173,10 @@ public class OpenExamples {
         NC solverNC = new NC(model, "keep", true, "verbose", 1);
         JMT solverJMT = new JMT(model, "keep", true, "verbose", 1, "seed", 23000, "samples", 100000);
         SSA solverSSA = new SSA(model, "keep", true, "verbose", 1, "seed", 23000, "samples", 100000);
+        LDES solverLDES = new LDES(model, "keep", true, "verbose", 1, "seed", 23000, "samples", 100000);
         
-        Object[] solvers = {solverCTMC, solverFluid, solverMVA, solverMAM, solverNC, solverJMT, solverSSA};
+        Object[] solvers = {solverCTMC, solverFluid, solverMVA, solverMAM, solverNC, solverJMT, solverSSA,
+                solverLDES};
         
         // Execute all solvers and collect results
         for (int i = 0; i < solvers.length; i++) {
@@ -158,6 +195,8 @@ public class OpenExamples {
                     ((JMT) solvers[i]).getAvgTable().print();
                 } else if (solvers[i] instanceof SSA) {
                     ((SSA) solvers[i]).getAvgTable().print();
+                } else if (solvers[i] instanceof LDES) {
+                    ((LDES) solvers[i]).getAvgTable().print();
                 }
             } catch (Exception e) {
                 System.out.println("Solver failed: " + e.getMessage());
@@ -254,9 +293,17 @@ public class OpenExamples {
      */
     public static void oqn_trace_driven() throws Exception {
         Network model = OpenModel.oqn_trace_driven();
-        JMT solver = new JMT(model, "seed", 23000);
-        
-        solver.getAvgTable().print();
+
+        try {
+            new JMT(model, "seed", 23000).getAvgTable().print();
+        } catch (Exception e) {
+            System.out.println("JMT failed: " + e.getMessage());
+        }
+        try {
+            new LDES(model, "seed", 23000).getAvgTable().print();
+        } catch (Exception e) {
+            System.out.println("LDES failed: " + e.getMessage());
+        }
         pauseForUser();
     }
     

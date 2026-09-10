@@ -202,6 +202,24 @@ public class Coxian extends Markovian {
         return ((List<Double>) this.getParam(1).getValue()).size();
     }
 
+    /**
+     * "Cox2" at two phases, "Coxian" otherwise.
+     *
+     * The registry carries both names, and the Cox2 entry can only mean the
+     * two-phase Coxian: MATLAB has no Cox2 OBJECT to mark, since Cox2 there is a
+     * static factory returning a Coxian, and the C++ port already gives every
+     * two-phase Coxian ProcessType::COX2. Reading the entry off the phase count
+     * is therefore the one reading all four codebases can share, and the only
+     * one under which the name is reachable at all. The {@link jline.lang.FeatureSet}
+     * generalization table keeps a solver that declares just "Coxian" accepting.
+     *
+     * @return the FeatureSet entry naming this distribution
+     */
+    @Override
+    public String getFeatureName() {
+        return this.getNumberOfPhases() == 2 ? "Cox2" : getName();
+    }
+
     public Matrix getPhi() {
         List<Double> phi = (List<Double>) this.getParam(2).getValue();
         Matrix res = new Matrix((int) this.getNumberOfPhases(), 1, (int) this.getNumberOfPhases());
@@ -258,66 +276,66 @@ public class Coxian extends Markovian {
         return Map_sample.map_sample(D(0), D(1), n, random);
     }
 
-    // =================== KOTLIN-STYLE PROPERTY ALIASES ===================
+    // =================== PROPERTY ALIASES ===================
     
     /**
-     * Kotlin-style property alias for getMean()
+     * Property alias for getMean
      */
     public double mean() {
         return getMean();
     }
     
     /**
-     * Kotlin-style property alias for getRate()
+     * Property alias for getRate
      */
     public double rate() {
         return getRate();
     }
     
     /**
-     * Kotlin-style property alias for getSCV()
+     * Property alias for getSCV
      */
     public double scv() {
         return getSCV();
     }
     
     /**
-     * Kotlin-style property alias for getSkewness()
+     * Property alias for getSkewness
      */
     public double skewness() {
         return getSkewness();
     }
     
     /**
-     * Kotlin-style property alias for getVar()
+     * Property alias for getVar
      */
     public double var() {
         return getVar();
     }
     
     /**
-     * Kotlin-style property alias for getMu()
+     * Property alias for getMu
      */
     public Matrix mu() {
         return getMu();
     }
     
     /**
-     * Kotlin-style property alias for getPhi()
+     * Property alias for getPhi
      */
     public Matrix phi() {
         return getPhi();
     }
     
     /**
-     * Kotlin-style property alias for getNumberOfPhases()
+     * Property alias for getNumberOfPhases
      */
     public long numberOfPhases() {
         return getNumberOfPhases();
     }
     
     /**
-     * Kotlin-style property alias for getNumberOfPhases()
+     * Property alias for getNumberOfPhases
      */
     public long numPhases() {
         return getNumberOfPhases();

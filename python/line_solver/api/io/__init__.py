@@ -50,6 +50,7 @@ from .attribution import libraries_used, show_library_attribution, solver_librar
 from .citations import CITATIONS, citations_for
 from .logging import (
     VerboseLevel,
+    LineError,
     LineLogger,
     line_printf,
     line_warning,
@@ -129,6 +130,7 @@ __all__ = [
     'citations_for',
     # Logging
     'VerboseLevel',
+    'LineError',
     'LineLogger',
     'line_printf',
     'line_warning',

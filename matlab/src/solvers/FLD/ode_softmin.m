@@ -2,8 +2,14 @@ function dx = ode_softmin(x, Phi, Mu, PH, M, K, enabled, q_indices, rt, Kic, nse
 % RATES = ODE_SOFTMIN(X, M, K, Q_INDICES, KIC, NSERVERS, W, SCHED_ID, ALPHA)
 
 % Variance of ODE_STATEDEP with softmin function replacing the min function
+%
+% ALPHA is scalar or one entry per station; FLUID_SOFTMIN_ALPHA derives the
+% per-station value that matches the curvature of the Gaussian closure.
 
 dx = 0*x;
+if isscalar(alpha)
+    alpha = alpha * ones(M,1);
+end
 for i = 1:M
     switch sched_id(i) % source
         case SchedStrategy.INF
@@ -123,7 +129,7 @@ for i = 1:M
                         for kic_p = 1:Kic(i,c)
                             if kic ~= kic_p
                                 rate = PH{i}{c}{1}(kic,kic_p);
-                                rate = rate * softmin(ni,nservers(i),alpha) * w(c,kic) /wni;
+                                rate = rate * softmin(ni,nservers(i),alpha(i)) * w(c,kic) /wni;
                                 dx(xic+kic-1) = dx(xic+kic-1) - x(xic+kic-1)*rate;
                                 dx(xic+kic_p-1) = dx(xic+kic_p-1) + x(xic+kic-1)*rate;
                             end
@@ -144,7 +150,7 @@ for i = 1:M
                                     for kic = 1 : Kic(i,c)
                                         for kjl = 1 : Kic(j,l)
                                             rate = Phi{i}{c}(kic) * Mu{i}{c}(kic) * rt((i-1)*K+c,(j-1)*K+l) * pie(kjl);
-                                            rate = rate * softmin(ni,nservers(i),alpha) * w(c,kic) /wni;
+                                            rate = rate * softmin(ni,nservers(i),alpha(i)) * w(c,kic) /wni;
                                             dx(xic+kic-1) = dx(xic+kic-1) - x(xic+kic-1)*rate;
                                             dx(xjl+kjl-1) = dx(xjl+kjl-1) + x(xic+kic-1)*rate;
                                         end

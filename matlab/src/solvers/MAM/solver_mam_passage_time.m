@@ -62,13 +62,48 @@ if M==2 && all(isinf(N))
         end
     end
 
-    if any(sn.classprio ~= sn.classprio(1)) % if priorities are not identical
+    % Priorities select the law only under a priority DISCIPLINE: a plain FCFS
+    % or PS queue serves in arrival or processor order whatever the classprio
+    % column says, exactly as solver_mam_basic gates the same analyzers
+    if (sn.sched(idx_q)==SchedStrategy.HOL || sn.sched(idx_q)==SchedStrategy.FCFSPRPRIO) ...
+            && any(sn.classprio ~= sn.classprio(1)) % if priorities are not identical
         [uK,iK] = unique(sn.classprio);
         if length(uK) == length(sn.classprio) % if all priorities are different
-            if sn.sched(ist)==SchedStrategy.FCFSPRPRIO
-                [Ret{1:2*K}] = MMAPPH1PRPR({A{[1,3:end]}}, {pie{:}}, {S{:}}, 'stDistrPH');
+            % BUTools convention: D1=lowest priority, DK=highest priority
+            % LINE convention: lower value = higher priority
+            % unique() returns ascending order, so reverse for BUTools
+            iK = flipud(iK(:));
+            % Neither vendored analyzer exports 'stDistrPH', so the law is
+            % TABULATED: one solve for two sojourn moments sizes a shared grid
+            % (mean + 10 sigma over the classes), a second tabulates the CDF on
+            % it. The [outputs{iK'}] assignment lands each BUTools slot back on
+            % its LINE class.
+            Moms = cell(1,K);
+            if sn.sched(idx_q)==SchedStrategy.FCFSPRPRIO
+                [Moms{iK'}] = MMAPPH1PRPR({A{[1;2+iK]}}, {pie{iK}}, {S{iK}}, 'stMoms', 2);
             else % HOL (non-preemptive)
-                [Ret{1:2*K}] = MMAPPH1NPPR({A{[1,3:end]}}, {pie{:}}, {S{:}}, 'stDistrPH');
+                [Moms{iK'}] = MMAPPH1NPPR({A{[1;2+iK]}}, {pie{iK}}, {S{iK}}, 'stMoms', 2);
+            end
+            xmax = 0;
+            for k=1:K
+                m1 = Moms{k}(1);
+                sig = sqrt(max(Moms{k}(2) - m1^2, 0));
+                xmax = max(xmax, m1 + 10*sig);
+            end
+            X = linspace(0, xmax, n_cdf_pts);
+            % The Erlangization inside stDistr divides by t, so t = 0 is not
+            % evaluable; a sojourn time is strictly positive, so F(0) = 0
+            % exactly and the grid's first point is prepended, not asked for
+            Dist = cell(1,K);
+            if sn.sched(idx_q)==SchedStrategy.FCFSPRPRIO
+                [Dist{iK'}] = MMAPPH1PRPR({A{[1;2+iK]}}, {pie{iK}}, {S{iK}}, 'stDistr', X(2:end));
+            else
+                [Dist{iK'}] = MMAPPH1NPPR({A{[1;2+iK]}}, {pie{iK}}, {S{iK}}, 'stDistr', X(2:end));
+            end
+            RD = cell(M,K);
+            for k=1:K
+                RD{idx_arv,k} = [];
+                RD{idx_q,k} = [[0; Dist{k}(:)], X(:)];
             end
         else
             line_error(mfilename,'SolverMAM requires either identical priorities or all distinct priorities');
@@ -129,7 +164,10 @@ if M==2 && all(isinf(N))
 
                 % Compute aggregated MAP parameters
                 C_map = A{1};
-                D_map_sum = sum(cat(3, A{2:end}), 3);  % Sum all class arrival matrices
+                % Sum the CLASS arrival matrices, A{3:end}: A{2} is already the
+                % aggregate the classes sum to, so starting the sum there
+                % counted every arrival twice and doubled the load
+                D_map_sum = sum(cat(3, A{3:end}), 3);
 
                 % Estimate CDF range using aggregated arrival rate
                 lambda = map_lambda({C_map, D_map_sum});
@@ -174,6 +212,7 @@ if M==2 && all(isinf(N))
     end
 else
     line_warning(mfilename,'This model is not supported by SolverMAM yet. Returning with no result.\n');
+    RD = {}; % warn-and-empty, as the JAR does; an unassigned RD errored at the caller
 end
 
 end

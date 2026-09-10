@@ -11,7 +11,7 @@ import jline.lang.nodes.Delay;
 import jline.lang.nodes.Queue;
 import jline.lang.processes.Exp;
 import jline.solvers.NetworkAvgTable;
-import jline.solvers.fluid.SolverFluid;
+import jline.solvers.fluid.SolverFLD;
 import jline.solvers.wrappers.jmt.SolverJMT;
 import jline.io.Ret.DistributionResult;
 import jline.util.Maths;
@@ -204,7 +204,7 @@ public class CdfRespTExamplesTest {
 
         final DistributionResult[] cdfHolder = new DistributionResult[1];
         withSuppressedOutput(() -> {
-            SolverFluid solver = new SolverFluid(model);
+            SolverFLD solver = new SolverFLD(model);
             cdfHolder[0] = solver.getCdfRespT();
         });
         DistributionResult cdfResult = cdfHolder[0];
@@ -377,7 +377,7 @@ public class CdfRespTExamplesTest {
 
         final DistributionResult[] cdfHolder = new DistributionResult[1];
         withSuppressedOutput(() -> {
-            SolverFluid solver = new SolverFluid(model, "method", "statedep", "iter_max", 100);
+            SolverFLD solver = new SolverFLD(model, "method", "statedep", "iter_max", 100);
             cdfHolder[0] = solver.getCdfRespT();
         });
         DistributionResult cdfResult = cdfHolder[0];
@@ -604,7 +604,7 @@ public class CdfRespTExamplesTest {
 
         final DistributionResult[] cdfHolder = new DistributionResult[1];
         withSuppressedOutput(() -> {
-            SolverFluid solver = new SolverFluid(model, "iter_max", 300);
+            SolverFLD solver = new SolverFLD(model, "iter_max", 300);
             cdfHolder[0] = solver.getCdfRespT();
         });
         DistributionResult cdfResult = cdfHolder[0];
@@ -670,35 +670,44 @@ public class CdfRespTExamplesTest {
             assertTrue(mean_q1c1 >= 0, "Queue1 Class1 mean should be non-negative");
         }
 
-        // MATLAB expected values for Queue1 Class2:
-        // RDfluid{2,2}: mean=1.0033, var=1.0072, q25=0.2909, median=0.6940, q75=1.3894, q95=3.0095, q99=4.6370
-        assertEqualsRel(1.0033, mean_q1c2, "Queue1 Class2 mean");
-        assertEqualsRel(1.0072, var_q1c2, "Queue1 Class2 variance");
-        assertEqualsRel(0.2909, q25_q1c2, "Queue1 Class2 Q25");
-        assertEqualsRel(0.6940, median_q1c2, "Queue1 Class2 median");
-        assertEqualsRel(1.3894, q75_q1c2, "Queue1 Class2 Q75");
-        assertEqualsRel(3.0095, q95_q1c2, "Queue1 Class2 Q95");
-        assertEqualsRel(4.6370, q99_q1c2, "Queue1 Class2 Q99");
+        // Re-recorded 2026-08-05, when the passage-time ODE started closing its
+        // capacity term at the variance the mean solve converged to (see
+        // SolverFluid.passageTimeOptions). This model resolves to `minnormal` in
+        // every codebase, and the first-order passage time contradicted the mean
+        // the same solve reported: RN is 1.5005 per class here, while the CDF it
+        // returned averaged 1.0033.
+        //
+        // LDES ADJUDICATES: simulation (200k samples, seed 23000) gives RespT
+        // 1.972/1.974 at Queue1 and 1.985/1.981 at Queue2, and the model is a
+        // pair of M/M/1 queues at rho = 0.5, whose exact mean response time is
+        // 2.0. The rows below (1.5095, 1.5067) are 24% under that where the ones
+        // they replace were 50% under.
+        // Queue1 Class2
+        assertEqualsRel(1.50952855234241, mean_q1c2, "Queue1 Class2 mean");
+        assertEqualsRel(2.25977695597360, var_q1c2, "Queue1 Class2 variance");
+        assertEqualsRel(0.439272059653034, q25_q1c2, "Queue1 Class2 Q25");
+        assertEqualsRel(1.04790334920056, median_q1c2, "Queue1 Class2 median");
+        assertEqualsRel(2.09751444249245, q75_q1c2, "Queue1 Class2 Q75");
+        assertEqualsRel(4.50358206384728, q95_q1c2, "Queue1 Class2 Q95");
+        assertEqualsRel(6.94862277279892, q99_q1c2, "Queue1 Class2 Q99");
 
-        // MATLAB expected values for Queue2 Class1:
-        // RDfluid{3,1}: mean=1.0024, var=1.0039, q25=0.2909, median=0.6940, q75=1.3894, q95=2.9958, q99=4.6316
-        assertEqualsRel(1.0024, mean_q2c1, "Queue2 Class1 mean");
-        assertEqualsRel(1.0039, var_q2c1, "Queue2 Class1 variance");
-        assertEqualsRel(0.2909, q25_q2c1, "Queue2 Class1 Q25");
-        assertEqualsRel(0.6940, median_q2c1, "Queue2 Class1 median");
-        assertEqualsRel(1.3894, q75_q2c1, "Queue2 Class1 Q75");
-        assertEqualsRel(2.9958, q95_q2c1, "Queue2 Class1 Q95");
-        assertEqualsRel(4.6316, q99_q2c1, "Queue2 Class1 Q99");
+        // Queue2 Class1
+        assertEqualsRel(1.50666683767163, mean_q2c1, "Queue2 Class1 mean");
+        assertEqualsRel(2.23885809378984, var_q2c1, "Queue2 Class1 variance");
+        assertEqualsRel(0.439291829664721, q25_q2c1, "Queue2 Class1 Q25");
+        assertEqualsRel(1.04787695484371, median_q2c1, "Queue2 Class1 median");
+        assertEqualsRel(2.09492363583990, q75_q2c1, "Queue2 Class1 Q75");
+        assertEqualsRel(4.48668489473544, q95_q2c1, "Queue2 Class1 Q95");
+        assertEqualsRel(6.91386297919844, q99_q2c1, "Queue2 Class1 Q99");
 
-        // MATLAB expected values for Queue2 Class2:
-        // RDfluid{3,2}: mean=1.0033, var=1.0072, q25=0.2909, median=0.6940, q75=1.3894, q95=3.0095, q99=4.6370
-        assertEqualsRel(1.0033, mean_q2c2, "Queue2 Class2 mean");
-        assertEqualsRel(1.0072, var_q2c2, "Queue2 Class2 variance");
-        assertEqualsRel(0.2909, q25_q2c2, "Queue2 Class2 Q25");
-        assertEqualsRel(0.6940, median_q2c2, "Queue2 Class2 median");
-        assertEqualsRel(1.3894, q75_q2c2, "Queue2 Class2 Q75");
-        assertEqualsRel(3.0095, q95_q2c2, "Queue2 Class2 Q95");
-        assertEqualsRel(4.6370, q99_q2c2, "Queue2 Class2 Q99");
+        // Queue2 Class2, identical to Queue2 Class1 as the two classes are
+        assertEqualsRel(1.50666683767136, mean_q2c2, "Queue2 Class2 mean");
+        assertEqualsRel(2.23885809374478, var_q2c2, "Queue2 Class2 variance");
+        assertEqualsRel(0.439291829664742, q25_q2c2, "Queue2 Class2 Q25");
+        assertEqualsRel(1.04787695484375, median_q2c2, "Queue2 Class2 median");
+        assertEqualsRel(2.09492363583984, q75_q2c2, "Queue2 Class2 Q75");
+        assertEqualsRel(4.48668489473521, q95_q2c2, "Queue2 Class2 Q95");
+        assertEqualsRel(6.91386297919850, q99_q2c2, "Queue2 Class2 Q99");
     }
 
     // ========== CDF_RESPT_DISTRIB Tests ==========
@@ -810,7 +819,7 @@ public class CdfRespTExamplesTest {
     public void testCdfRespTDistribFluid() {
         Network model = CDFRespTModel.cdf_respt_distrib();
 
-        SolverFluid solver = new SolverFluid(model);
+        SolverFLD solver = new SolverFLD(model);
         DistributionResult cdfResult = solver.getCdfRespT();
 
         assertNotNull(cdfResult);
@@ -940,7 +949,7 @@ public class CdfRespTExamplesTest {
 
         final DistributionResult[] cdfHolder = new DistributionResult[1];
         withSuppressedOutput(() -> {
-            SolverFluid solver = new SolverFluid(model, "iter_max", 100);
+            SolverFLD solver = new SolverFLD(model, "iter_max", 100);
             cdfHolder[0] = solver.getCdfRespT();
         });
         DistributionResult cdfResult = cdfHolder[0];
@@ -1018,7 +1027,7 @@ public class CdfRespTExamplesTest {
 
         final DistributionResult[] cdfHolder = new DistributionResult[1];
         withSuppressedOutput(() -> {
-            SolverFluid solver = new SolverFluid(model, "iter_max", 100);
+            SolverFLD solver = new SolverFLD(model, "iter_max", 100);
             cdfHolder[0] = solver.getCdfRespT();
         });
         DistributionResult cdfResult = cdfHolder[0];
@@ -1056,33 +1065,54 @@ public class CdfRespTExamplesTest {
         double q95_queue2 = getPercentile(cdf_queue2, 0.95);
         double q99_queue2 = getPercentile(cdf_queue2, 0.99);
 
-        // Ground truth from MATLAB for N=4 population with FC CDFs:
-        // Station 1 (Delay): mean=1.003105463787408, var=0.998360869906829
-        assertEqualsRel(1.003105463787408, mean_delay, "Delay mean");
-        assertEqualsRel(0.998360869906829, var_delay, "Delay variance");
-        assertEqualsRel(0.288720515332508, q25_delay, "Delay Q25");
-        assertEqualsRel(0.693449283701929, median_delay, "Delay median");
-        assertEqualsRel(1.390552511053389, q75_delay, "Delay Q75");
-        assertEqualsRel(3.006086791709178, q95_delay, "Delay Q95");
-        assertEqualsRel(4.614956762296455, q99_delay, "Delay Q99");
+        // Re-recorded 2026-08-19 as the `dae` answer: the solver reports
+        // `default/dae` here, because a declined `minnormal` now tries the DAE form
+        // of the SAME closure before dropping to a first-order method (see the
+        // fallback ladder in SolverFluid and FluidDaeApplicable).
+        //
+        // THE ROWS THIS REPLACES WERE KNOWN TO BE WRONG, and their own note said so.
+        // The fluid fixed point of this model puts n_i exactly on the single-server
+        // saturation kink n_i = c_i, where the drift min(n_i, c_i) has no
+        // derivative, so MinNormalAnalyzer -- which must start its alternation at
+        // sigma2 = 0, exactly on that kink -- finds a neutral Jacobian and declines.
+        // The previous recording was the `matrix` answer it then fell back to:
+        // QLen [0.5, 2.5, 1.0] against the exact CTMC [0.3889, 1.8055, 1.8055],
+        // asymmetric where the exact model is symmetric. DaeAnalyzer seeds the
+        // variance POSITIVE, never adopts sigma2 = 0, and answers the closure:
+        // QLen [0.3986, 1.8007, 1.8007], a max error of 0.0097 against the 0.8055
+        // the `matrix` rows carried.
+        //
+        // The CDF means below are NOT symmetric (4.948 at Queue1, 4.235 at Queue2)
+        // because getCdfRespT is a per-station passage-time computation rather than
+        // a read of the fixed point, but BOTH now straddle the exact 4.6426, where
+        // the `matrix` rows sat at 5.00 and 2.00.
+        // Station 1 (Delay)
+        assertEqualsRel(1.0002320971541565, mean_delay, "Delay mean");
+        assertEqualsRel(1.0009405673517253, var_delay, "Delay variance");
+        assertEqualsRel(0.2877089623906969, q25_delay, "Delay Q25");
+        assertEqualsRel(0.6932343783048657, median_delay, "Delay median");
+        assertEqualsRel(1.3865438360597335, q75_delay, "Delay Q75");
+        assertEqualsRel(2.9964470173281850, q95_delay, "Delay Q95");
+        assertEqualsRel(4.6073178882354640, q99_delay, "Delay Q99");
 
-        // Station 2 (Queue1): mean=5.009960060205612, var=25.188307112272913
-        assertEqualsRel(5.009960060205612, mean_queue1, "Queue1 mean");
-        assertEqualsRel(25.188307112272913, var_queue1, "Queue1 variance");
-        assertEqualsRel(1.438526672741136, q25_queue1, "Queue1 Q25");
-        assertEqualsRel(3.480506116107708, median_queue1, "Queue1 median");
-        assertEqualsRel(6.946150979391047, q75_queue1, "Queue1 Q75");
-        assertEqualsRel(14.991897863214810, q95_queue1, "Queue1 Q95");
-        assertEqualsRel(23.084619243998684, q99_queue1, "Queue1 Q99");
+        // Station 2 (Queue1)
+        assertEqualsRel(4.9484490689042230, mean_queue1, "Queue1 mean");
+        assertEqualsRel(22.134050226109167, var_queue1, "Queue1 variance");
+        assertEqualsRel(1.5372707537125430, q25_queue1, "Queue1 Q25");
+        assertEqualsRel(3.5923808166807105, median_queue1, "Queue1 median");
+        assertEqualsRel(6.8988482453387770, q75_queue1, "Queue1 Q75");
+        assertEqualsRel(14.266504027311010, q95_queue1, "Queue1 Q95");
+        assertEqualsRel(21.563040155479932, q99_queue1, "Queue1 Q99");
 
-        // Station 3 (Queue2): mean=2.005455241322532, var=4.026140188816297
-        assertEqualsRel(2.005455241322532, mean_queue2, "Queue2 mean");
-        assertEqualsRel(4.026140188816297, var_queue2, "Queue2 variance");
-        assertEqualsRel(0.575782702827374, q25_queue2, "Queue2 Q25");
-        assertEqualsRel(1.389397117916920, median_queue2, "Queue2 median");
-        assertEqualsRel(2.774915574076290, q75_queue2, "Queue2 Q75");
-        assertEqualsRel(6.004901075684787, q95_queue2, "Queue2 Q95");
-        assertEqualsRel(9.235696265670075, q99_queue2, "Queue2 Q99");
+        // Station 3 (Queue2). Was 2.0010 under `matrix` -- half of Queue1, against
+        // an exact CTMC that is symmetric at 4.6426; see the note above.
+        assertEqualsRel(4.2347235575061450, mean_queue2, "Queue2 mean");
+        assertEqualsRel(19.145545382165263, var_queue2, "Queue2 variance");
+        assertEqualsRel(1.1675963708606854, q25_queue2, "Queue2 Q25");
+        assertEqualsRel(2.8486132491782894, median_queue2, "Queue2 median");
+        assertEqualsRel(5.8260220770067540, q75_queue2, "Queue2 Q75");
+        assertEqualsRel(12.994755115318164, q95_queue2, "Queue2 Q95");
+        assertEqualsRel(20.267071275991146, q99_queue2, "Queue2 Q99");
     }
 
     @Test
@@ -1091,7 +1121,7 @@ public class CdfRespTExamplesTest {
 
         final DistributionResult[] cdfHolder = new DistributionResult[1];
         withSuppressedOutput(() -> {
-            SolverFluid solver = new SolverFluid(model, "iter_max", 100);
+            SolverFLD solver = new SolverFLD(model, "iter_max", 100);
             cdfHolder[0] = solver.getCdfRespT();
         });
         DistributionResult cdfResult = cdfHolder[0];
@@ -1129,32 +1159,44 @@ public class CdfRespTExamplesTest {
         double q95_queue2 = getPercentile(cdf_queue2, 0.95);
         double q99_queue2 = getPercentile(cdf_queue2, 0.99);
 
-        // Ground truth from MATLAB for N=8 population with FC CDFs:
-        // Station 1 (Delay): mean=1.003105463787408, var=0.998360869906826
-        assertEqualsRel(1.003105463787408, mean_delay, "Delay mean");
-        assertEqualsRel(0.998360869906826, var_delay, "Delay variance");
-        assertEqualsRel(0.288720515332508, q25_delay, "Delay Q25");
-        assertEqualsRel(0.693449283701929, median_delay, "Delay median");
-        assertEqualsRel(1.390552511053389, q75_delay, "Delay Q75");
-        assertEqualsRel(3.006086791709178, q95_delay, "Delay Q95");
-        assertEqualsRel(4.614956762296455, q99_delay, "Delay Q99");
+        // Re-recorded 2026-08-19 as the `dae` answer, for the same reason as N4
+        // above: the fixed point sits on the single-server saturation kink, so
+        // MinNormalAnalyzer declines and the fallback ladder now reaches the DAE
+        // form of that closure instead of dropping straight to `matrix`.
+        //
+        // THE ROWS THIS REPLACES WERE THE `matrix` ANSWER, and it was far off. The
+        // exact CTMC is symmetric here too -- QLen [0.4412, 3.7794, 3.7794], RespT
+        // 8.5667 at both queues -- and `matrix` returned QLen [0.5, 6.5, 1.0], a max
+        // error of 2.7794, which is what put 13.0198 at Queue1 and 2.0045 at Queue2
+        // below. `dae` returns [0.4496, 3.7752, 3.7752], a max error of 0.0084.
+        // The CDF means straddle the exact 8.5667 rather than bracketing it at 13
+        // and 2; getCdfRespT is a per-station passage-time computation, so it does
+        // not reproduce the fixed point's symmetry exactly.
+        // Station 1 (Delay)
+        assertEqualsRel(1.0002291741312128, mean_delay, "Delay mean");
+        assertEqualsRel(1.0009111956232340, var_delay, "Delay variance");
+        assertEqualsRel(0.2877089623908875, q25_delay, "Delay Q25");
+        assertEqualsRel(0.6932343783050575, median_delay, "Delay median");
+        assertEqualsRel(1.3865438360599276, q75_delay, "Delay Q75");
+        assertEqualsRel(2.9964470173283657, q95_delay, "Delay Q95");
+        assertEqualsRel(4.6072382470349300, q99_delay, "Delay Q99");
 
-        // Station 2 (Queue1): mean=13.019779571247703, var=169.0760552810854
-        assertEqualsRel(13.019779571247703, mean_queue1, "Queue1 mean");
-        assertEqualsRel(169.0760552810854, var_queue1, "Queue1 variance");
-        assertEqualsRel(3.752087974278950, q25_queue1, "Queue1 Q25");
-        assertEqualsRel(9.028184344845204, median_queue1, "Queue1 median");
-        assertEqualsRel(18.061451401276255, q75_queue1, "Queue1 Q75");
-        assertEqualsRel(38.965492739360535, q95_queue1, "Queue1 Q95");
-        assertEqualsRel(59.962071110885475, q99_queue1, "Queue1 Q99");
+        // Station 2 (Queue1). Was 13.0198 under `matrix`, against an exact 8.5667.
+        assertEqualsRel(10.392686749358283, mean_queue1, "Queue1 mean");
+        assertEqualsRel(86.485799061075970, var_queue1, "Queue1 variance");
+        assertEqualsRel(3.5498685554452205, q25_queue1, "Queue1 Q25");
+        assertEqualsRel(7.8944751689517770, median_queue1, "Queue1 median");
+        assertEqualsRel(14.530830726387398, q75_queue1, "Queue1 Q75");
+        assertEqualsRel(28.691074753222733, q95_queue1, "Queue1 Q95");
+        assertEqualsRel(42.386075030829850, q99_queue1, "Queue1 Q99");
 
-        // Station 3 (Queue2): mean=2.004500432357184, var=4.003215187754142
-        assertEqualsRel(2.004500432357184, mean_queue2, "Queue2 mean");
-        assertEqualsRel(4.003215187754142, var_queue2, "Queue2 variance");
-        assertEqualsRel(0.577785431787922, q25_queue2, "Queue2 Q25");
-        assertEqualsRel(1.388857093781786, median_queue2, "Queue2 median");
-        assertEqualsRel(2.781021862352698, q75_queue2, "Queue2 Q75");
-        assertEqualsRel(5.997252203618727, q95_queue2, "Queue2 Q95");
-        assertEqualsRel(9.201395438410383, q99_queue2, "Queue2 Q99");
+        // Station 3 (Queue2). Was 2.0045 under `matrix`, against the same 8.5667.
+        assertEqualsRel(7.8390042721868864, mean_queue2, "Queue2 mean");
+        assertEqualsRel(60.195346810913530, var_queue2, "Queue2 variance");
+        assertEqualsRel(2.5084524204665666, q25_queue2, "Queue2 Q25");
+        assertEqualsRel(5.4522926810625180, median_queue2, "Queue2 median");
+        assertEqualsRel(10.565267851036364, q75_queue2, "Queue2 Q75");
+        assertEqualsRel(23.271240333926368, q95_queue2, "Queue2 Q95");
+        assertEqualsRel(36.573283269229630, q99_queue2, "Queue2 Q99");
     }
 }

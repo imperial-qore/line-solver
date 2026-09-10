@@ -17,7 +17,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Top-level functions for AMAP2 gamma fitting (ported from Kotlin).
+ * Top-level functions for AMAP2 gamma fitting.
  */
 public final class Amap2_fit_gamma {
 

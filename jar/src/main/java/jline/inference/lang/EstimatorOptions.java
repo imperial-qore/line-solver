@@ -22,6 +22,20 @@ public class EstimatorOptions {
     public int openPopulation = 100;
     public double[] x0 = null;
 
+    /** Options of the variational estimator ("vi"). */
+    public jline.inference.api.VariationalOptions variational =
+            new jline.inference.api.VariationalOptions();
+    /** Probability that a queue-length reading is faulty ("vi"). */
+    public double epsilon = 0.05;
+    /** Shape of the Gamma prior placed on each estimated rate ("vi"). */
+    public double priorShape = 1.0;
+    /** Posterior Gamma shapes left behind by the variational estimator. */
+    public double[] posteriorAlpha = null;
+    /** Posterior Gamma rates left behind by the variational estimator. */
+    public double[] posteriorBeta = null;
+    /** Evidence lower bound per iteration, left behind by the variational estimator. */
+    public double[] bound = null;
+
     public EstimatorOptions() {}
 
     public static EstimatorOptions defaultOptions() {

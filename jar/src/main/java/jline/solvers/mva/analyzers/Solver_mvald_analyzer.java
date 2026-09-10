@@ -19,6 +19,11 @@ public final class Solver_mvald_analyzer {
     public static MVAResult solver_mvald_analyzer(NetworkStruct sn, SolverOptions options) {
         MVAResult res = new MVAResult();
         long startTime = System.nanoTime();
+        // The "amva." spellings are aliases the caller may pass and
+        // listValidMethods advertises, so they have to reach the same arms as the
+        // bare names: without this, "amva.lin" on a load-dependent model fell to
+        // the refusal below naming a method the solver does in fact implement.
+        options.method = jline.solvers.mva.SolverMVA.baseMethod(options.method);
         String method = options.method;
         MVAResult ret = null;
         if ("exact".equals(method) || "mva".equals(method)) {

@@ -13,20 +13,28 @@ import java.util.Locale;
 /**
  * Class representing a model supported by the library
  */
-public class Model implements Serializable {
+public class Model implements Copyable {
     private String network_name;
     private String lineVersion;
+    protected ModelAttribute attribute;
 
     /**
      * Creates a new model with the specified name.
      * Sets the locale to US and initializes the LINE version from GlobalConstants.
-     * 
+     *
+     * Mirrors the constructor of {@code matlab/src/lang/Model.m}: it first makes
+     * sure LINE is initialized (the MATLAB {@code lineStart} guard on an empty
+     * {@code GlobalConstants.Verbose}, here the singleton), then records the
+     * trimmed version and the name.
+     *
      * @param modelName the name to assign to this model
      */
     public Model(String modelName) {
         Locale.setDefault(Locale.US);
-        this.network_name = modelName;
-        this.setVersion(GlobalConstants.Version);
+        GlobalConstants.getInstance();
+        this.attribute = new ModelAttribute();
+        this.setVersion(GlobalConstants.Version.trim());
+        this.setName(modelName);
     }
 
     /**
@@ -65,6 +73,23 @@ public class Model implements Serializable {
         this.lineVersion = version;
     }
 
-    // Parity gap: MATLAB methods not yet ported here - see _kb/07-cross-language-parity.md
+    /**
+     * Gets the metadata container of this model, twin of the MATLAB
+     * {@code Model.attribute} property.
+     *
+     * @return the model attribute container
+     */
+    public ModelAttribute getAttribute() {
+        return this.attribute;
+    }
+
+    /**
+     * Sets the metadata container of this model.
+     *
+     * @param attribute the container to install
+     */
+    public void setAttribute(ModelAttribute attribute) {
+        this.attribute = attribute;
+    }
 
 }

@@ -54,12 +54,14 @@ Z = 0*F;
 
 [~,R,~] = QBD_CR(B,L,F);
 pi = QBD_pi(B,L0,R);
-v0  = pi(1,:);
+v0  = pi(1,1:lvlsz); % QBD_pi returns every level in one row, only level 0 is the boundary vector
 
 lambdaS = map_lambda(MAPs);
-v0D = 1/lambdaS*v0 *R * F;
-v1D = 1/lambdaS*v0 *R^2 * F;
-v2Dp = 1/lambdaS*v0 * R^3*inv(eye(size(R))-R)*F;
+% departure epochs are the B transitions, so the embedded vector weighs the level
+% probabilities by B and not by the arrival matrix F
+v0D = 1/lambdaS*v0 *R * B;
+v1D = 1/lambdaS*v0 *R^2 * B;
+v2Dp = 1/lambdaS*v0 * R^3*inv(eye(size(R))-R)*B;
 z = [v0D, v1D, v2Dp];
 z = z / sum(z); % normalize to probability distribution
 

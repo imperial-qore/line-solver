@@ -55,16 +55,16 @@ public final class LineCitations {
     }
 
     static {
-        add("mva.exact", "reis.lave80",
+        add("mva.exact", "ReiL80",
             "M. Reiser, S. Lavenberg, \"Mean-Value Analysis of Closed Multichain Queuing Networks\", J. ACM 27(2), 1980",
             "exact mean queue lengths of the product-form network");
-        add("exact", "reis.lave80",
+        add("exact", "ReiL80",
             "M. Reiser, S. Lavenberg, \"Mean-Value Analysis of Closed Multichain Queuing Networks\", J. ACM 27(2), 1980",
             "exact mean queue lengths of the product-form network");
-        add("mva.mva", "reis.lave80",
+        add("mva.mva", "ReiL80",
             "M. Reiser, S. Lavenberg, \"Mean-Value Analysis of Closed Multichain Queuing Networks\", J. ACM 27(2), 1980",
             "exact mean queue lengths of the product-form network");
-        add("reiser", "reis.lave80",
+        add("reiser", "ReiL80",
             "M. Reiser, S. Lavenberg, \"Mean-Value Analysis of Closed Multichain Queuing Networks\", J. ACM 27(2), 1980",
             "exact mean queue lengths of the product-form network");
         add("bs", "Sch79",
@@ -79,6 +79,15 @@ public final class LineCitations {
         add("amva.aql", "ZahES88",
             "J. Zahorjan, D. L. Eager, H. M. Sweillam, \"Accuracy, Speed, and Convergence of Approximate Mean Value Analysis\", Perform. Eval. 8, 1988",
             "aggregate queue-length AMVA iteration");
+        add("qsa", "SchSB98",
+            "P. J. Schweitzer, G. Serazzi, M. Broglia, \"A Queue-Shift Approximation Technique for Product-Form Queueing Networks\", Tools'98, LNCS 1469, 1998",
+            "queue-shift correction of the arrival-instant queue lengths");
+        add("amva.qsa", "SchSB98",
+            "P. J. Schweitzer, G. Serazzi, M. Broglia, \"A Queue-Shift Approximation Technique for Product-Form Queueing Networks\", Tools'98, LNCS 1469, 1998",
+            "queue-shift correction of the arrival-instant queue lengths");
+        add("cntol", "ChaN82",
+            "K. M. Chandy, D. Neuse, \"Linearizer: A Heuristic Algorithm for Queuing Network Models of Computing Systems\", Commun. ACM 25(2), 1982",
+            "population-scaled termination test 1/(4000+16*sum(N)) of the approximate-MVA fixed point");
         add("lin", "ChaN82",
             "K. M. Chandy, D. Neuse, \"Linearizer: A Heuristic Algorithm for Queuing Network Models of Computing Systems\", Commun. ACM 25(2), 1982",
             "Linearizer correction of the arrival-instant queue lengths");
@@ -94,16 +103,73 @@ public final class LineCitations {
         add("dmlin", "SilvaM90",
             "E. de Souza e Silva, R. R. Muntz, \"A Note on the Computational Cost of the Linearizer Algorithm for Queueing Networks\", IEEE TC 39(6), 1990",
             "de Souza e Silva-Muntz cost reduction of Linearizer");
-        add("qd", "casale2015qdamva",
+        add("amva.dmlin", "SilvaM90",
+            "E. de Souza e Silva, R. R. Muntz, \"A Note on the Computational Cost of the Linearizer Algorithm for Queueing Networks\", IEEE TC 39(6), 1990",
+            "de Souza e Silva-Muntz cost reduction of Linearizer");
+        add("lcp", "Bar79",
+            "Y. Bard, \"Some Extensions to Multiclass Queueing Network Analysis\", Performance of Computer Systems, North-Holland, 1979",
+            "large-customer-population estimate of the arrival-instant queue lengths");
+        add("amva.lcp", "Bar79",
+            "Y. Bard, \"Some Extensions to Multiclass Queueing Network Analysis\", Performance of Computer Systems, North-Holland, 1979",
+            "large-customer-population estimate of the arrival-instant queue lengths");
+        add("chow", "Cho83",
+            "W.-M. Chow, \"Approximations for Large Scale Closed Queueing Networks\", Perform. Eval. 3(1), 1983",
+            "second-approximation theta-correction of the arrival-instant queue lengths, taken off the Bard LCP solution");
+        add("amva.chow", "Cho83",
+            "W.-M. Chow, \"Approximations for Large Scale Closed Queueing Networks\", Perform. Eval. 3(1), 1983",
+            "second-approximation theta-correction of the arrival-instant queue lengths, taken off the Bard LCP solution");
+        add("pamb", "HsiL88",
+            "C. T. Hsieh, S. S. Lam, \"PAM - A Noniterative Approximate Solution Method for Closed Multichain Queueing Networks\", ACM SIGMETRICS Perform. Eval. Rev. 16(1), 1988",
+            "noniterative proportional seed of the queue lengths plus the last MVA step");
+        add("amva.pamb", "HsiL88",
+            "C. T. Hsieh, S. S. Lam, \"PAM - A Noniterative Approximate Solution Method for Closed Multichain Queueing Networks\", ACM SIGMETRICS Perform. Eval. Rev. 16(1), 1988",
+            "noniterative proportional seed of the queue lengths plus the last MVA step");
+        add("pami", "HsiL88",
+            "C. T. Hsieh, S. S. Lam, \"PAM - A Noniterative Approximate Solution Method for Closed Multichain Queueing Networks\", ACM SIGMETRICS Perform. Eval. Rev. 16(1), 1988",
+            "noniterative proportional seed with the throughputs capped at full centre utilization");
+        add("amva.pami", "HsiL88",
+            "C. T. Hsieh, S. S. Lam, \"PAM - A Noniterative Approximate Solution Method for Closed Multichain Queueing Networks\", ACM SIGMETRICS Perform. Eval. Rev. 16(1), 1988",
+            "noniterative proportional seed with the throughputs capped at full centre utilization");
+        add("pamt", "HsiL88",
+            "C. T. Hsieh, S. S. Lam, \"PAM - A Noniterative Approximate Solution Method for Closed Multichain Queueing Networks\", ACM SIGMETRICS Perform. Eval. Rev. 16(1), 1988",
+            "noniterative proportional seed plus the last two MVA steps");
+        add("amva.pamt", "HsiL88",
+            "C. T. Hsieh, S. S. Lam, \"PAM - A Noniterative Approximate Solution Method for Closed Multichain Queueing Networks\", ACM SIGMETRICS Perform. Eval. Rev. 16(1), 1988",
+            "noniterative proportional seed plus the last two MVA steps");
+        add("clust", "SilLM86",
+            "E. de Souza e Silva, S. S. Lavenberg, R. R. Muntz, \"A Clustering Approximation Technique for Queueing Network Models with a Large Number of Chains\", IEEE TC C-35(5), 1986",
+            "decomposition into subnetworks with local classes solved exactly and foreign classes carried as a per-centre utilization");
+        add("amva.clust", "SilLM86",
+            "E. de Souza e Silva, S. S. Lavenberg, R. R. Muntz, \"A Clustering Approximation Technique for Queueing Network Models with a Large Number of Chains\", IEEE TC C-35(5), 1986",
+            "decomposition into subnetworks with local classes solved exactly and foreign classes carried as a per-centre utilization");
+        add("looping", "Eag84",
+            "D. L. Eager, \"Bounding Algorithms for Queueing Network Models of Computer Systems\", Ph.D. thesis, Tech. Rept. CSRG-156, University of Toronto, 1984",
+            "multiclass queue-length bracket built from the unaccounted-congestion heaps, the initial estimate of the multiple-class performance bound hierarchy");
+        add("looping.upper", "Eag84",
+            "D. L. Eager, \"Bounding Algorithms for Queueing Network Models of Computer Systems\", Ph.D. thesis, Tech. Rept. CSRG-156, University of Toronto, 1984",
+            "multiclass queue-length bracket built from the unaccounted-congestion heaps, the initial estimate of the multiple-class performance bound hierarchy");
+        add("looping.lower", "Eag84",
+            "D. L. Eager, \"Bounding Algorithms for Queueing Network Models of Computer Systems\", Ph.D. thesis, Tech. Rept. CSRG-156, University of Toronto, 1984",
+            "multiclass queue-length bracket built from the unaccounted-congestion heaps, the initial estimate of the multiple-class performance bound hierarchy");
+        add("qd", "CasPW15",
             "G. Casale, J. F. Perez, W. Wang, \"QD-AMVA: Evaluating Systems with Queue-Dependent Service Requirements\", IFIP PERFORMANCE, 2015",
             "queue-dependent AMVA for load-dependent stations");
-        add("amva.qd", "casale2015qdamva",
+        add("amva.qd", "CasPW15",
             "G. Casale, J. F. Perez, W. Wang, \"QD-AMVA: Evaluating Systems with Queue-Dependent Service Requirements\", IFIP PERFORMANCE, 2015",
             "queue-dependent AMVA for load-dependent stations");
-        add("qdlin", "casale2015qdamva",
+        add("qdlin", "CasPW15",
             "G. Casale, J. F. Perez, W. Wang, \"QD-AMVA: Evaluating Systems with Queue-Dependent Service Requirements\", IFIP PERFORMANCE, 2015",
             "queue-dependent AMVA for load-dependent stations");
-        add("softmin", "casale2015qdamva",
+        add("pfqn_qdamva", "CasPW15",
+            "G. Casale, J. F. Perez, W. Wang, \"QD-AMVA: Evaluating Systems with Queue-Dependent Service Requirements\", IFIP PERFORMANCE, 2015",
+            "queue-dependent AMVA on plain demand matrices, the layer solver of lqn_mol");
+        add("pfqn_qdlin", "CasPW15",
+            "G. Casale, J. F. Perez, W. Wang, \"QD-AMVA: Evaluating Systems with Queue-Dependent Service Requirements\", IFIP PERFORMANCE, 2015",
+            "the queue-dependent AMVA framework the Linearizer arm runs inside, on plain demand matrices; the Linearizer correction itself is ChaN82");
+        add("lqn_mol", "RolS95",
+            "J. A. Rolia, K. C. Sevcik, \"The Method of Layers\", IEEE TSE 21(8), 1995",
+            "two-phase software-then-hardware sweep of the submodels, on the srvn decomposition of an entry-only layered model");
+        add("softmin", "CasPW15",
             "G. Casale, J. F. Perez, W. Wang, \"QD-AMVA: Evaluating Systems with Queue-Dependent Service Requirements\", IFIP PERFORMANCE, 2015",
             "queue-dependent AMVA for load-dependent stations");
         add("fli", "WangS00",
@@ -124,42 +190,156 @@ public final class LineCitations {
         add("linearizerms", "Con89",
             "A. E. Conway, \"Fast Approximate Solution of Queueing Networks with Multi-Server Chain-Dependent FCFS Queues\", 1989",
             "multi-server chain-dependent AMVA");
-        add("suri", "suri2007approximate",
+        add("suri", "SurSV07",
             "R. Suri, S. K. Sahu, M. Vernon, \"Approximate Mean Value Analysis for Closed Queuing Networks with Multiple-Server Stations\", IERC, 2007",
             "multi-server station correction in AMVA");
-        add("schmidt", "suri2007approximate",
+        add("schmidt", "SurSV07",
             "R. Suri, S. K. Sahu, M. Vernon, \"Approximate Mean Value Analysis for Closed Queuing Networks with Multiple-Server Stations\", IERC, 2007",
             "multi-server station correction in AMVA");
-        add("schmidt-ext", "suri2007approximate",
+        add("schmidt-ext", "SurSV07",
             "R. Suri, S. K. Sahu, M. Vernon, \"Approximate Mean Value Analysis for Closed Queuing Networks with Multiple-Server Stations\", IERC, 2007",
             "multi-server station correction in AMVA");
-        add("schmidtext", "suri2007approximate",
+        add("schmidtext", "SurSV07",
             "R. Suri, S. K. Sahu, M. Vernon, \"Approximate Mean Value Analysis for Closed Queuing Networks with Multiple-Server Stations\", IERC, 2007",
             "multi-server station correction in AMVA");
-        add("seidmann", "seidmann1987computerized",
+        add("seidmann", "SeiSS87",
             "A. Seidmann, P. J. Schweitzer, S. Shalev-Oren, \"Computerized closed queueing network models of flexible manufacturing systems\", Large Scale Systems 12, 1987",
             "multi-server to single-server flow-equivalent reduction");
-        add("cl", "EagL88",
-            "D. L. Eager, J. N. Lipscomb, \"The AMVA priority approximation\", Perform. Eval. 8, 1988",
-            "priority approximation inside AMVA");
-        add("chandy-lakshmi", "EagL88",
-            "D. L. Eager, J. N. Lipscomb, \"The AMVA priority approximation\", Perform. Eval. 8, 1988",
-            "priority approximation inside AMVA");
-        add("amva.cl", "EagL88",
-            "D. L. Eager, J. N. Lipscomb, \"The AMVA priority approximation\", Perform. Eval. 8, 1988",
-            "priority approximation inside AMVA");
+        add("priomva", "ChaL83",
+            "K. M. Chandy, M. S. Lakshmi, \"An Approximation Technique for Queueing Networks with Preemptive Priority Queues\", Tech. Rep., Univ. of Texas at Austin, 1983",
+            "preemptive-resume priority arm of AMVA; PRIOMVA is Bolch's PEPSY-QNS name for it");
+        add("amva.priomva", "ChaL83",
+            "K. M. Chandy, M. S. Lakshmi, \"An Approximation Technique for Queueing Networks with Preemptive Priority Queues\", Tech. Rep., Univ. of Texas at Austin, 1983",
+            "preemptive-resume priority arm of AMVA; PRIOMVA is Bolch's PEPSY-QNS name for it");
+        add("cl", "ChaL83",
+            "K. M. Chandy, M. S. Lakshmi, \"An Approximation Technique for Queueing Networks with Preemptive Priority Queues\", Tech. Rep., Univ. of Texas at Austin, 1983",
+            "priority approximation inside AMVA; the AMVA formulation follows Eager & Lipscomb [EagL88]");
+        add("chandy-lakshmi", "ChaL83",
+            "K. M. Chandy, M. S. Lakshmi, \"An Approximation Technique for Queueing Networks with Preemptive Priority Queues\", Tech. Rep., Univ. of Texas at Austin, 1983",
+            "priority approximation inside AMVA; the AMVA formulation follows Eager & Lipscomb [EagL88]");
+        add("amva.cl", "ChaL83",
+            "K. M. Chandy, M. S. Lakshmi, \"An Approximation Technique for Queueing Networks with Preemptive Priority Queues\", Tech. Rep., Univ. of Texas at Austin, 1983",
+            "priority approximation inside AMVA; the AMVA formulation follows Eager & Lipscomb [EagL88]");
         add("shadow", "Sev77",
             "K. Sevcik, \"Priority Scheduling Disciplines in Queuing Network Models of Computer Systems\", IFIP Congress, 1977",
             "shadow-server treatment of priority scheduling");
         add("zhou", "Woo22",
             "S. Zhou, M. Woodside, \"A Multiserver Approximation for Cloud Scaling Analysis\", ICPE Companion, 2022",
             "multiserver scaling approximation");
-        add("qna", "whitt1983qna",
+        add("rolia", "RolS95",
+            "J. A. Rolia, K. C. Sevcik, \"The Method of Layers\", IEEE Trans. Software Engineering 21(8), 1995",
+            "multi-server station approximation of the method of layers");
+        add("interpos", "casale2016m3a",
+            "G. Casale, A. Sansottera, P. Cremonesi, \"Compact Markov-Modulated Models for Multiclass Trace Fitting\", Eur. J. Oper. Res. 255(3), 2016",
+            "lumped interleaving of the per-flow M3PP(2,m) counting-process fits");
+        add("m3pp", "casale2016m3a",
+            "G. Casale, A. Sansottera, P. Cremonesi, \"Compact Markov-Modulated Models for Multiclass Trace Fitting\", Eur. J. Oper. Res. 255(3), 2016",
+            "M3PP(2,m) fitted to the counting process, per-class rates exact");
+        add("m3pp2m_fitc", "casale2016m3a",
+            "G. Casale, A. Sansottera, P. Cremonesi, \"Compact Markov-Modulated Models for Multiclass Trace Fitting\", Eur. J. Oper. Res. 255(3), 2016",
+            "M3PP(2,m) fitted to the counting process, per-class rates exact");
+        add("m3pp_superpos", "casale2016m3a",
+            "G. Casale, A. Sansottera, P. Cremonesi, \"Compact Markov-Modulated Models for Multiclass Trace Fitting\", Eur. J. Oper. Res. 255(3), 2016",
+            "superposition of one second-order M3PP per class");
+        add("qna", "Whi83a",
             "W. Whitt, \"The Queueing Network Analyzer\", Bell Syst. Tech. J. 62, 1983",
-            "two-moment decomposition of the open network");
-        add("rqna", "whittyou2018rqna",
+            "two-moment decomposition of the open network, including the deterministic (round-robin) traffic split");
+        add("tvfluid", "LiuW12",
+            "Y. Liu, W. Whitt, \"The Gt/GI/st+GI Many-Server Fluid Queue\", Queueing Systems 71, 2012",
+            "the two-regime fluid limit, the boundary waiting time ODE and the age-based queue content");
+        add("gtmtst", "LiuW12",
+            "Y. Liu, W. Whitt, \"The Gt/GI/st+GI Many-Server Fluid Queue\", Queueing Systems 71, 2012",
+            "the two-regime fluid limit, the boundary waiting time ODE and the age-based queue content");
+        add("tvfluidnet", "LiuW14",
+            "Y. Liu, W. Whitt, \"Algorithms for Time-Varying Networks of Many-Server Fluid Queues\", INFORMS J. on Computing 26(1), 2014",
+            "the regime-switching algorithm and the traffic-rate fixed point that couples the queues");
+        add("ggnmdiffusion", "Whi04",
+            "W. Whitt, \"A Diffusion Approximation for the GI/GI/n/m Queue\", Operations Research 52(6), 2004",
+            "the two-region diffusion, the asymptotic peakedness z and the blocking approximation at the upper boundary");
+        add("peakedness", "Whi04",
+            "W. Whitt, \"A Diffusion Approximation for the GI/GI/n/m Queue\", Operations Research 52(6), 2004",
+            "the two-region diffusion, the asymptotic peakedness z and the blocking approximation at the upper boundary");
+        add("tga", "LiuWY16",
+            "Y. Liu, W. Whitt, Y. Yu, \"Approximations for Heavily-Loaded G/GI/n+GI Queues\", Naval Research Logistics 63(3), 2016",
+            "the truncated Gaussian refinement of the fluid limit, and the (cs+1)rho term that carries a general service law");
+        add("ggingi", "LiuWY16",
+            "Y. Liu, W. Whitt, Y. Yu, \"Approximations for Heavily-Loaded G/GI/n+GI Queues\", Naval Research Logistics 63(3), 2016",
+            "the truncated Gaussian refinement of the fluid limit, and the (cs+1)rho term that carries a general service law");
+        add("feedbackelim", "WhiY22",
+            "W. Whitt, W. You, \"A Robust Queueing Network Analyzer Based on Indices of Dispersion\", Naval Research Logistics 69, 2022",
+            "near-immediate feedback elimination and the geometric-sum service law it leaves behind");
+        add("longtailfit", "FelW98",
+            "A. Feldmann, W. Whitt, \"Fitting Mixtures of Exponentials to Long-Tail Distributions to Analyze Network Performance Models\", Perform. Eval. 31, 1998",
+            "the recursive fit of a hyperexponential to a ccdf over successive time scales");
+        add("hyperexpfit", "FelW98",
+            "A. Feldmann, W. Whitt, \"Fitting Mixtures of Exponentials to Long-Tail Distributions to Analyze Network Performance Models\", Perform. Eval. 31, 1998",
+            "the recursive fit of a hyperexponential to a ccdf over successive time scales");
+        add("mol", "MasW94",
+            "W. A. Massey, W. Whitt, \"An Analysis of the Modified Offered Load Approximation for the Nonstationary Erlang Loss Model\", Ann. Appl. Prob. 4(4), 1994",
+            "the infinite-server offered load fed into the stationary Erlang formula, which carries the time lag");
+        add("psa", "Whi91",
+            "W. Whitt, \"The Pointwise Stationary Approximation for Mt/Mt/s Queues is Asymptotically Correct as the Rates Increase\", Management Science 37(3), 1991",
+            "the instantaneous-load approximation and the regime where it is asymptotically correct");
+        add("runlength", "Whi89",
+            "W. Whitt, \"Planning Queueing Simulations\", Management Science 35(11), 1989",
+            "the asymptotic variance as the cost of a steady-state estimate, and the run length it implies");
+        add("nhppks", "KimW14",
+            "S.-H. Kim, W. Whitt, \"Are Call Center and Hospital Arrivals Well Modeled by Nonhomogeneous Poisson Processes?\", M&SOM 16(3), 2014",
+            "the conditional-uniform KS test and the Durbin-transformed Lewis variant that gives it power");
+        add("maxima", "CroGW07",
+            "C. Crow, D. Goldberg, W. Whitt, \"Two-Moment Approximations for Maxima\", Operations Research 55(3), 2007",
+            "the extreme-value form of the maximum from two moments, its n* validity threshold and the fitted-distribution route");
+        add("extremal", "CheW20",
+            "Y. Chen, W. Whitt, \"Algorithms for the Upper Bound Mean Waiting Time in the GI/GI/1 Queue\", Queueing Systems 94, 2020",
+            "the conjectured tight two-moment upper bound and the D/RS/1 reduction that computes it");
+        add("gig1bnds", "CheW20",
+            "Y. Chen, W. Whitt, \"Algorithms for the Upper Bound Mean Waiting Time in the GI/GI/1 Queue\", Queueing Systems 94, 2020",
+            "the conjectured tight two-moment upper bound and the D/RS/1 reduction that computes it");
+        add("erlanga", "Whi05",
+            "W. Whitt, \"Engineering Solution of a Basic Call-Center Model\", Management Science 51(2), 2005",
+            "birth-and-death solution of M/M/s/r+M and the customer-experience recursions it shares with the general model");
+        add("mgisrgi", "Whi05",
+            "W. Whitt, \"Engineering Solution of a Basic Call-Center Model\", Management Science 51(2), 2005",
+            "state-dependent Markovian approximation of general patience and the exponential replacement of general service");
+        add("ggisgi.fluid", "Whi06",
+            "W. Whitt, \"Fluid Models for Multiserver Queues with Abandonments\", Operations Research 54(1), 2006",
+            "deterministic fluid limit of the overloaded multiserver queue, including the queue boundary F^c(w)=1/rho");
+        add("qed", "HalW81",
+            "S. Halfin, W. Whitt, \"Heavy-Traffic Limits for Queues with Many Exponential Servers\", Operations Research 29(3), 1981",
+            "the many-server heavy-traffic delay probability alpha(beta) and the square-root staffing rule that inverts it");
+        add("sqrtstaffing", "HalW81",
+            "S. Halfin, W. Whitt, \"Heavy-Traffic Limits for Queues with Many Exponential Servers\", Operations Research 29(3), 1981",
+            "the many-server heavy-traffic delay probability alpha(beta) and the square-root staffing rule that inverts it");
+        add("mtginf", "EicMW93",
+            "S. G. Eick, W. A. Massey, W. Whitt, \"The Physics of the Mt/G/infinity Queue\", Operations Research 41(4), 1993",
+            "exact Poisson law of the time-varying infinite-server queue, its mean ES E[lambda(t-Se)] and the time lag");
+        add("gigk.diffusion", "Whi04",
+            "W. Whitt, \"A Diffusion Approximation for the GI/GI/n/m Queue\", Operations Research 52(6), 2004",
+            "the two-region diffusion, the asymptotic peakedness z and the blocking approximation at the upper boundary");
+        add("gigk.whitt", "Whi93",
+            "W. Whitt, \"Approximations for the GI/G/m Queue\", Production and Operations Management 2(2), 1993",
+            "the phi interpolation between the M/D/k and D/M/k correction factors of the M/M/k waiting time");
+        add("gig1.extremal", "CheW20",
+            "Y. Chen, W. Whitt, \"Algorithms for the Upper Bound Mean Waiting Time in the GI/GI/1 Queue\", Queueing Systems 94, 2020",
+            "the conjectured tight two-moment upper bound and the D/RS/1 reduction that computes it");
+        add("ggingi.tga", "LiuWY16",
+            "Y. Liu, W. Whitt, Y. Yu, \"Approximations for Heavily-Loaded G/GI/n+GI Queues\", Naval Research Logistics 63(3), 2016",
+            "the truncated Gaussian refinement of the fluid limit, and the (cs+1)rho term that carries a general service law");
+        add("tvms", "LiuW14",
+            "Y. Liu, W. Whitt, \"Algorithms for Time-Varying Networks of Many-Server Fluid Queues\", INFORMS J. on Computing 26(1), 2014",
+            "the time-varying many-server fluid queue solved forward on a grid, at the staffing the model declares");
+        add("runlengthplan", "Whi89",
+            "W. Whitt, \"Planning Queueing Simulations\", Management Science 35(11), 1989",
+            "the asymptotic variance as the cost of a steady-state estimate, and the run length it implies");
+        add("asymvar", "Whi89",
+            "W. Whitt, \"Planning Queueing Simulations\", Management Science 35(11), 1989",
+            "the asymptotic variance as the cost of a steady-state estimate, and the run length it implies");
+        add("rqna", "WhiY22",
             "W. Whitt, W. You, \"A Robust Queueing Network Analyzer Based on Indices of Dispersion\", Naval Research Logistics 69, 2022",
             "index-of-dispersion decomposition and robust queueing bounds");
+        add("rqt", "bandi2015rqt",
+            "C. Bandi, D. Bertsimas, N. Youssef, \"Robust Queueing Theory\", Operations Research 63(3), 2015",
+            "polyhedral uncertainty sets and the worst-case system time of each node, with the robust Burke calculus for the network");
         add("highvar", "BonW86",
             "A. B. Bondi, W. Whitt, \"The influence of service-time variability in a closed network of queues\", Perform. Eval. 6, 1986",
             "high-variability service correction of the demands");
@@ -169,48 +349,220 @@ public final class LineCitations {
         add("kraemer", "KraLB78",
             "W. Kraemer, M. Langenbach-Belz, \"Approximate Formulae for General Single Server Systems with Single and Batch Arrivals\", Angewandte Informatik 9, 1978",
             "G/G/1 waiting time approximation");
+        add("gig1.gelenbe", "Gel75",
+            "E. Gelenbe, \"On Approximate Computer System Models\", Journal of the ACM 22(2), 1975",
+            "the diffusion approximation with instantaneous-return boundary, whose geometric fit rhat=exp(-2(1-rho)/(rho ca^2+cs^2)) gives the mean queue length");
+        add("gelenbe", "Gel75",
+            "E. Gelenbe, \"On Approximate Computer System Models\", Journal of the ACM 22(2), 1975",
+            "the diffusion approximation with instantaneous-return boundary, whose geometric fit rhat=exp(-2(1-rho)/(rho ca^2+cs^2)) gives the mean queue length");
+        add("gig1.kimura", "Kim86",
+            "T. Kimura, \"A Two-Moment Approximation for the Mean Waiting Time in the GI/G/s Queue\", Management Science 32(6), 1986",
+            "the diffusion-interpolation waiting time rho(ca^2+cs^2)/(mu(1-rho)(1+ca^2)), exact for M/M/1 and M/G/1");
+        add("kimura", "Kim86",
+            "T. Kimura, \"A Two-Moment Approximation for the Mean Waiting Time in the GI/G/s Queue\", Management Science 32(6), 1986",
+            "the diffusion-interpolation waiting time rho(ca^2+cs^2)/(mu(1-rho)(1+ca^2)), exact for M/M/1 and M/G/1");
         add("klb", "KraLB78",
             "W. Kraemer, M. Langenbach-Belz, \"Approximate Formulae for General Single Server Systems with Single and Batch Arrivals\", Angewandte Informatik 9, 1978",
             "G/G/1 waiting time approximation");
-        add("nc.ca", "Cas09",
-            "G. Casale, \"CoMoM: Efficient Class-Oriented Evaluation of Multiclass Performance Models\", IEEE TSE 35(2), 2009",
-            "class-oriented recursion for the normalizing constant");
-        add("ca", "Cas09",
-            "G. Casale, \"CoMoM: Efficient Class-Oriented Evaluation of Multiclass Performance Models\", IEEE TSE 35(2), 2009",
-            "class-oriented recursion for the normalizing constant");
+        add("nc.ca", "ReiK75",
+            "M. Reiser, H. Kobayashi, \"Queueing Networks with Multiple Closed Chains: Theory and Computational Algorithms\", IBM J. Res. Dev. 19(3), 1975",
+            "exact normalizing constant by the multiclass convolution algorithm, Buzen's single-chain recursion (CACM 16(9), 1973) generalized to multiple closed chains");
+        add("ca", "ReiK75",
+            "M. Reiser, H. Kobayashi, \"Queueing Networks with Multiple Closed Chains: Theory and Computational Algorithms\", IBM J. Res. Dev. 19(3), 1975",
+            "exact normalizing constant by the multiclass convolution algorithm, Buzen's single-chain recursion (CACM 16(9), 1973) generalized to multiple closed chains");
         add("comom", "Cas09",
             "G. Casale, \"CoMoM: Efficient Class-Oriented Evaluation of Multiclass Performance Models\", IEEE TSE 35(2), 2009",
             "class-oriented recursion for the normalizing constant");
         add("nc.comom", "Cas09",
             "G. Casale, \"CoMoM: Efficient Class-Oriented Evaluation of Multiclass Performance Models\", IEEE TSE 35(2), 2009",
             "class-oriented recursion for the normalizing constant");
+        // Flow-equivalent server aggregation (ModelAdapter.aggregateFES, api.fes)
+        add("fes", "ChaHW75",
+            "K. M. Chandy, U. Herzog, L. Woo, \"Parametric Analysis of Queuing Networks\", IBM J. Res. Dev. 19(1), 1975",
+            "replacement of a subnetwork by a load-dependent station carrying its isolated throughputs");
+        add("ctmc.fes", "ChaHW75",
+            "K. M. Chandy, U. Herzog, L. Woo, \"Parametric Analysis of Queuing Networks\", IBM J. Res. Dev. 19(1), 1975",
+            "hierarchical decomposition: the reduced chain is enumerated with the subnetwork replaced by its flow-equivalent server, and the collapsed stations are recovered by conditioning on its population");
+        add("ctmc.chainaggr", "ReiL80",
+            "M. Reiser, S. S. Lavenberg, \"Mean-Value Analysis of Closed Multichain Queuing Networks\", J. ACM 27(2), 1980",
+            "the chain, not the class, as the unit a product-form network is solved in, which is what makes chain aggregation exact and the alpha-weighted deaggregation its inverse");
+        add("chains", "ReiL80",
+            "M. Reiser, S. S. Lavenberg, \"Mean-Value Analysis of Closed Multichain Queuing Networks\", J. ACM 27(2), 1980",
+            "the chain, not the class, as the unit a product-form network is solved in, which is what makes the chains transformation exact and the alpha-weighted deaggregation its inverse");
+        add("fes.map", "CasMCS11",
+            "G. Casale, N. Mi, L. Cherkasova, E. Smirni, \"Dealing with Burstiness in Multi-Tier Applications: Models and Their Parameterization\", IEEE TSE 37(5), 2011",
+            "load-dependent MAP flow-equivalent server, whose inter-departure moments and index of dispersion carry the burstiness of the aggregated subnetwork");
+        add("map2.idc", "CasMCS11",
+            "G. Casale, N. Mi, L. Cherkasova, E. Smirni, \"Dealing with Burstiness in Multi-Tier Applications: Models and Their Parameterization\", IEEE TSE 37(5), 2011",
+            "inversion of the index of dispersion into the autocorrelation decay rate of a MAP(2), and the fallbacks when it is not representable");
+        add("map2.fit", "HeiHG06",
+            "A. Heindl, G. Horvath, K. Gross, \"Explicit Inverse Characterizations of Acyclic MAPs of Second Order\", EPEW, 2006",
+            "explicit MAP(2) from three moments and the autocorrelation decay rate");
+        // Loss networks with finite capacity regions (SolverNC, lossn analyzers)
+        add("passage", "harr.knot02",
+                "P. G. Harrison and W. J. Knottenbelt, \"Passage Time Distributions in Large Markov Chains\", ACM SIGMETRICS Perf. Eval. Review 30(1), 2002",
+                "first passage time into a target state set: the transform of Eqs. 1-2 and the moment recursion of Eq. 3");
+        add("ctmc.passage", "harr.knot02",
+                "P. G. Harrison and W. J. Knottenbelt, \"Passage Time Distributions in Large Markov Chains\", ACM SIGMETRICS Perf. Eval. Review 30(1), 2002",
+                "first passage time into a target state set: the transform of Eqs. 1-2 and the moment recursion of Eq. 3");
+        add("smp.passage", "harr.knot02",
+                "P. G. Harrison and W. J. Knottenbelt, \"Passage Time Distributions in Large Markov Chains\", ACM SIGMETRICS Perf. Eval. Review 30(1), 2002",
+                "semi-Markov first passage time: the kernel transform of Eqs. 4-5 and the u_i(r) moment recurrence of Eqs. 7-8");
+        add("cyclet", "harr90",
+                "P. G. Harrison, \"Laplace transform inversion and passage-time distributions in Markov processes\", J. Appl. Prob. 27(1), 1990",
+                "Laplace transform of the cycle time along an overtake-free path of a closed tree-like network, and its inversion");
+        add("cyclet.ofree", "dadu82",
+                "H. Daduna, \"Passage times for overtake-free paths in Gordon-Newell networks\", Adv. Appl. Prob. 14(3), 1982",
+                "the overtake-free path passage time in a Gordon-Newell network, which the closed-form density of Theorem 2 evaluates");
+        add("lti.weeks", "week66",
+                "W. T. Weeks, \"Numerical inversion of Laplace transforms using Laguerre functions\", J. ACM 13(3), 1966",
+                "inversion of a Laplace transform by a Laguerre function series");
+        add("lti.laguerre", "abat.chou.whit96",
+                "J. Abate, G. L. Choudhury and W. Whitt, \"On the Laguerre method for numerically inverting Laplace transforms\", INFORMS J. Computing 8(4), 1996",
+                "the Laguerre inversion made practical: coefficient quadrature, scaling and truncation");
+        add("lti.talbot", "Talb79",
+                "A. Talbot, \"The accurate numerical inversion of Laplace transforms\", IMA J. Appl. Math. 23(1), 1979",
+                "inversion on a deformed contour around the negative real axis, whose nodes and weights this method uses");
+        add("ctmc.transient.sens", "TriBob17",
+                "K. S. Trivedi, A. Bobbio, \"Reliability and Availability Engineering\", Cambridge Univ. Press, 2017, Eq. (9.82)",
+                "sensitivity of the transient distribution to a scalar parameter, integrated with the state as one augmented system");
+        add("busyp", "Dad88",
+            "H. Daduna, \"Busy Periods for Subnetworks in Stochastic Networks: Mean Value Analysis\", J. ACM 35(3), 1988",
+            "mean duration of the busy period of order n for a subnetwork, from the subnetwork and complement normalizing constants");
+        add("nc.busyp", "Dad88",
+            "H. Daduna, \"Busy Periods for Subnetworks in Stochastic Networks: Mean Value Analysis\", J. ACM 35(3), 1988",
+            "mean duration of the busy period of order n for a subnetwork, from the subnetwork and complement normalizing constants");
+        add("dt.bernoulli1", "Dad01", "H. Daduna, \"Queueing Networks with Discrete Time Scale\", LNCS 2046, Springer, 2001",
+                "exact queue length and arrival-instant law of a state dependent Bernoulli server (Thm 2.3, Cor 2.7-2.8, Thm 2.11), including the finite-buffer loss system");
+        add("dt.cycle", "Dad01", "H. Daduna, \"Queueing Networks with Discrete Time Scale\", LNCS 2046, Springer, 2001",
+                "discrete-time product form of the closed cycle of Bernoulli servers and its Buzen-style normalizing constants (Cor 3.4, Prop 3.17-3.19, Cor 3.20)");
+        add("dt.cycleld", "Dad01", "H. Daduna, \"Queueing Networks with Discrete Time Scale\", LNCS 2046, Springer, 2001",
+                "discrete-time product form of the closed cycle with state dependent service probabilities (Thm 3.2) and the arrival theorem behind it (Prop 3.5)");
+        add("lossn.exact", "ManSik07",
+            "D. Manjunath, B. Sikdar, \"Integral Expressions for the Numerical Evaluation of Product Form Expressions Over Irregular Multidimensional Integer Spaces\"",
+            "exact normalizing constant over a state space cut by linear integer constraints");
+        add("lossn.ms", "ManSik07",
+            "D. Manjunath, B. Sikdar, \"Integral Expressions for the Numerical Evaluation of Product Form Expressions Over Irregular Multidimensional Integer Spaces\"",
+            "exact normalizing constant over a state space cut by linear integer constraints");
+        add("lossn.manjunath", "ManSik07",
+            "D. Manjunath, B. Sikdar, \"Integral Expressions for the Numerical Evaluation of Product Form Expressions Over Irregular Multidimensional Integer Spaces\"",
+            "exact normalizing constant over a state space cut by linear integer constraints");
+        add("pfqn.manjunath", "ManSik07",
+            "D. Manjunath, B. Sikdar, \"Integral Expressions for the Numerical Evaluation of Product Form Expressions Over Irregular Multidimensional Integer Spaces\"",
+            "exact normalizing constant of a closed product-form network over a state space cut by linear integer constraints, by residue extraction from the multivariate generating function");
+        add("manjunath", "ManSik07",
+            "D. Manjunath, B. Sikdar, \"Integral Expressions for the Numerical Evaluation of Product Form Expressions Over Irregular Multidimensional Integer Spaces\"",
+            "exact normalizing constant of a closed product-form network over a state space cut by linear integer constraints, by residue extraction from the multivariate generating function");
+        add("lossn.erlangfp", "Kelly91",
+            "F. P. Kelly, \"Loss Networks\", Ann. Appl. Probab. 1(3), 1991",
+            "reduced-load (Erlang fixed point) approximation of link blocking");
+        add("erlangfp", "Kelly91",
+            "F. P. Kelly, \"Loss Networks\", Ann. Appl. Probab. 1(3), 1991",
+            "reduced-load (Erlang fixed point) approximation of link blocking");
+        add("lossn.mci", "RosWan92",
+            "K. W. Ross, J. Wang, \"Monte Carlo Summation Applied to Product-Form Loss Networks\", Prob. Eng. Inf. Sci. 6, 1992",
+            "Monte Carlo summation of the loss-network normalizing constant");
+        add("mci", "RosWan92",
+            "K. W. Ross, J. Wang, \"Monte Carlo Summation Applied to Product-Form Loss Networks\", Prob. Eng. Inf. Sci. 6, 1992",
+            "Monte Carlo summation of the loss-network normalizing constant");
+        add("imci", "WangCS16",
+            "W. Wang, G. Casale, C. A. Sutton, \"A Bayesian Approach to Parameter Inference in Queueing Networks\", ACM TOMACS 27(1), 2016",
+            "improved (tilted) Monte Carlo integration sampler for the normalizing constant");
         add("clw", "ChoLW95",
             "G. L. Choudhury, K. K. Leung, W. Whitt, \"Calculating Normalization Constants of Closed Queuing Networks by Numerically Inverting Their Generating Functions\", J. ACM 42, 1995",
             "numerical inversion of the generating function");
         add("nc.clw", "ChoLW95",
             "G. L. Choudhury, K. K. Leung, W. Whitt, \"Calculating Normalization Constants of Closed Queuing Networks by Numerically Inverting Their Generating Functions\", J. ACM 42, 1995",
             "numerical inversion of the generating function");
+        // the inversion is CLW for every member of the family; these method names name the
+        // station transform that is inverted, so pass them together with "clw"
+        add("clw.lld", "BerM93",
+            "A. L. Bertozzi, J. McKenna, \"Multidimensional Residues, Generating Functions, and Their Application to Queueing Networks\", SIAM Review 35(2), 1993",
+            "per-center transform of the load-dependent station");
+        add("nc.clw.lld", "BerM93",
+            "A. L. Bertozzi, J. McKenna, \"Multidimensional Residues, Generating Functions, and Their Application to Queueing Networks\", SIAM Review 35(2), 1993",
+            "per-center transform of the load-dependent station");
+        add("clw.oi", "ChoLW95",
+            "G. L. Choudhury, K. K. Leung, W. Whitt, \"Calculating Normalization Constants of Closed Queuing Networks by Numerically Inverting Their Generating Functions\", J. ACM 42, 1995",
+            "numerical inversion of the generating function of the order-independent network");
+        add("nc.clw.oi", "ChoLW95",
+            "G. L. Choudhury, K. K. Leung, W. Whitt, \"Calculating Normalization Constants of Closed Queuing Networks by Numerically Inverting Their Generating Functions\", J. ACM 42, 1995",
+            "numerical inversion of the generating function of the order-independent network");
+        add("clw.jd", "ChoLW95",
+            "G. L. Choudhury, K. K. Leung, W. Whitt, \"Calculating Normalization Constants of Closed Queuing Networks by Numerically Inverting Their Generating Functions\", J. ACM 42, 1995",
+            "numerical inversion of the generating function of the joint-dependent network");
+        add("nc.clw.jd", "ChoLW95",
+            "G. L. Choudhury, K. K. Leung, W. Whitt, \"Calculating Normalization Constants of Closed Queuing Networks by Numerically Inverting Their Generating Functions\", J. ACM 42, 1995",
+            "numerical inversion of the generating function of the joint-dependent network");
+        add("jd", "BonP03",
+            "T. Bonald, A. Proutiere, \"Insensitive bandwidth sharing in data networks\", Queueing Systems 44(1), 2003",
+            "balance function of the joint-dependent (balanced-fair) station");
+        add("jointdependence", "BonP03",
+            "T. Bonald, A. Proutiere, \"Insensitive bandwidth sharing in data networks\", Queueing Systems 44(1), 2003",
+            "balance function of the joint-dependent (balanced-fair) station");
+        add("nc.jd", "BonP03",
+            "T. Bonald, A. Proutiere, \"Insensitive bandwidth sharing in data networks\", Queueing Systems 44(1), 2003",
+            "balance function of the joint-dependent (balanced-fair) station");
+        add("mva.jd", "BonP03",
+            "T. Bonald, A. Proutiere, \"Insensitive bandwidth sharing in data networks\", Queueing Systems 44(1), 2003",
+            "balance function of the joint-dependent (balanced-fair) station");
         add("nc.mva", "Rei81",
             "M. Reiser, \"Mean-Value Analysis and Convolution Method for Queue-Dependent Servers in Closed Queueing Networks\", Perform. Eval. 1, 1981",
             "convolution and MVA with queue-dependent servers");
         add("le", "Cas17",
             "G. Casale, \"Accelerating Performance Inference over Closed Systems by Asymptotic Methods\", ACM SIGMETRICS, 2017",
             "asymptotic expansion of the normalizing constant integral");
+        add("ble", "Cas17",
+            "G. Casale, \"Accelerating Performance Inference over Closed Systems by Asymptotic Methods\", ACM SIGMETRICS, 2017",
+            "asymptotic expansion of the normalizing constant integral, plus an empirical (1-log(2*pi)/2) correction per Laplaced direction for the eps->0 evaluation, M-1 with Z=0 and M with Z>0 (not from the paper)");
+        add("aghq", "LiuP94",
+            "Q. Liu, D. A. Pierce, \"A Note on Gauss-Hermite Quadrature\", Biometrika 81(3), 1994",
+            "adaptive Gauss-Hermite rule over the simplex factor of the normalizing-constant integral, rescaled by the logistic-expansion mode and curvature; q=1 reproduces pfqn_le");
         add("ls", "Cas17",
             "G. Casale, \"Accelerating Performance Inference over Closed Systems by Asymptotic Methods\", ACM SIGMETRICS, 2017",
             "asymptotic expansion of the normalizing constant integral");
+        add("sdr", "Krz87",
+            "A. E. Krzesinski, \"Multiclass Queueing Networks with State-Dependent Routing\", Perform. Eval. 7(2):125-143, 1987",
+            "product-form joint distribution (eq. 16) and routing probabilities (eq. 10) of a closed multiclass network whose entry center routes on branch and subnetwork populations");
+        add("sdr.mva", "Krz87",
+            "A. E. Krzesinski, \"Multiclass Queueing Networks with State-Dependent Routing\", Perform. Eval. 7(2):125-143, 1987",
+            "Section 4 mean value analysis and convolution of the state-dependent routing product form, single-centre branches");
+        add("sdr.towsley", "Tow80",
+            "D. Towsley, \"Queuing Network Models with State-Dependent Routing\", J. ACM 27(2):323-337, 1980",
+            "single-class antecedent: p-subnetworks, the affine routing functions and the Norton-type composite queue");
         add("cub", "Cas17",
             "G. Casale, \"Accelerating Performance Inference over Closed Systems by Asymptotic Methods\", ACM SIGMETRICS, 2017",
             "asymptotic expansion of the normalizing constant integral");
         add("nc.le", "Cas17",
             "G. Casale, \"Accelerating Performance Inference over Closed Systems by Asymptotic Methods\", ACM SIGMETRICS, 2017",
             "asymptotic expansion of the normalizing constant integral");
+        add("nc.ble", "Cas17",
+            "G. Casale, \"Accelerating Performance Inference over Closed Systems by Asymptotic Methods\", ACM SIGMETRICS, 2017",
+            "asymptotic expansion of the normalizing constant integral, plus an empirical (1-log(2*pi)/2) correction per Laplaced direction for the eps->0 evaluation, M-1 with Z=0 and M with Z>0 (not from the paper)");
+        add("nc.aghq", "LiuP94",
+            "Q. Liu, D. A. Pierce, \"A Note on Gauss-Hermite Quadrature\", Biometrika 81(3), 1994",
+            "adaptive Gauss-Hermite rule over the simplex factor of the normalizing-constant integral, rescaled by the logistic-expansion mode and curvature; q=1 reproduces pfqn_le");
         add("nc.ls", "Cas17",
             "G. Casale, \"Accelerating Performance Inference over Closed Systems by Asymptotic Methods\", ACM SIGMETRICS, 2017",
             "asymptotic expansion of the normalizing constant integral");
         add("nc.cub", "Cas17",
             "G. Casale, \"Accelerating Performance Inference over Closed Systems by Asymptotic Methods\", ACM SIGMETRICS, 2017",
             "asymptotic expansion of the normalizing constant integral");
+        add("divdiff", "Cas17",
+            "G. Casale, \"Accelerating Performance Inference over Closed Systems by Asymptotic Methods\", ACM SIGMETRICS, 2017",
+            "explicit O(1)-space closed forms of the multiclass normalizing constant: Eq. (15) at pairwise distinct induced demands, Eq. (16) at repeated ones");
+        add("nc.divdiff", "Cas17",
+            "G. Casale, \"Accelerating Performance Inference over Closed Systems by Asymptotic Methods\", ACM SIGMETRICS, 2017",
+            "explicit O(1)-space closed forms of the multiclass normalizing constant: Eq. (15) at pairwise distinct induced demands, Eq. (16) at repeated ones");
+        add("pfqn_divdiff_ld", "Cas17",
+                "G. Casale, \"Accelerating Performance Inference over Closed Systems by Asymptotic Methods\", ACM SIGMETRICS, 2017",
+                "divided-difference form of the multiclass normalizing constant (Cor. 3.2), generalized here to load-dependent rates alpha_i(.), which the paper left as future work");
+        add("divdiff.ld", "CasHH21",
+            "G. Casale, P. G. Harrison, O. W. Hong, \"Facilitating Load-Dependent Queueing Analysis Through Factorization\", Perform. Eval., 2021",
+            "limited load-dependent closed form of the single-class normalizing constant (Thm. 1), used as the inner kernel of the divided-difference expansion");
+        add("nc.divdiff.ld", "CasHH21",
+            "G. Casale, P. G. Harrison, O. W. Hong, \"Facilitating Load-Dependent Queueing Analysis Through Factorization\", Perform. Eval., 2021",
+            "limited load-dependent closed form of the single-class normalizing constant (Thm. 1), used as the inner kernel of the divided-difference expansion");
         add("rd", "CasHH21",
             "G. Casale, P. G. Harrison, O. W. Hong, \"Facilitating Load-Dependent Queueing Analysis Through Factorization\", Perform. Eval., 2021",
             "factorization of the load-dependent normalizing constant");
@@ -220,16 +572,54 @@ public final class LineCitations {
         add("nrl", "CasHH21",
             "G. Casale, P. G. Harrison, O. W. Hong, \"Facilitating Load-Dependent Queueing Analysis Through Factorization\", Perform. Eval., 2021",
             "factorization of the load-dependent normalizing constant");
+        // one entry per method name: REGISTRY.put overwrites, so the Daniels and
+        // Barndorff-Nielsen-Cox references ride in the covers text
+        add("nre", "CasHH21",
+            "G. Casale, P. G. Harrison, O. W. Hong, \"Facilitating Load-Dependent Queueing Analysis Through Factorization\", Perform. Eval., 2021",
+            "Norlund-Rice integral form of the load-dependent normalizing constant, evaluated by Daniels steepest descent (Ann. Math. Statist. 25(4), 1954) with the Barndorff-Nielsen-Cox second-order Edgeworth correction (J. R. Stat. Soc. B 41(3), 1979)");
         add("comomld", "CasHH21",
             "G. Casale, P. G. Harrison, O. W. Hong, \"Facilitating Load-Dependent Queueing Analysis Through Factorization\", Perform. Eval., 2021",
             "factorization of the load-dependent normalizing constant");
+        add("ncldmx", "AfBaBr84",
+            "S. C. Bruell, G. Balbo, P. V. Afshari, \"Mean value analysis of mixed, multiple class BCMP networks with load dependent service stations\", Perform. Eval. 4, 1984",
+            "exact mean value analysis of a mixed network whose queues carry limited load-dependent rates, through the effective capacity of the open classes");
         add("kt", "KneT92",
             "C. Knessl, C. Tier, \"Asymptotic Expansions for Large Closed Queueing Networks with Multiple Job Classes\", IEEE TC 41(4), 1992",
             "asymptotic expansion for large populations");
-        add("panacea", "McKM84",
-            "J. McKenna, D. Mitra, \"Asymptotic Expansions and Integral Representations of Moments of Queue Lengths in Closed Markovian Networks\", J. ACM 31, 1984",
-            "integral representation of the queue-length moments");
-        add("panaceald", "MitM86",
+        add("bkt", "KneT92",
+            "C. Knessl, C. Tier, \"Asymptotic Expansions for Large Closed Queueing Networks with Multiple Job Classes\", IEEE TC 41(4), 1992",
+            "asymptotic expansion for large populations, minus the exact Stirling remainder log(N_r!)-(N_r log N_r - N_r + log(2 pi N_r)/2) that steepest descent drops in each Laplaced class direction (BKT, not from the paper)");
+        add("lekt", "Cas17",
+            "G. Casale, \"Accelerating Performance Inference over Closed Systems by Asymptotic Methods\", ACM SIGMETRICS, 2017",
+            "the corrected logistic expansion (ble) and the corrected Knessl-Tier expansion (bkt, Knessl and Tier, IEEE TC 41(4), 1992) are one estimator, evaluated in M-1 and in R dimensions; computed on the cheaper side, with the Z=0 constant M(1-log(2*pi)/2)-r(N+M) so that the two sides agree there too (not from the papers)");
+        add("nc.lekt", "Cas17",
+            "G. Casale, \"Accelerating Performance Inference over Closed Systems by Asymptotic Methods\", ACM SIGMETRICS, 2017",
+            "the corrected logistic expansion (ble) and the corrected Knessl-Tier expansion (bkt, Knessl and Tier, IEEE TC 41(4), 1992) are one estimator, evaluated in M-1 and in R dimensions; computed on the cheaper side, with the Z=0 constant M(1-log(2*pi)/2)-r(N+M) so that the two sides agree there too (not from the papers)");
+        add("nc.bkt", "KneT92",
+            "C. Knessl, C. Tier, \"Asymptotic Expansions for Large Closed Queueing Networks with Multiple Job Classes\", IEEE TC 41(4), 1992",
+            "asymptotic expansion for large populations, minus the exact Stirling remainder log(N_r!)-(N_r log N_r - N_r + log(2 pi N_r)/2) that steepest descent drops in each Laplaced class direction (BKT, not from the paper)");
+        add("bk", "BirK92",
+            "A. Birman, Y. Kogan, \"Asymptotic Evaluation of Closed Queueing Networks with Many Stations\", Commun. Statist. Stochastic Models 8(3), 1992",
+            "saddle point expansion of the multichain partition function, with Algorithm 1 detecting the chains whose dedicated station is a bottleneck");
+        add("bkue", "BirK92",
+            "A. Birman, Y. Kogan, \"Asymptotic Evaluation of Closed Queueing Networks with Many Stations\", Commun. Statist. Stochastic Models 8(3), 1992",
+            "van der Waerden uniform expansion, which keeps the dominant pole and the saddle point in one erfc formula");
+        add("lc", "BirK92",
+            "A. Birman, Y. Kogan, \"Asymptotic Evaluation of Closed Queueing Networks with Many Stations\", Commun. Statist. Stochastic Models 8(3), 1992",
+            "Algorithm 2, the load concealment reduction of a multichain network to single chain problems");
+        add("lc.ue", "BirK92",
+            "A. Birman, Y. Kogan, \"Asymptotic Evaluation of Closed Queueing Networks with Many Stations\", Commun. Statist. Stochastic Models 8(3), 1992",
+            "Algorithm 2 with the uniform expansion as the single chain solver");
+        add("mcmc", "CheO98",
+            "W. Chen, C. A. O'Cinneide, \"Towards a Polynomial-Time Randomized Algorithm for Closed Product-Form Networks\", ACM TOMACS 8(3), 1998",
+            "regularization of a closed multiclass network into a reversible unit-rate processor-sharing network with the same steady state, simulated at service-completion epochs for the class throughput ratios G(N-e_r)/G(N) and the queue lengths");
+        add("nc.mcmc", "CheO98",
+            "W. Chen, C. A. O'Cinneide, \"Towards a Polynomial-Time Randomized Algorithm for Closed Product-Form Networks\", ACM TOMACS 8(3), 1998",
+            "regularization of a closed multiclass network into a reversible unit-rate processor-sharing network with the same steady state, simulated at service-completion epochs for the class throughput ratios G(N-e_r)/G(N) and the queue lengths");
+        add("pana", "McKM82",
+            "J. McKenna, D. Mitra, \"Integral Representations and Asymptotic Expansions for Closed Markovian Queueing Networks: Normal Usage\", Bell Syst. Tech. J. 61(5), 1982",
+            "normal-usage asymptotic expansion of the normalizing constant, the series the original PANACEA package (Ramakrishnan-Mitra, BSTJ 61(10), 1982) truncates at 1 to 3 terms");
+        add("panald", "MitM86",
             "D. Mitra, J. McKenna, \"Asymptotic Expansions for Closed Markovian Networks with State-Dependent Service Rates\", J. ACM 33(3), 1986",
             "load-dependent PANACEA expansion and its pseudonetwork coefficients");
         add("mem", "Kou94",
@@ -286,6 +676,125 @@ public final class LineCitations {
         add("pb.lower", "CasMS08",
             "G. Casale, R. R. Muntz, G. Serazzi, \"Geometric Bounds: A Noniterative Analysis Technique for Closed Queueing Networks\", IEEE TC 57(6), 2008",
             "geometric and balanced-job bounds");
+        add("auto", "CasMS08",
+            "Composite over the noniterative bound families; the applicable reference is that of the family selected at run time, most often G. Casale, R. R. Muntz, G. Serazzi, \"Geometric Bounds\", IEEE TC 57(6), 2008",
+            "automatic selection of the tightest feasible noniterative upper and lower throughput bound");
+        add("auto.upper", "CasMS08",
+            "Composite over the noniterative bound families; the applicable reference is that of the family selected at run time, most often G. Casale, R. R. Muntz, G. Serazzi, \"Geometric Bounds\", IEEE TC 57(6), 2008",
+            "automatic selection of the tightest feasible noniterative upper and lower throughput bound");
+        add("auto.lower", "CasMS08",
+            "Composite over the noniterative bound families; the applicable reference is that of the family selected at run time, most often G. Casale, R. R. Muntz, G. Serazzi, \"Geometric Bounds\", IEEE TC 57(6), 2008",
+            "automatic selection of the tightest feasible noniterative upper and lower throughput bound");
+        // Level-parameterized bound hierarchies (SolverBA pbh/pbk/bjbk/cbh/sib).
+        // Each trades work for a tighter bracket and is exact at the top of its
+        // hierarchy. PB(k) and BJB(k) are the iteration counts of CasMS08 Tables 5
+        // and 7, but both are computed by the Eager-Sevcik recursion, so citations()
+        // pairs them with "pbh".
+        add("pbh", "EagS83",
+            "D. L. Eager, K. C. Sevcik, \"Performance Bound Hierarchies for Queueing Networks\", ACM TOCS 1(2), 1983",
+            "level-parameterized bracket: the MVA recursion is unrolled for LEVEL steps from the population of interest and the truncated queue lengths are replaced by their extreme admissible values (eqs. 5-13), exact once LEVEL reaches N");
+        add("pbh.upper", "EagS83",
+            "D. L. Eager, K. C. Sevcik, \"Performance Bound Hierarchies for Queueing Networks\", ACM TOCS 1(2), 1983",
+            "level-parameterized bracket: the MVA recursion is unrolled for LEVEL steps from the population of interest and the truncated queue lengths are replaced by their extreme admissible values (eqs. 5-13), exact once LEVEL reaches N");
+        add("pbh.lower", "EagS83",
+            "D. L. Eager, K. C. Sevcik, \"Performance Bound Hierarchies for Queueing Networks\", ACM TOCS 1(2), 1983",
+            "level-parameterized bracket: the MVA recursion is unrolled for LEVEL steps from the population of interest and the truncated queue lengths are replaced by their extreme admissible values (eqs. 5-13), exact once LEVEL reaches N");
+        add("pbk", "CasMS08",
+            "G. Casale, R. R. Muntz, G. Serazzi, \"Geometric Bounds: A Noniterative Analysis Technique for Closed Queueing Networks\", IEEE TC 57(6), 2008",
+            "PB(k), the Eager-Sevcik performance bound hierarchy evaluated at iteration count k over the populations N, N-1, ..., N-k, the iterative form tabulated in Tables 5 and 7");
+        add("pbk.upper", "CasMS08",
+            "G. Casale, R. R. Muntz, G. Serazzi, \"Geometric Bounds: A Noniterative Analysis Technique for Closed Queueing Networks\", IEEE TC 57(6), 2008",
+            "PB(k), the Eager-Sevcik performance bound hierarchy evaluated at iteration count k over the populations N, N-1, ..., N-k, the iterative form tabulated in Tables 5 and 7");
+        add("pbk.lower", "CasMS08",
+            "G. Casale, R. R. Muntz, G. Serazzi, \"Geometric Bounds: A Noniterative Analysis Technique for Closed Queueing Networks\", IEEE TC 57(6), 2008",
+            "PB(k), the Eager-Sevcik performance bound hierarchy evaluated at iteration count k over the populations N, N-1, ..., N-k, the iterative form tabulated in Tables 5 and 7");
+        add("bjbk", "CasMS08",
+            "G. Casale, R. R. Muntz, G. Serazzi, \"Geometric Bounds: A Noniterative Analysis Technique for Closed Queueing Networks\", IEEE TC 57(6), 2008",
+            "BJB(k), the iterative balanced job bound of Tables 5 and 7: BJB(1) is the noniterative bound and each further iteration is one exact MVA step from the balanced seed");
+        add("bjbk.upper", "CasMS08",
+            "G. Casale, R. R. Muntz, G. Serazzi, \"Geometric Bounds: A Noniterative Analysis Technique for Closed Queueing Networks\", IEEE TC 57(6), 2008",
+            "BJB(k), the iterative balanced job bound of Tables 5 and 7: BJB(1) is the noniterative bound and each further iteration is one exact MVA step from the balanced seed");
+        add("bjbk.lower", "CasMS08",
+            "G. Casale, R. R. Muntz, G. Serazzi, \"Geometric Bounds: A Noniterative Analysis Technique for Closed Queueing Networks\", IEEE TC 57(6), 2008",
+            "BJB(k), the iterative balanced job bound of Tables 5 and 7: BJB(1) is the noniterative bound and each further iteration is one exact MVA step from the balanced seed");
+        add("cbh", "DowEGS84",
+            "L. W. Dowdy, D. L. Eager, K. D. Gordon, L. V. Saxton, \"Throughput Concavity and Response Time Convexity\", Information Processing Letters 19(4), 1984",
+            "convolutional bound hierarchy: column M-LEVEL of Buzen's g-array is filled with balanced-job-bound estimates and the remaining stations are convolved exactly, exact once LEVEL reaches M");
+        add("cbh.upper", "DowEGS84",
+            "L. W. Dowdy, D. L. Eager, K. D. Gordon, L. V. Saxton, \"Throughput Concavity and Response Time Convexity\", Information Processing Letters 19(4), 1984",
+            "convolutional bound hierarchy: column M-LEVEL of Buzen's g-array is filled with balanced-job-bound estimates and the remaining stations are convolved exactly, exact once LEVEL reaches M");
+        add("cbh.lower", "DowEGS84",
+            "L. W. Dowdy, D. L. Eager, K. D. Gordon, L. V. Saxton, \"Throughput Concavity and Response Time Convexity\", Information Processing Letters 19(4), 1984",
+            "convolutional bound hierarchy: column M-LEVEL of Buzen's g-array is filled with balanced-job-bound estimates and the remaining stations are convolved exactly, exact once LEVEL reaches M");
+        add("sib", "Sri85",
+            "V. Srinivasan, \"Successively Improving Bounds on Performance Measures for Single Class Product Form Queueing Networks\", IEEE Trans. Computers C-34(11), 1985",
+            "successively improving closed-form hierarchy on the cycle time W(N) and the throughput X(N), built from the power sums S_i of the relative utilizations (Thm 2.1 at level 1, Thms 3.5 and 3.6 above it); never looser than the balanced job bounds");
+        add("sib.upper", "Sri85",
+            "V. Srinivasan, \"Successively Improving Bounds on Performance Measures for Single Class Product Form Queueing Networks\", IEEE Trans. Computers C-34(11), 1985",
+            "successively improving closed-form hierarchy on the cycle time W(N) and the throughput X(N), built from the power sums S_i of the relative utilizations (Thm 2.1 at level 1, Thms 3.5 and 3.6 above it); never looser than the balanced job bounds");
+        add("sib.lower", "Sri85",
+            "V. Srinivasan, \"Successively Improving Bounds on Performance Measures for Single Class Product Form Queueing Networks\", IEEE Trans. Computers C-34(11), 1985",
+            "successively improving closed-form hierarchy on the cycle time W(N) and the throughput X(N), built from the power sums S_i of the relative utilizations (Thm 2.1 at level 1, Thms 3.5 and 3.6 above it); never looser than the balanced job bounds");
+        add("rgf", "HarL04",
+            "P. G. Harrison, T. T. Lee, \"A New Recursive Algorithm for Computing Generating Functions in Closed Multi-Class Queueing Networks\", IEEE MASCOTS, 2004",
+            "residue elimination of one class at a time (Harrison-Coury 2002, Thm 1) down to the grouped single-class convolution of Coury-Harrison 1997 Property 1, with think times carried by the Bertozzi-McKenna 1993 truncation that neither RGF paper has");
+        add("ger", "Ger95",
+            "A. I. Gerasimov, \"On Normalizing Constants in Multiclass Queueing Networks\", Oper. Res. 43(4), 1995",
+            "exact normalizing constant of a closed multiclass product-form network in closed form, by iterated residues of its rational generating function, one class per elimination");
+        add("dnc", "DowGor84",
+            "L. W. Dowdy, K. D. Gordon, \"Algorithms for Nonintegral Degrees of Multiprogramming in Closed Queuing Networks\", Perform. Eval. 4(1), 1984",
+            "normalizing constant and throughput at a real-valued population, by partial-fraction inversion of the network generating function");
+        add("mvainterval", "LutHar98",
+            "J. Luthi, G. Haring, \"Mean value analysis for queueing network models with intervals as input parameters\", Perform. Eval. 32(3), 1998",
+            "exact hull of single-class MVA over interval-valued demands, think time and population, by endpoint evaluation at the corners the monotonicity theorems select");
+        add("nintmva", "DowGor84",
+            "L. W. Dowdy, K. D. Gordon, \"Algorithms for Nonintegral Degrees of Multiprogramming in Closed Queuing Networks\", Perform. Eval. 4(1), 1984",
+            "exact MVA recursion started from the fractional base N - floor(N), giving mean measures at a nonintegral degree of multiprogramming");
+        add("momlin", "AkyS91",
+            "I. F. Akyildiz, J. C. Strelen, \"Moment Analysis for Load-Dependent Mixed Product Form Queueing Networks\", IEEE Trans. Commun. 39(6), 1991",
+            "covariance identity Cov[n(i,r),n(j,s)] = D(j,s) dQ(i,r)/dD(j,s), evaluated with the demand derivatives of the linearized Schweitzer-Bard fixed point instead of the exact recursion");
+        add("sens", "SouM88",
+            "E. de Souza e Silva, R. R. Muntz, \"Simple Relationships Among Moments of Queue Lengths in Product Form Queueing Networks\", IEEE Trans. Comput. 37(9), 1988",
+            "exact queue-length moments obtained by differentiating the MVA recursion");
+        add("tay", "TaySur85",
+            "Y. C. Tay, R. Suri, \"Error bounds for performance prediction in queuing networks\", ACM TOCS 3(4), 1985; P. J. Schweitzer, G. Serazzi, M. Broglia, \"A survey of bottleneck analysis in closed queueing networks\", Sec. 4.8.2",
+            "arrival-instant approximate MVA whose auxiliary queue lengths come from the throughput elasticities, solved as R linear equations per station-class pair");
+        add("amva.tay", "TaySur85",
+            "Y. C. Tay, R. Suri, \"Error bounds for performance prediction in queuing networks\", ACM TOCS 3(4), 1985; P. J. Schweitzer, G. Serazzi, M. Broglia, \"A survey of bottleneck analysis in closed queueing networks\", Sec. 4.8.2",
+            "arrival-instant approximate MVA whose auxiliary queue lengths come from the throughput elasticities, solved as R linear equations per station-class pair");
+        add("scat", "NeuC81",
+            "D. Neuse, K. M. Chandy, \"SCAT: A Heuristic Algorithm for Queueing Network Models of Computing Systems\", ACM SIGMETRICS Perform. Eval. Rev. 10(3), 1981",
+            "Linearizer correction of the arrival-instant queue lengths refreshed once instead of three times");
+        add("amva.scat", "NeuC81",
+            "D. Neuse, K. M. Chandy, \"SCAT: A Heuristic Algorithm for Queueing Network Models of Computing Systems\", ACM SIGMETRICS Perform. Eval. Rev. 10(3), 1981",
+            "Linearizer correction of the arrival-instant queue lengths refreshed once instead of three times");
+        add("hst", "Suri83",
+            "R. Suri, \"Robustness of Queuing Network Formulas\", JACM 30(3), 1983",
+            "first-order sensitivity of throughput to homogeneous-service-time violations (eq. 3.11) and the operationally constrained worst case (P1)");
+        add("amci", "RosWan92",
+            "K. W. Ross, J. Wang, \"Monte Carlo Summation Applied to Product-Form Loss Networks\", Prob. Eng. Inf. Sci. 6(3), 1992",
+            "antithetic-variate sampling of the importance-sampled Monte Carlo normalizing-constant estimator");
+        add("lhsmci", "RosWan92",
+            "K. W. Ross, J. Wang, \"Monte Carlo Summation Applied to Product-Form Loss Networks\", Prob. Eng. Inf. Sci. 6(3), 1992",
+            "Latin-hypercube stratified sampling of the importance-sampled Monte Carlo normalizing-constant estimator");
+        add("ssd", "DalS86",
+            "Y. Dallery, R. Suri, \"Approximate Disaggregation and Performance Bounds for Queueing Networks with Multiple-Server Stations\", ACM SIGMETRICS, 1986",
+            "multiserver server-station disaggregation throughput bounds, with the Lazowska et al. 1984 Table 5.2 think-time correction");
+        add("ssd.upper", "DalS86",
+            "Y. Dallery, R. Suri, \"Approximate Disaggregation and Performance Bounds for Queueing Networks with Multiple-Server Stations\", ACM SIGMETRICS, 1986",
+            "multiserver server-station disaggregation throughput bounds, with the Lazowska et al. 1984 Table 5.2 think-time correction");
+        add("ssd.lower", "DalS86",
+            "Y. Dallery, R. Suri, \"Approximate Disaggregation and Performance Bounds for Queueing Networks with Multiple-Server Stations\", ACM SIGMETRICS, 1986",
+            "multiserver server-station disaggregation throughput bounds, with the Lazowska et al. 1984 Table 5.2 think-time correction");
+        // The load-dependent companion of ssd: the same multiserver/load-dependent
+        // territory, bounded through the closed-open equivalence rather than by
+        // disaggregating the servers. Lower side only, hence no "ldbcmp.upper".
+        add("ldbcmp", "AnsC08",
+            "J. Anselmi, P. Cremonesi, \"On the Property of Product-Form Queueing Networks with Load-Dependent Stations\", Perform. Eval. 65(11-12), 2008",
+            "lower throughput bound (upper response time) of a closed single-class BCMP network from the asymptotic closed-open equivalence (eq. 15), refined to a monotone fixed point by Algorithm 1; applicable at N >= Qhat");
+        add("ldbcmp.lower", "AnsC08",
+            "J. Anselmi, P. Cremonesi, \"On the Property of Product-Form Queueing Networks with Load-Dependent Stations\", Perform. Eval. 65(11-12), 2008",
+            "lower throughput bound (upper response time) of a closed single-class BCMP network from the asymptotic closed-open equivalence (eq. 15), refined to a monotone fixed point by Algorithm 1; applicable at N >= Qhat");
         add("sb", "Harel1999",
             "A. Harel, S. Namn, J. Sturm, \"Simple bounds for closed queueing networks\", Queueing Systems 31, 1999",
             "simple closed-network bounds");
@@ -295,6 +804,42 @@ public final class LineCitations {
         add("sb.lower", "Harel1999",
             "A. Harel, S. Namn, J. Sturm, \"Simple bounds for closed queueing networks\", Queueing Systems 31, 1999",
             "simple closed-network bounds");
+        add("harel", "Harel1999",
+            "A. Harel, S. Namn, J. Sturm, \"Simple bounds for closed queueing networks\", Queueing Systems 31, 1999",
+            "sharp throughput bounds extrapolated from the exact normalizing constant at small populations (distinct from the power-sum 'sb' family of the same paper)");
+        add("harel.upper", "Harel1999",
+            "A. Harel, S. Namn, J. Sturm, \"Simple bounds for closed queueing networks\", Queueing Systems 31, 1999",
+            "upper throughput bound UB(n) extrapolated from the exact throughput at population n <= 7");
+        add("harel.lower", "Harel1999",
+            "A. Harel, S. Namn, J. Sturm, \"Simple bounds for closed queueing networks\", Queueing Systems 31, 1999",
+            "lower throughput bound from the first and N-th power sums of the relative utilizations");
+        add("bgt", "BerGT01",
+            "D. Bertsimas, D. Gamarnik, J. N. Tsitsiklis, \"Performance of Multiclass Markovian Queueing Networks Via Piecewise Linear Lyapunov Functions\", Ann. Appl. Prob. 11(4), 2001",
+            "piecewise-linear Lyapunov function whose Down-Meyn linear program certifies global stability and bounds the mean queue lengths under any work-conserving policy");
+        add("bgt.upper", "BerGT01",
+            "D. Bertsimas, D. Gamarnik, J. N. Tsitsiklis, \"Performance of Multiclass Markovian Queueing Networks Via Piecewise Linear Lyapunov Functions\", Ann. Appl. Prob. 11(4), 2001",
+            "piecewise-linear Lyapunov function whose Down-Meyn linear program certifies global stability and bounds the mean queue lengths under any work-conserving policy");
+        add("bpt", "BerPT94",
+            "D. Bertsimas, I. Paschalidis, J. Tsitsiklis, \"Optimization of Multiclass Queueing Networks: Polyhedral and Nonlinear Characterizations of Achievable Performance\", Ann. Appl. Prob. 4(1), 1994",
+            "first-order linear-programming relaxation of the achievable region: quadratic test functions bound the mean sojourn times attainable by any non-idling policy");
+        add("bpt.lower", "BerPT94",
+            "D. Bertsimas, I. Paschalidis, J. Tsitsiklis, \"Optimization of Multiclass Queueing Networks: Polyhedral and Nonlinear Characterizations of Achievable Performance\", Ann. Appl. Prob. 4(1), 1994",
+            "first-order linear-programming relaxation of the achievable region: quadratic test functions bound the mean sojourn times attainable by any non-idling policy");
+        add("snc", "FidR15",
+            "M. Fidler, A. Rizk, \"A Guide to the Stochastic Network Calculus\", IEEE Commun. Surveys and Tutorials 17(1), 2015",
+            "MGF (sigma,rho) arrival and service envelopes, blind-multiplexing leftover and min-plus concatenation, giving delay and backlog tail bounds valid under any work-conserving policy");
+        add("snc.upper", "FidR15",
+            "M. Fidler, A. Rizk, \"A Guide to the Stochastic Network Calculus\", IEEE Commun. Surveys and Tutorials 17(1), 2015",
+            "MGF (sigma,rho) arrival and service envelopes propagated hop by hop over a feed-forward open network; the mean columns integrate the delay tail bound, the quantiles read it directly");
+        add("scb", "DowCKT92",
+            "L. W. Dowdy, B. M. Carlson, A. T. Krantz, S. K. Tripathi, \"Single-Class Bounds of Multi-Class Queuing Networks\", J. ACM 39(1), 1992",
+            "bracket on the multiclass system a single-class model aggregates: the exact single-class solution as a lower bound (Thm 2, Cor 2) and the demand-free (min(N,K)-1)/(N+min(N,K)-1) aggregation gap as an upper bound (Thm 3)");
+        add("scb.upper", "DowCKT92",
+            "L. W. Dowdy, B. M. Carlson, A. T. Krantz, S. K. Tripathi, \"Single-Class Bounds of Multi-Class Queuing Networks\", J. ACM 39(1), 1992",
+            "demand-free upper bound on multiclass throughput, X_1*(N+m-1)/N with m=min(N,K) (Thm 3, Expression 3), capped by the single-server limit U_k <= 1");
+        add("scb.lower", "DowCKT92",
+            "L. W. Dowdy, B. M. Carlson, A. T. Krantz, S. K. Tripathi, \"Single-Class Bounds of Multi-Class Queuing Networks\", J. ACM 39(1), 1992",
+            "exact single-class throughput as a lower bound on the multiclass throughput, and exact single-class utilizations as lower bounds on the multiclass ones (Thm 2, Cor 2)");
         add("mwba", "MajW98",
             "S. Majumdar, C. M. Woodside, \"Robust bounds and throughput guarantees for closed multiclass queueing networks\", Perform. Eval. 32, 1998",
             "robust throughput bounds");
@@ -304,27 +849,80 @@ public final class LineCitations {
         add("mwba.lower", "MajW98",
             "S. Majumdar, C. M. Woodside, \"Robust bounds and throughput guarantees for closed multiclass queueing networks\", Perform. Eval. 32, 1998",
             "robust throughput bounds");
+        // Kerola's composite bound method: the upper side is the composite bound and
+        // the lower side the multiclass balanced job bound that seeds it, so the two
+        // are separate names rather than the sides of one family. "cub.upper" must be
+        // registered in full: the bare token "cub" is the unrelated NC cubature
+        // method, and the family fallback strips the leading "ba." only.
+        add("cub.upper", "Kerola86",
+            "T. Kerola, \"The Composite Bound Method for Computing Throughput Bounds in Multiple Class Environments\", Perform. Eval. 6(1), 1986",
+            "composite upper bound on per-class throughput, X_r <= min_k [1 - sum_{s~=r} X_s^- L_ks] / L_kr, from the residual utilization the other classes leave at each device (eqs. 13-16)");
+        add("mbjb", "Kerola86",
+            "T. Kerola, \"The Composite Bound Method for Computing Throughput Bounds in Multiple Class Environments\", Perform. Eval. 6(1), 1986",
+            "multiclass balanced job bounds lower throughput bound (eq. 10), the per-class seed X_s^- the composite upper bound is built on");
+        add("mbjb.lower", "Kerola86",
+            "T. Kerola, \"The Composite Bound Method for Computing Throughput Bounds in Multiple Class Environments\", Perform. Eval. 6(1), 1986",
+            "multiclass balanced job bounds lower throughput bound (eq. 10), the per-class seed X_s^- the composite upper bound is built on");
         add("balanced", "LazZGS84",
             "E. D. Lazowska, J. Zahorjan, G. S. Graham, K. C. Sevcik, \"Quantitative System Performance\", Prentice-Hall, 1984",
             "operational analysis and balanced-system bounds");
         add("mna", "ZhuC24",
             "Z. Li, G. Casale, \"Matrix Network Analyzer: A New Decomposition Algorithm for Phase-type Queueing Networks\", ICPE Companion, 2024",
-            "phase-type network decomposition");
+            "phase-type network decomposition, including the deterministic (round-robin) traffic split");
         add("inap", "CasH13",
             "G. Casale, P. G. Harrison, \"AutoCAT: Automated Product-Form Solution of Stochastic Models\", MAM in Stochastic Models 27, 2013",
-            "RCAT product-form solution of the cooperating processes");
+            "RCAT product-form solution of the cooperating processes, with the reversed rate of each action estimated by the mean of its state-wise ratios");
         add("inapplus", "CasH13",
             "G. Casale, P. G. Harrison, \"AutoCAT: Automated Product-Form Solution of Stochastic Models\", MAM in Stochastic Models 27, 2013",
-            "RCAT product-form solution of the cooperating processes");
+            "RCAT product-form solution of the cooperating processes, with the reversed rate of each action estimated by rate conservation");
         add("inapinf", "MarinRB12",
             "A. Marin, S. Rota Bulo, S. Balsamo, \"A numerical algorithm for the decomposition of cooperating structured Markov processes\", IEEE MASCOTS, 2012",
             "matrix-geometric decomposition on the infinite state space");
+        add("rcat.qbd", "Neu81",
+            "M. F. Neuts, \"Matrix-Geometric Solutions in Stochastic Models: An Algorithmic Approach\", Johns Hopkins University Press, 1981",
+            "quasi-birth-death form of each isolated RCAT component -- level = queue length, phase = (arrival phase, service phase) -- and the rate matrix R of its geometric tail");
+        add("ldqbd", "PhungDuc10",
+            "T. Phung-Duc, H. Masuyama, S. Kasahara, Y. Takahashi, \"A Simple Algorithm for the Rate Matrices of Level-Dependent QBD Processes\", QTNA, 2010",
+            "rate matrices and stationary vector of the level-dependent quasi-birth-death process");
+        add("ldqbd_mphc", "AsmM01",
+            "S. Asmussen, J. R. Moller, \"Calculation of the steady state waiting time distribution in GI/PH/c and MAP/PH/c queues\", Queueing Systems 37(1), 2001",
+            "exact multiserver phase-type chain inside the level-dependent QBD: the level carries the MULTISET of the phases the min(n,c) busy servers sit in, of order nchoosek(min(n,c)+p-1,p-1) rather than p^min(n,c)");
+        add("mam.setupdelayoff", "gand.harc.adan10",
+            "A. Gandhi, M. Harchol-Balter, I. Adan, \"Server farms with setup costs\", Performance Evaluation 67(11), 2010",
+            "open setup/delay-off server as a QBD: the server runs a delay-off timer when it empties and pays a setup only if an arrival finds it already shut down");
+        add("mam.setupdelayoff.closed", "Bis01",
+            "W. Bischof, \"Analysis of M/G/1-queues with setup times and vacations under six different service disciplines\", Queueing Systems 39(4), 2001",
+            "closed setup/delay-off server: the setup-with-close-down discipline in which an arrival during the close-down resumes the server without setup, solved on the FINITE level-dependent chain lambda(n) = (N-n)/Z rather than by a per-instance cold-start race");
+        add("bgchain", "ChaHW75",
+            "K. M. Chandy, U. Herzog, L. Woo, \"Parametric Analysis of Queuing Networks\", IBM J. Res. Dev. 19(1), 1975",
+            "flow-equivalent aggregation of the untagged closed classes into the second class of the background modulating chain");
         add("qbd", "Hor17",
             "G. Horvath, M. Telek, \"BuTools 2: A Rich Toolbox for Markovian Performance Evaluation\", VALUETOOLS, 2017",
             "quasi-birth-death and matrix-analytic routines");
         add("mam.qbd", "Hor17",
             "G. Horvath, M. Telek, \"BuTools 2: A Rich Toolbox for Markovian Performance Evaluation\", VALUETOOLS, 2017",
             "quasi-birth-death and matrix-analytic routines");
+        add("dt.qmam", "PerVV08",
+            "J. F. Perez, J. Van Velthoven, B. Van Houdt, \"Q-MAM: A Tool for Solving Infinite Queues using Matrix-Analytic Methods\", VALUETOOLS, 2008",
+            "exact discrete-time single-station queue length under the late arrival system with delayed access (Q_DT_MAP_MAP_1, Q_DT_PH_PH_1)");
+        add("mapmc", "PerVV08",
+            "J. F. Perez, J. Van Velthoven, B. Van Houdt, \"Q-MAM: A Tool for Solving Infinite Queues using Matrix-Analytic Methods\", VALUETOOLS, 2008",
+            "exact MAP/M/c queue length and phase-type waiting time, level dependent below level c and matrix geometric above it (Q_CT_MAP_M_C)");
+        add("mapmc.boundary", "GavJL84",
+            "D. P. Gaver, P. A. Jacobs, G. Latouche, \"Finite birth-and-death models in randomly changing environments\", Adv. Appl. Probab. 16, 1984",
+            "backward recursion for the boundary levels 0..c-1 of the level-dependent multiserver QBD");
+        add("mapphc", "AsmM01",
+            "S. Asmussen, J. R. Moller, \"Calculation of the steady state waiting time distribution in GI/PH/c and MAP/PH/c queues\", Queueing Systems 37(1), 2001",
+            "exact MAP/PH/c FCFS queue on the MULTISET configuration space of the busy servers, whose order is binomial(ms+c-1,c) rather than ms^c, and the phase-type waiting time it carries");
+        add("mmapgk1", "He01",
+            "Q.-M. He, \"The versatility of MMAP[K] and the MMAP[K]/G[K]/1 queue\", Queueing Systems 38(4), 2001",
+            "per-type actual waiting times of the marked queue with class-dependent GENERAL service: Thm 4.1 workload transform, eq (4.4)-(4.5) and Thm 4.2 for the idle vector, Thm 5.1 for the per-type bias; single customer per arrival, his Special case 3.3");
+        add("dt.dec", "Dad01",
+            "H. Daduna, \"Queueing Networks with Discrete Time Scale\", LNCS 2046, Springer, 2001",
+            "slotted time scale, the LA/DA event ordering within a slot and the geometric-server product form the decomposition reproduces on tandem networks");
+        add("dt.dec.mg1", "BinMS06",
+            "D. A. Bini, B. Meini, S. Steffe, B. Van Houdt, \"Structured Markov chains solver: software tools\", SMCtools, 2006",
+            "M/G/1-type solution of each slotted station under batch arrivals, via the Ramaswami recursion");
         add("mg1.fb", "WieH03",
             "A. Wierman, M. Harchol-Balter, \"Classifying scheduling policies with respect to unfairness in an M/GI/1\", ACM SIGMETRICS, 2003",
             "size-based M/G/1 scheduling response times");
@@ -349,6 +947,15 @@ public final class LineCitations {
         add("srpt", "WieH03",
             "A. Wierman, M. Harchol-Balter, \"Classifying scheduling policies with respect to unfairness in an M/GI/1\", ACM SIGMETRICS, 2003",
             "size-based M/G/1 scheduling response times");
+        add("sjn.mva", "Kant92",
+            "K. Kant, \"MVA approximations for SJN scheduling\", Perform. Eval. 15(1), 1992",
+            "conditional waiting time equation of the shortest-job-next station, stepped over the population lattice");
+        add("sjn.amva", "Kant92",
+            "K. Kant, \"MVA approximations for SJN scheduling\", Perform. Eval. 15(1), 1992; P. J. Schweitzer, \"Approximate Analysis of Multiclass Closed Networks of Queues\", Int. Conf. Stoch. Control Optim., 1979",
+            "shortest-job-next conditional waiting time closed by a Schweitzer fixed point on the size-resolved queue length");
+        add("sjf", "Kant92",
+            "K. Kant, \"MVA approximations for SJN scheduling\", Perform. Eval. 15(1), 1992",
+            "conditional waiting time equation of the shortest-job-next station");
         add("mg1.setf", "NuyW08",
             "M. Nuyens, A. Wierman, \"The Foreground-Background queue: A survey\", Perform. Eval. 65, 2008",
             "foreground-background M/G/1 response times");
@@ -358,18 +965,73 @@ public final class LineCitations {
         add("mapm1ps", "MasuyamaTakine2003",
             "H. Masuyama, T. Takine, \"Sojourn time distribution in a MAP/M/1 processor-sharing queue\", Oper. Res. Lett. 31, 2003",
             "MAP/M/1-PS sojourn time distribution");
-        add("mmt", "dobre24",
+        add("mapg1k", "NiuC93",
+            "Z. Niu, R. B. Cooper, \"Transform-Free Analysis of M/G/1/K and Related Queues\", Math. Oper. Res. 18(3), 1993",
+            "the departure-epoch embedded chain and its Markov renewal reward, which give the MAP/G/1/K loss and level law without a transform");
+        add("mmapg1k", "Chy26",
+            "A. Chydzinski, \"Per-Flow Throughput of a FIFO Buffer\", Applied System Innovation 9(5), 2026",
+            "per-class throughput and loss ratio of a finite FIFO buffer, told apart by the arrival process rather than by rate alone");
+        add("mapg1k.perflow", "Chy26",
+            "A. Chydzinski, \"Per-Flow Throughput of a FIFO Buffer\", Applied System Innovation 9(5), 2026, Theorem 1",
+            "per-flow analysis by keeping one flow exact and replacing the rest by a Poisson stream of the same rate");
+        add("mmt", "DobNC24",
             "R.-A. Dobre, Z. Niu, G. Casale, \"Approximating Fork-Join Systems via Mixed Model Transformations\", ICPE Companion, 2024",
             "mixed model transformation of the fork-join network");
-        add("fjt", "dobre24",
+        add("fjt", "DobNC24",
             "R.-A. Dobre, Z. Niu, G. Casale, \"Approximating Fork-Join Systems via Mixed Model Transformations\", ICPE Companion, 2024",
             "mixed model transformation of the fork-join network");
-        add("ht", "heidelberger1982queueing",
+        add("ht", "HeiT82",
             "P. Heidelberger, K. Trivedi, \"Queueing network models for parallel processing with asynchronous tasks\", IEEE TC C-31(11), 1982",
             "fork-join transformation with auxiliary asynchronous tasks");
-        add("heidelberger-trivedi", "heidelberger1982queueing",
+        add("heidelberger-trivedi", "HeiT82",
             "P. Heidelberger, K. Trivedi, \"Queueing network models for parallel processing with asynchronous tasks\", IEEE TC C-31(11), 1982",
             "fork-join transformation with auxiliary asynchronous tasks");
+        // Fork-join formulas collected by the Thomasian survey (ACM CSUR 47(2), 2014)
+        add("fjgb", "CasMS08",
+                "G. Casale, R. R. Muntz, G. Serazzi, \"Geometric Bounds: A Noniterative Analysis Technique for Closed Queueing Networks\", IEEE Trans. Computers 57(6), 2008",
+                "geometric bound on the queue length of a fork-join subnetwork");
+        add("fjamva", "Varki01",
+                "E. Varki, \"Response Time Analysis of Parallel Computer and Storage Systems\", IEEE Trans. Parallel Distrib. Syst. 12(11), 2001",
+                "harmonic-inflated mean value analysis of a closed fork-join network");
+        add("varki", "Varki01",
+                "E. Varki, \"Response Time Analysis of Parallel Computer and Storage Systems\", IEEE Trans. Parallel Distrib. Syst. 12(11), 2001",
+                "bound on the residence time of a closed parallel subsystem");
+        add("harrison-zertal", "HarZ07",
+                "P. G. Harrison, S. Zertal, \"Queueing Models of RAID Systems with Maxima of Waiting Times\", Perform. Eval. 64(7-8), 2007",
+                "transform and moment recurrences for the maximum of heterogeneous branch times");
+        add("gravey", "Gravey85",
+                "A. Gravey, \"A Simple Construction of an Upper Bound for the Mean of the Maximum of N Identically Distributed Random Variables\", J. Applied Probability 22(4), 1985",
+                "characteristic maximum as an upper bound on the expected maximum");
+        add("blom", "Blom58",
+                "G. Blom, \"Statistical Estimates and Transformed Beta Variables\", Wiley, 1958",
+                "bias-corrected plotting position of the characteristic maximum");
+        add("marie-cox", "Marie78",
+                "R. Marie, \"Methodes iteratives de resolution de modeles mathematiques de systemes informatiques\", RAIRO Informatique 12(2), 1978",
+                "balanced-stage two-phase Coxian fit of a mean and a squared coefficient of variation");
+        add("dispersion", "TsimK13",
+                "I. Tsimashenka, W. J. Knottenbelt, \"Reduction of Subtask Dispersion in Fork-Join Systems\", EPEW, 2013",
+                "mean subtask dispersion and the deterministic delays that minimise it");
+        add("nosplit", "NelsonTT88",
+                "R. Nelson, D. Towsley, A. N. Tantawi, \"Performance Analysis of Parallel Processing Systems\", IEEE Trans. Software Eng. 14(4), 1988",
+                "splitting and no-splitting policies for parallel task assignment");
+        add("green-ism", "Green80",
+                "L. Green, \"A Queueing System in Which Customers Require a Random Number of Servers\", Operations Research 28(6), 1980",
+                "cycle decomposition of the independent server model");
+        add("tsm", "OmahenS72",
+                "A. Thomasian, \"A Performance Study of Dynamic Load Balancing in Distributed Systems\", 1978; K. Omahen, L. Schrage, \"A Queueing Analysis of a Multiprocessor System with Shared Memory\", 1972",
+                "attainable capacity of the team service model");
+        add("serialization", "Thomasian83",
+                "A. Thomasian, \"Queueing Network Models to Estimate Serialization Delays in Computer Systems\", Performance, 1983",
+                "blocking probability and pseudoserver delay of a serialization phase");
+        add("dag-makespan", "ThomasianB86",
+                "A. Thomasian, P. F. Bay, \"Analytic Queueing Network Models for Parallel Processing of Task Systems\", IEEE Trans. Computers C-35(12), 1986",
+                "makespan of a task system whose completion rates depend on the concurrency");
+        add("thomasian-fj", "Thomasian14",
+                "A. Thomasian, \"Analysis of Fork/Join and Related Queueing Systems\", ACM Comput. Surv. 47(2), Article 17, 2014",
+                "survey collecting the fork-join response time, order statistic and parallel processing formulas");
+        add("quorum", "Thomasian14",
+            "A. Thomasian, \"Analysis of Fork/Join and Related Queueing Systems\", ACM Comput. Surv. 47(2), 2014",
+            "k-of-n join fired by the k-th order statistic of the branch completion times");
         add("forktail", "NguALCJ18",
             "M. Nguyen, S. Alesawi, N. Li, H. Che, H. Jiang, \"ForkTail: A Black-Box Fork-Join Tail Latency Prediction Model\", ACM HPDC, 2018",
             "response time tail of the fork-join request from the branch moments");
@@ -388,24 +1050,126 @@ public final class LineCitations {
         add("uniformization", "BolGMT06",
             "G. Bolch, S. Greiner, H. de Meer, K. S. Trivedi, \"Queueing Networks and Markov Chains\", Wiley, 2006",
             "CTMC formulation, uniformization and its stationary solution");
-        add("courtois", "courtois1977decomposability",
+        add("foxglynn", "FoxG88",
+            "B. L. Fox, P. W. Glynn, \"Computing Poisson Probabilities\", Communications of the ACM 31(4), 1988",
+            "the truncation window and the Poisson weights of the uniformized mixture");
+        add("foxglynn.jansen", "Jan11",
+            "D. N. Jansen, \"Understanding Fox and Glynn's Computing Poisson probabilities\", CTIT Technical Report 11-16, University of Twente, 2011",
+            "the correction factor that repairs the Fox-Glynn right tail estimate at moderate lambda");
+        add("daniels2", "Jen91",
+            "J. L. Jensen, \"Saddlepoint Expansions for Sums of Markov Dependent Variables on a Continuous State Space\", Probab. Th. Rel. Fields 89, 1991",
+            "the Perron-projection amplitude gamma_0 and the second-order bracket of Eq. (4.4), i.e. the daniels2 correction: the eigenvector projection the large-deviation limit discards");
+        add("jensen", "Jen91",
+            "J. L. Jensen, \"Saddlepoint Expansions for Sums of Markov Dependent Variables on a Continuous State Space\", Probab. Th. Rel. Fields 89, 1991",
+            "the Perron-projection amplitude gamma_0 and the second-order bracket of Eq. (4.4), i.e. the daniels2 correction: the eigenvector projection the large-deviation limit discards");
+        add("saddlepoint", "Dan54",
+            "H. E. Daniels, \"Saddlepoint Approximations in Statistics\", Ann. Math. Statist. 25(4), 1954",
+            "steepest-descent inversion of the counting generating function exp(t*(D0+z*D1)) at the saddle of its cumulant generating function, with the O(1/t) correction term");
+        add("ctmc.saddlepoint", "Dan54",
+            "H. E. Daniels, \"Saddlepoint Approximations in Statistics\", Ann. Math. Statist. 25(4), 1954",
+            "steepest-descent inversion of the counting generating function exp(t*(D0+z*D1)) at the saddle of its cumulant generating function, with the O(1/t) correction term");
+        add("daniels", "Dan54",
+            "H. E. Daniels, \"Saddlepoint Approximations in Statistics\", Ann. Math. Statist. 25(4), 1954",
+            "steepest-descent inversion of the counting generating function exp(t*(D0+z*D1)) at the saddle of its cumulant generating function, with the O(1/t) correction term");
+        add("au", "MooS94",
+            "A. P. A. van Moorsel, W. H. Sanders, \"Adaptive uniformization\", Communications in Statistics - Stochastic Models 10(3), 1994",
+            "the per-step uniformization rate taken from the occupied support, and the birth process that subordinates it");
+        add("fau", "MatWDH10",
+            "A. Mateescu, V. Wolf, F. Didier, T. A. Henzinger, \"Fast adaptive uniformisation of the chemical master equation\", IET Systems Biology 4(6), 2010",
+            "the dropping of states below an occupancy threshold, so the support tracks the probability mass rather than the reachable set");
+        add("gmres", "SaaS86",
+            "Y. Saad, M. H. Schultz, \"GMRES: A Generalized Minimal Residual Algorithm for Solving Nonsymmetric Linear Systems\", SIAM J. Sci. Stat. Comput. 7(3), 1986",
+            "restarted Krylov solution of the stationary balance equations, ILUT-preconditioned");
+        add("ilut", "Saa94",
+            "Y. Saad, \"ILUT: A dual threshold incomplete LU factorization\", Numerical Linear Algebra with Applications 1(4), 1994",
+            "the threshold incomplete LU preconditioner of the Krylov path");
+        add("bicgstab", "Vor92",
+            "H. A. van der Vorst, \"Bi-CGSTAB: A Fast and Smoothly Converging Variant of Bi-CG for the Solution of Nonsymmetric Linear Systems\", SIAM J. Sci. Stat. Comput. 13(2), 1992",
+            "short-recurrence Krylov solution of the stationary balance equations, tried when restarted GMRES stagnates");
+        add("courtois", "Cou77",
             "P. J. Courtois, \"Decomposability: Queueing and Computer System Applications\", Academic Press, 1977",
             "nearly-completely-decomposable aggregation of the chain");
-        add("kms", "koury1984iterative",
+        add("kms", "KouMS84",
             "J. R. Koury, D. F. McAllister, W. J. Stewart, \"Iterative methods for computing stationary distributions of nearly completely decomposable Markov chains\", SIAM J. Alg. Disc. Meth. 5, 1984",
             "iterative aggregation-disaggregation of the chain");
-        add("takahashi", "takahashi1975iterative",
+        add("takahashi", "Tak75",
             "Y. Takahashi, \"A lumping method for numerical calculations of stationary distributions of Markov chains\", 1975",
             "lumping-based iterative solution of the chain");
+        add("cftp", "KijM05",
+            "S. Kijima, T. Matsui, \"Approximate/Perfect Samplers for Closed Jackson Networks\", Proc. Winter Simulation Conference, 2005",
+            "monotone coupling-from-the-past perfect sampler of the closed product-form stationary distribution");
+        add("ctmc.cftp", "KijM05",
+            "S. Kijima, T. Matsui, \"Approximate/Perfect Samplers for Closed Jackson Networks\", Proc. Winter Simulation Conference, 2005",
+            "monotone coupling-from-the-past perfect sampler of the closed product-form stationary distribution");
+        add("mdd", "MinC99",
+            "A. S. Miner, G. Ciardo, \"Efficient Reachability Set Generation and Storage Using Decision Diagrams\", ICATPN, LNCS 1639, 1999",
+            "multi-valued decision diagram storage of the reachable state space and its O(K) indexing");
+        add("mdd.reachset", "MinC99",
+            "A. S. Miner, G. Ciardo, \"Efficient Reachability Set Generation and Storage Using Decision Diagrams\", ICATPN, LNCS 1639, 1999",
+            "multi-valued decision diagram storage of the reachable state space and its O(K) indexing");
+        add("mcd", "MinCD00",
+            "A. S. Miner, G. Ciardo, S. Donatelli, \"Using the exact state space of a Markov model to compute approximate stationary measures\", ACM SIGMETRICS, 2000",
+            "decision-diagram-guided aggregation into K coupled level-CTMCs, exact on product-form models");
+        add("mdd.mcd", "MinCD00",
+            "A. S. Miner, G. Ciardo, S. Donatelli, \"Using the exact state space of a Markov model to compute approximate stationary measures\", ACM SIGMETRICS, 2000",
+            "decision-diagram-guided aggregation into K coupled level-CTMCs, exact on product-form models");
+        add("ctmc.mdd", "MinCD00",
+            "A. S. Miner, G. Ciardo, S. Donatelli, \"Using the exact state space of a Markov model to compute approximate stationary measures\", ACM SIGMETRICS, 2000",
+            "decision-diagram-guided aggregation into K coupled level-CTMCs, exact on product-form models");
+        add("rec", "BalMS20",
+            "S. Balsamo, A. Marin, I. Stojic, \"Computation of the normalising constant for product-form models of distributed systems with synchronisation\", Future Generation Computer Systems 111, 2020",
+            "normalising constant of a product form by one memoised walk of the decision diagram holding the reachable set");
+        add("mdd.rec", "BalMS20",
+            "S. Balsamo, A. Marin, I. Stojic, \"Computation of the normalising constant for product-form models of distributed systems with synchronisation\", Future Generation Computer Systems 111, 2020",
+            "normalising constant of a product form by one memoised walk of the decision diagram holding the reachable set");
+        add("spn.rec_enabled", "BalMS20",
+            "S. Balsamo, A. Marin, I. Stojic, \"Computation of the normalising constant for product-form models of distributed systems with synchronisation\", Future Generation Computer Systems 111, 2020",
+            "enabling-degree distribution of a transition mode from the masked MDD-rec recursion");
+        add("spn.metrics", "BalMS20",
+            "S. Balsamo, A. Marin, I. Stojic, \"Computation of the normalising constant for product-form models of distributed systems with synchronisation\", Future Generation Computer Systems 111, 2020",
+            "stationary token, utilization and throughput measures of a product-form Petri net from the MDD-rec masses");
+        add("spn.pf", "ColHT96",
+            "J. L. Coleman, W. Henderson, P. G. Taylor, \"Product form equilibrium distributions and a convolution algorithm for stochastic Petri nets\", Performance Evaluation 26(3), 1996",
+            "the condition under which a stochastic Petri net has a product form, and the complex-balance equations its per-place factors solve");
+        add("pf", "ColHT96",
+            "J. L. Coleman, W. Henderson, P. G. Taylor, \"Product form equilibrium distributions and a convolution algorithm for stochastic Petri nets\", Performance Evaluation 26(3), 1996",
+            "the condition under which a stochastic Petri net has a product form, and the complex-balance equations its per-place factors solve");
+        add("spn.pf.deficiency", "Fei72",
+            "M. Feinberg, \"Complex balancing in general kinetic systems\", Archive for Rational Mechanics and Analysis 49(3), 1972",
+            "existence of a positive complex-balanced point at deficiency zero with weak reversibility, which is what makes the log-linear solve for y consistent");
+        add("spn.pf.massaction", "AndCK10",
+            "D. F. Anderson, G. Craciun, T. G. Kurtz, \"Product-form stationary distributions for deficiency zero chemical reaction networks\", Bulletin of Mathematical Biology 72(8), 2010",
+            "the Poisson product form g_l(k) = y_l^k/k! of a net whose modes fire at mass-action rates");
+        add("lossn.rec", "Kelly91",
+            "F. P. Kelly, \"Loss networks\", Annals of Applied Probability 1(3), 1991",
+            "the truncated-Poisson product form of a loss network and the G(C - A e_r)/G(C) acceptance ratio MDD-rec evaluates");
+        add("spn.conv", "ColHT96",
+            "J. L. Coleman, W. Henderson, P. G. Taylor, \"Product form equilibrium distributions and a convolution algorithm for stochastic Petri nets\", Performance Evaluation 26(3), 1996",
+            "normalising constant by convolution over the S-invariant load vector of an S-invariant reachable net");
+        add("spn.sinvariants", "MarS82",
+            "J. Martinez, M. Silva, \"A simple and fast algorithm to obtain all invariants of a generalised Petri net\", Application and Theory of Petri Nets, 1982",
+            "the Farkas algorithm on the incidence matrix for the minimal-support S-invariants");
         add("oi", "BonP03",
             "T. Bonald, A. Proutiere, \"Insensitive bandwidth sharing in data networks\", Queueing Systems 44(1), 2003",
             "balanced-fairness balance function of the order-independent station");
+        add("compat", "DorG24",
+            "J.-P. Dorsman, K. Gardner, \"New directions in pass-and-swap queues\", Queueing Systems 107(3), 2024",
+            "activated-server rate of a compatibility structure, the order-independent reading used by SnCompatRate");
         add("nc.oi", "BonP03",
             "T. Bonald, A. Proutiere, \"Insensitive bandwidth sharing in data networks\", Queueing Systems 44(1), 2003",
             "balanced-fairness balance function of the order-independent station");
         add("mva.oi", "BonP03",
             "T. Bonald, A. Proutiere, \"Insensitive bandwidth sharing in data networks\", Queueing Systems 44(1), 2003",
             "balanced-fairness balance function of the order-independent station");
+        add("balancedfairness", "BonP03",
+            "T. Bonald, A. Proutiere, \"Insensitive bandwidth sharing in data networks\", Queueing Systems 44(1), 2003",
+            "balanced-fairness balance function of the order-independent station");
+        add("globaldependence", "Whi85",
+            "P. Whittle, \"Partial balance and insensitivity\", J. Appl. Prob. 22(1), 1985",
+            "balance property of a globally state-dependent rate phi(n) (setGlobalDependence), which yields the reversible product form and insensitivity");
+        add("gd", "Whi85",
+            "P. Whittle, \"Partial balance and insensitivity\", J. Appl. Prob. 22(1), 1985",
+            "balance property of a globally state-dependent rate phi(n) (setGlobalDependence), which yields the reversible product form and insensitivity");
         add("pas", "ComD21",
             "C. Comte, J.-P. Dorsman, \"Pass-and-swap queues\", Queueing Systems, 2021 (arXiv:2009.12299)",
             "per-communicating-class product form of the pass-and-swap network");
@@ -418,16 +1182,84 @@ public final class LineCitations {
         add("qrf.mem", "CasNPS16",
             "G. Casale, V. De Nitto Persone, E. Smirni, \"QRF: An Optimization-Based Framework for Evaluating Complex Stochastic Networks\", ACM TOMACS 26, 2016",
             "quadratic reduction bounds on the chain");
+        add("qrf.bethe", "CasNPS16",
+            "G. Casale, V. De Nitto Persone, E. Smirni, \"QRF: An Optimization-Based Framework for Evaluating Complex Stochastic Networks\", ACM TOMACS 26, 2016",
+            "quadratic reduction of the chain and the no-blocking polytope minimised over");
+        add("qrf.trw", "WaiJW05",
+            "M. J. Wainwright, T. S. Jaakkola, A. S. Willsky, \"A New Class of Upper Bounds on the Log Partition Function\", IEEE Trans. Inform. Theory 51(7), 2005",
+            "tree-reweighted free entropy of the qrf.bethe objective, and the spanning-tree polytope condition rho_ij <= 2/M that makes it convex");
+        add("qrf.bas.bethe", "CasNPS16",
+            "G. Casale, V. De Nitto Persone, E. Smirni, \"QRF: An Optimization-Based Framework for Evaluating Complex Stochastic Networks\", ACM TOMACS 26, 2016",
+            "quadratic reduction of the chain and the BAS blocking polytope minimised over");
         add("qrf.bas", "CasNPS16",
             "G. Casale, V. De Nitto Persone, E. Smirni, \"QRF: An Optimization-Based Framework for Evaluating Complex Stochastic Networks\", ACM TOMACS 26, 2016",
             "quadratic reduction bounds on the chain");
         add("qrf.rsrd", "CasNPS16",
             "G. Casale, V. De Nitto Persone, E. Smirni, \"QRF: An Optimization-Based Framework for Evaluating Complex Stochastic Networks\", ACM TOMACS 26, 2016",
             "quadratic reduction bounds on the chain");
+        add("qr", "CasNPS16",
+            "G. Casale, V. De Nitto Persone, E. Smirni, \"QRF: An Optimization-Based Framework for Evaluating Complex Stochastic Networks\", ACM TOMACS 26, 2016",
+            "quadratic reduction bounds on the chain; qr is the friendly alias that resolves to qrf.mmi");
+        add("qrf.bas.mmi", "CasNPS16",
+            "G. Casale, V. De Nitto Persone, E. Smirni, \"QRF: An Optimization-Based Framework for Evaluating Complex Stochastic Networks\", ACM TOMACS 26, 2016",
+            "quadratic reduction of the chain with the mutual-information objective over the BAS blocking polytope");
+        add("qrf.bas.mem", "CasNPS16",
+            "G. Casale, V. De Nitto Persone, E. Smirni, \"QRF: An Optimization-Based Framework for Evaluating Complex Stochastic Networks\", ACM TOMACS 26, 2016",
+            "quadratic reduction of the chain with the maximum-entropy objective over the BAS blocking polytope");
+        // The Linear Reduction family and the two three-segment QRF names had
+        // NO entry at all, so a run under them reported no attribution: the
+        // lookup strips one leading segment, which turns "ba.lr.upper" into
+        // "lr.upper" and "ba.qrf.mmi.ld" into "qrf.mmi.ld", and neither was
+        // registered.
+        add("mapamva", "CasSmi09",
+            "G. Casale, E. Smirni, \"MAP-AMVA: Approximate Mean Value Analysis of Bursty Systems\", IEEE/IFIP DSN 2009",
+            "linear program over the exact mean-value balances of a closed MAP queueing network, in the per-phase queue-length and utilization variables");
+        add("mapqn", "CasSmi09",
+            "G. Casale, E. Smirni, \"MAP-AMVA: Approximate Mean Value Analysis of Bursty Systems\", IEEE/IFIP DSN 2009",
+            "horizontal-cut mean value recursion: the exact per-phase balances of the MAP queue closed by the arrival theorem (SolverMVA amva.mapqn)");
+        add("amva.mapqn", "CasSmi09",
+            "G. Casale, E. Smirni, \"MAP-AMVA: Approximate Mean Value Analysis of Bursty Systems\", IEEE/IFIP DSN 2009",
+            "horizontal-cut mean value recursion: the exact per-phase balances of the MAP queue closed by the arrival theorem (SolverMVA amva.mapqn)");
+        add("mapamva.upper", "CasSmi09",
+            "G. Casale, E. Smirni, \"MAP-AMVA: Approximate Mean Value Analysis of Bursty Systems\", IEEE/IFIP DSN 2009",
+            "linear program over the exact mean-value balances of a closed MAP queueing network, in the per-phase queue-length and utilization variables");
+        add("mapamva.lower", "CasSmi09",
+            "G. Casale, E. Smirni, \"MAP-AMVA: Approximate Mean Value Analysis of Bursty Systems\", IEEE/IFIP DSN 2009",
+            "linear program over the exact mean-value balances of a closed MAP queueing network, in the per-phase queue-length and utilization variables");
+        add("lr", "CasNPS16",
+            "G. Casale, V. De Nitto Persone, E. Smirni, \"QRF: An Optimization-Based Framework for Evaluating Complex Stochastic Networks\", ACM TOMACS 26, 2016",
+            "linear reduction bounds on the chain");
+        add("lr.upper", "CasNPS16",
+            "G. Casale, V. De Nitto Persone, E. Smirni, \"QRF: An Optimization-Based Framework for Evaluating Complex Stochastic Networks\", ACM TOMACS 26, 2016",
+            "linear reduction bounds on the chain");
+        add("lr.lower", "CasNPS16",
+            "G. Casale, V. De Nitto Persone, E. Smirni, \"QRF: An Optimization-Based Framework for Evaluating Complex Stochastic Networks\", ACM TOMACS 26, 2016",
+            "linear reduction bounds on the chain");
+        add("qrf.mmi.ld", "CasNPS16",
+            "G. Casale, V. De Nitto Persone, E. Smirni, \"QRF: An Optimization-Based Framework for Evaluating Complex Stochastic Networks\", ACM TOMACS 26, 2016",
+            "quadratic reduction bounds on the load-dependent chain");
+        add("qrf.mmi.linear", "CasNPS16",
+            "G. Casale, V. De Nitto Persone, E. Smirni, \"QRF: An Optimization-Based Framework for Evaluating Complex Stochastic Networks\", ACM TOMACS 26, 2016",
+            "quadratic reduction bounds on the chain");
+        add("spnlp", "Liu98",
+            "Z. Liu, \"Performance Analysis of Stochastic Timed Petri Nets Using Linear Programming Approach\", IEEE Trans. Software Engineering 24(11), 1998",
+            "uniformized moment relaxation of the marking process, and the linear program bounding the mean tokens and the throughputs over it");
+        add("spnlp.upper", "Liu98",
+            "Z. Liu, \"Performance Analysis of Stochastic Timed Petri Nets Using Linear Programming Approach\", IEEE Trans. Software Engineering 24(11), 1998",
+            "uniformized moment relaxation of the marking process, and the linear program bounding the mean tokens and the throughputs over it");
+        add("spnlp.lower", "Liu98",
+            "Z. Liu, \"Performance Analysis of Stochastic Timed Petri Nets Using Linear Programming Approach\", IEEE Trans. Software Engineering 24(11), 1998",
+            "uniformized moment relaxation of the marking process, and the linear program bounding the mean tokens and the throughputs over it");
+        add("spnlp.op.upper", "Liu98",
+            "Z. Liu, \"Performance Analysis of Stochastic Timed Petri Nets Using Linear Programming Approach\", IEEE Trans. Software Engineering 24(11), 1998",
+            "the same relaxation without its Markovian families, so the bound rests on flow balance, the place invariants and the state equation alone");
+        add("spnlp.op.lower", "Liu98",
+            "Z. Liu, \"Performance Analysis of Stochastic Timed Petri Nets Using Linear Programming Approach\", IEEE Trans. Software Engineering 24(11), 1998",
+            "the same relaxation without its Markovian families, so the bound rests on flow balance, the place invariants and the state equation alone");
         add("ssa", "Gill77",
             "D. T. Gillespie, \"Exact stochastic simulation of coupled chemical reactions\", J. Phys. Chem. 81(25), 1977",
             "stochastic simulation of the Markov process sample path");
-        add("firingdep", "mars.ea84",
+        add("firingdep", "AjmCB84",
             "M. Ajmone Marsan, G. Conte, G. Balbo, \"A class of generalized stochastic Petri nets for the performance evaluation of multiprocessor systems\", ACM TOCS 2(2), 1984",
             "marking-dependent transition firing rates (setFiringRateDependence)");
         add("nrm", "And07",
@@ -445,9 +1277,42 @@ public final class LineCitations {
         add("closing", "PerC17",
             "J. F. Perez, G. Casale, \"LINE: Evaluating Software Applications in Unreliable Environments\", IEEE Trans. Reliability 66(3), 2017",
             "mean-field fluid ODEs for the queueing network");
+        add("kp", "ko.pend17", "Y. M. Ko, J. Pender, \"Diffusion limits for the (MAP_t/Ph_t/inf)^N queueing network\", Oper. Res. Lett. 45(3), 2017", "fluid and diffusion limits of the time-varying infinite-server network, i.e. the mean and covariance ODEs");
         add("matrix", "RuuskanenBAC21",
             "J. Ruuskanen, T. Berner, K.-E. Arzen, A. Cervin, \"Improving the mean-field fluid model of processor sharing queueing networks\", Perform. Eval. 151, 2021",
             "matrix form of the processor-sharing fluid model");
+        add("cache.exact", "CasG21",
+            "G. Casale, N. Gast, \"Performance Analysis Methods for List-Based Caches With Non-Uniform Access\", IEEE/ACM Trans. Networking 29(2), 2021",
+            "product-form normalizing constant of the tree cache with non-uniform access, and its recursion under per-list storage cost caps");
+        add("cache.sampling", "CasG21",
+            "G. Casale, N. Gast, \"Performance Analysis Methods for List-Based Caches With Non-Uniform Access\", IEEE/ACM Trans. Networking 29(2), 2021",
+            "Monte Carlo summation of the (cost-capped) normalizing constant over sampled cache permutations");
+        add("cache.itemsize", "CasG21",
+            "G. Casale, N. Gast, \"Performance Analysis Methods for List-Based Caches With Non-Uniform Access\", IEEE/ACM Trans. Networking 29(2), 2021",
+            "per-item storage costs with per-list cost caps, and the mean per-list cost at steady state");
+        // Retrieval_rayint evaluates the same normalizing constant as Cache_erec by a
+        // geometrical-optics expansion, so it carries the product-form constant of CasG21
+        // together with the asymptotic machinery of Cas17.
+        add("rayint", "CasG21",
+            "G. Casale, N. Gast, \"Performance Analysis Methods for List-Based Caches With Non-Uniform Access\", IEEE/ACM Trans. Networking 29(2), 2021",
+            "product-form normalizing constant of the list-based cache that the ray expansion approximates");
+        add("spm", "CasG21",
+            "G. Casale, N. Gast, \"Performance Analysis Methods for List-Based Caches With Non-Uniform Access\", IEEE/ACM Trans. Networking 29(2), 2021",
+            "product-form normalizing constant of the list-based cache by the saddle-point method (cache_spm); 'rayint' is an alias of the same route");
+        add("cache.rayint", "Cas17",
+            "G. Casale, \"Accelerating Performance Inference over Closed Systems by Asymptotic Methods\", ACM SIGMETRICS, 2017",
+            "asymptotic (saddle-point) expansion of the normalizing constant integral, here in eikonal/ray form with the geometrical-spreading amplitude 1/sqrt(det dx/dxi)");
+        add("cache.spm", "CasG21",
+            "G. Casale, N. Gast, \"Performance Analysis Methods for List-Based Caches With Non-Uniform Access\", IEEE/ACM Trans. Networking 29(2), 2021",
+            "saddle-point (SPM) expansion of the list-based cache normalizing constant over the exchangeable-family measure, served for any replacement policy");
+        // cache_spm_size carries the same pair, with the cost-capped recursion of CasG21
+        // Sec. IX supplying the second family of ray constants zeta_j that tilt by item size.
+        add("cache.spm.size", "CasG21",
+            "G. Casale, N. Gast, \"Performance Analysis Methods for List-Based Caches With Non-Uniform Access\", IEEE/ACM Trans. Networking 29(2), 2021",
+            "cost-capped normalizing constant recursion whose size-tilted saddle point the ray expansion approximates, with the shadow price of each per-list cost cap");
+        add("asy", "GastH16",
+                "N. Gast, B. Van Houdt, \"Transient and steady-state regime of a family of list-based cache replacement algorithms\", Queueing Syst. 83, 2016",
+                "leading-order (unrefined) mean-field limit in which each list deterministically holds its m most popular items, solved as a rank-threshold fixed point on the miss probabilities");
         add("rmf", "GastH16",
             "N. Gast, B. Van Houdt, \"Transient and steady-state regime of a family of list-based cache replacement algorithms\", Queueing Syst. 83, 2016",
             "refined mean-field approximation");
@@ -463,6 +1328,126 @@ public final class LineCitations {
         add("diffusion", "BolGMT06",
             "G. Bolch, S. Greiner, H. de Meer, K. S. Trivedi, \"Queueing Networks and Markov Chains\", Wiley, 2006",
             "diffusion approximation of the queue-length process");
+        // the covariance equation implemented here is Thm 1.2 / eq (1.3) of the QAPL
+        // paper, the LNA specialised to performance models; van Kampen is the origin
+        add("minnormal.covariance", "StefanekHB10",
+            "A. Stefanek, R. A. Hayden, J. T. Bradley, \"A new tool for the performance analysis of massively parallel computer systems\", QAPL, EPTCS 28, 2010",
+            "covariance ODE d/dt Cov = Cov*Df' + Df*Cov + sum_k f^k l^k l^k' about the fluid trajectory, with non-smooth min() rates");
+        add("minnormal.lyapunov", "StefanekHB10",
+            "A. Stefanek, R. A. Hayden, J. T. Bradley, \"A new tool for the performance analysis of massively parallel computer systems\", QAPL, EPTCS 28, 2010",
+            "covariance ODE d/dt Cov = Cov*Df' + Df*Cov + sum_k f^k l^k l^k' about the fluid trajectory, with non-smooth min() rates");
+        add("minnormal.origin", "vanKampen07",
+            "N. G. van Kampen, \"Stochastic Processes in Physics and Chemistry\", 3rd ed., North-Holland, 2007",
+            "linear noise approximation: Lyapunov equation for the stationary covariance about the fluid fixed point");
+        add("moments", "Kur70",
+            "T. G. Kurtz, \"Solutions of ordinary differential equations as limits of pure jump Markov processes\", J. Appl. Probab. 7(1), 1970",
+            "density-dependent population limit justifying the fluid drift and its Gaussian fluctuation");
+        // FluidClosures.minClosure implements eq (4) of the min-normal closure paper
+        // verbatim, so that is the primary reference; the queueing-side twin is
+        // under minnormal.network
+        add("minnormal", "GuentherSB13",
+            "M. C. Guenther, A. Stefanek, J. T. Bradley, \"Moment Closures for Performance Models with Highly Non-linear Rates\", EPEW/UKPEW 2012, LNCS 7587:32-47",
+            "min-normal moment closure of E[min(X,Y)] for jointly normal populations, eq (4)");
+        add("fluid.minnormal", "GuentherSB13",
+            "M. C. Guenther, A. Stefanek, J. T. Bradley, \"Moment Closures for Performance Models with Highly Non-linear Rates\", EPEW/UKPEW 2012, LNCS 7587:32-47",
+            "min-normal moment closure of E[min(X,Y)] for jointly normal populations, eq (4)");
+        // -- the DAE form of the same closure ----------------------------
+        // 'dae' does not change the closure, only how the coupled equations are
+        // discharged: the drift, the rate factors and the Lyapunov equation are
+        // the ones above, so the closure citation is GuentherSB13 unchanged.
+        // What is new is the SOLUTION METHOD, recorded separately: the index-1
+        // DAE with a singular mass matrix and the Rosenbrock integrator that
+        // carries it, and the active-set treatment of the region's inequality.
+        add("dae", "GuentherSB13",
+                "M. C. Guenther, A. Stefanek, J. T. Bradley, \"Moment Closures for Performance Models with Highly Non-linear Rates\", EPEW/UKPEW 2012, LNCS 7587:32-47",
+                "min-normal moment closure of E[min(X,Y)] for jointly normal populations, eq (4), here stated and solved as one differential-algebraic system");
+        add("fluid.dae", "GuentherSB13",
+                "M. C. Guenther, A. Stefanek, J. T. Bradley, \"Moment Closures for Performance Models with Highly Non-linear Rates\", EPEW/UKPEW 2012, LNCS 7587:32-47",
+                "min-normal moment closure of E[min(X,Y)] for jointly normal populations, eq (4), here stated and solved as one differential-algebraic system");
+        add("dae.integrator", "HairerW96",
+                "E. Hairer, G. Wanner, \"Solving Ordinary Differential Equations II. Stiff and Differential-Algebraic Problems\", 2nd ed., Springer Series in Computational Mathematics 14, 1996",
+                "RODAS, the Rosenbrock method of order (3)4 for M y' = f with a singular mass matrix, i.e. the index-1 DAE the transient is integrated as (ch. IV.7, VI.3)");
+        add("dae.activeset", "NocedalW06",
+                "J. Nocedal, S. J. Wright, \"Numerical Optimization\", 2nd ed., Springer, 2006",
+                "active-set treatment of every capacity limit -- a finite capacity region and a station buffer alike: an inequality has no residual for a Newton solver, so the loop iterates over WHICH caps bind and each pass is an equality-constrained solve (ch. 16)");
+        add("dae.events", "ShampineT00",
+                "L. F. Shampine, S. Thompson, \"Event location for ordinary differential equations\", Computers & Mathematics with Applications 39(5-6):43-54, 2000",
+                "the transient under a cap is a hybrid system: each crossing is located on the step's own interpolant, the segment stops there and the next one restarts with the binding set updated");
+        add("dae.petri", "SilvaR04",
+                "M. Silva, L. Recalde, \"On fluidification of Petri nets: from discrete to hybrid and continuous models\", Annual Reviews in Control 28(2):253-266, 2004",
+                "the continuous relaxation of a Petri net marking and its firing-speed law min over the input arcs of m_a/w_a, the drift SolverFLD closes");
+        add("dae.petri.limit", "Kurtz70",
+                "T. G. Kurtz, \"Solutions of ordinary differential equations as limits of pure jump Markov processes\", J. Appl. Probab. 7(1):49-58, 1970",
+                "the density-dependent population limit that makes a GSPN marking a fluid trajectory, and the linear noise approximation about it its covariance");
+        add("dae.petri.minmulti", "Clark61",
+                "C. E. Clark, \"The greatest of a finite set of random variables\", Operations Research 9(2):145-162, 1961",
+                "moment recursion closing E[min(X_1,...,X_A)] for a mode with several input arcs, each pairwise step being the two-population min-normal closure");
+        add("dae.petri.vanishing", "MarsanCB84",
+                "M. Ajmone Marsan, G. Conte, G. Balbo, \"A class of generalized stochastic Petri nets for the performance evaluation of multiprocessor systems\", ACM Trans. Comput. Syst. 2(2):93-122, 1984",
+                "the GSPN vanishing-marking semantics the algebraic firing flows reproduce: an immediate transition fires in zero time, and a conflict is resolved in proportion to the firing weights within the highest firing priority");
+        add("dae.petri.invariants", "BalsamoMS20",
+                "S. Balsamo, A. Marin, I. Stojic, \"Computation of the normalising constant for product-form models of distributed systems with synchronisation\", Future Generation Computer Systems 111:475-490, 2020",
+                "the P-invariants (S-invariants) of the incidence matrix, the conserved quantities the DAE states as constraints; SPN_SINVARIANTS computes the integral basis of the same space");
+
+        add("minnormal.network", "PendM17",
+            "J. Pender, W. A. Massey, \"Approximating and stabilizing dynamic rate Jackson networks with abandonment\", Prob. Eng. Inf. Sci. 31(1), 2017",
+            "the same closure in the queueing setting: coupled mean and covariance equations closing E[min(Q_i,c_i)] under a multivariate normal marginal");
+        // the single-station origin of the same closure; distinct tokens because the
+        // registry keeps one reference per method name and 'minnormal' names the network form
+        add("minnormal.station", "MassP13",
+            "W. A. Massey, J. Pender, \"Gaussian skewness approximation for dynamic rate multi-server queues with abandonment\", Queueing Syst. 75, 2013",
+            "single-station Gaussian closure of the multiserver rate term E[min(Q,c)]; its own contribution is the third-cumulant (skewness) extension");
+        add("minnormal.smoothing", "KoG13",
+            "Y. M. Ko, N. Gautam, \"Critically Loaded Time-Varying Multiserver Queues: Computational Challenges and Approximations\", INFORMS J. Comput. 25(2), 2013",
+            "Gaussian smoothing of the non-smooth multiserver rate, the g-function form of the same closure");
+        // the min() is not the only non-linear rate term: the PS/DPS capacity share is
+        // a RATIO of populations, closed at second order in FluidClosures.shareClosure
+        add("minnormal.share", "Oehlert92",
+            "G. W. Oehlert, \"A Note on the Delta Method\", The American Statistician 46(1), 1992",
+            "second-order (delta method) closure of the capacity-share ratio E[w_k*X_k/sum_j w_j*X_j] at PS and DPS stations");
+        // GPS splits the server among the BACKLOGGED classes, so its share is a
+        // function of the backlog indicator and is closed by enumerating the 2^K
+        // patterns in FluidClosures.gpsShare; a first-order closure cannot express it
+        add("minnormal.gps", "ParekhG93",
+            "A. K. Parekh, R. G. Gallager, \"A Generalized Processor Sharing Approach to Flow Control in Integrated Services Networks: The Single-Node Case\", IEEE/ACM Trans. Netw. 1(3), 1993",
+            "generalized processor sharing: the server is divided by weight among the backlogged classes, the discipline whose capacity share the closure evaluates");
+        // getProbAggr reads a joint per-class probability off the same covariance: the
+        // unit cell around the state under the multivariate normal, a rectangle
+        // integral with no closed form beyond one dimension
+        // the same linear noise approximation on the cache side: the RANDOM(m)
+        // occupancy is the density-dependent process of the list-based cache mean field
+        add("minnormal.cache", "GastH16",
+            "N. Gast, B. Van Houdt, \"Transient and steady-state regime of a family of list-based cache replacement algorithms\", Queueing Syst. 83, 2016",
+            "the RANDOM(m)/FIFO(m) occupancy process whose stationary covariance getMoments reports for a cache node");
+        add("minnormal.jointprob", "Genz92",
+            "A. Genz, \"Numerical Computation of Multivariate Normal Probabilities\", J. Comput. Graph. Statist. 1(2):141-149, 1992",
+            "separation-of-variables transformation evaluating the Gaussian rectangle probability P(n-1/2 <= Q <= n+1/2) returned by getProbAggr");
+        add("minnormal.lattice", "Niederreiter92",
+            "H. Niederreiter, \"Random Number Generation and Quasi-Monte Carlo Methods\", SIAM, 1992",
+            "deterministic Richtmyer lattice rule frac(k*sqrt(p_j)) integrating the transformed unit cube, so the three codebases return the same number");
+        add("refined", "Gast17",
+            "N. Gast, \"Expected Values Estimated via Mean-Field Approximation are 1/N-Accurate\", Proc. ACM Meas. Anal. Comput. Syst. 1(1), 2017",
+            "O(1/N) refinement term added to the mean-field fixed point");
+        add("fluid.refined", "Gast17",
+            "N. Gast, \"Expected Values Estimated via Mean-Field Approximation are 1/N-Accurate\", Proc. ACM Meas. Anal. Comput. Syst. 1(1), 2017",
+            "O(1/N) refinement term added to the mean-field fixed point");
+        // the bare "softmin" method name is AMVA's queue-dependent method, so the fluid
+        // smoothing is registered under its family-qualified name
+        add("fluid.softmin", "RuuskanenBAC21",
+            "J. Ruuskanen, T. Berner, K.-E. Arzen, A. Cervin, \"Improving the mean-field fluid model of processor sharing queueing networks\", Perform. Eval. 151, 2021",
+            "smoothing of the min() capacity term in the fluid drift");
+        // TBI carries a second method beside its decomposition: the sweep that
+        // reconciles the cells is waveform relaxation, whose convergence theory over
+        // a time window is Lelarasmee's, so the token pair reports both papers.
+        add("tbi", "SheldonTC",
+            "M. Sheldon, D. Tuncer, G. Casale, \"TBI: Transient Hierarchical Modeling of Large-Scale Vehicle Sharing Systems\", IEEE Trans. Intell. Transp. Syst., 2025",
+            "cell-decomposed transient fluid solution: the station partition, the growing time segments, and the frozen cross-cell inflows the decomposed ODEs read");
+        add("fluid.tbi", "SheldonTC",
+            "M. Sheldon, D. Tuncer, G. Casale, \"TBI: Transient Hierarchical Modeling of Large-Scale Vehicle Sharing Systems\", IEEE Trans. Intell. Transp. Syst., 2025",
+            "cell-decomposed transient fluid solution: the station partition, the growing time segments, and the frozen cross-cell inflows the decomposed ODEs read");
+        add("tbi.relaxation", "Lelarasmee82",
+            "E. Lelarasmee, A. E. Ruehli, A. L. Sangiovanni-Vincentelli, \"The Waveform Relaxation Method for Time-Domain Analysis of Large Scale Integrated Circuits\", IEEE Trans. CAD 1(3), 1982",
+            "waveform relaxation: each cell's ODE is integrated over a time window against the other cells frozen at the previous sweep's trajectory, sweeping in Gauss-Seidel or Jacobi order until the sup-norm trajectory gap closes");
         add("jmt", "BerCS07",
             "M. Bertoli, G. Casale, G. Serazzi, \"The JMT Simulator for Performance Evaluation of Non-Product-Form Queueing Networks\", ANSS, 2007",
             "discrete-event simulation and JMVA analysis");
@@ -472,38 +1457,197 @@ public final class LineCitations {
         add("jmva", "BerCS07",
             "M. Bertoli, G. Casale, G. Serazzi, \"The JMT Simulator for Performance Evaluation of Non-Product-Form Queueing Networks\", ANSS, 2007",
             "discrete-event simulation and JMVA analysis");
-        add("ln", "roli.sevc95",
+        add("ln", "RolS95",
             "J. A. Rolia, K. C. Sevcik, \"The Method of Layers\", IEEE TSE 21(8), 1995",
             "layer decomposition of the layered queueing network");
-        add("layers", "roli.sevc95",
+        add("layers", "RolS95",
             "J. A. Rolia, K. C. Sevcik, \"The Method of Layers\", IEEE TSE 21(8), 1995",
             "layer decomposition of the layered queueing network");
-        add("lqns", "lqns12",
+        add("srvn.ph", "sahn.triv87",
+            "R. A. Sahner, K. S. Trivedi, \"Performance and Reliability Analysis Using Directed Acyclic Graphs\", IEEE TSE 13(10), 1987",
+            "exact series-parallel reduction of an activity graph into one phase-type entry service law");
+        add("srvn.ph.setup", "gand.harc.adan10",
+            "A. Gandhi, M. Harchol-Balter, I. Adan, \"Server farms with setup costs\", Performance Evaluation 67(11), 2010",
+            "a SetupTask under srvn.ph: the cold start a powered-down thread pays is prefixed to the composed entry law as the phase-type mixture p*(setup THEN entry) + (1-p)*entry, with p the probability the delay-off countdown expired first");
+        add("flat.ph", "sahn.triv87",
+            "R. A. Sahner, K. S. Trivedi, \"Performance and Reliability Analysis Using Directed Acyclic Graphs\", IEEE TSE 13(10), 1987",
+            "squashed layering with the composed encoding: the same single submodel as flat.cs, but each activity graph reduced by the exact series-parallel reduction into one phase-type entry service law, so a caller visits a server once per invocation");
+        add("lqns", "FraMWPHM12",
             "G. Franks, P. Maly, M. Woodside, D. C. Petriu, A. Hubbard, M. Mroz, \"Layered Queueing Network Solver and Simulator User Manual\", Carleton University, 2012",
             "layered queueing solver and simulator");
-        add("ln.dec", "fran.ea09",
+        add("ln.flat", "FraMWPHM12",
+            "G. Franks, P. Maly, M. Woodside, D. C. Petriu, A. Hubbard, M. Mroz, \"Layered Queueing Network Solver and Simulator User Manual\", Carleton University, 2012",
+            "squashed layering, a single submodel holding every processor and task");
+        add("flat.cs", "FraMWPHM12",
+            "G. Franks, P. Maly, M. Woodside, D. C. Petriu, A. Hubbard, M. Mroz, \"Layered Queueing Network Solver and Simulator User Manual\", Carleton University, 2012",
+            "squashed layering, a single submodel holding every processor and task, with the activity graph encoded as class routing");
+        add("srvn.cs", "FraAWDD09",
+            "G. Franks, T. Al-Omari, M. Woodside, O. Das, S. Derisavi, \"Enhanced Modeling and Solution of Layered Queueing Networks\", IEEE TSE 35(2), 2009",
+            "srvn layering: one submodel per served element, with the activity graph, its precedences and its calls encoded as the class routing of that submodel");
+        add("ln.interlock", "Franks1996",
+            "R. G. Franks, \"Performance Analysis of Distributed Server Systems\", PhD thesis, Carleton University, 1999, Ch. 4",
+            "interlocked flow: an arrival does not queue behind the work its own request caused, applied inside the layer MVA");
+        add("ln.interlock.rate", "Li2015",
+            "L. Li, G. Franks, \"An Improved Interlocking Correction for Decomposition of Layered Queueing Networks\", IEEE CCECE, 2015",
+            "the interlocked adjustment rate Pr(IL)*IR*IR of Eqs. (3)-(5), superseding the (n_s-1)/n_s discount of Franks (1999), Eq. (4.7)");
+        add("interlock", "Franks1996",
+            "R. G. Franks, \"Performance Analysis of Distributed Server Systems\", PhD thesis, Carleton University, 1999, Ch. 4",
+            "interlocked flow: an arrival does not queue behind the work its own request caused, applied inside the layer MVA");
+        add("interlock.rate", "Li2015",
+            "L. Li, G. Franks, \"An Improved Interlocking Correction for Decomposition of Layered Queueing Networks\", IEEE CCECE, 2015",
+            "the interlocked adjustment rate Pr(IL)*IR*IR of Eqs. (3)-(5), superseding the (n_s-1)/n_s discount of Franks (1999), Eq. (4.7)");
+        add("ln.dec", "FraAWDD09",
             "G. Franks, T. Al-Omari, M. Woodside, O. Das, S. Derisavi, \"Enhanced Modeling and Solution of Layered Queueing Networks\", IEEE TSE 35(2), 2009",
             "enhanced decomposition of the layers");
-        add("enhanced", "fran.ea09",
+        add("enhanced", "FraAWDD09",
             "G. Franks, T. Al-Omari, M. Woodside, O. Das, S. Derisavi, \"Enhanced Modeling and Solution of Layered Queueing Networks\", IEEE TSE 35(2), 2009",
             "enhanced decomposition of the layers");
-        add("ln.fluid", "trib13",
+        add("ln.fluid", "Tri13",
             "M. Tribastone, \"A Fluid Model for Layered Queueing Networks\", IEEE TSE 39(6), 2013",
             "fluid model of the layered network");
-        add("env", "casa.trib11",
+        // the coupled layered transient is the same relaxation scheme applied to the
+        // ensemble instead of to a cell partition: the layers, not the stations, are
+        // the subsystems frozen at the previous sweep's trajectory
+        add("ln.transient.coupled", "Lelarasmee82",
+            "E. Lelarasmee, A. E. Ruehli, A. L. Sangiovanni-Vincentelli, \"The Waveform Relaxation Method for Time-Domain Analysis of Large Scale Integrated Circuits\", IEEE Trans. CAD 1(3), 1982",
+            "waveform relaxation over the LQN layers: each layer's transient is integrated against the other layers' latest demand trajectories, sweeping until the trajectories stop changing in the sup-norm");
+        add("env", "CasT11",
             "G. Casale, M. Tribastone, \"Fluid Analysis of Queueing in Two-Stage Random Environments\", QEST, 2011",
             "queueing in a random environment");
-        add("env.blend", "pere.casa13",
+        add("env.blend", "PerC13",
             "J. F. Perez, G. Casale, \"Assessing SLA Compliance from Palladio Component Models\", MICAS, 2013",
             "environment-stage blending of the metrics");
+        add("map2renv", "neut79",
+            "M. F. Neuts, \"A Versatile Markovian Point Process\", Journal of Applied Probability 16(4), 1979",
+            "the (D0,D1) modulating chain that the environment stages are frozen from");
+        add("env.dec", "Cou77",
+            "P. J. Courtois, \"Decomposability: Queueing and Computer System Applications\", Academic Press, 1977",
+            "quasi-stationary (slow-environment) limit in which each stage is solved in its own steady state");
+        add("env.avg", "yin.zhan98",
+            "G. G. Yin, Q. Zhang, \"Continuous-Time Markov Chains and Applications: A Singular Perturbation Approach\", Springer, 1998",
+            "rate-averaged (fast-environment) limit in which the modulated rates are replaced by their stationary average");
+
+        // Simulation output analysis: steady-state quantile intervals (api/sim)
+        add("fquest", "lolo.ea23",
+            "A. Lolos, C. Alexopoulos, D. Goldsman, K. D. Dingec, A. C. Mokashi, J. R. Wilson, \"A Fixed-Sample-Size Method for Estimating Steady-State Quantiles\", Proc. Winter Simulation Conference, 2023",
+            "automated fixed-sample-size confidence interval for a steady-state quantile from one sample path");
+        add("firquest", "lolo.ea25",
+            "A. Lolos, C. Alexopoulos, D. Goldsman, K. D. Dingec, A. C. Mokashi, J. R. Wilson, \"A Fixed-Sample-Size Procedure for Estimating Steady-State Quantiles Based on Independent Replications\", Proc. Winter Simulation Conference, 2025",
+            "the same interval pooled over independent replications");
+        add("sts", "alex.ea23",
+            "C. Alexopoulos, D. Goldsman, A. Lolos, K. D. Dingec, J. R. Wilson, \"Steady-State Quantile Estimation Using Standardized Time Series\", 2023",
+            "standardized time series variance-parameter estimators of the batched quantile process");
+        add("nbq", "alex.ea23",
+            "C. Alexopoulos, D. Goldsman, A. Lolos, K. D. Dingec, J. R. Wilson, \"Steady-State Quantile Estimation Using Standardized Time Series\", 2023",
+            "standardized time series variance-parameter estimators of the batched quantile process");
+        add("bahadur", "wu05",
+            "W. B. Wu, \"On the Bahadur Representation of Sample Quantiles for Dependent Sequences\", Ann. Statist. 33(4), 2005",
+            "Bahadur representation of the batched quantile under geometric moment contraction");
+        add("vonneumann", "vonn41",
+            "J. von Neumann, \"Distribution of the Ratio of the Mean Square Successive Difference to the Variance\", Ann. Math. Statist. 12(4), 1941",
+            "randomness test on the batch statistics");
+        add("shapirowilk", "royston95",
+            "J. P. Royston, \"Remark AS R94: A Remark on Algorithm AS 181, The W Test for Normality\", Applied Statistics 44(4), 1995",
+            "normality test on the batch statistics");
+        add("willink", "will05",
+            "R. Willink, \"A Confidence Interval and Test for the Mean of an Asymmetric Distribution\", Commun. Statist. Theory Methods 34, 2005",
+            "skewness adjustment of the fallback interval");
+
+        // Matrix permanent library (jline.lib.perm, api/perm, util/perm.m)
+        add("perm", "ryse63",
+            "H. J. Ryser, \"Combinatorial Mathematics\", Carus Mathematical Monographs 14, MAA, 1963",
+            "inclusion-exclusion formula for the exact permanent of the demand matrix");
+        add("perm.ryser", "ryse63",
+            "H. J. Ryser, \"Combinatorial Mathematics\", Carus Mathematical Monographs 14, MAA, 1963",
+            "inclusion-exclusion formula for the exact permanent of the demand matrix");
+        add("ryser", "ryse63",
+            "H. J. Ryser, \"Combinatorial Mathematics\", Carus Mathematical Monographs 14, MAA, 1963",
+            "inclusion-exclusion formula for the exact permanent of the demand matrix");
+        add("perm.bethe", "vont13",
+            "P. O. Vontobel, \"The Bethe Permanent of a Nonnegative Matrix\", IEEE Trans. Inform. Theory 59(3), 2013",
+            "sum-product approximation of the permanent and its Bethe free energy");
+        add("bethe", "vont13",
+            "P. O. Vontobel, \"The Bethe Permanent of a Nonnegative Matrix\", IEEE Trans. Inform. Theory 59(3), 2013",
+            "sum-product approximation of the permanent and its Bethe free energy");
+        add("perm.heur", "sink64",
+            "R. Sinkhorn, \"A Relationship Between Arbitrary Positive Matrices and Doubly Stochastic Matrices\", Ann. Math. Statist. 35(2), 1964",
+            "diagonal scaling of the matrix to doubly stochastic form");
+        add("sinkhorn", "sink64",
+            "R. Sinkhorn, \"A Relationship Between Arbitrary Positive Matrices and Doubly Stochastic Matrices\", Ann. Math. Statist. 35(2), 1964",
+            "diagonal scaling of the matrix to doubly stochastic form");
+        add("perm.gurvits", "gurv06",
+            "L. Gurvits, \"Hyperbolic Polynomials Approach to Van der Waerden/Schrijver-Valiant Like Conjectures\", STOC, 2006",
+            "van der Waerden capacity bound of the doubly stochastic permanent");
+        add("gurvits", "gurv06",
+            "L. Gurvits, \"Hyperbolic Polynomials Approach to Van der Waerden/Schrijver-Valiant Like Conjectures\", STOC, 2006",
+            "van der Waerden capacity bound of the doubly stochastic permanent");
+        // perm_spm is the homogeneous cache_spm: the same Laplace expansion, of a generating
+        // function without the cache's "+1", so the coefficient extracted is the permanent.
+        add("perm.spm", "Cas17",
+            "G. Casale, \"Accelerating Performance Inference over Closed Systems by Asymptotic Methods\", ACM SIGMETRICS, 2017",
+            "saddle-point (Laplace) expansion of the coefficient integral, here of the homogeneous product of linear forms whose coefficient is the permanent");
+        add("perm.spm.scaling", "sink64",
+            "R. Sinkhorn, \"A Relationship Between Arbitrary Positive Matrices and Doubly Stochastic Matrices\", Ann. Math. Statist. 35(2), 1964",
+            "diagonal scaling to row sums 1 and column sums m, which is the saddle point equation");
+        add("perm.spm.capacity", "gurv06",
+            "L. Gurvits, \"Hyperbolic Polynomials Approach to Van der Waerden/Schrijver-Valiant Like Conjectures\", STOC, 2006",
+            "capacity at the saddle point, the upper bound on the permanent that the Gaussian factor corrects");
+        add("perm.huberlaw", "hube.law08",
+            "M. Huber, J. Law, \"Fast Approximation of the Permanent for Very Dense Problems\", SODA, 2008",
+            "acceptance-rejection sampling of permutations under the Huber-Law bound");
+        add("huberlaw", "hube.law08",
+            "M. Huber, J. Law, \"Fast Approximation of the Permanent for Very Dense Problems\", SODA, 2008",
+            "acceptance-rejection sampling of permutations under the Huber-Law bound");
+        add("perm.adapart", "kuck.ea19",
+            "J. Kuck, T. Dao, H. Rezatofighi, A. Sabharwal, S. Ermon, \"Approximating the Permanent by Sampling from Adaptive Partitions\", NeurIPS, 2019",
+            "adaptive partitioning of the permutation space and its rejection sampler");
+        add("adapart", "kuck.ea19",
+            "J. Kuck, T. Dao, H. Rezatofighi, A. Sabharwal, S. Ermon, \"Approximating the Permanent by Sampling from Adaptive Partitions\", NeurIPS, 2019",
+            "adaptive partitioning of the permutation space and its rejection sampler");
+        add("soules", "soul05",
+            "G. W. Soules, \"Permanental Bounds for Nonnegative Matrices via Decomposition\", Linear Algebra Appl. 394, 2005",
+            "column-decomposition upper bound of the permanent used by the partition sampler");
+
+        // Parameter inference (lang/ParamEstimator)
+        add("ubo", "LiuHCA06",
+            "Z. Liu, L. Wynter, C. H. Xia, L. Zhang, \"Parameter Inference of Queueing Models for IT Systems Using End-to-End Measurements\", Performance Evaluation 63(1), 2006",
+            "utilization-based constrained optimization of service demands from end-to-end measurements");
+        add("vi", "PerC20",
+            "I. Perez, G. Casale, \"Variational Inference for Markovian Queueing Networks\", Advances in Applied Probability 53(3), 2021",
+            "the transition-count reparameterisation, the expanded state space that keeps the approximating measure absolutely continuous, and the mean-field rates and conjugate Gamma posteriors of the service rates");
+
+        // Sojourn time distribution of the M/G/1-PS queue (api/qsys)
+        add("mg1ps", "ott84",
+            "T. J. Ott, \"The Sojourn-Time Distribution in the M/G/1 Queue with Processor Sharing\", J. Appl. Prob. 21(2), 1984",
+            "transform of the sojourn time conditioned on the service requirement");
+        add("mg1ps.yashkov", "yash83",
+            "S. F. Yashkov, \"A Derivation of Response Time Distribution for an M/G/1 Processor-Sharing Queue\", Probl. Contr. Inform. Theory 12, 1983",
+            "independent derivation of the same conditional sojourn-time transform");
+        add("mg1ps.inversion", "abat.whit95",
+            "J. Abate, W. Whitt, \"Numerical Inversion of Laplace Transforms of Probability Distributions\", ORSA J. Computing 7(1), 1995",
+            "Euler summation used to invert the sojourn-time transform");
+
+        // Conditional Lindley recursion (api/qsys)
+        add("lindley", "lind52",
+            "D. V. Lindley, \"The Theory of Queues with a Single Server\", Proc. Camb. Phil. Soc. 48, 1952",
+            "waiting-time recursion of the single-server queue");
+        add("condlindley", "palo.pend21",
+            "S. Palomo, J. Pender, \"Learning the Tandem Network Lindley Recursion\", Proc. Winter Simulation Conference, 2021",
+            "conditional waiting-time moments of one Lindley step and the tandem interdeparture coupling");
+        add("tandemub", "ciuc.mehr25",
+            "F. Ciucu, S. Mehri, \"On the Distribution of Sojourn Times in Tandem Queues\", Proc. ACM Meas. Anal. Comput. Syst. 9(2), Article 27, 2025",
+            "polynomial-exponential upper bounds on the end-to-end waiting and sojourn time tails of a two-station tandem");
+        add("tandemlindley", "palo.pend21",
+            "S. Palomo, J. Pender, \"Learning the Tandem Network Lindley Recursion\", Proc. Winter Simulation Conference, 2021",
+            "conditional waiting-time moments of one Lindley step and the tandem interdeparture coupling");
     }
 
     /**
      * References for the algorithms named by the given tokens.
      *
-     * <p>A token may be qualified by solver family ("nc.mva" is Reiser's
+     * <p>A method name may be qualified by solver family ("nc.mva" is Reiser's
      * convolution, "mva.exact" is Reiser-Lavenberg MVA); the lookup falls back
-     * to the bare method name. Unknown tokens are ignored, so a caller may pass
+     * to the bare method name. Unknown method names are ignored, so a caller may pass
      * whatever it knows about a run.
      *
      * @param tokens algorithm or feature names

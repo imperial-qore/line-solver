@@ -23,6 +23,23 @@ public final class Cache_is {
      * using Monte Carlo importance sampling.
      */
     public static Ret.cacheIs cache_is(Matrix gamma, Matrix m, int samples) {
+        return cache_is(gamma, m, samples, null, null);
+    }
+
+    /**
+     * Estimate the (cost-capped) normalizing constant with the feasibility
+     * indicator I{S in O} of Casale-Gast, IEEE/ACM Trans. Networking 29(2),
+     * 2021, Sec. IX-B.
+     *
+     * @param gamma Cache access factors (n x h).
+     * @param m Cache capacity vector (1 x h).
+     * @param samples Number of Monte Carlo samples.
+     * @param sigma Item storage costs (sizes); null or empty for none.
+     * @param k Per-list storage cost caps; null or empty for none.
+     * @return the estimate and its logarithm.
+     */
+    public static Ret.cacheIs cache_is(Matrix gamma, Matrix m, int samples, Matrix sigma, Matrix k) {
+        boolean capped = sigma != null && k != null && !sigma.isEmpty() && !k.isEmpty();
         // Remove items with zero gamma
         boolean[] rowsToKeep = new boolean[gamma.getNumRows()];
         boolean[] colsToKeep = new boolean[gamma.getNumCols()];
@@ -38,6 +55,17 @@ public final class Cache_is {
         }
 
         Matrix filteredGamma = (validRows < gamma.getNumRows()) ? gamma.getSlice(rowsToKeep, colsToKeep) : gamma;
+        Matrix filteredSigma = sigma;
+        if (capped && validRows < gamma.getNumRows()) {
+            filteredSigma = new Matrix(1, validRows);
+            int c = 0;
+            for (int i = 0; i < gamma.getNumRows(); i++) {
+                if (rowsToKeep[i]) {
+                    filteredSigma.set(0, c, sigma.get(i));
+                    c++;
+                }
+            }
+        }
 
         int n = filteredGamma.getNumRows();
         int h = filteredGamma.getNumCols();
@@ -53,7 +81,7 @@ public final class Cache_is {
         }
 
         if (n == mt) {
-            double E = Cache_erec.cache_erec(filteredGamma, m).value();
+            double E = Cache_erec.cache_erec(filteredGamma, m, filteredSigma, k).value();
             return new Ret.cacheIs(E, FastMath.log(E));
         }
 
@@ -82,10 +110,25 @@ public final class Cache_is {
             int[][] assignment = assignItemsToLevels(m, selected, random);
 
             double logStateProb = logMFact;
-            for (int j = 0; j < h; j++) {
+            boolean feasible = true;
+            for (int j = 0; j < h && feasible; j++) {
+                if (capped) {
+                    double listCost = 0.0;
+                    for (int item : assignment[j]) {
+                        listCost += filteredSigma.get(item);
+                    }
+                    if (listCost > k.get(j)) {
+                        feasible = false;
+                        break;
+                    }
+                }
                 for (int item : assignment[j]) {
                     logStateProb += logGamma.get(item, j);
                 }
+            }
+            if (!feasible) {
+                lZSamples[s] = Double.NEGATIVE_INFINITY; // I{S_v in O} = 0
+                continue;
             }
 
             double logProposal = -logCombinations - logMultinomial;

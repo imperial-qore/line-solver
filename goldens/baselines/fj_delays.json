@@ -1,0 +1,113 @@
+{
+  "class": {
+    "JMT": "stochastic",
+    "MVA": "deterministic"
+  },
+  "example": "fj_delays",
+  "solvers": {
+    "JMT": [
+      {
+        "ArvR": 0.96734,
+        "JobClass": "class1",
+        "QLen": 1.9728,
+        "ResidT": 2.035,
+        "RespT": 2.035,
+        "Station": "Delay1",
+        "Tput": 0.95415,
+        "Util": 1.9728
+      },
+      {
+        "ArvR": 0.95415,
+        "JobClass": "class1",
+        "QLen": 0.48219,
+        "ResidT": 0.49433,
+        "RespT": 0.49433,
+        "Station": "Delay2",
+        "Tput": 0.95412,
+        "Util": 0.48219
+      },
+      {
+        "ArvR": 0.95412,
+        "JobClass": "class1",
+        "QLen": 6.0429,
+        "ResidT": 6.081,
+        "RespT": 6.081,
+        "Station": "Queue1",
+        "Tput": 0.96494,
+        "Util": 0.95704
+      },
+      {
+        "ArvR": 0.95412,
+        "JobClass": "class1",
+        "QLen": 5.1463,
+        "ResidT": 5.7192,
+        "RespT": 5.7192,
+        "Station": "Queue2",
+        "Tput": 0.96616,
+        "Util": 0.94515
+      },
+      {
+        "ArvR": 1.9436,
+        "JobClass": "class1",
+        "QLen": 3.9749,
+        "ResidT": 2.0321,
+        "RespT": 2.0321,
+        "Station": "Join",
+        "Tput": 0.96744,
+        "Util": 0.0
+      }
+    ],
+    "MVA": [
+      {
+        "ArvR": 0.85919,
+        "JobClass": "class1",
+        "QLen": 1.7184,
+        "ResidT": 2.0,
+        "RespT": 2.0,
+        "Station": "Delay1",
+        "Tput": 0.85919,
+        "Util": 1.7184
+      },
+      {
+        "ArvR": 0.85919,
+        "JobClass": "class1",
+        "QLen": 0.4296,
+        "ResidT": 0.5,
+        "RespT": 0.5,
+        "Station": "Delay2",
+        "Tput": 0.85919,
+        "Util": 0.4296
+      },
+      {
+        "ArvR": 0.85919,
+        "JobClass": "class1",
+        "QLen": 5.3091,
+        "ResidT": 6.1792,
+        "RespT": 6.1792,
+        "Station": "Queue1",
+        "Tput": 0.85919,
+        "Util": 0.85919
+      },
+      {
+        "ArvR": 0.85919,
+        "JobClass": "class1",
+        "QLen": 5.3091,
+        "ResidT": 6.1792,
+        "RespT": 6.1792,
+        "Station": "Queue2",
+        "Tput": 0.85919,
+        "Util": 0.85919
+      },
+      {
+        "ArvR": 1.7184,
+        "JobClass": "class1",
+        "QLen": 5.3091,
+        "ResidT": 3.0896,
+        "RespT": 3.0896,
+        "Station": "Join",
+        "Tput": 0.85919,
+        "Util": 0.0
+      }
+    ]
+  }
+}

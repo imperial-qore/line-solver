@@ -8,7 +8,7 @@ analysis through automated pattern detection and model generation.
 Based on Wf_auto_integration.kt from the MDN toolbox.
 
 References:
-    Original Kotlin: jar/src/main/kotlin/jline/api/wf/Wf_auto_integration.kt
+    Original JAR: jar/src/main/java/jline/api/wf/Wf_auto_integration.java
 """
 
 import numpy as np

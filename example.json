@@ -1,0 +1,174 @@
+{
+  "format": "line-model",
+  "version": "1.0",
+  "model": {
+    "type": "Network",
+    "name": "example_openModel_3",
+    "nodes": [
+      {
+        "name": "Source 1",
+        "type": "Source",
+        "service": {
+          "Class A": {
+            "type": "Exp",
+            "params": {
+              "lambda": 2.0
+            }
+          },
+          "Class B": {
+            "type": "Exp",
+            "params": {
+              "lambda": 1.0
+            }
+          },
+          "Class C": {
+            "type": "Disabled"
+          }
+        }
+      },
+      {
+        "name": "Queue 1",
+        "type": "Queue",
+        "scheduling": "PS",
+        "service": {
+          "Class A": {
+            "type": "Exp",
+            "params": {
+              "lambda": 5.0
+            }
+          },
+          "Class B": {
+            "type": "Exp",
+            "params": {
+              "lambda": 3.3333333333333335
+            }
+          },
+          "Class C": {
+            "type": "Exp",
+            "params": {
+              "lambda": 3.000000000003
+            }
+          }
+        }
+      },
+      {
+        "name": "ClassSwitch 1",
+        "type": "ClassSwitch",
+        "classSwitchMatrix": {
+          "Class A": {
+            "Class C": 1.0
+          },
+          "Class B": {
+            "Class C": 1.0
+          },
+          "Class C": {
+            "Class C": 1.0
+          }
+        }
+      },
+      {
+        "name": "Sink 1",
+        "type": "Sink"
+      },
+      {
+        "name": "Queue 2",
+        "type": "Queue",
+        "scheduling": "PS",
+        "service": {
+          "Class A": {
+            "type": "Exp",
+            "params": {
+              "lambda": 1.0
+            }
+          },
+          "Class B": {
+            "type": "Exp",
+            "params": {
+              "lambda": 1.0
+            }
+          },
+          "Class C": {
+            "type": "Exp",
+            "params": {
+              "lambda": 6.666666666666667
+            }
+          }
+        }
+      }
+    ],
+    "classes": [
+      {
+        "name": "Class A",
+        "type": "Open"
+      },
+      {
+        "name": "Class B",
+        "type": "Open"
+      },
+      {
+        "name": "Class C",
+        "type": "Open"
+      }
+    ],
+    "routing": {
+      "type": "matrix",
+      "matrix": {
+        "Class A,Class A": {
+          "Source 1": {
+            "Queue 1": 1.0
+          },
+          "Queue 1": {
+            "ClassSwitch 1": 1.0
+          },
+          "Queue 2": {
+            "Sink 1": 1.0
+          }
+        },
+        "Class B,Class B": {
+          "Source 1": {
+            "Queue 1": 1.0
+          },
+          "Queue 1": {
+            "ClassSwitch 1": 1.0
+          },
+          "Queue 2": {
+            "Sink 1": 1.0
+          }
+        },
+        "Class C,Class C": {
+          "Queue 1": {
+            "ClassSwitch 1": 1.0
+          },
+          "ClassSwitch 1": {
+            "Queue 2": 1.0
+          },
+          "Queue 2": {
+            "Sink 1": 1.0
+          }
+        }
+      }
+    },
+    "routingStrategies": {
+      "Source 1": {
+        "Class A": "RAND",
+        "Class B": "RAND",
+        "Class C": "RAND"
+      },
+      "Queue 1": {
+        "Class A": "RAND",
+        "Class B": "RAND",
+        "Class C": "RAND"
+      },
+      "Sink 1": {
+        "Class A": "RAND",
+        "Class B": "RAND",
+        "Class C": "RAND"
+      },
+      "Queue 2": {
+        "Class A": "RAND",
+        "Class B": "RAND",
+        "Class C": "RAND"
+      }
+    }
+  }
+}

@@ -13,10 +13,16 @@ function [rhs, vars, sys] = getSymbolicDrift(self, options)
 % methods scale rates by min(n_i, S_i), which is not differentiable at
 % n_i = S_i, so their Jacobian does not exist there; emitting a one-sided
 % derivative would be a silent lie exactly at the regime switch that matters.
+% DPS under the closing family carries that same min() -- it takes the share
+% w_ir*x/ntilde_i OF min(n_i,S_i) -- and is refused with it. It was exported as
+% a smooth ratio while the drift still divided by mean(w) + ntilde_i and served
+% at the full S_i, so what was typeset was a drift the solver had stopped
+% integrating; the min() is what makes it inexportable, not what hides it.
 % Use the p-norm smoothing (options.config.pstar, method matrix or pnorm) or
 % the softmin method, whose drifts are smooth everywhere, and this function
 % refuses the others by name.
 %
+% @param self The SolverFLD instance
 % @param options Solver options (optional, defaults to the solver's own)
 % @return rhs Cell array of expression strings, one per state variable
 % @return vars Cell array of variable names, x1 ... xn
@@ -24,6 +30,13 @@ function [rhs, vars, sys] = getSymbolicDrift(self, options)
 %
 % Copyright (c) 2012-2026, Imperial College London
 % All rights reserved.
+
+
+% lang='cpp' cannot serve this getter; the reason is named, not blanket.
+if isfield(self.options,'lang') && strcmp(self.options.lang,'cpp')
+    CPPLINE.cppUnsupported(self.name, 'getSymbolicDrift', ...
+        ['the C++ port has no symbolic arithmetic backend']);
+end
 
 if nargin < 2 || isempty(options)
     options = self.getOptions();
@@ -102,8 +115,9 @@ end
 function rhs = jform_rhs(sys, vars, eps0)
 % dx/dt = J * r(x), with r_e = coeff(e) * factor_e(x). Only the smooth factor
 % types are exportable: 'min' (PS/FCFS under closing and statedep), 'fcfsw'
-% (statedep FCFS) and 'dpspw' (piecewise DPS) all carry a min or a branch.
-smooth = {'lin', 'ext1', 'dps', 'fcfsws'};
+% (statedep FCFS), 'dpsmin' (closing DPS) and 'dpspw' (piecewise DPS) all carry
+% a min or a branch.
+smooth = {'lin', 'ext1', 'fcfsws'};
 rate = cell(1, sys.nevents);
 for e = 1:sys.nevents
     ftype = sys.factorType{e};
@@ -129,11 +143,6 @@ for e = 1:sys.nevents
                 end
                 factor = sprintf('(1 - (%s))', strjoin(parts, ' + '));
             end
-        case 'dps'
-            % ode_rates_closing seeds the denominator with mean(w) and adds
-            % no FineTol, so neither does this.
-            ntilde = weightedStationSum(sys, fdata.station, sys.dpsw(fdata.station, :), vars, '0');
-            factor = sprintf('%s/(%s + %s)', v, num2char(fdata.c0), ntilde);
         case 'fcfsws'
             i = fdata.station;
             % ode_softmin: ni is the raw station total, wni carries FineTol.
@@ -186,20 +195,6 @@ if strcmp(offset, '0')
 else
     s = sprintf('(%s + %s)', offset, strjoin(parts, ' + '));
 end
-end
-
-function s = weightedStationSum(sys, i, w, vars, offset)
-% sum_r w_ir * n_ir over the classes of station i (DPS denominator).
-parts = {};
-for k = 1:sys.nstates
-    if sys.stateStation(k) == i
-        wt = w(sys.stateClass(k));
-        if wt ~= 0
-            parts{end+1} = sprintf('(%s)*%s', num2char(wt), vars{k}); %#ok<AGROW>
-        end
-    end
-end
-s = joinSum(parts, offset);
 end
 
 function s = phaseWeightedStationSum(sys, i, vars, offset)

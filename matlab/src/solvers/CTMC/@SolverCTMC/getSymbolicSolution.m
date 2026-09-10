@@ -20,6 +20,13 @@ function [pi, num, den, stateSpace] = getSymbolicSolution(self)
 % Copyright (c) 2012-2026, Imperial College London
 % All rights reserved.
 
+
+% lang='cpp' cannot serve this getter; the reason is named, not blanket.
+if isfield(self.options,'lang') && strcmp(self.options.lang,'cpp')
+    CPPLINE.cppUnsupported(self.name, 'getSymbolicSolution', ...
+        ['the C++ port has no symbolic arithmetic backend; --arith exact is rational and not symbolic']);
+end
+
 backend = SolverCTMC.symbolicBackend(self);
 timeout = 300;
 if isprop(self, 'options') && isfield(self.options, 'config') && ...

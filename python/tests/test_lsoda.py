@@ -94,7 +94,7 @@ def _run_parity_test(name, f, y0, t_span, t_eval, rtol, atol,
 # ============================================================================
 # Test 1: Robertson chemical kinetics (stiff)
 # ============================================================================
-def test_robertson():
+def _check_robertson():
     """Robertson problem: classic stiff ODE benchmark (3 eqs).
     dy1/dt = -0.04*y1 + 1e4*y2*y3
     dy2/dt = 0.04*y1 - 1e4*y2*y3 - 3e7*y2^2
@@ -136,7 +136,7 @@ def test_robertson():
 # ============================================================================
 # Test 2: Exponential decay (nonstiff, exact solution)
 # ============================================================================
-def test_exponential_decay():
+def _check_exponential_decay():
     """dy/dt = -y, y(0)=1. Exact: y(t) = exp(-t)."""
     def f(t, y, ydot, data):
         ydot[0] = -y[0]
@@ -174,7 +174,7 @@ def test_exponential_decay():
 # ============================================================================
 # Test 3: Linear 2D system (exact solution available)
 # ============================================================================
-def test_linear_2d():
+def _check_linear_2d():
     """dy1/dt = -0.04*y1, dy2/dt = 0.04*y1 - 0.0004*y2.
     y1(0)=100, y2(0)=0.
     Exact: y1(t) = 100*exp(-0.04*t)
@@ -223,7 +223,7 @@ def test_linear_2d():
 # ============================================================================
 # Test 4: Lotka-Volterra predator-prey (nonstiff)
 # ============================================================================
-def test_lotka_volterra():
+def _check_lotka_volterra():
     """Lotka-Volterra: dx/dt = a*x - b*x*y, dy/dt = -c*y + d*x*y.
     a=1.5, b=1, c=3, d=1. Nonstiff oscillator.
     """
@@ -252,7 +252,7 @@ def test_lotka_volterra():
 # ============================================================================
 # Test 5: HIRES photochemistry (moderately stiff, 8 eqs)
 # ============================================================================
-def test_hires():
+def _check_hires():
     """HIRES (High Irradiance RESponses of photomorphogenesis).
     8-equation moderately stiff chemical kinetics system.
     Standard test problem from Hairer & Wanner.
@@ -294,7 +294,7 @@ def test_hires():
 # ============================================================================
 # Test 6: Van der Pol oscillator (very stiff, mu=1000)
 # ============================================================================
-def test_vanderpol():
+def _check_vanderpol():
     """Van der Pol oscillator with mu=1000 (very stiff).
     dy1/dt = y2, dy2/dt = mu*(1-y1^2)*y2 - y1.
     No C reference (too large), but verify solver completes successfully
@@ -331,7 +331,7 @@ def test_vanderpol():
 # ============================================================================
 # Test 7: Oregonator (stiff chemical oscillator)
 # ============================================================================
-def test_oregonator():
+def _check_oregonator():
     """Oregonator model for Belousov-Zhabotinsky reaction.
     3 equations, stiff. Requires many steps.
     Verify solver can handle it (with increased max_steps).
@@ -369,7 +369,7 @@ def test_oregonator():
 # ============================================================================
 # Test 8: Conservation law (Robertson y1+y2+y3 = 1)
 # ============================================================================
-def test_conservation_law():
+def _check_conservation_law():
     """Verify Robertson problem conserves mass: y1+y2+y3 = 1 at all times."""
     def f(t, y, ydot, data):
         ydot[0] = 1.0e4 * y[1] * y[2] - 0.04 * y[0]
@@ -401,7 +401,7 @@ def test_conservation_law():
 # ============================================================================
 # Test 9: Scalar tolerance interface
 # ============================================================================
-def test_scalar_tolerances():
+def _check_scalar_tolerances():
     """Verify that scalar rtol/atol work the same as per-component arrays."""
     def f(t, y, ydot, data):
         ydot[0] = -0.04 * y[0]
@@ -433,7 +433,7 @@ def test_scalar_tolerances():
 # ============================================================================
 # Test 10: odeint convenience interface vs lsoda()
 # ============================================================================
-def test_odeint_parity():
+def _check_odeint_parity():
     """Verify lsoda_odeint gives same results as lsoda for decay problem."""
     def f_lsoda(t, y, ydot, data):
         ydot[0] = -y[0]
@@ -474,7 +474,7 @@ def test_odeint_parity():
 # ============================================================================
 # Test 11: Backward integration (negative time direction)
 # ============================================================================
-def test_backward_integration():
+def _check_backward_integration():
     """dy/dt = -y integrated backward: from t=5 to t=0.
     y(5) = exp(-5), should recover y(0) = 1.
     """
@@ -503,7 +503,7 @@ def test_backward_integration():
 # ============================================================================
 # Test 12: Large system (50 coupled equations)
 # ============================================================================
-def test_large_system():
+def _check_large_system():
     """50-equation coupled decay chain: dy_i/dt = -alpha_i * y_i + alpha_{i-1} * y_{i-1}.
     Tests that dgefa/dgesl work correctly for larger matrices.
     """
@@ -545,21 +545,73 @@ def test_large_system():
 
 
 # ============================================================================
+# pytest entry points: the _check_* routines report by return value, so each
+# one needs an assertion here or the suite passes regardless of the outcome.
+# ============================================================================
+def test_robertson():
+    assert _check_robertson()
+
+
+def test_exponential_decay():
+    assert _check_exponential_decay()
+
+
+def test_linear_2d():
+    assert _check_linear_2d()
+
+
+def test_lotka_volterra():
+    assert _check_lotka_volterra()
+
+
+def test_hires():
+    assert _check_hires()
+
+
+def test_vanderpol():
+    assert _check_vanderpol()
+
+
+def test_oregonator():
+    assert _check_oregonator()
+
+
+def test_conservation_law():
+    assert _check_conservation_law()
+
+
+def test_scalar_tolerances():
+    assert _check_scalar_tolerances()
+
+
+def test_odeint_parity():
+    assert _check_odeint_parity()
+
+
+def test_backward_integration():
+    assert _check_backward_integration()
+
+
+def test_large_system():
+    assert _check_large_system()
+
+
+# ============================================================================
 # Main
 # ============================================================================
 TESTS = [
-    ("Robertson chemical kinetics (stiff, 3 eqs)", test_robertson),
-    ("Exponential decay (nonstiff, exact solution)", test_exponential_decay),
-    ("Linear 2D system (exact solution)", test_linear_2d),
-    ("Lotka-Volterra (nonstiff oscillator)", test_lotka_volterra),
-    ("HIRES photochemistry (stiff, 8 eqs)", test_hires),
-    ("Van der Pol (very stiff, mu=1000)", test_vanderpol),
-    ("Oregonator (stiff oscillator)", test_oregonator),
-    ("Conservation law (Robertson)", test_conservation_law),
-    ("Scalar tolerance interface", test_scalar_tolerances),
-    ("odeint interface parity", test_odeint_parity),
-    ("Backward integration", test_backward_integration),
-    ("Large system (50 eqs)", test_large_system),
+    ("Robertson chemical kinetics (stiff, 3 eqs)", _check_robertson),
+    ("Exponential decay (nonstiff, exact solution)", _check_exponential_decay),
+    ("Linear 2D system (exact solution)", _check_linear_2d),
+    ("Lotka-Volterra (nonstiff oscillator)", _check_lotka_volterra),
+    ("HIRES photochemistry (stiff, 8 eqs)", _check_hires),
+    ("Van der Pol (very stiff, mu=1000)", _check_vanderpol),
+    ("Oregonator (stiff oscillator)", _check_oregonator),
+    ("Conservation law (Robertson)", _check_conservation_law),
+    ("Scalar tolerance interface", _check_scalar_tolerances),
+    ("odeint interface parity", _check_odeint_parity),
+    ("Backward integration", _check_backward_integration),
+    ("Large system (50 eqs)", _check_large_system),
 ]
 
 

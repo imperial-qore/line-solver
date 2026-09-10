@@ -85,7 +85,7 @@ if __name__ == '__main__':
     # On a small instance, SolverCTMC yields the mode of the exact stationary
     # distribution instead (feasible when the state space is small):
     ms = build_model(20)
-    proto_ctmc = SolverLDES(ms, SolverCTMC(ms, force=True))
+    proto_ctmc = SolverLDES(ms, SolverCTMC(ms, 'exact', force=True))
     print('CTMC distribution-mode placement (N=20):', proto_ctmc.options.init_sol)
     print()
 

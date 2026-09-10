@@ -37,6 +37,17 @@ class SolverFLDOptions:
     pstar: Optional[List[float]] = None  # P-norm smoothing values per station
     num_cdf_pts: int = 200  # Number of points for CDF computation
     odemaxstep: Optional[float] = None  # ODE solver max step size override (None = unbounded)
+    # Integrator override; see SolverFLDOptions.odesolver in
+    # solvers/solver_fld/options.py. None keeps the method chosen below.
+    odesolver: Optional[Any] = None
+    # Instants the caller wants the trajectory AT, increasing. When set, the ODE
+    # is evaluated on exactly these (plus the endpoints) through the
+    # integrator's own continuous extension, instead of on its step grid. Port
+    # of MATLAB's options.tranpoints in solver_fluid_iteration.m; SolverENV sets
+    # it to the sojourn quadrature grid, because reading that grid off a LINEAR
+    # interpolation of the step grid is a first-order error the dense output
+    # does not have. Unset, nothing changes for any other caller.
+    tranpoints: Optional[np.ndarray] = None
 
 
 @dataclass
@@ -409,6 +420,110 @@ def _build_state_mappings(
     return Qa, SQC, SUC, STC, SQ
 
 
+def _fluid_theta(
+    x: np.ndarray,
+    SQ: np.ndarray,
+    Sa: np.ndarray,
+    pstar: Optional[np.ndarray] = None,
+    isSourceState: Optional[np.ndarray] = None,
+    isInfState: Optional[np.ndarray] = None,
+    varclosure: bool = False,
+) -> np.ndarray:
+    """
+    Mass in service, i.e. theta(x) of Ruuskanen et al., PEVA 151 (2021).
+
+    Without smoothing, theta = x * min(S, sum_station(x)) / sum_station(x),
+    eq. (12). With pstar set, theta = x * ghat with the p-norm ghat of
+    eq. (26). An INF station has no min() to smooth, so its share stays 1;
+    Sa holds the total population there, which would smooth it as a k = N
+    queue.
+
+    The same theta feeds the drift and the metrics: eq. (23) reads the
+    utilization off the share the ODE integrated, so U and T must not
+    revert to min() after a smoothed solve.
+
+    Args:
+        x: State vector (queue lengths)
+        SQ: State-to-station queue mapping
+        Sa: Server capacity per state
+        pstar: P-norm smoothing parameters, None or empty for the hard min
+        isSourceState: States belonging to Source stations
+        isInfState: States belonging to INF (delay) stations
+        varclosure: replace min(E[n], c) by E[min(n, c)] under the equilibrium
+            geometric marginal of the station. Set ONLY by the degeneracy repair
+            in solver_fld; see _fluid_fixed_point_is_degenerate for why.
+
+    Returns:
+        theta, the per-state mass in service
+    """
+    x = np.maximum(x, 0)  # Ensure non-negative
+
+    # Compute total queue at each state's station
+    sum_x_Qa = SQ @ x + 1e-8  # Add FineTol for numerical stability (matching MATLAB GlobalConstants.FineTol)
+
+    if pstar is not None and len(pstar) > 0:
+        # P-norm smoothed constraint as per Ruuskanen et al.
+        ghat = np.ones_like(x)
+        for i in range(len(x)):
+            if isInfState is not None and isInfState[i]:
+                continue
+            x_val = sum_x_Qa[i]
+            c_val = Sa[i]
+            p_val = pstar[i] if i < len(pstar) else pstar[-1]
+
+            if p_val > 0 and c_val > 0:
+                ghat_val = 1.0 / np.power(1 + np.power(x_val / c_val, p_val), 1.0 / p_val)
+                if np.isnan(ghat_val):
+                    ghat[i] = 0.0
+                else:
+                    ghat[i] = ghat_val
+
+        theta = x * ghat
+    elif varclosure:
+        # E[min(n, c)] UNDER A GEOMETRIC MARGINAL, not min(E[n], c).
+        #
+        #   n ~ Geometric(mean m)  =>  P(n >= k) = p^k with p = m/(1+m), and
+        #   E[min(n,c)] = sum_{k=1..c} p^k = m * (1 - p^c).
+        #
+        # It has the two properties the hard min lacks and the repair needs:
+        # it is STRICTLY INCREASING in m everywhere (slope 1/(1+m)^2 at c = 1,
+        # so still 1e-2 at m = 9 -- a restoring force the integrator can follow
+        # inside its horizon), and it carries the same asymptote, -> c as
+        # m -> inf and -> m as m -> 0. It is the first-order face of what the
+        # `dae` rung does by seeding the variance positive, which is why both
+        # isolate the same fixed point.
+        m = sum_x_Qa
+        c = Sa.flatten()
+        with np.errstate(divide='ignore', invalid='ignore', over='ignore'):
+            p = np.where(m > 0, m / (1.0 + m), 0.0)
+            min_vals = m * (1.0 - np.power(p, np.maximum(c, 0.0)))
+        min_vals = np.nan_to_num(min_vals, nan=0.0, posinf=0.0, neginf=0.0)
+        if isInfState is not None:
+            # An INF station has a server per job: there is no min() to close,
+            # and Sa holds the whole population there, which the closure would
+            # otherwise read as a finite queue of that many servers.
+            min_vals = np.where(isInfState, m, min_vals)
+        min_vals = np.minimum(min_vals, sum_x_Qa)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            ratio = np.where(sum_x_Qa > 1e-8, min_vals / sum_x_Qa, 1.0)
+        ratio = np.nan_to_num(ratio, nan=1.0, posinf=1.0, neginf=0.0)
+        theta = x * ratio
+    else:
+        # Standard fluid constraint
+        min_vals = np.minimum(sum_x_Qa, Sa.flatten())
+        with np.errstate(divide='ignore', invalid='ignore'):
+            ratio = np.where(sum_x_Qa > 1e-8, min_vals / sum_x_Qa, 1.0)
+        ratio = np.nan_to_num(ratio, nan=1.0, posinf=1.0, neginf=0.0)
+
+        theta = x * ratio
+
+    # For Source stations, theta = 0 to bypass Source in dynamics
+    # (matching MATLAB where Source is excluded from state space)
+    if isSourceState is not None:
+        theta[isSourceState] = 0.0
+    return theta
+
+
 def _fluid_ode(
     t: float,
     x: np.ndarray,
@@ -418,15 +533,13 @@ def _fluid_ode(
     ALambda: np.ndarray,
     pstar: Optional[np.ndarray] = None,
     isSourceState: Optional[np.ndarray] = None,
+    isInfState: Optional[np.ndarray] = None,
+    varclosure: bool = False,
 ) -> np.ndarray:
     """
     Fluid ODE right-hand side for queueing network fluid analysis.
 
-    dx/dt = W * (x .* g(x)) + ALambda
-
-    where g(x) is the server constraint:
-    - min(S, sum_station(x)) / sum_station(x) (without smoothing)
-    - p-norm smoothed constraint function (with smoothing)
+    dx/dt = W * theta(x) + ALambda
 
     The W matrix encodes both service rates and routing:
     - W[i,i] = -mu_i (departure rate from station i)
@@ -441,53 +554,123 @@ def _fluid_ode(
         ALambda: External arrival rates
         pstar: P-norm smoothing parameters
         isSourceState: Boolean array indicating which states belong to Source stations
+        isInfState: Boolean array indicating which states belong to INF stations
 
     Returns:
         dx/dt state derivative
     """
-    x = np.maximum(x, 0)  # Ensure non-negative
+    theta = _fluid_theta(x, SQ, Sa, pstar, isSourceState, isInfState, varclosure)
+    return W @ theta + ALambda.flatten()
 
-    # Compute total queue at each state's station
-    sum_x_Qa = SQ @ x + 1e-8  # Add FineTol for numerical stability (matching MATLAB GlobalConstants.FineTol)
 
-    if pstar is not None and len(pstar) > 0:
-        # P-norm smoothed constraint as per Ruuskanen et al.
-        ghat = np.zeros_like(x)
-        for i in range(len(x)):
-            x_val = sum_x_Qa[i]
-            c_val = Sa[i]
-            p_val = pstar[i] if i < len(pstar) else pstar[-1]
+def _fluid_station_groups(SQC, K, isSourceState=None, isInfState=None):
+    """State index groups, one per (station, CLASS), keyed by class.
 
-            if p_val > 0 and c_val > 0:
-                ghat_val = 1.0 / np.power(1 + np.power(x_val / c_val, p_val), 1.0 / p_val)
-                if np.isnan(ghat_val):
-                    ghat[i] = 0.0
+    PER CLASS, NOT PER STATION, and that is the whole correctness of the probe.
+    A direction that moves a station's mass proportionally across ALL its
+    classes is not a direction the model can take: a SelfLoopingClass is pinned
+    at one station and can never leave it, so such a direction is infeasible,
+    the drift is trivially unchanged along it, and the fixed point reads as
+    degenerate. That is what it did to
+    `sanity_CQN_2q_psfcfs_1class_1slcateachqueue`, whose two queues each hold a
+    self-looping job: RespT came back 1.4336 against a baseline of 0.726303, a
+    97% error, on a model with nothing wrong with it.
+
+    Moving ONE class between two stations it actually occupies IS feasible, and
+    a self-looping class occupies exactly one station, so no pair exists for it
+    and no direction is proposed.
+
+    SQC[i*K + r, a] is 1 exactly when state a belongs to station i and class r.
+    Source and INF states are dropped: a Source carries theta = 0 by
+    construction and an INF station carries theta = x with no min() to pin.
+
+    Returns {class r: [state-index arrays, one per station that class occupies]},
+    with only the classes that occupy at least two stations.
+    """
+    SQC = np.asarray(SQC)
+    if SQC.ndim != 2 or K <= 0:
+        return {}
+    n = SQC.shape[1]
+    M = SQC.shape[0] // K
+    by_class = {}
+    for r in range(K):
+        per_station = []
+        for i in range(M):
+            members = [a for a in range(n)
+                       if SQC[i * K + r, a] > 0
+                       and not (isSourceState is not None and isSourceState[a])
+                       and not (isInfState is not None and isInfState[a])]
+            if members:
+                per_station.append(np.asarray(members, dtype=int))
+        if len(per_station) >= 2:
+            by_class[r] = per_station
+    return by_class
+
+
+def _fluid_fixed_point_is_degenerate(x, rhs, SQC, K, isSourceState=None,
+                                     isInfState=None, rate_scale=1.0):
+    """Is the returned point one of a CONTINUUM of fixed points?
+
+    A station whose queue exceeds its server count has theta pinned at the
+    server count: min(S, sum_x) stops depending on sum_x, so the drift cannot
+    tell one split of the mass between two such stations from another. Every
+    split is then an equilibrium and the first-order method returns whichever
+    one the integrator happened to stop at -- [9 1] where the exact answer is
+    [5 5], on two identical saturated stations in a closed cycle.
+
+    The test is direct rather than structural: move a little mass of ONE CLASS
+    from one station to another along a population-conserving direction and see
+    whether the drift moves at all. Both directions are tried, because the
+    integrator typically stops on the BOUNDARY of the degenerate set, where one
+    of the two does change the drift. The direction must be FEASIBLE -- see
+    _fluid_station_groups for why moving a station's whole mass is not.
+
+    The DIRECTIONAL DERIVATIVE is the scale-free quantity to threshold: a live
+    direction moves the drift at the station's own service rate, a null one only
+    by the FineTol the share carries, which leaves four orders between them.
+
+    Returns False whenever the point is not a fixed point in the first place --
+    a transient or timespan-limited run -- so no repair is ever attempted on a
+    trajectory the caller asked to see mid-flight.
+    """
+    x = np.asarray(x, dtype=float).ravel()
+    d0 = np.asarray(rhs(x), dtype=float).ravel()
+    if d0.size == 0 or float(np.max(np.abs(d0))) > 1e-6 * max(1.0, float(np.max(np.abs(x)))):
+        return False
+    by_class = _fluid_station_groups(SQC, K, isSourceState, isInfState)
+    if not by_class:
+        return False
+    eps = 1e-3 * max(1.0, float(np.max(np.abs(x))))
+    rate_scale = max(float(rate_scale), 1e-12)
+    for groups in by_class.values():
+        mass = [float(np.sum(x[g])) for g in groups]
+        for a in range(len(groups)):
+            if mass[a] <= eps:
+                continue
+            for b in range(len(groups)):
+                if a == b:
+                    continue
+                ga, gb = groups[a], groups[b]
+                d = np.zeros_like(x)
+                d[ga] -= x[ga] / mass[a]                   # take, proportionally
+                if mass[b] > 0:
+                    d[gb] += x[gb] / mass[b]               # give, proportionally
                 else:
-                    ghat[i] = ghat_val
-            else:
-                ghat[i] = 1.0
+                    d[gb] += 1.0 / len(gb)
+                dd = np.asarray(rhs(x + eps * d), dtype=float).ravel() - d0
+                if float(np.max(np.abs(dd))) / eps <= 1e-4 * rate_scale:
+                    return True
+    return False
 
-        theta = x * ghat
-        # For Source stations, theta = 0 to bypass Source in dynamics
-        # (matching MATLAB where Source is excluded from state space)
-        if isSourceState is not None:
-            theta[isSourceState] = 0.0
-        dxdt = W @ theta + ALambda.flatten()
-    else:
-        # Standard fluid constraint
-        min_vals = np.minimum(sum_x_Qa, Sa.flatten())
-        with np.errstate(divide='ignore', invalid='ignore'):
-            ratio = np.where(sum_x_Qa > 1e-8, min_vals / sum_x_Qa, 1.0)
-        ratio = np.nan_to_num(ratio, nan=1.0, posinf=1.0, neginf=0.0)
 
-        theta = x * ratio
-        # For Source stations, theta = 0 to bypass Source in dynamics
-        # (matching MATLAB where Source is excluded from state space)
-        if isSourceState is not None:
-            theta[isSourceState] = 0.0
-        dxdt = W @ theta + ALambda.flatten()
-
-    return dxdt
+def _expand_eliminated(x_reduced, state_map, n_original):
+    """Reduced ODE state back to the pre-elimination layout, eliminated slots at 0."""
+    x = np.asarray(x_reduced, dtype=float).ravel()
+    if state_map is None or x.size != len(state_map):
+        return x_reduced
+    full = np.zeros(int(n_original))
+    full[np.asarray(state_map, dtype=int)] = x
+    return full
 
 
 def solver_fld(
@@ -732,27 +915,44 @@ def solver_fld(
         # Use explicitly provided initial solution
         x0 = np.array(options.init_sol, dtype=float)
     elif hasattr(sn, 'state') and sn.state is not None and len(sn.state) > 0:
-        # Build x0 from sn.state (matching MATLAB solver_fluid_initsol)
-        # sn.state[isf] contains per-class marginal job counts
+        # Build x0 from sn.state, the port of MATLAB SOLVER_FLUID_INITSOL.
+        #
+        # sn.state[isf] IS NOT A PER-CLASS COUNT VECTOR, and reading it as one is
+        # a silent wrong answer rather than an error. Its layout depends on the
+        # station's scheduling: PS/INF carry per-class counts, but FCFS, HOL,
+        # LCFS and SIRO carry the BUFFER ORDERING -- one entry per job holding
+        # that job's class -- so entry r is the class of the r-th queued job, not
+        # the number of class-r jobs. Taking state_vec[r] there put ONE job in
+        # the state of a station holding N of them, and the ODE conserves
+        # whatever it is handed: a closed cycle referencing an FCFS station
+        # returned a total population of 1 against N=6.
+        #
+        # State.toMarginal is the decoder for every layout, exactly as the MATLAB
+        # reference calls it, and nir is the per-class count regardless of
+        # scheduling.
+        from ....api.state.marginal import toMarginal
+
         idx = 0
         for ist in range(M):
+            node_idx_ist = int(sn.stationToNode[ist]) if ist < len(sn.stationToNode) else ist
             isf = int(sn.stationToStateful[ist]) if hasattr(sn, 'stationToStateful') and sn.stationToStateful is not None else ist
+
+            nir_i = None
+            kir_i = None
+            if isf < len(sn.state) and sn.state[isf] is not None:
+                _, nir_i, _, kir_i = toMarginal(sn, node_idx_ist, np.asarray(sn.state[isf]))
+                nir_i = np.atleast_2d(np.asarray(nir_i, dtype=float))[0]
+                kir_i = np.asarray(kir_i, dtype=float)
+                if kir_i.ndim == 3:
+                    kir_i = kir_i[0]
+                else:
+                    kir_i = np.atleast_2d(kir_i)
+
             for k in range(K):
                 nphases_ik = int(phases[ist, k])
                 if nphases_ik == 0:
                     continue
 
-                # Get number of jobs of class k at station ist from sn.state
-                n_jobs_at_station = 0.0
-                if isf < len(sn.state) and sn.state[isf] is not None:
-                    state_vec = np.asarray(sn.state[isf]).flatten()
-                    if k < len(state_vec):
-                        n_jobs_at_station = float(state_vec[k])
-                    elif len(state_vec) == 1 and K == 1:
-                        n_jobs_at_station = float(state_vec[0])
-
-                # Check if this is a Source station - set state to 0
-                node_idx_ist = int(sn.stationToNode[ist]) if ist < len(sn.stationToNode) else ist
                 is_source = (node_idx_ist < len(sn.nodetype) and sn.nodetype[node_idx_ist] == NodeType.SOURCE)
                 sched_ist = sched_dict.get(ist) if sched_dict else None
                 if sched_ist == SchedStrategy.EXT:
@@ -763,12 +963,23 @@ def solver_fld(
                     idx += nphases_ik
                     continue
 
-                if np.isnan(n_jobs_at_station):
-                    n_jobs_at_station = 0.0
+                if nir_i is None or k >= len(nir_i):
+                    idx += nphases_ik
+                    continue
 
-                # Place all jobs in first phase (matching MATLAB: jobs in waiting buffer
-                # are re-started from phase 1)
-                x0[idx] = n_jobs_at_station
+                # A job in the WAITING BUFFER has no phase yet, so it is restarted
+                # in phase 1; only the jobs actually in service carry kir.
+                in_service = np.zeros(nphases_ik)
+                for ph in range(nphases_ik):
+                    if k < kir_i.shape[0] and ph < kir_i.shape[1]:
+                        in_service[ph] = kir_i[k, ph]
+
+                total_k = float(nir_i[k])
+                if np.isnan(total_k):
+                    total_k = 0.0
+                x0[idx] = total_k - float(np.sum(in_service[1:]))
+                for ph in range(1, nphases_ik):
+                    x0[idx + ph] = in_service[ph]
                 idx += nphases_ik
     else:
         # Fallback: distribute evenly (legacy behavior)
@@ -843,6 +1054,9 @@ def solver_fld(
     # This matches the MATLAB implementation where Source is excluded from state space.
     # Arrivals are injected directly into queue phases via ALambda.
     isSourceState = np.zeros(W.shape[0], dtype=bool)
+    # An INF station carries no min() to smooth, and Sa holds the population
+    # there, which the p-norm would otherwise read as a k = N queue
+    isInfState = np.zeros(W.shape[0], dtype=bool)
     state_idx = 0
     for i in range(M):
         node_idx = int(sn.stationToNode[i]) if i < len(sn.stationToNode) else i
@@ -853,12 +1067,74 @@ def solver_fld(
                 if is_source:
                     isSourceState[state_idx] = True
                     x0[state_idx] = 0.0  # Initialize Source phases to 0 (no mass at Source)
+                if i < len(nservers_orig) and np.isinf(nservers_orig[i]):
+                    isInfState[state_idx] = True
                 state_idx += 1
+
+    # STOCHASTIC-COMPLEMENT THE INSTANTANEOUS STATES OUT OF THE LINEAR GENERATOR,
+    # the same reduction the event-set routes take, so this route does not
+    # integrate an InfRate mode either. Port of MATLAB solver_fluid_matrix.m /
+    # eliminate_immediate_matrix.m. Here W is the TRANSPOSE of a generator --
+    # W[j,i] is the rate i -> j, because the drift is W @ theta -- so the block
+    # splits by COLUMN and every per-state object is projected alongside it.
+    #
+    # The read-off matrices are CORRECTED, not truncated: an eliminated state
+    # holds O(1/InfRate) mass and yet carries a FINITE throughput, because the
+    # rate read off it is InfRate itself, so dropping its column would silently
+    # delete every completion the instantaneous phase makes.
+    try:
+        from ....solvers.solver_fld.immediate import fluid_hide_immediate
+        _do_hide = fluid_hide_immediate(sn, options)
+    except Exception:  # noqa: BLE001 - a handler-level options object may not carry the flag
+        _do_hide = False
+    imm_state_map = None
+    n_pre_elim = W.shape[0]
+    if _do_hide and W.shape[0] > 1:
+        imm_tol = GlobalConstants.Immediate * (1.0 - 0.01)
+        cfg = getattr(options, 'config', None) or {}
+        if isinstance(cfg, dict) and cfg.get('immediate_tol') is not None:
+            imm_tol = float(cfg['immediate_tol'])
+        # outgoing rates of state i live in COLUMN i
+        imm = np.nonzero(np.abs(W).max(axis=0) >= imm_tol)[0]
+        timed = np.setdiff1d(np.arange(W.shape[0]), imm)
+        if imm.size > 0 and timed.size > 1:
+            Q = W.T  # generator in the usual row-source convention
+            QTT = Q[np.ix_(timed, timed)]
+            QTI = Q[np.ix_(timed, imm)]
+            QIT = Q[np.ix_(imm, timed)]
+            QII = Q[np.ix_(imm, imm)]
+            try:
+                neg_inv = np.linalg.inv(-QII)
+                absorb_ii = neg_inv @ QIT      # absorption distribution
+                sojourn_ti = QTI @ neg_inv     # mass held per unit timed mass
+                Q_red = QTT + QTI @ absorb_ii
+            except np.linalg.LinAlgError:
+                Q_red = None
+            if Q_red is not None and np.all(np.isfinite(Q_red)):
+                x0 = x0[timed] + absorb_ii.T @ x0[imm]
+                ALambda = (np.asarray(ALambda).ravel()[timed]
+                           + absorb_ii.T @ np.asarray(ALambda).ravel()[imm]).reshape(-1, 1)
+                SQC = SQC[:, timed] + SQC[:, imm] @ sojourn_ti.T
+                SUC = SUC[:, timed] + SUC[:, imm] @ sojourn_ti.T
+                STC = STC[:, timed] + STC[:, imm] @ sojourn_ti.T
+                Qa = Qa[:, timed]
+                SQ = SQ[np.ix_(timed, timed)]
+                Sa = Sa[timed]
+                pstar = pstar[timed]
+                isSourceState = isSourceState[timed]
+                isInfState = isInfState[timed]
+                W = Q_red.T
+                imm_state_map = timed
 
     # Time span
     min_rate = np.abs(W[W != 0]).min() if np.any(W != 0) else 1.0
     T_end = min(options.timespan[1], abs(10 * options.iter_max / min_rate))
     T_start = options.timespan[0] if np.isfinite(options.timespan[0]) else 0.0
+
+    # Set by the degeneracy repair below when the drift had to be re-integrated
+    # with a variance-carrying saturation term; the metrics must then be read
+    # off the SAME share the drift used.
+    varclosure_used = False
 
     # Check if W is essentially zero (equilibrium case)
     W_norm = np.linalg.norm(W)
@@ -870,7 +1146,7 @@ def solver_fld(
     else:
         # Solve ODE
         def _rhs(t, x):
-            return _fluid_ode(t, x, W, SQ, Sa, ALambda, pstar, isSourceState)
+            return _fluid_ode(t, x, W, SQ, Sa, ALambda, pstar, isSourceState, isInfState)
         try:
             if not options.stiff:
                 method = 'RK45'
@@ -885,21 +1161,122 @@ def solver_fld(
                 method = 'BDF'
             else:
                 method = 'LSODA'
+            # An explicit integrator wins over all three branches above, and is
+            # the only way the in-tree line_solver.lib.lsoda is reached
+            if getattr(options, 'odesolver', None) is not None:
+                method = options.odesolver
 
-            sol = solve_ivp(
-                _rhs,
-                [T_start, T_end],
-                x0,
-                method=method,
-                rtol=options.tol,
-                atol=options.tol,
-                dense_output=True,
-                max_step=options.odemaxstep if (options.odemaxstep is not None and np.isfinite(options.odemaxstep)) else np.inf,
-            )
+            t_eval = None
+            if options.tranpoints is not None and len(options.tranpoints) > 0:
+                pts = np.asarray(options.tranpoints, dtype=float).ravel()
+                pts = pts[(pts > T_start) & (pts < T_end)]
+                if pts.size:
+                    t_eval = np.unique(np.concatenate(([T_start], pts, [T_end])))
 
-            t_vec = sol.t
-            x_vec = sol.y.T  # Shape: (n_times, n_states)
+            # SUCCESSIVE TIME WINDOWS, not one integration to the horizon.
+            # This port used to compute T_end = 10*iter_max/min_rate up front and
+            # hand solve_ivp the whole span in a single call. MATLAB
+            # (solver_fluid_iteration.m) and the JAR
+            # (ClosingAndStateDepMethodsAnalyzer) both advance in consecutive
+            # warm-started windows T_k = 10*k/min_rate over [T_{k-1}, T_k], and
+            # stop as soon as the iteration's own geometric tail says the fixed
+            # point is within tolerance. The total model time is the same either
+            # way; what the windows buy is the EARLY STOP, so a model that settles
+            # in one window pays one window instead of the full horizon, and what
+            # they cost is an integrator restart per window. Aligning here keeps
+            # the three codebases on one algorithm rather than three.
+            _mx = options.odemaxstep if (options.odemaxstep is not None
+                                         and np.isfinite(options.odemaxstep)) else np.inf
 
+            def _integrate(t0, t1, y0):
+                pts = None
+                if options.tranpoints is not None and len(options.tranpoints) > 0:
+                    q = np.asarray(options.tranpoints, dtype=float).ravel()
+                    q = q[(q > t0) & (q < t1)]
+                    if q.size:
+                        pts = np.unique(np.concatenate(([t0], q, [t1])))
+                r = solve_ivp(_rhs, [t0, t1], y0, method=method,
+                              rtol=options.tol, atol=options.tol,
+                              dense_output=True, t_eval=pts, max_step=_mx)
+                return r.t, r.y.T
+
+            earlystop = True
+            cfg = getattr(options, 'config', None)
+            if isinstance(cfg, dict) and cfg.get('fluid_earlystop') is not None:
+                earlystop = bool(cfg['fluid_earlystop'])
+            elif cfg is not None and getattr(cfg, 'fluid_earlystop', None) is not None:
+                earlystop = bool(cfg.fluid_earlystop)
+
+            # The residual cannot be driven below the error the integrator carries.
+            drift_tol = max(getattr(options, 'iter_tol', options.tol), options.tol)
+            slowest_rate = min_rate
+            min_horizon = 10.0 / slowest_rate
+            drift_safety = 0.01   # headroom on the tail, since rho is estimated
+            rho_hist = [np.nan, np.nan, np.nan]
+            drift_below = 0       # consecutive windows satisfying the residual test
+            moved_prev = np.inf
+
+            T0 = T_start
+            T = 0.0
+            it_w = 0
+            goon = True
+            x_prev = np.asarray(x0, dtype=float)
+            t_chunks, x_chunks = [], []
+            while ((np.isfinite(options.timespan[1]) and T < options.timespan[1])
+                   or (goon and it_w < options.iter_max)):
+                it_w += 1
+                T = min(options.timespan[1], abs(10.0 / min_rate)) if it_w == 1 \
+                    else min(options.timespan[1], abs(10.0 * it_w / min_rate))
+                t_it, x_it = _integrate(T0, T, x_prev)
+                if t_it.size == 0:
+                    break
+                t_chunks.append(t_it)
+                x_chunks.append(x_it)
+                x_end = x_it[-1, :]
+                denom = np.sum(x_prev)
+                moved = (np.linalg.norm(x_end - x_prev, 1) / 2.0 / denom) if denom > 0 else 0.0
+                T0 = T
+                # MOVED MASS IS NOT THE TERMINATION TEST: it is one window's motion
+                # and drops exactly the geometric tail r*rho/(1-rho) still to come.
+                # rho is read off the iteration itself, and the drift F(x) -- zero AT
+                # a fixed point -- is an independent second bound; BOTH must hold on
+                # two consecutive windows, past the slowest relaxation time.
+                if earlystop and goon and T >= min_horizon and it_w > 1:
+                    rho_hist[it_w % len(rho_hist)] = moved / max(moved_prev, GlobalConstants.Zero)
+                    finite = [v for v in rho_hist if np.isfinite(v)]
+                    rho = max(finite) if finite else np.inf
+                    xe = np.asarray(x_end, dtype=float)
+                    drift_displ = (np.linalg.norm(_rhs(T, xe), 1) / 2.0
+                                   / max(np.sum(xe), GlobalConstants.Zero) / slowest_rate)
+                    if rho < 1:
+                        tail = moved * rho / (1.0 - rho)
+                        if tail < drift_safety * drift_tol and drift_displ < drift_tol:
+                            drift_below += 1
+                            if drift_below >= 2:
+                                goon = False
+                        else:
+                            drift_below = 0
+                    else:
+                        drift_below = 0
+                moved_prev = moved
+                x_prev = x_end
+                if T >= options.timespan[1]:
+                    goon = False
+
+            if t_chunks:
+                t_vec = np.concatenate(t_chunks)
+                x_vec = np.vstack(x_chunks)
+            else:
+                t_vec = np.array([T_start])
+                x_vec = np.asarray(x0, dtype=float).reshape(1, -1)
+
+        except (NameError, AttributeError, TypeError, ImportError):
+            # A PROGRAMMING ERROR IS NOT AN INTEGRATION FAILURE, and turning one into
+            # a NaN table hides it: `GlobalConstants` shadowed by a function-local
+            # import made every method='matrix' model return NaN, and forty fluid
+            # tests failed with no message naming the cause. The NaN fallback below
+            # stays for what it is for -- a drift the integrator cannot follow.
+            raise
         except Exception as e:
             # Return empty result on failure
             result = SolverFLDReturn(
@@ -921,6 +1298,63 @@ def solver_fld(
     x_final = x_vec[-1, :]
     x_final = np.maximum(x_final, 0)  # Ensure non-negative
 
+    # DEGENERATE DRIFT: re-integrate with a closed saturation term, do not touch
+    # the answer that came back. min(E[n], c) is FLAT above the server count, so
+    # a network of saturated stations has a CONTINUUM of fixed points and this
+    # method returns whichever one the integrator stopped at -- [9 1] against an
+    # exact [5 5] on two identical saturated stations in a closed cycle, and
+    # [8 2] on the same pair with two servers each.
+    #
+    # The repair is applied to the DRIFT, not to the point: the same trajectory
+    # is integrated again with E[min(n, c)] in place of min(E[n], c), which is
+    # strictly increasing and therefore isolates one fixed point. A selection
+    # rule imposed after the fact would not be a solution of anything.
+    #
+    # WHY A CLOSURE AND NOT A SMOOTHED min: any smoothing sharp enough to stay
+    # faithful to min away from the kink is numerically FLAT far from it -- the
+    # Boltzmann softmin at alpha = 20 carries a restoring force of exp(-160) at
+    # the [9 1] point, and the p-norm trades the two off directly (pstar = 2
+    # recovers [5 5], pstar = 8 gives [7.64 2.36], pstar = 128 gives
+    # [8.94 1.06]). The closure has no such trade-off because its slope comes
+    # from the VARIANCE of the marginal rather than from a smoothing width.
+    #
+    # Only a model that is ACTUALLY degenerate pays for it: the test is a
+    # null-direction probe at the returned point, so a well-posed model
+    # integrates once and is bit-for-bit unchanged.
+    if W_norm >= 1e-10 and (pstar is None or len(pstar) == 0):
+        try:
+            if _fluid_fixed_point_is_degenerate(
+                    x_final, lambda xx: _rhs(T_end, xx), SQC, K,
+                    isSourceState, isInfState,
+                    float(np.max(np.abs(W))) if W.size else 1.0):
+                def _rhs_closed(t, x):
+                    return _fluid_ode(t, x, W, SQ, Sa, ALambda, pstar,
+                                      isSourceState, isInfState, True)
+                sol_c = solve_ivp(
+                    _rhs_closed, [T_start, T_end], x0, method=method,
+                    rtol=options.tol, atol=options.tol, dense_output=True,
+                    t_eval=t_eval,
+                    max_step=options.odemaxstep if (options.odemaxstep is not None
+                                                    and np.isfinite(options.odemaxstep))
+                    else np.inf,
+                )
+                x_c = np.maximum(sol_c.y.T[-1, :], 0)
+                if np.all(np.isfinite(x_c)):
+                    t_vec = sol_c.t
+                    x_vec = sol_c.y.T
+                    x_final = x_c
+                    varclosure_used = True
+                    if options.verbose:
+                        from ...io.logging import line_printf
+                        line_printf(
+                            'Fluid: the first-order fixed point is not isolated '
+                            '(two or more saturated stations), so the drift was '
+                            're-integrated with a closed saturation term.\n')
+        except Exception:
+            # A failed repair must leave the unrepaired answer standing rather
+            # than turning a wrong number into no number.
+            pass
+
     # Identify Source and Sink stations (they don't hold jobs)
     source_stations = set()
     sink_stations = set()
@@ -938,12 +1372,9 @@ def solver_fld(
     T = np.zeros((M, K))
     R = np.zeros((M, K))
 
-    # Compute theta (effective service rate fraction)
-    sum_x_Qa = SQ @ x_final + 1e-8
-    theta = x_final.copy()
-    for phase in range(len(x_final)):
-        station = int(Qa[0, phase]) if phase < Qa.shape[1] else 0
-        theta[phase] = x_final[phase] / sum_x_Qa[phase] * min(Sa[phase], sum_x_Qa[phase])
+    # The same share the drift used, smoothed, closed or neither
+    theta = _fluid_theta(x_final, SQ, Sa, pstar, isSourceState, isInfState,
+                         varclosure_used)
 
     # Queue lengths
     if SQC.shape[1] == len(x_final):
@@ -1028,11 +1459,8 @@ def solver_fld(
 
     for step in range(len(t_vec)):
         x_step = np.maximum(x_vec[step, :], 0)
-        sum_x_step = SQ @ x_step + 1e-8
-        theta_step = x_step.copy()
-        for phase in range(len(x_step)):
-            station = int(Qa[0, phase]) if phase < Qa.shape[1] else 0
-            theta_step[phase] = x_step[phase] / sum_x_step[phase] * min(Sa[phase], sum_x_step[phase])
+        theta_step = _fluid_theta(x_step, SQ, Sa, pstar, isSourceState, isInfState,
+                                  varclosure_used)
 
         if SQC.shape[1] == len(x_step):
             QN_step = SQC @ x_step
@@ -1072,7 +1500,13 @@ def solver_fld(
         Ut=Ut,
         Tt=Tt,
         t=t_vec,
-        odeStateVec=x_final,
+        # Handed back in the PRE-ELIMINATION layout: the caller stores it as
+        # options.init_sol for the next iterate, which rebuilds the state over
+        # every phase, so a vector shortened by the immediate elimination would
+        # run that iterate off the end. The eliminated slots come back empty,
+        # which is what they hold.
+        odeStateVec=(_expand_eliminated(x_final, imm_state_map, n_pre_elim)
+                     if imm_state_map is not None else x_final),
         runtime=time.time() - start_time,
         method=options.method,
         it=len(t_vec)

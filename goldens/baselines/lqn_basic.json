@@ -1,0 +1,120 @@
+{
+  "class": {
+    "LN": "deterministic"
+  },
+  "example": "lqn_basic",
+  "solvers": {
+    "LN": [
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": "NaN",
+        "ResidT": "NaN",
+        "RespT": "NaN",
+        "Station": "P1",
+        "Tput": "NaN",
+        "Util": 0.99711
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": "NaN",
+        "ResidT": "NaN",
+        "RespT": "NaN",
+        "Station": "P2",
+        "Tput": "NaN",
+        "Util": 0.44316
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 23.4,
+        "ResidT": 1.0848,
+        "RespT": "NaN",
+        "Station": "T1",
+        "Tput": 13.3,
+        "Util": 0.66474
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 8.7259,
+        "ResidT": 0.55607,
+        "RespT": "NaN",
+        "Station": "T2",
+        "Tput": 13.3,
+        "Util": 0.33237
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 1.3295,
+        "ResidT": 0.02,
+        "RespT": "NaN",
+        "Station": "T3",
+        "Tput": 66.5,
+        "Util": 0.44316
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 23.4,
+        "ResidT": "NaN",
+        "RespT": 1.7609,
+        "Station": "E1",
+        "Tput": 13.3,
+        "Util": 0.66474
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 8.7259,
+        "ResidT": "NaN",
+        "RespT": 0.65634,
+        "Station": "E2",
+        "Tput": 13.3,
+        "Util": 0.33237
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 1.3295,
+        "ResidT": "NaN",
+        "RespT": 0.02,
+        "Station": "E3",
+        "Tput": 66.5,
+        "Util": 0.44316
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 23.4,
+        "ResidT": 1.0848,
+        "RespT": 1.7609,
+        "Station": "AS1",
+        "Tput": 13.3,
+        "Util": 0.66474
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 8.7259,
+        "ResidT": 0.55607,
+        "RespT": 0.65634,
+        "Station": "AS2",
+        "Tput": 13.3,
+        "Util": 0.33237
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Jobs",
+        "QLen": 1.3295,
+        "ResidT": 0.02,
+        "RespT": 0.02,
+        "Station": "AS3",
+        "Tput": 66.5,
+        "Util": 0.44316
+      }
+    ]
+  }
+}

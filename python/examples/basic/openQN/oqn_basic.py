@@ -2,7 +2,7 @@
 Basic Open Queueing Network
 
 This example demonstrates:
-- Open network: Source → Delay → Queue → Sink
+- Open network: Source -> Delay -> Queue -> Sink
 - Single class with HyperExp and Exp distributions
 - Multiple solver comparison
 """
@@ -10,9 +10,8 @@ This example demonstrates:
 from line_solver import *
 import numpy as np
 
-if __name__ == "__main__":
-    GlobalConstants.set_verbose(VerboseLevel.STD)
 
+def oqn_basic():
     model = Network('model')
 
     node = np.empty(4, dtype=object)
@@ -33,6 +32,18 @@ if __name__ == "__main__":
         for j in range(len(node)):
             P.set(jobclass, jobclass, node[i], node[j], pmatrix[i][j])
     model.link(P)
+
+    return model
+
+
+if __name__ == "__main__":
+    GlobalConstants.set_verbose(VerboseLevel.STD)
+
+    # The model is built by the function above, not inline: an example that
+    # builds it only under __main__ exposes nothing on import, so the JAVA and
+    # C++ rows of parity-static cannot export it and SKIP every solver. That
+    # reads as coverage while asserting nothing (see _example_model_vendor.py).
+    model = oqn_basic()
 
     # Run multiple solvers
     solver = np.array([], dtype=object)

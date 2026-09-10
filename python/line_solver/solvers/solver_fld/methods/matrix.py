@@ -48,7 +48,8 @@ class MatrixMethod:
             timespan=self.options.timespan,
             pstar=[self.options.pstar] * self.sn.nstations,
             num_cdf_pts=200,
-            odemaxstep=self.options.odemaxstep
+            odemaxstep=self.options.odemaxstep,
+            odesolver=getattr(self.options, 'odesolver', None)
         )
 
         # Solve using handler

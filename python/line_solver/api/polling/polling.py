@@ -70,7 +70,7 @@ def polling_qsys_exhaustive(
     lst1 = []
     lst2 = []
 
-    for i in range(1, n + 1):  # 1-indexed as in Kotlin
+    for i in range(1, n + 1): # 1-indexed
         for j in range(1, n + 1):
             if i > j:
                 t1 = np.zeros(n * n)

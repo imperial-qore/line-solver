@@ -8,7 +8,7 @@ include requirements.txt
 # Exclude pre-built JARs from distributions (auto-downloaded on first use via lang='java' wrapper):
 # - jline.jar: canonical LINE JAR (auto-downloads from SourceForge latest/)
 # - JMT.jar: Java Modelling Tools (auto-downloads from SourceForge latest/)
-# - ldes.jar: LINE Discrete Event Simulator (auto-downloads from SourceForge latest/)
+# - ldes.jar: LDES simulation engine (auto-downloads from SourceForge latest/)
 recursive-exclude line_solver jline.jar
 recursive-exclude line_solver JMT.jar
 recursive-exclude line_solver ldes.jar

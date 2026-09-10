@@ -8,16 +8,29 @@ package jline.lang.processes;
 import jline.io.Ret;
 import jline.util.matrix.Matrix;
 import jline.util.RandomManager;
+import jline.util.Triple;
+import jline.api.mc.Ctmc_multi;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
 
+import static jline.api.mc.Ctmc_courtois.ctmc_courtois;
+import static jline.api.mc.Ctmc_foxglynn.ctmc_foxglynn;
+import static jline.api.mc.Ctmc_isfeasible.ctmc_isfeasible;
+import static jline.api.mc.Ctmc_kms.ctmc_kms;
+import static jline.api.mc.Ctmc_multi.ctmc_multi;
+import static jline.api.mc.Ctmc_relsolve.ctmc_relsolve;
+import static jline.api.mc.Ctmc_takahashi.ctmc_takahashi;
 import static jline.api.mc.Ctmc_makeinfgen.ctmc_makeinfgen;
 import static jline.api.mc.Ctmc_rand.ctmc_rand;
+import static jline.api.mc.Ctmc_sens.ctmc_sens;
 import static jline.api.mc.Ctmc_solve.ctmc_solve;
+import static jline.api.mc.Ctmc_stochcomp.ctmc_stochcomp;
+import static jline.api.mc.Ctmc_timeaverage.ctmc_timeaverage;
 import static jline.api.mc.Ctmc_timereverse.ctmc_timereverse;
+import static jline.api.mc.Ctmc_uniformization.ctmc_uniformization;
 import static jline.api.mc.Dtmc_makestochastic.dtmc_makestochastic;
 
 /**
@@ -154,6 +167,172 @@ public class MarkovProcess extends Process {
      */
     public Matrix solve() {
         return ctmc_solve(infGen);
+    }
+
+    /**
+     * Distribution at time t from pi0, by Jensen uniformization.
+     *
+     * @param pi0 initial distribution, uniform when null
+     * @param t   time point
+     * @return the distribution at time t
+     */
+    public Matrix transientProb(Matrix pi0, double t) {
+        return transientProb(pi0, t, "unif");
+    }
+
+    /**
+     * Distribution at time t from pi0.
+     *
+     * @param pi0    initial distribution, uniform when null
+     * @param t      time point
+     * @param method "unif" for Jensen uniformization, "foxglynn" for the
+     *               Fox-Glynn weights, which avoid evaluating the Poisson
+     *               terms directly
+     * @return the distribution at time t
+     */
+    public Matrix transientProb(Matrix pi0, double t, String method) {
+        if (method != null && method.equalsIgnoreCase("foxglynn")) {
+            return ctmc_foxglynn(uniformOrGiven(pi0), infGen, t);
+        }
+        return ctmc_uniformization(uniformOrGiven(pi0), infGen, t);
+    }
+
+    /**
+     * Equilibrium distribution relative to a reference state, i.e. with
+     * p(refstate) = 1. Unnormalized by construction, so it is defined even
+     * where the normalizing constant is not.
+     *
+     * @param refstate 0-based index of the reference state
+     * @return the relative equilibrium distribution
+     */
+    public Matrix solveRelative(int refstate) {
+        return (Matrix) ctmc_relsolve(infGen, refstate)[0];
+    }
+
+    /**
+     * Aggregation-disaggregation over a macrostate partition.
+     *
+     * @param MS     macrostates, each a list of 0-based state indices
+     * @param method "courtois" (param is the randomization rate q), "kms" or
+     *               "takahashi" (param is the iteration count, default 10), or
+     *               "multi" (param is the second-level partition, a
+     *               List&lt;List&lt;Integer&gt;&gt;)
+     * @param param  the per-method parameter described above, may be null
+     * @return the approximate stationary vector, the nearly-complete-
+     *         decomposability index of the partition, and the largest index for
+     *         which the approximation is meant to hold
+     */
+    @SuppressWarnings("unchecked")
+    public Triple<Matrix, Double, Double> aggregate(List<List<Integer>> MS, String method, Object param) {
+        String m = (method == null) ? "courtois" : method.toLowerCase();
+        if (m.equals("courtois")) {
+            return (param == null) ? ctmc_courtois(infGen, MS)
+                    : ctmc_courtois(infGen, MS, ((Number) param).doubleValue());
+        } else if (m.equals("kms")) {
+            return ctmc_kms(infGen, MS, (param == null) ? 10 : ((Number) param).intValue());
+        } else if (m.equals("takahashi")) {
+            return ctmc_takahashi(infGen, MS, (param == null) ? 10 : ((Number) param).intValue());
+        } else if (m.equals("multi")) {
+            if (param == null) {
+                throw new RuntimeException("The 'multi' method requires the second-level partition MSS.");
+            }
+            Ctmc_multi.CtmcMultiResult res = ctmc_multi(infGen, MS, (List<List<Integer>>) param);
+            return new Triple<Matrix, Double, Double>(res.p, res.eps, res.epsMAX);
+        }
+        throw new RuntimeException("Unknown aggregation method '" + method + "'.");
+    }
+
+    /**
+     * Time-averaged distribution over [0,t].
+     *
+     * @param pi0 initial distribution, uniform when null
+     * @param t   horizon
+     * @return the time-averaged distribution over [0,t]
+     */
+    public Matrix timeAverage(Matrix pi0, double t) {
+        return ctmc_timeaverage(uniformOrGiven(pi0), infGen, t).getLeft();
+    }
+
+    /**
+     * Sensitivity of the stationary distribution to a scalar parameter.
+     *
+     * @param dQ derivative of the generator with respect to the parameter
+     * @return the derivative of the stationary distribution
+     */
+    public Matrix sens(Matrix dQ) {
+        return ctmc_sens(infGen, dQ, solve());
+    }
+
+    /**
+     * Stochastic complement of a subset of states. Use stochCompFull to also
+     * obtain the partitioned blocks.
+     *
+     * @param I 0-based indices of the states to retain
+     * @return the generator of the complement on those states
+     */
+    public Matrix stochComp(List<Double> I) {
+        return ctmc_stochcomp(infGen, I).S;
+    }
+
+    /**
+     * Stochastic complement of a subset of states together with the blocks of
+     * the generator partitioned by I and its complement, and the return-path
+     * term T = Q12*inv(-Q22)*Q21, so that S = Q11 + T. Twin of the MATLAB
+     * [S,Q11,Q12,Q21,Q22,T] = ctmc.stochCompFull(I) and of the Python
+     * stochCompFull, which return the same six matrices.
+     *
+     * @param I 0-based indices of the states to retain
+     * @return the complement and the blocks it was built from
+     */
+    public jline.solvers.ctmc.SolverCTMC.StochCompResult stochCompFull(List<Double> I) {
+        return ctmc_stochcomp(infGen, I);
+    }
+
+    /**
+     * @return true when the generator is a valid one
+     */
+    public boolean isFeasible() {
+        return ctmc_isfeasible(infGen);
+    }
+
+    /**
+     * Embedded jump chain, i.e. the DTMC of the states visited at transition
+     * epochs. Unlike toDTMC (uniformization) it does not preserve the
+     * stationary distribution, since it drops the holding times; an absorbing
+     * state stays absorbing.
+     *
+     * @return the embedded DTMC
+     */
+    public MarkovChain toEmbedded() {
+        int n = infGen.getNumRows();
+        Matrix P = new Matrix(n, n);
+        for (int i = 0; i < n; i++) {
+            double exitRate = -infGen.get(i, i);
+            if (exitRate > 0) {
+                for (int j = 0; j < n; j++) {
+                    if (i != j) {
+                        P.set(i, j, infGen.get(i, j) / exitRate);
+                    }
+                }
+            } else {
+                P.set(i, i, 1.0);
+            }
+        }
+        MarkovChain dtmc = new MarkovChain(P);
+        if (stateSpace != null) {
+            dtmc.setStateSpace(stateSpace);
+        }
+        return dtmc;
+    }
+
+    /** The given initial distribution as a row vector, or the uniform one. */
+    private Matrix uniformOrGiven(Matrix pi0) {
+        int n = infGen.getNumRows();
+        Matrix out = new Matrix(1, n);
+        for (int i = 0; i < n; i++) {
+            out.set(0, i, (pi0 == null || pi0.length() != n) ? 1.0 / n : pi0.get(i));
+        }
+        return out;
     }
 
     /**

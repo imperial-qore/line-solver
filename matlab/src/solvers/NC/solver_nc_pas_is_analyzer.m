@@ -29,17 +29,13 @@ method = 'is';         % importance sampling, specialized to OI/P&S stations
 M = sn.nstations;
 K = sn.nclasses;
 
-% ---- reject class switching (P&S rank rates are per raw class) -------------
-for c = 1:sn.nchains
-    if numel(sn.inchain{c}) > 1
-        line_error(mfilename, 'solver_nc_pas_is requires one class per chain (no class switching).');
-    end
-end
-if any(isinf(sn.njobs))
-    line_error(mfilename, 'solver_nc_pas_is requires a closed queueing network.');
-end
-if M ~= 2
-    line_error(mfilename, 'solver_nc_pas_is models a two-station pass-and-swap tandem (got %d stations).', M);
+% ---- the route's own premises (class switching, open chains, a rate lattice,
+% a fork, two stations, a missing rank rate, unit visits) are decided by
+% NC_OI_REFUSAL, which SolverNC's support gate asks too, so a pair the report
+% offers is a pair this analyzer accepts ------------------------------------
+pasReason = nc_oi_refusal(sn, 'pas');
+if ~isempty(pasReason)
+    line_error(mfilename, pasReason);
 end
 N = round(sn.njobs(:)');
 
@@ -47,8 +43,19 @@ N = round(sn.njobs(:)');
 svc = cell(M, 1);
 swapG = cell(M, 1);
 for ist = 1:M
+    if sn.sched(ist) == SchedStrategy.INF
+        % An infinite server IS an order-independent queue: every job is in
+        % service, so mu(c) = sum_i sigma_{c_i} is permutation invariant and
+        % satisfies P1-P3. Admitting it here is what lets the canonical
+        % IS + OI cyclic model be sampled, which is otherwise rejected for
+        % having a station that is not literally declared OI/PAS.
+        infrates = sn.rates(ist, :);
+        svc{ist} = @(c) sum(infrates(c));
+        swapG{ist} = [];
+        continue
+    end
     if sn.sched(ist) ~= SchedStrategy.PAS && sn.sched(ist) ~= SchedStrategy.OI
-        line_error(mfilename, 'solver_nc_pas_is requires both stations to be OI/PAS (station %d is not).', ist);
+        line_error(mfilename, 'solver_nc_pas_is requires both stations to be OI/PAS/INF (station %d is not).', ist);
     end
     ind = sn.stationToNode(ist);
     if ind < 1 || ind > numel(sn.nodeparam) || ~isstruct(sn.nodeparam{ind})
@@ -85,14 +92,6 @@ for r = 1:K
         V(:, r) = V(:, r) / vref;
     end
 end
-for ist = 1:M
-    for r = 1:K
-        if N(r) > 0 && abs(V(ist, r) - 1) > 1e-9
-            line_error(mfilename, 'solver_nc_pas_is requires unit per-class visits (station %d, class %d, V=%g).', ist, r, V(ist, r));
-        end
-    end
-end
-
 % ---- OI rank-rate handles on a per-class count vector ----------------------
 % svcRateFun(c) takes an ordered microstate list; for an OI station it is
 % permutation-invariant, so evaluate it on a canonical microstate for count n.
@@ -118,18 +117,34 @@ if ~isfield(isopt, 'seed') || isempty(isopt.seed)
 end
 
 % ---- normalizing constant and mean queue lengths at population N -----------
-[G, lG, Qpas] = pfqn_pas_is(N, mu, H, isopt);
+% An EMPTY placement DAG means no swap ever reorders the queue, so the sampled
+% orderings are unrestricted and the constant is the plain OI one. Call
+% PFQN_OI_IS for that case rather than PFQN_PAS_IS with H=0: they compute the
+% same quantity, but the OI kernel is the one that says so, and it does not
+% carry the swap bookkeeping the degenerate graph would make dead weight.
+isOIonly = isempty(H) || ~any(H(:));
+if isOIonly
+    method = 'is';
+    isKernel = @(NN, mm, oo) pfqn_oi_is(NN, mm, oo);
+else
+    isKernel = @(NN, mm, oo) pfqn_pas_is(NN, mm, H, oo);
+end
+[G, lG, Qpas] = isKernel(N, mu, isopt);
 
 Q = zeros(M, K);
 Q(1, :) = Qpas(1, :);
 Q(2, :) = Qpas(2, :);
 
 % ---- per-class throughput X_r = G(N - e_r)/G(N) (common random numbers) ----
+% Only the constant is read here, so these runs skip the prefix-count
+% coefficients: same stream, same G, none of the queue-length bookkeeping.
+isoptG = isopt;
+isoptG.qlen = false;
 X = zeros(1, K);
 for r = 1:K
     if N(r) > 0
         er = zeros(1, K); er(r) = 1;
-        Gr = pfqn_pas_is(N - er, mu, H, isopt);
+        Gr = isKernel(N - er, mu, isoptG);
         if G > 0
             X(r) = Gr / G;
         end

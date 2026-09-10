@@ -162,6 +162,16 @@ def example5_solve_environment():
     # FLD needs finite timespan for transient analysis in ENV solver (matching MATLAB)
     solver = ENV(env, lambda m: FLD(m, timespan=[0, 1000]), {'iter_tol': 0.01, 'iter_max': 100})
 
+    # The MATLAB twin's own line, verbatim and UNPREFIXED. It is not decoration:
+    # everything after it belongs to the STAGE solver, so a reader of the console
+    # keys the environment-averaged table below to FLD -- which is what this
+    # example's golden holds. The section heading above spells the same words but
+    # carries an "Example 5: " prefix, and the reader anchors at the start of the
+    # line, so it did not count: PYTHON, P2J and P2C all filed the table under
+    # the ENV metasolver and failed as "solver FLD missing from output" with the
+    # numbers inside tolerance. Belongs HERE and not in SolverENV -- the
+    # renv_*_repairmen examples do not print it, and their goldens key ENV.
+    print("\nSolving environment model with ENV solver...")
     print("\nAverage Performance Metrics:")
     avg_table = solver.getAvgTable()
     print(avg_table)

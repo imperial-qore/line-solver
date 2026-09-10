@@ -1,5 +1,5 @@
-function [outspace, outrate, outprob, eventCache] = afterEventStationPAS(sn, ind, ist, inspace, event, class, isSimulation, eventCache, R, V, key) %#ok<INUSL>
-% [OUTSPACE, OUTRATE, OUTPROB, EVENTCACHE] = AFTEREVENTSTATIONPAS(...)
+function [outspace, outrate, outprob, eventCache, outstart, outpreempt] = afterEventStationPAS(sn, ind, ist, inspace, event, class, isSimulation, eventCache, R, V, key) %#ok<INUSL>
+% [OUTSPACE, OUTRATE, OUTPROB, EVENTCACHE, OUTSTART, OUTPREEMPT] = AFTEREVENTSTATIONPAS(...)
 %
 % Event handler for pass-and-swap (PAS) / order-independent (OI) stations.
 %
@@ -20,12 +20,25 @@ function [outspace, outrate, outprob, eventCache] = afterEventStationPAS(sn, ind
 %   job.
 % - PHASE: none (PAS service is exponential).
 %
+% START/PREEMPT tags. A PAS station has one clock for the whole station and no
+% servers to hold, so "in service" means "at a position whose rate increment
+% Delta_mu is positive". A job therefore starts service exactly when a position
+% goes from a zero increment to a positive one, which is what sub_startedHere
+% compares. The two canaries bracket the rule: with mu(c) = 1 only the head is
+% served, so a job starts when it reaches the head (M/M/1); with mu(c) = |c|
+% every position is served, so every arrival starts at once (M/M/inf). Under a
+% swap the tag follows the POSITION rather than the job identity, since
+% pass-and-swap redefines which job holds a position. Nothing is ever pushed
+% back out of service here, so OUTPREEMPT is identically zero.
+%
 % Copyright (c) 2012-2026, Imperial College London
 % All rights reserved.
 
 outspace = [];
 outrate = [];
 outprob = [];
+outstart = [];
+outpreempt = [];
 
 muFun = sn.nodeparam{ind}.svcRateFun;
 G = sn.nodeparam{ind}.swapGraph;
@@ -51,6 +64,7 @@ switch event
             outspace = [outspace; newc, zeros(1, W-numel(newc)), varcols(row,:)]; %#ok<AGROW>
             outrate = [outrate; -1];        % passive action, rate unspecified %#ok<AGROW>
             outprob = [outprob; 1];         %#ok<AGROW>
+            outstart = [outstart; sub_startedHere(muFun, c, newc, R)]; %#ok<AGROW>
         end
     case EventType.DEP % active: a class-`class` job departs via pass-and-swap
         for row=1:nrows
@@ -74,15 +88,19 @@ switch event
                 outspace = [outspace; cnew, zeros(1, W-numel(cnew)), varcols(row,:)]; %#ok<AGROW>
                 outrate = [outrate; ratep]; %#ok<AGROW>
                 outprob = [outprob; 1];     %#ok<AGROW>
+                outstart = [outstart; sub_startedHere(muFun, c, cnew, R)]; %#ok<AGROW>
             end
         end
     case EventType.PHASE
         % PAS service is exponential: no intra-service phase transitions.
 end
 
+outstart = State.tagPad(outstart, size(outspace,1), R);
+outpreempt = State.tagPad(outpreempt, size(outspace,1), R);
+
 if isSimulation
     if ~isnan(key) && isobject(eventCache)
-        eventCache(key) = {outprob, outspace, outrate};
+        eventCache{key} = {outprob, outspace, outrate, outstart, outpreempt};
     end
     if size(outspace,1) > 1
         if event == EventType.DEP
@@ -99,6 +117,37 @@ if isSimulation
             outrate = -1;
             outprob = 1;
         end
+        outstart = outstart(firing_ctr,:); % the tags of the sampled arc
+        outpreempt = outpreempt(firing_ctr,:);
     end
+end
+end
+
+function st = sub_startedHere(muFun, cold, cnew, R)
+% Count, per class, the positions of CNEW that are served (Delta_mu > 0) and
+% were not served in COLD. mu of the empty prefix is 0, so position 1 is served
+% whenever mu(c1) > 0.
+st = zeros(1,R);
+incNew = sub_increments(muFun, cnew);
+incOld = sub_increments(muFun, cold);
+for p = 1:numel(incNew)
+    if incNew(p) <= 0
+        continue
+    end
+    if p <= numel(incOld) && incOld(p) > 0
+        continue % the position was already being served
+    end
+    st(cnew(p)) = st(cnew(p)) + 1;
+end
+end
+
+function inc = sub_increments(muFun, c)
+% Per-position service rate increments Delta_mu(c1..cp) = mu(c1..cp) - mu(c1..c_{p-1}).
+inc = zeros(1, numel(c));
+muPrev = 0;
+for p = 1:numel(c)
+    muCur = muFun(c(1:p));
+    inc(p) = muCur - muPrev;
+    muPrev = muCur;
 end
 end

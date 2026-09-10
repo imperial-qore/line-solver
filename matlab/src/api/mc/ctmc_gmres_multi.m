@@ -18,7 +18,10 @@ function [X,flag] = ctmc_gmres_multi(A,B,tol,restart,maxit)
 % Copyright (c) 2012-2026, Imperial College London
 % All rights reserved.
 
-% Relative threshold below which ILUT discards a fill-in entry.
+% Relative threshold below which the incomplete factorization discards a fill-in
+% entry. CROUT, NOT ILUTP, and with the recurrence taken from the private
+% GMRES_ITERATE rather than the built-in GMRES; see CTMC_GMRES for the fill
+% measurement that decides it, which the block right-hand side only magnifies.
 ILUT_DROP_TOL = 1e-4;
 
 n = size(A,1);
@@ -51,7 +54,7 @@ B = B(p,:);
 L = [];
 U = [];
 try
-    [L,U] = ilu(A,struct('type','ilutp','droptol',ILUT_DROP_TOL,'udiag',1));
+    [L,U] = ilu(A,struct('type','crout','droptol',ILUT_DROP_TOL,'udiag',1));
     if any(~isfinite(nonzeros(L))) || any(~isfinite(nonzeros(U)))
         L = [];
         U = [];
@@ -70,18 +73,9 @@ end
 
 Xp = zeros(n,nrhs);
 guess = ones(n,1)/n;
-warnstate = warning('off','MATLAB:gmres:tooSmallTolerance');
 for c = 1:nrhs
-    try
-        [xc,fc] = gmres(A,full(B(:,c)),restart,tol,maxit,L,U,guess);
-    catch
-        warning(warnstate);
-        X = [];
-        flag = 3;
-        return
-    end
+    [xc,fc] = gmres_iterate(A,L,U,full(B(:,c)),guess,tol,restart,maxit);
     if fc ~= 0
-        warning(warnstate);
         X = [];
         flag = fc;
         return
@@ -89,7 +83,6 @@ for c = 1:nrhs
     Xp(:,c) = xc;
     guess = xc;
 end
-warning(warnstate);
 
 X = zeros(n,nrhs);
 X(p,:) = Xp;

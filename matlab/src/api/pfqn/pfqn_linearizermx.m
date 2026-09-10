@@ -18,6 +18,7 @@
  % @param tol Convergence tolerance (default: 1e-8).
  % @param maxiter Maximum iterations (default: 1000).
  % @param method Linearizer variant ('lin', 'gflin', 'egflin', default: 'egflin').
+ % @param QN0 (M x R) queue lengths that warm-start the Bard-Schweitzer initialization; empty for the default cold start.
  % @return QN Mean queue lengths.
  % @return UN Utilization.
  % @return WN Waiting times.

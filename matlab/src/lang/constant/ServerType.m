@@ -23,12 +23,13 @@ classdef ServerType < Element
     properties
         id;                    % Unique identifier within the queue
         numOfServers;          % Number of servers of this type
-        compatibleClasses;     % Cell array of compatible JobClass objects
-        parentQueue;           % The Queue this server type belongs to
+        compatibleClasses;     % Cell array of compatible JobClass objects (or, on a layered server, of compatible Task/Entry operands)
+        parentQueue;           % The Queue or LayeredNetworkElement this server type belongs to
+        rate;                  % Per-server rate of this pool; read on a LAYERED server, where the rate law is per pool
     end
 
     methods
-        function self = ServerType(name, numOfServers, compatibleClasses)
+        function self = ServerType(name, numOfServers, compatibleClasses, rate)
             % SERVERTYPE Create a new server type
             %
             % self = SERVERTYPE(name, numOfServers) creates a server type with
@@ -51,6 +52,17 @@ classdef ServerType < Element
             self.id = -1;  % Will be set when added to a queue
             self.numOfServers = numOfServers;
             self.parentQueue = [];
+            % On a layered server the rate law is per POOL, not per (pool,
+            % operand): the activated-server rate reads only which pools are
+            % active, and a per-operand rate would need to know WHICH compatible
+            % operand each server picked, which is a matching and not order
+            % independent. A Queue ignores this and keeps its per-(type,class)
+            % service distributions. See sn_compat_rate.
+            if nargin < 4 || isempty(rate)
+                self.rate = 1;
+            else
+                self.rate = rate;
+            end
 
             if nargin < 3
                 self.compatibleClasses = {};
@@ -102,6 +114,21 @@ classdef ServerType < Element
                 line_error(mfilename, 'Number of servers must be at least 1');
             end
             self.numOfServers = n;
+        end
+
+        function r = getRate(self)
+            % R = GETRATE() Per-server rate of this pool.
+
+            r = self.rate;
+        end
+
+        function self = setRate(self, r)
+            % SELF = SETRATE(R) Set the per-server rate of this pool.
+
+            if ~isnumeric(r) || ~isscalar(r) || ~(r > 0)
+                line_error(mfilename, 'Server type rate must be a positive scalar');
+            end
+            self.rate = r;
         end
 
         function classes = getCompatibleClasses(self)

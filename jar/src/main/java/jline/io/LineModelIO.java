@@ -122,6 +122,22 @@ public class LineModelIO {
             modelObj.add("routingParams", routingParams);
         }
 
+        // Krzesinski state-dependent routing. Every center travels by NODE NAME,
+        // so the block is language independent and a node reordering on either
+        // side cannot shift a center. See _kb/16-state-dependent-routing.md
+        JsonObject sdrObj = serializeStateDepRouting(model);
+        if (sdrObj != null) {
+            modelObj.add("stateDepRouting", sdrObj);
+        }
+
+        // Global (Whittle) dependence phi(n): materialized over the lattice of the
+        // WHOLE network state, unlike the per-station classDependence /
+        // jointDependence blocks. Only the (station,class) slots a class can
+        // actually occupy carry a coordinate, which keeps the lattice finite.
+        if (model.getGlobalDependence() != null) {
+            modelObj.add("globalDependence", serializeGlobalDependence(model));
+        }
+
         // Finite capacity regions
         List<Region> regions = model.getRegions();
         if (regions != null && !regions.isEmpty()) {
@@ -311,6 +327,78 @@ public class LineModelIO {
     }
 
     /**
+     * Rewrites every non-finite number in a model document into the spelling
+     * the wire format uses, then writes it.
+     * <p>
+     * JSON HAS NO INFINITY LITERAL. Gson's serializeSpecialFloatingPointValues
+     * writes a bare {@code Infinity} / {@code NaN} anyway, which no strict
+     * parser takes: {@code linemodel_save} (the reference) writes an infinite
+     * scalar as the STRING "Infinity" / "-Infinity" and a NaN as {@code null},
+     * for every numeric field rather than a named few, and the C++ reader
+     * {@code num_from_json} decodes exactly that pair. The spelling is
+     * reachable whenever a model carries its declared state, since an open
+     * class holds an infinite population and the Source's {@code initialState}
+     * row then carries the sentinel. Left as a Gson literal, such a document is
+     * refused by nlohmann at PARSE time, so the native {@code common/ldes}
+     * engine cannot read it and SolverLDES silently falls back to the JVM
+     * engine -- a different sample path, not a different spelling.
+     * <p>
+     * The builder no longer permits the special values, so a non-finite that
+     * escapes this rewrite is reported here rather than written.
+     *
+     * @param doc      the model document
+     * @param filename the output file path
+     * @throws IOException if the file cannot be written
+     */
+    private static void writeJson(JsonObject doc, String filename) throws IOException {
+        Gson gson = new GsonBuilder().setPrettyPrinting().create();
+        Writer writer = new BufferedWriter(new FileWriter(filename));
+        try {
+            gson.toJson(wireNonFinite(doc), writer);
+        } finally {
+            writer.close();
+        }
+    }
+
+    /**
+     * The document with every non-finite number replaced by its wire spelling.
+     * Containers are rewritten in place; see {@link #writeJson}.
+     *
+     * @param el the element to rewrite
+     * @return the rewritten element
+     */
+    private static JsonElement wireNonFinite(JsonElement el) {
+        if (el == null || el.isJsonNull()) {
+            return el;
+        }
+        if (el.isJsonObject()) {
+            JsonObject obj = el.getAsJsonObject();
+            List<String> keys = new ArrayList<String>(obj.keySet());
+            for (String key : keys) {
+                obj.add(key, wireNonFinite(obj.get(key)));
+            }
+            return obj;
+        }
+        if (el.isJsonArray()) {
+            JsonArray arr = el.getAsJsonArray();
+            for (int i = 0; i < arr.size(); i++) {
+                arr.set(i, wireNonFinite(arr.get(i)));
+            }
+            return arr;
+        }
+        if (el.isJsonPrimitive() && el.getAsJsonPrimitive().isNumber()) {
+            double v = el.getAsDouble();
+            if (Double.isNaN(v)) {
+                return JsonNull.INSTANCE;
+            }
+            if (Double.isInfinite(v)) {
+                return new JsonPrimitive(v > 0 ? "Infinity" : "-Infinity");
+            }
+        }
+        return el;
+    }
+
+    /**
      * Saves a {@link Network} model to a JSON file.
      *
      * @param model    the queueing network model to save
@@ -319,13 +407,7 @@ public class LineModelIO {
      */
     public static void save(Network model, String filename) throws IOException {
         JsonObject doc = toJsonObject(model);
-        Gson gson = new GsonBuilder().setPrettyPrinting().serializeSpecialFloatingPointValues().create();
-        Writer writer = new BufferedWriter(new FileWriter(filename));
-        try {
-            gson.toJson(doc, writer);
-        } finally {
-            writer.close();
-        }
+        writeJson(doc, filename);
     }
 
     // ========================================================================
@@ -371,13 +453,7 @@ public class LineModelIO {
      */
     public static void save(LayeredNetwork model, String filename) throws IOException {
         JsonObject doc = toJsonObject(model);
-        Gson gson = new GsonBuilder().setPrettyPrinting().serializeSpecialFloatingPointValues().create();
-        Writer writer = new BufferedWriter(new FileWriter(filename));
-        try {
-            gson.toJson(doc, writer);
-        } finally {
-            writer.close();
-        }
+        writeJson(doc, filename);
     }
 
     // ========================================================================
@@ -440,13 +516,7 @@ public class LineModelIO {
 
         doc.add("model", modelObj);
 
-        Gson gson = new GsonBuilder().setPrettyPrinting().serializeSpecialFloatingPointValues().create();
-        Writer writer = new BufferedWriter(new FileWriter(filename));
-        try {
-            gson.toJson(doc, writer);
-        } finally {
-            writer.close();
-        }
+        writeJson(doc, filename);
     }
 
     // ========================================================================
@@ -481,6 +551,14 @@ public class LineModelIO {
             }
             JsonObject stageObj = new JsonObject();
             stageObj.addProperty("name", stageName);
+            // The stage TYPE, which every reader already looks for and no writer
+            // emitted: an Environment round-tripped through JSON came back with its
+            // stage types blanked, so getStageTable and any consumer keying off
+            // UP/DOWN read a different environment from the one that was saved.
+            String stageType = env.getStageType(i);
+            if (stageType != null && stageType.length() > 0) {
+                stageObj.addProperty("type", stageType);
+            }
             // Serialize the stage's Network model using existing Network serialization
             Network stageModel = env.getEnsemble().size() > i ? env.getModel(i) : null;
             if (stageModel != null) {
@@ -536,13 +614,7 @@ public class LineModelIO {
 
         doc.add("model", modelObj);
 
-        Gson gson = new GsonBuilder().setPrettyPrinting().serializeSpecialFloatingPointValues().create();
-        Writer writer = new BufferedWriter(new FileWriter(filename));
-        try {
-            gson.toJson(doc, writer);
-        } finally {
-            writer.close();
-        }
+        writeJson(doc, filename);
     }
 
     /**
@@ -651,7 +723,20 @@ public class LineModelIO {
         List<Node> nodes = model.getNodes();
         List<JobClass> classes = model.getClasses();
 
+        // A STATE ON A STRICT SUBSET OF THE STATEFUL NODES DOES NOT TRAVEL: it is
+        // not an initialization, and getState() runs initDefault() for exactly
+        // that reason, so this side answers for the DEFAULT marking. A document
+        // naming only the node the caller moved made the reader combine that row
+        // with default markings for the rest -- on Think -> Q1 with 2 jobs and Q1
+        // alone set to 2, the C++ read (Think=2, Q1=2) and answered
+        // getProbSysAggr 0 for a joint state holding 4 of 2 jobs, against 0.4
+        // here. A PAS placement is the exception initDefault() itself makes,
+        // its ordering being a required input rather than a default.
+        boolean fullyInitialized = model.hasInitState();
+
         for (Node node : nodes) {
+            boolean nodeStateTravels = fullyInitialized
+                    || (node instanceof Queue && ((Queue) node).getSchedStrategy() == SchedStrategy.PAS);
             // Skip auto-added ClassSwitch nodes (recreated by link())
             if (node instanceof ClassSwitch && ((ClassSwitch) node).autoAdded) {
                 continue;
@@ -1000,6 +1085,18 @@ public class LineModelIO {
                     nodeObj.add("batchRejectProb", batchRejectObj);
                 }
 
+                // Job parallelism: servers seized at once by a job, per class
+                JsonObject parallelismObj = new JsonObject();
+                for (JobClass jc : classes) {
+                    int npar = queue.getServerParallelism(jc);
+                    if (npar > 1) {
+                        parallelismObj.addProperty(jc.getName(), npar);
+                    }
+                }
+                if (parallelismObj.size() > 0) {
+                    nodeObj.add("serverParallelism", parallelismObj);
+                }
+
                 // immediateFeedback: see _kb/09-ldes-and-cache.md ("More model.json writer/reader notes")
                 JsonObject immFeedObj = new JsonObject();
                 if (queue.isImmediateFeedbackAll()) {
@@ -1039,6 +1136,27 @@ public class LineModelIO {
                 }
                 if (delayOffObj.size() > 0) {
                     nodeObj.add("delayOffTime", delayOffObj);
+                }
+
+                // Server breakdown/repair. The degraded down-server service is
+                // written per class, which flattens the class-independent form
+                // setBreakdown also accepts: both rebuild the same
+                // sn.downServiceRates row.
+                if (queue.hasBreakdown()) {
+                    JsonObject bdObj = new JsonObject();
+                    bdObj.add("failure", serializeDistribution(queue.getBreakdownFailure()));
+                    bdObj.add("repair", serializeDistribution(queue.getBreakdownRepair()));
+                    JsonObject downSvcObj = new JsonObject();
+                    for (JobClass jc : classes) {
+                        Distribution ds = queue.getDownService(jc);
+                        if (ds != null && !(ds instanceof Disabled)) {
+                            downSvcObj.add(jc.getName(), serializeDistribution(ds));
+                        }
+                    }
+                    if (downSvcObj.size() > 0) {
+                        bdObj.add("downService", downSvcObj);
+                    }
+                    nodeObj.add("breakdown", bdObj);
                 }
 
                 // pollingType written by name (Python auto() differs numerically): see _kb/09-ldes-and-cache.md
@@ -1153,6 +1271,17 @@ public class LineModelIO {
                 nodeObj.add("itemLevelCap", matrixToJsonArray(cache.getItemLevelCap()));
                 nodeObj.addProperty("replacementStrategy", cache.getReplacementStrategy().toString());
                 nodeObj.addProperty("admissionProb", cache.getAdmissionProb());
+                // per-item storage costs and per-list cost caps (ton21cache Sec. IX)
+                if (cache.getItemSizes() != null && !cache.getItemSizes().isEmpty()) {
+                    nodeObj.add("itemSizes", matrixToJsonArray(cache.getItemSizes()));
+                }
+                if (cache.getCostCaps() != null && !cache.getCostCaps().isEmpty()) {
+                    if (cache.isCostCapGlobal()) {
+                        nodeObj.addProperty("costCaps", cache.getCostCaps().get(0));
+                    } else {
+                        nodeObj.add("costCaps", matrixToJsonArray(cache.getCostCaps()));
+                    }
+                }
 
                 // Hit/miss class mapping
                 Matrix hitClass = cache.getHitClass();
@@ -1280,7 +1409,7 @@ public class LineModelIO {
                     }
                 }
                 Matrix st = place.getState();
-                if (st != null && !st.isEmpty()) {
+                if (nodeStateTravels && st != null && !st.isEmpty()) {
                     JsonArray stArr = new JsonArray();
                     for (int k = 0; k < st.getNumElements(); k++) {
                         stArr.add(st.get(k));
@@ -1322,7 +1451,9 @@ public class LineModelIO {
                         // Firing priority
                         if (trans.firingPriorities.getNumElements() > mi) {
                             double fp = trans.firingPriorities.get(mi);
-                            if (fp > 0) {
+                            // Omit only when it equals the builder default of 1: an explicit 0 is a
+                            // legal JMT firing priority and has to survive the round trip (BUG-90).
+                            if (fp != 1) {
                                 modeObj.addProperty("firingPriority", fp);
                             }
                         }
@@ -1460,10 +1591,22 @@ public class LineModelIO {
             // see _kb/09-ldes-and-cache.md (statePrior is emitted only as a pair with stateSpace)
             if (node instanceof StatefulNode) {
                 StatefulNode sfNode = (StatefulNode) node;
+                // The initial state itself, for every stateful node that has one:
+                // the reader decides the model is initialized only when EVERY
+                // stateful node carries a state, so naming just the ones the
+                // caller moved makes the document read as uninitialized and the
+                // state space and prior below are then rebuilt from scratch. The
+                // Place and Cache branches above write the same key for the nodes
+                // whose state is their whole model, so this fills it in only where
+                // it is still absent.
+                Matrix nodeState = sfNode.getState();
+                if (nodeStateTravels && !nodeObj.has("initialState") && nodeState != null && !nodeState.isEmpty()) {
+                    nodeObj.add("initialState", matrixToJsonRowVector(nodeState));
+                }
                 Matrix prior = sfNode.getStatePrior();
                 boolean trivialPrior = prior == null || prior.isEmpty()
                         || (prior.getNumRows() == 1 && Math.abs(prior.get(0) - 1.0) < 1e-12);
-                if (!trivialPrior) {
+                if (!trivialPrior && nodeStateTravels) {
                     Matrix space = sfNode.getStateSpace();
                     if (space == null || space.getNumRows() != prior.getNumRows()) {
                         line_warning(mfilename(new Object() {
@@ -1725,8 +1868,9 @@ public class LineModelIO {
             JsonObject nodeParams = null;
             for (JobClass jc : model.getClasses()) {
                 RoutingStrategy rs = n.getRoutingStrategy(jc);
-                if (rs != null && rs != RoutingStrategy.PROB
-                        && rs != RoutingStrategy.RAND) {
+                // RAND is DECLARED not derived: dropping it wrote JMT Empirical where model wants Random. Implicit ClassSwitch not in `nodes`, so naming it dangles.
+                boolean implicitCs = n instanceof ClassSwitch && ((ClassSwitch) n).autoAdded;
+                if (rs != null && rs != RoutingStrategy.PROB && !implicitCs) {
                     if (nodeStrats == null) {
                         nodeStrats = new JsonObject();
                     }
@@ -1749,52 +1893,6 @@ public class LineModelIO {
                             nodeParams.add(jc.getName(), kp);
                             break;
                         }
-                    }
-                }
-                // see _kb/09-ldes-and-cache.md for the RL routing-parameter rationale
-                if (rs == RoutingStrategy.RL) {
-                    List<OutputStrategy> rlOsList = n.getOutput().getOutputStrategyByClass(jc);
-                    OutputStrategy rlOs = null;
-                    if (rlOsList != null) {
-                        for (OutputStrategy os : rlOsList) {
-                            if (os.getRoutingStrategy() == RoutingStrategy.RL) {
-                                rlOs = os;
-                                break;
-                            }
-                        }
-                    }
-                    if (rlOs == null || rlOs.getRlValueFunction() == null) {
-                        line_warning(mfilename(new Object() {
-                        }),
-                                "Node %s routes class %s by RL but carries no value function; "
-                                        + "the reloaded model will fall back to JSQ.",
-                                n.getName(), jc.getName());
-                    } else {
-                        JsonObject rp = new JsonObject();
-                        rp.add("valueFunction", matrixToJsonRowVector(rlOs.getRlValueFunction()));
-                        JsonArray shapeArr = new JsonArray();
-                        int[] vfShape = rlOs.getRlValueFunctionShape();
-                        if (vfShape != null) {
-                            for (int sdim : vfShape) {
-                                shapeArr.add(sdim);
-                            }
-                        }
-                        rp.add("vfShape", shapeArr);
-                        rp.addProperty("stateSize", rlOs.getRlStateSize());
-                        JsonArray actArr = new JsonArray();
-                        int[] actIdx = rlOs.getRlNodesNeedAction();
-                        if (actIdx != null) {
-                            for (int ai : actIdx) {
-                                if (ai >= 0 && ai < allNodes.size()) {
-                                    actArr.add(allNodes.get(ai).getName());
-                                }
-                            }
-                        }
-                        rp.add("actionNodes", actArr);
-                        if (nodeParams == null) {
-                            nodeParams = new JsonObject();
-                        }
-                        nodeParams.add(jc.getName(), rp);
                     }
                 }
                 // Save WRROBIN weights
@@ -1862,6 +1960,15 @@ public class LineModelIO {
             if (repl > 1) {
                 hostObj.addProperty("replication", repl);
             }
+            // Admission constraints: columns of a host constraint are its tasks
+            List<String> hostCols = new ArrayList<String>();
+            for (Task t : host.getTasks()) {
+                hostCols.add(t.getName());
+            }
+            JsonArray hostRows = serializeLincon(host, hostCols);
+            if (hostRows.size() > 0) {
+                hostObj.add("admissionConstraints", hostRows);
+            }
             hostsArr.add(hostObj);
         }
         return hostsArr;
@@ -1885,8 +1992,16 @@ public class LineModelIO {
                 taskObj.addProperty("replication", repl);
             }
 
+            // Both spellings are written: the object form carries the whole
+            // distribution, the mean/SCV pair is kept so a reader that only knows
+            // the older keys still loads the document. See the reader, which
+            // accepts both and prefers the object.
             double thinkMean = task.getThinkTimeMean();
             if (thinkMean > 1e-8) {
+                Distribution thinkDist = task.getThinkTime();
+                if (thinkDist != null) {
+                    taskObj.add("thinkTime", serializeDistribution(thinkDist));
+                }
                 taskObj.addProperty("thinkTimeMean", thinkMean);
                 taskObj.addProperty("thinkTimeSCV", task.getThinkTimeSCV());
             }
@@ -1896,12 +2011,13 @@ public class LineModelIO {
                 taskObj.addProperty("priority", priority);
             }
 
-            // Fan-in
+            // Fan-in, keyed by SOURCE task exactly as fanOut is keyed by dest.
+            // MATLAB linemodel_save and the Python writer both emit the map, so
+            // the pair form this used to write was unreadable by either.
             String fanInSrc = task.getFanInSource();
             if (fanInSrc != null && !fanInSrc.isEmpty()) {
                 JsonObject fanInObj = new JsonObject();
-                fanInObj.addProperty("source", fanInSrc);
-                fanInObj.addProperty("value", task.getFanInValue());
+                fanInObj.addProperty(fanInSrc, task.getFanInValue());
                 taskObj.add("fanIn", fanInObj);
             }
 
@@ -1915,7 +2031,7 @@ public class LineModelIO {
                 taskObj.add("fanOut", fanOutObj);
             }
 
-            // CacheTask / FunctionTask properties
+            // CacheTask / SetupTask properties
             if (task instanceof CacheTask) {
                 CacheTask ct = (CacheTask) task;
                 taskObj.addProperty("taskType", "CacheTask");
@@ -1926,25 +2042,130 @@ public class LineModelIO {
                 }
                 taskObj.add("cacheCapacity", capArr);
                 taskObj.addProperty("replacementStrategy", ct.getReplacestrategy().toString());
-            } else if (task instanceof FunctionTask) {
-                taskObj.addProperty("taskType", "FunctionTask");
+            } else if (task instanceof SetupTask) {
+                taskObj.addProperty("taskType", "SetupTask");
             }
             Distribution setupDist = task.getSetupTime();
             if (setupDist != null && !(setupDist instanceof Immediate)
                     && task.getSetupTimeMean() > GlobalConstants.FineTol) {
+                taskObj.add("setupTime", serializeDistribution(setupDist));
                 taskObj.addProperty("setupTimeMean", task.getSetupTimeMean());
                 taskObj.addProperty("setupTimeSCV", task.getSetupTimeSCV());
             }
             Distribution delayOffDist = task.getDelayOffTime();
             if (delayOffDist != null && !(delayOffDist instanceof Immediate)
                     && task.getDelayOffTimeMean() > GlobalConstants.FineTol) {
+                taskObj.add("delayOffTime", serializeDistribution(delayOffDist));
                 taskObj.addProperty("delayOffTimeMean", task.getDelayOffTimeMean());
                 taskObj.addProperty("delayOffTimeSCV", task.getDelayOffTimeSCV());
+            }
+
+            // Admission constraints: columns of a task constraint are its entries
+            List<String> taskCols = new ArrayList<String>();
+            for (Entry e : task.getEntries()) {
+                taskCols.add(e.getName());
+            }
+            JsonArray taskRows = serializeLincon(task, taskCols);
+            if (taskRows.size() > 0) {
+                taskObj.add("admissionConstraints", taskRows);
             }
 
             tasksArr.add(taskObj);
         }
         return tasksArr;
+    }
+
+    /**
+     * <p>Admission constraint rows of a Task or Host on the wire.</p>
+     *
+     * <p>Both declaration forms are normalised to the named form, so the wire is
+     * order-independent: a positional setConstraint(A,b) matrix is resolved
+     * against colNames (the element's entries, or its tasks) at write time.
+     * colNames must be in the same declaration order the positional columns
+     * assume.</p>
+     *
+     * @param elem     the Task or Host declaring the constraint
+     * @param colNames operand names in positional-column order
+     * @return the rows, empty when the element declares no constraint
+     */
+    private static JsonArray serializeLincon(LayeredNetworkElement elem, List<String> colNames) {
+        JsonArray rows = new JsonArray();
+        if (!elem.hasLinearConstraints()) {
+            return rows;
+        }
+        Matrix A = elem.linConA;
+        Matrix b = elem.linConB;
+        if (A != null && b != null) {
+            for (int r = 0; r < A.getNumRows(); r++) {
+                JsonArray operands = new JsonArray();
+                JsonArray coeffs = new JsonArray();
+                for (int j = 0; j < A.getNumCols(); j++) {
+                    if (A.get(r, j) == 0) {
+                        continue;
+                    }
+                    if (j >= colNames.size()) {
+                        throw new IllegalArgumentException("Admission constraint on " + elem.getName()
+                                + " references column " + (j + 1) + " but the element has only "
+                                + colNames.size() + " operands.");
+                    }
+                    operands.add(colNames.get(j));
+                    coeffs.add(A.get(r, j));
+                }
+                if (operands.size() == 0) {
+                    continue;
+                }
+                JsonObject row = new JsonObject();
+                row.add("operands", operands);
+                row.add("coeffs", coeffs);
+                row.addProperty("cap", b.get(r, 0));
+                rows.add(row);
+            }
+        }
+        for (LayeredNetworkElement.LinConRow named : elem.linConRows) {
+            JsonArray operands = new JsonArray();
+            JsonArray coeffs = new JsonArray();
+            for (int k = 0; k < named.names.size(); k++) {
+                operands.add(named.names.get(k));
+                coeffs.add(named.coeffs[k]);
+            }
+            JsonObject row = new JsonObject();
+            row.add("operands", operands);
+            row.add("coeffs", coeffs);
+            row.addProperty("cap", named.cap);
+            rows.add(row);
+        }
+        return rows;
+    }
+
+    /**
+     * Replays admission constraint rows from the wire onto a Task or Host. Rows
+     * name their operands, so no column order is assumed and the referenced
+     * entries or tasks need not exist yet.
+     *
+     * @param elem the Task or Host to configure
+     * @param rows the wire rows, may be null
+     */
+    private static void applyLincon(LayeredNetworkElement elem, JsonArray rows) {
+        if (rows == null) {
+            return;
+        }
+        for (int r = 0; r < rows.size(); r++) {
+            JsonObject row = rows.get(r).getAsJsonObject();
+            JsonArray operands = row.getAsJsonArray("operands");
+            List<String> names = new ArrayList<String>();
+            for (int k = 0; k < operands.size(); k++) {
+                names.add(operands.get(k).getAsString());
+            }
+            double[] coeffs = null;
+            if (row.has("coeffs")) {
+                JsonArray cf = row.getAsJsonArray("coeffs");
+                coeffs = new double[cf.size()];
+                for (int k = 0; k < cf.size(); k++) {
+                    coeffs[k] = cf.get(k).getAsDouble();
+                }
+            }
+            elem.addConstraintByName(names, coeffs, row.get("cap").getAsDouble());
+        }
     }
 
     private static JsonArray serializeEntries(LayeredNetwork model) {
@@ -2314,7 +2535,9 @@ public class LineModelIO {
             for (int b = 1; b <= bm.getMaxBatchSize(); b++) {
                 dArr.add(matrixToJson2D(bm.getProcess().get(1 + b)));
             }
-            obj.add("D", dArr);
+            JsonObject bmapParams = new JsonObject();
+            bmapParams.add("D", dArr);
+            obj.add("params", bmapParams);
         } else if (dist instanceof jline.lang.processes.MarkedMMPP) {
             // see _kb/09-ldes-and-cache.md for the MarkedMMPP (M3PP) wire-format rationale
             obj.addProperty("type", "MarkedMMPP");
@@ -2323,8 +2546,10 @@ public class LineModelIO {
             for (int k = 0; k < mm.getProcess().size(); k++) {
                 dArr.add(matrixToJson2D(mm.getProcess().get(k)));
             }
-            obj.add("D", dArr);
-            obj.addProperty("K", Math.max(0, mm.getProcess().size() - 2));
+            JsonObject mmppParams = new JsonObject();
+            mmppParams.add("D", dArr);
+            mmppParams.addProperty("K", Math.max(0, mm.getProcess().size() - 2));
+            obj.add("params", mmppParams);
         } else if (dist instanceof jline.lang.processes.MarkedMAP
                 && !(dist instanceof jline.lang.processes.BMAP)) {
             // see _kb/09-ldes-and-cache.md for the MMAP (Marked MAP) wire-format rationale
@@ -2428,8 +2653,36 @@ public class LineModelIO {
             nhppParams.add("rates", nhppRatesArr);
             nhppParams.addProperty("cyclic", nhppDist.isCyclic());
             obj.add("params", nhppParams);
+        } else if (dist instanceof MAPt || dist instanceof PHt) {
+            // Segment matrices go out as a JSON array of matrices, one per segment, so a
+            // single-segment schedule keeps its nesting instead of collapsing to a vector.
+            boolean isMapt = dist instanceof MAPt;
+            obj.addProperty("type", isMapt ? "MAPt" : "PHt");
+            JsonObject schedParams = new JsonObject();
+            JsonArray schedBp = new JsonArray();
+            double[] bps = isMapt ? ((MAPt) dist).getBreakpoints() : ((PHt) dist).getBreakpoints();
+            for (double b : bps) {
+                schedBp.add(b);
+            }
+            schedParams.add("breakpoints", schedBp);
+            java.util.List<Matrix> firstSeg = isMapt
+                    ? ((MAPt) dist).getD0Segments() : ((PHt) dist).getAlphaSegments();
+            java.util.List<Matrix> secondSeg = isMapt
+                    ? ((MAPt) dist).getD1Segments() : ((PHt) dist).getSSegments();
+            JsonArray firstArr = new JsonArray();
+            JsonArray secondArr = new JsonArray();
+            for (int k = 0; k < firstSeg.size(); k++) {
+                firstArr.add(matrixToJsonArray(firstSeg.get(k)));
+                secondArr.add(matrixToJsonArray(secondSeg.get(k)));
+            }
+            schedParams.add(isMapt ? "D0" : "alpha", firstArr);
+            schedParams.add(isMapt ? "D1" : "S", secondArr);
+            schedParams.addProperty("cyclic",
+                    isMapt ? ((MAPt) dist).isCyclic() : ((PHt) dist).isCyclic());
+            obj.add("params", schedParams);
         } else if (dist instanceof Prior) {
             obj.addProperty("type", "Prior");
+            obj.addProperty("kind", "discrete");
             Prior priorDist = (Prior) dist;
             JsonArray distsArr = new JsonArray();
             for (int i = 0; i < priorDist.getNumAlternatives(); i++) {
@@ -2567,6 +2820,29 @@ public class LineModelIO {
                         + "named moment fields");
     }
 
+    /**
+     * <p>The {@code params} object of a distribution record, or a named failure.</p>
+     *
+     * <p>Nearly every branch of {@link #deserializeDistribution} reads {@code params}
+     * and then dereferences a key inside it. A record written in a foreign dialect
+     * carries no {@code params} at all, and {@code getAsJsonObject} answers null
+     * rather than throwing, so the first key read surfaced as a bare
+     * NullPointerException naming neither the field nor the distribution. A
+     * wire-format mismatch has to arrive as a diagnosis, not a stack trace.</p>
+     *
+     * @param obj  the distribution record
+     * @param type the record's declared type, so the message names which one failed
+     * @return the params object, never null
+     */
+    private static JsonObject requireParams(JsonObject obj, String type) {
+        JsonElement el = obj.get("params");
+        if (el == null || !el.isJsonObject()) {
+            throw new IllegalArgumentException(
+                    "distribution of type '" + type + "' carries no 'params' object");
+        }
+        return el.getAsJsonObject();
+    }
+
     private static Distribution deserializeDistribution(JsonObject obj) {
         String type = obj.get("type").getAsString();
 
@@ -2604,7 +2880,7 @@ public class LineModelIO {
         }
 
         if ("Exp".equals(type)) {
-            JsonObject params = obj.getAsJsonObject("params");
+            JsonObject params = requireParams(obj, type);
             // "lambda" is canonical; "rate" is accepted as a read-side alias
             // because the published manual example and the Python reader use it.
             JsonElement lambdaEl = params.has("lambda") ? params.get("lambda") : params.get("rate");
@@ -2613,16 +2889,16 @@ public class LineModelIO {
             }
             return new Exp(lambdaEl.getAsDouble());
         } else if ("Det".equals(type)) {
-            JsonObject params = obj.getAsJsonObject("params");
+            JsonObject params = requireParams(obj, type);
             double value = params.get("value").getAsDouble();
             return new Det(value);
         } else if ("Erlang".equals(type)) {
-            JsonObject params = obj.getAsJsonObject("params");
+            JsonObject params = requireParams(obj, type);
             double lambda = params.get("lambda").getAsDouble();
             int k = params.get("k").getAsInt();
             return new Erlang(lambda, k);
         } else if ("HyperExp".equals(type)) {
-            JsonObject params = obj.getAsJsonObject("params");
+            JsonObject params = requireParams(obj, type);
             JsonArray pArr = params.getAsJsonArray("p");
             JsonArray lambdaArr = params.getAsJsonArray("lambda");
             int n = lambdaArr.size();
@@ -2643,65 +2919,65 @@ public class LineModelIO {
             }
             return new HyperExp(pVec, lambdaVec);
         } else if ("Gamma".equals(type)) {
-            JsonObject params = obj.getAsJsonObject("params");
+            JsonObject params = requireParams(obj, type);
             double alpha = params.get("alpha").getAsDouble();
             double beta = params.get("beta").getAsDouble();
             return new Gamma(alpha, beta);
         } else if ("Lognormal".equals(type)) {
-            JsonObject params = obj.getAsJsonObject("params");
+            JsonObject params = requireParams(obj, type);
             double mu = params.get("mu").getAsDouble();
             double sigma = params.get("sigma").getAsDouble();
             return new Lognormal(mu, sigma);
         } else if ("Uniform".equals(type)) {
-            JsonObject params = obj.getAsJsonObject("params");
+            JsonObject params = requireParams(obj, type);
             double a = params.get("a").getAsDouble();
             double b = params.get("b").getAsDouble();
             return new Uniform(a, b);
         } else if ("Weibull".equals(type)) {
-            JsonObject params = obj.getAsJsonObject("params");
+            JsonObject params = requireParams(obj, type);
             double alpha = params.get("alpha").getAsDouble();  // scale
             double beta = params.get("beta").getAsDouble();    // shape
             return new Weibull(beta, alpha);  // constructor: Weibull(shape, scale)
         } else if ("Pareto".equals(type)) {
-            JsonObject params = obj.getAsJsonObject("params");
+            JsonObject params = requireParams(obj, type);
             double alpha = params.get("alpha").getAsDouble();
             double scale = params.has("scale") ? params.get("scale").getAsDouble()
                     : params.get("beta").getAsDouble();
             return new Pareto(alpha, scale);
         } else if ("Normal".equals(type)) {
-            JsonObject params = obj.getAsJsonObject("params");
+            JsonObject params = requireParams(obj, type);
             double mu = params.get("mu").getAsDouble();
             double sigma = params.get("sigma").getAsDouble();
             return new Normal(mu, sigma);
         } else if ("Geometric".equals(type)) {
-            JsonObject params = obj.getAsJsonObject("params");
+            JsonObject params = requireParams(obj, type);
             double p = params.get("p").getAsDouble();
             return new Geometric(p);
         } else if ("Binomial".equals(type)) {
-            JsonObject params = obj.getAsJsonObject("params");
+            JsonObject params = requireParams(obj, type);
             int n = params.get("n").getAsInt();
             double p = params.get("p").getAsDouble();
             return new Binomial(n, p);
         } else if ("Poisson".equals(type)) {
-            JsonObject params = obj.getAsJsonObject("params");
+            JsonObject params = requireParams(obj, type);
             double lambda = params.get("lambda").getAsDouble();
             return new Poisson(lambda);
         } else if ("Bernoulli".equals(type)) {
-            JsonObject params = obj.getAsJsonObject("params");
+            JsonObject params = requireParams(obj, type);
             double p = params.get("p").getAsDouble();
             return new Bernoulli(p);
         } else if ("DiscreteUniform".equals(type)) {
-            JsonObject params = obj.getAsJsonObject("params");
+            JsonObject params = requireParams(obj, type);
             double min = params.get("min").getAsDouble();
             double max = params.get("max").getAsDouble();
             return new DiscreteUniform(min, max);
         } else if ("Zipf".equals(type)) {
-            JsonObject params = obj.getAsJsonObject("params");
+            JsonObject params = requireParams(obj, type);
             double s = params.get("s").getAsDouble();
             int n = params.get("n").getAsInt();
             return new Zipf(s, n);
         } else if ("DiscreteSampler".equals(type)) {
-            JsonObject params = obj.getAsJsonObject("params");
+            JsonObject params = requireParams(obj, type);
             JsonArray pArr = params.getAsJsonArray("p");
             JsonArray xArr = params.getAsJsonArray("x");
             int n = pArr.size();
@@ -2713,7 +2989,7 @@ public class LineModelIO {
             }
             return new DiscreteSampler(pMat, xMat);
         } else if ("MMPP2".equals(type)) {
-            JsonObject p = obj.getAsJsonObject("params");
+            JsonObject p = requireParams(obj, type);
             return new MMPP2(
                 p.get("lambda0").getAsDouble(),
                 p.get("lambda1").getAsDouble(),
@@ -2721,7 +2997,7 @@ public class LineModelIO {
                 p.get("sigma1").getAsDouble()
             );
         } else if ("NHPP".equals(type)) {
-            JsonObject params = obj.getAsJsonObject("params");
+            JsonObject params = requireParams(obj, type);
             JsonArray bpArr = params.getAsJsonArray("breakpoints");
             JsonArray rateArr = params.getAsJsonArray("rates");
             int n = rateArr.size();
@@ -2735,8 +3011,31 @@ public class LineModelIO {
             // Absent 'cyclic' means cyclic, matching the constructor default.
             boolean cyclic = !params.has("cyclic") || params.get("cyclic").getAsBoolean();
             return new NHPP(breakpoints, rates, cyclic);
+        } else if ("MAPt".equals(type) || "PHt".equals(type)) {
+            JsonObject params = requireParams(obj, type);
+            JsonArray bpArr = params.getAsJsonArray("breakpoints");
+            boolean isMapt = "MAPt".equals(type);
+            JsonArray firstArr = params.getAsJsonArray(isMapt ? "D0" : "alpha");
+            JsonArray secondArr = params.getAsJsonArray(isMapt ? "D1" : "S");
+            int n = secondArr.size();
+            double[] breakpoints = new double[n + 1];
+            for (int k = 0; k <= n; k++) {
+                breakpoints[k] = bpArr.get(k).getAsDouble();
+            }
+            java.util.List<Matrix> firstSeg = new java.util.ArrayList<Matrix>();
+            java.util.List<Matrix> secondSeg = new java.util.ArrayList<Matrix>();
+            for (int k = 0; k < n; k++) {
+                firstSeg.add(jsonToMatrix2DLenient(firstArr.get(k)));
+                secondSeg.add(jsonToMatrix2DLenient(secondArr.get(k)));
+            }
+            // Absent 'cyclic' means cyclic, matching the constructor default.
+            boolean cyclic = !params.has("cyclic") || params.get("cyclic").getAsBoolean();
+            if (isMapt) {
+                return new MAPt(breakpoints, firstSeg, secondSeg, cyclic);
+            }
+            return new PHt(breakpoints, firstSeg, secondSeg, cyclic);
         } else if ("MMDP2".equals(type)) {
-            JsonObject p = obj.getAsJsonObject("params");
+            JsonObject p = requireParams(obj, type);
             return new MMDP2(
                 p.get("r0").getAsDouble(),
                 p.get("r1").getAsDouble(),
@@ -2749,24 +3048,27 @@ public class LineModelIO {
             Matrix D1 = jsonToMatrix2DLenient(mapObj.get("D1"));
             return new MAP(D0, D1);
         } else if ("DMAP".equals(type)) {
-            JsonObject params = obj.getAsJsonObject("params");
+            JsonObject params = requireParams(obj, type);
             Matrix D0 = jsonToMatrix2DLenient(params.get("D0"));
             Matrix D1 = jsonToMatrix2DLenient(params.get("D1"));
             return new DMAP(D0, D1);
         } else if ("RAP".equals(type)) {
-            JsonObject params = obj.getAsJsonObject("params");
+            JsonObject params = requireParams(obj, type);
             Matrix H0 = jsonToMatrix2DLenient(params.get("H0"));
             Matrix H1 = jsonToMatrix2DLenient(params.get("H1"));
             return new RAP(H0, H1);
         } else if ("ME".equals(type)) {
-            JsonObject params = obj.getAsJsonObject("params");
+            JsonObject params = requireParams(obj, type);
             Matrix alpha = jsonToRowVector(params.getAsJsonArray("alpha"));
             Matrix A = jsonToMatrix2DLenient(params.get("A"));
             return new ME(alpha, A);
         } else if ("BMAP".equals(type)) {
             // D[0]=D0, D[b]=D_b for batch size b; the aggregate D1 is recomputed
-            // by the constructor.
-            JsonArray dArr = obj.getAsJsonArray("D");
+            // by the constructor. The array lives under "params", which is what
+            // linemodel_save.m and linemodel_io.py write and what
+            // linemodel_io.py reads; the top-level form is what this class used
+            // to write and is accepted so old model.json files still load.
+            JsonArray dArr = blockArray(obj, "D");
             if (dArr == null || dArr.size() < 2) {
                 throw new IllegalArgumentException("BMAP requires D0 and at least one batch matrix");
             }
@@ -2778,7 +3080,8 @@ public class LineModelIO {
             return new jline.lang.processes.BMAP(D0, Db);
         } else if ("MarkedMMPP".equals(type)) {
             // Process cell in M3A layout {D0, D1_agg, D11..D1K}, taken verbatim.
-            JsonArray dArr = obj.getAsJsonArray("D");
+            // Under "params", as above.
+            JsonArray dArr = blockArray(obj, "D");
             if (dArr == null || dArr.size() < 2) {
                 throw new IllegalArgumentException("MarkedMMPP requires at least D0 and D1");
             }
@@ -2788,7 +3091,7 @@ public class LineModelIO {
             }
             return new jline.lang.processes.MarkedMMPP(cell);
         } else if ("EmpiricalCDF".equals(type) || "EmpiricalCdf".equals(type)) {
-            JsonObject params = obj.getAsJsonObject("params");
+            JsonObject params = requireParams(obj, type);
             JsonArray fArr = params.getAsJsonArray("F");
             JsonArray xArr = params.getAsJsonArray("x");
             int n = Math.min(fArr.size(), xArr.size());
@@ -2846,7 +3149,7 @@ public class LineModelIO {
         } else if ("Coxian".equals(type) || "Cox2".equals(type)) {
             // see _kb/09-ldes-and-cache.md for the Cox2/Coxian alias rationale
             if ("Cox2".equals(type) && obj.has("params")) {
-                JsonObject cx = obj.getAsJsonObject("params");
+                JsonObject cx = requireParams(obj, type);
                 if (cx.has("mu1") && cx.has("mu2") && cx.has("phi1")) {
                     return new Cox2(cx.get("mu1").getAsDouble(),
                             cx.get("mu2").getAsDouble(), cx.get("phi1").getAsDouble());
@@ -2854,7 +3157,7 @@ public class LineModelIO {
             }
             // Try mu/phi params format first
             if (obj.has("params")) {
-                JsonObject params = obj.getAsJsonObject("params");
+                JsonObject params = requireParams(obj, type);
                 if (params.has("mu") && params.has("phi")) {
                     JsonArray muArr = params.getAsJsonArray("mu");
                     JsonArray phiArr = params.getAsJsonArray("phi");
@@ -2887,7 +3190,7 @@ public class LineModelIO {
             }
             // Final fallback: mean/scv
             if (obj.has("params")) {
-                JsonObject params = obj.getAsJsonObject("params");
+                JsonObject params = requireParams(obj, type);
                 double mean = params.get("mean").getAsDouble();
                 double scv = params.get("scv").getAsDouble();
                 return Coxian.fitMeanAndSCV(mean, scv);
@@ -2900,6 +3203,17 @@ public class LineModelIO {
             Matrix T = jsonToMatrix2D(phObj.getAsJsonArray("T"));
             return new PH(alpha, T);
         } else if ("Prior".equals(type)) {
+            // The continuous form (parameter density plus factory template) is
+            // MATLAB/C++ only; the JAR Prior is discrete, and its keys read as a
+            // discrete set would be a null alternative array
+            String priorKind = obj.has("kind") ? obj.get("kind").getAsString() : "discrete";
+            if ("continuous".equals(priorKind)) {
+                throw new RuntimeException(
+                        "a continuous Prior (paramDist plus a factory template) is carried by the "
+                        + "MATLAB and C++ codebases only; the JAR Prior is discrete. Re-save the "
+                        + "model with the Prior expanded by Prior.discretize, or solve it in "
+                        + "MATLAB or C++");
+            }
             JsonArray distsArr = obj.getAsJsonArray("distributions");
             JsonArray probsArr = obj.getAsJsonArray("probabilities");
             java.util.List<Distribution> alternatives = new java.util.ArrayList<Distribution>();
@@ -2915,7 +3229,7 @@ public class LineModelIO {
 
         // see _kb/09-ldes-and-cache.md (unrecognized type on read: APH fit from mean/SCV, never Immediate/Exp)
         if (obj.has("params")) {
-            JsonObject params = obj.getAsJsonObject("params");
+            JsonObject params = requireParams(obj, type);
             if (params.has("mean")) {
                 double mean = params.get("mean").getAsDouble();
                 double scv = params.has("scv") ? params.get("scv").getAsDouble() : 1.0;
@@ -3029,6 +3343,18 @@ public class LineModelIO {
                 JsonElement apEl = cacheField(nodeObj, "admissionProb", "admissionProb");
                 if (apEl != null) {
                     cacheNode.setAdmissionProb(apEl.getAsDouble());
+                }
+                JsonElement szEl = cacheField(nodeObj, "itemSizes", "itemSizes");
+                if (szEl != null) {
+                    cacheNode.setItemSizes(szEl.isJsonArray()
+                            ? jsonToRowVector(szEl.getAsJsonArray())
+                            : Matrix.singleton(szEl.getAsDouble()));
+                }
+                JsonElement ccEl = cacheField(nodeObj, "costCaps", "costCaps");
+                if (ccEl != null) {
+                    cacheNode.setCostCaps(ccEl.isJsonArray()
+                            ? jsonToRowVector(ccEl.getAsJsonArray())
+                            : Matrix.singleton(ccEl.getAsDouble()));
                 }
                 node = cacheNode;
             } else if ("Place".equals(nodeType)) {
@@ -3273,6 +3599,22 @@ public class LineModelIO {
                         JobClass jc = classMap.get(be.getKey());
                         if (jc != null) {
                             Distribution batch = deserializeDistribution(be.getValue().getAsJsonObject());
+                            // A DETERMINISTIC BATCH IS A LEGITIMATE BATCH SIZE. MATLAB's Det
+                            // is declared `ContinuousDistribution & DiscreteDistribution`, so
+                            // setArrivalBatch accepts it and the writer emits it; this class
+                            // hierarchy has Det outside DiscreteDistribution, which refused
+                            // the very models the reference writes. A Det on a positive
+                            // integer is the degenerate DiscreteUniform on that value, so it
+                            // is converted rather than rejected.
+                            if (batch instanceof jline.lang.processes.Det) {
+                                double v = batch.getMean();
+                                if (v < 1 || Math.abs(v - Math.rint(v)) > 1e-9) {
+                                    throw new RuntimeException("arrivalBatch for class '" + be.getKey()
+                                            + "' is a Det on " + v + "; a batch must carry a positive "
+                                            + "integer number of jobs");
+                                }
+                                batch = new jline.lang.processes.DiscreteUniform(Math.rint(v), Math.rint(v));
+                            }
                             if (!(batch instanceof jline.lang.processes.DiscreteDistribution)) {
                                 throw new RuntimeException("arrivalBatch for class '" + be.getKey()
                                         + "' deserialized to " + batch.getClass().getSimpleName()
@@ -3520,7 +3862,26 @@ public class LineModelIO {
                             }
                             queue.setLimitedClassDependence(betaFun, peakVec);
                         } else {
-                            queue.setLimitedClassDependence(betaFun);
+                            // LEGACY JSON, written before the peak became a wire
+                            // key. The table IS the whole lattice, bounded by
+                            // `cutoffs`, so max_n beta(n) is recoverable here in
+                            // a way it never is from a user's handle -- the same
+                            // recovery linemodel_load.m and linemodel_io.py make.
+                            // Dropping the peak instead would defer the failure
+                            // to the solver, or worse to a zeroed utilization.
+                            final int[] peakNK = new int[Kcd];
+                            for (int i = 0; i < Kcd; i++) {
+                                peakNK[i] = (cdCutoffs != null && i < cdCutoffs.length) ? cdCutoffs[i] : 1;
+                            }
+                            double bmax = jline.api.pfqn.ld.CdPeakScaling.cd_peak_scaling(betaFun, peakNK, Kcd);
+                            if (!(bmax > 0)) {
+                                throw new RuntimeException("classDependence at node '" + queue.getName()
+                                        + "' carries no peak and none can be recovered from its lattice table;"
+                                        + " write the \"peak\" key.");
+                            }
+                            Matrix derived = new Matrix(1, Kcd);
+                            for (int i = 0; i < Kcd; i++) derived.set(0, i, bmax);
+                            queue.setLimitedClassDependence(betaFun, derived);
                         }
                     }
                 }
@@ -3578,7 +3939,21 @@ public class LineModelIO {
                             }
                             queue.setLimitedJointDependence(etaFun, peakVec);
                         } else {
-                            queue.setLimitedJointDependence(etaFun);
+                            // Legacy JSON: recover the peak from the lattice
+                            // table, as the classDependence branch above does.
+                            final int[] peakNK = new int[Kjd];
+                            for (int i = 0; i < Kjd; i++) {
+                                peakNK[i] = (jdCutoffs != null && i < jdCutoffs.length) ? jdCutoffs[i] : 1;
+                            }
+                            double emax = jline.api.pfqn.ld.CdPeakScaling.cd_peak_scaling(etaFun, peakNK, Kjd);
+                            if (!(emax > 0)) {
+                                throw new RuntimeException("jointDependence at node '" + queue.getName()
+                                        + "' carries no peak and none can be recovered from its lattice table;"
+                                        + " write the \"peak\" key.");
+                            }
+                            Matrix derived = new Matrix(1, Kjd);
+                            for (int i = 0; i < Kjd; i++) derived.set(0, i, emax);
+                            queue.setLimitedJointDependence(etaFun, derived);
                         }
                     }
                 }
@@ -3696,6 +4071,16 @@ public class LineModelIO {
                     }
                 }
 
+                // Job parallelism: servers seized at once by a job, per class
+                if (nodeObj.has("serverParallelism")) {
+                    JsonObject parallelismObj = nodeObj.getAsJsonObject("serverParallelism");
+                    for (Map.Entry<String, JsonElement> pe : parallelismObj.entrySet()) {
+                        JobClass jc = classMap.get(pe.getKey());
+                        if (jc == null) continue;
+                        queue.setServerParallelism(jc, pe.getValue().getAsInt());
+                    }
+                }
+
                 // Immediate feedback
                 if (nodeObj.has("immediateFeedback")) {
                     JsonObject immFeedObj = nodeObj.getAsJsonObject("immediateFeedback");
@@ -3720,6 +4105,28 @@ public class LineModelIO {
                         Distribution doffDist = deserializeDistribution(
                                 delayOffObj.getAsJsonObject(suEntry.getKey()));
                         queue.setDelayOff(jc, suDist, doffDist);
+                    }
+                }
+
+                // Server breakdown/repair, with the optional per-class degraded
+                // down-server service.
+                if (nodeObj.has("breakdown")) {
+                    JsonObject bdObj = nodeObj.getAsJsonObject("breakdown");
+                    if (!bdObj.has("failure") || !bdObj.has("repair")) {
+                        throw new RuntimeException("Node \"" + queue.getName() + "\": \"breakdown\" "
+                                + "requires both a \"failure\" and a \"repair\" distribution.");
+                    }
+                    Distribution failDist = deserializeDistribution(bdObj.getAsJsonObject("failure"));
+                    Distribution repairDist = deserializeDistribution(bdObj.getAsJsonObject("repair"));
+                    queue.setBreakdown(failDist, repairDist);
+                    if (bdObj.has("downService")) {
+                        JsonObject downSvcObj = bdObj.getAsJsonObject("downService");
+                        for (Map.Entry<String, JsonElement> de : downSvcObj.entrySet()) {
+                            JobClass jc = classMap.get(de.getKey());
+                            if (jc == null) continue;
+                            queue.setDownService(jc,
+                                    deserializeDistribution(de.getValue().getAsJsonObject()));
+                        }
                     }
                 }
 
@@ -3862,6 +4269,21 @@ public class LineModelIO {
                             if (popDist.isDiscrete()) {
                                 cache.setRead(jc, popDist);
                             }
+                        }
+                    }
+                }
+                // `itemClass`: for a cache network, the item each per-item class reads
+                // (Cache.setItemReadClasses). Recorded directly: popularity and the
+                // hit/miss switches are read from their own keys above, so only the
+                // item mapping itself is missing, and inferring it from a one-hot
+                // popularity would be ambiguous against a single-item popularity.
+                JsonElement icEl = cacheField(nodeObj, "itemClass", "itemClass");
+                if (icEl != null) {
+                    JsonObject icObj = icEl.getAsJsonObject();
+                    for (Map.Entry<String, JsonElement> ie : icObj.entrySet()) {
+                        JobClass jc = classMap.get(ie.getKey());
+                        if (jc != null) {
+                            cache.setItemOfClass(jc, ie.getValue().getAsInt());
                         }
                     }
                 }
@@ -4040,13 +4462,17 @@ public class LineModelIO {
             }
         }
 
-        // Phase 3c: Restore initial state for Place nodes and for closed
-        // pass-and-swap (PAS) queues (ordered job placement, 1-based list).
+        // Phase 3c: Restore the initial state of EVERY stateful node the document
+        // names. A Place's token counts and a closed pass-and-swap queue's ordered
+        // job placement are two readings of one field, and `hasInitState` tests
+        // every stateful node, so restoring only those two left the model reading
+        // as uninitialized: getState() then ran initDefault() and overwrote the
+        // state, state space and prior this reader had just installed.
         for (Map.Entry<String, JsonObject> njEntry : nodeJsonMap.entrySet()) {
             JsonObject nodeObj = njEntry.getValue();
             if (!nodeObj.has("initialState")) continue;
             Node node = nodeMap.get(njEntry.getKey());
-            if (!(node instanceof Place) && !(node instanceof Queue)) continue;
+            if (!(node instanceof StatefulNode)) continue;
 
             JsonElement isElem = nodeObj.get("initialState");
             Matrix stateVec;
@@ -4059,7 +4485,20 @@ public class LineModelIO {
             } else {
                 stateVec = Matrix.singleton(isElem.getAsDouble());
             }
-            node.setState(stateVec);
+            StatefulNode sfNode = (StatefulNode) node;
+            sfNode.setState(stateVec);
+            // AND ITS ONE-ROW STATE SPACE AND TRIVIAL PRIOR. The writer omits a
+            // [1] prior over one row because `initialState` already carries that
+            // row, so restoring the row alone leaves a node whose state, space
+            // and prior disagree -- which is not what initDefault or any
+            // initFromMarginal* builds: all of them set the TRIO together, and a
+            // solver that indexes the state space finds it empty. A space or
+            // prior the document DID carry is installed by the loop below and
+            // overwrites this pair.
+            if (sfNode.getStateSpace().isEmpty()) {
+                sfNode.setStateSpace(stateVec);
+                sfNode.setStatePrior(Matrix.singleton(1.0));
+            }
         }
 
         // see _kb/09-ldes-and-cache.md (statePrior is emitted only as a pair with stateSpace)
@@ -4174,15 +4613,16 @@ public class LineModelIO {
                             continue;
                         }
                         // see _kb/09-ldes-and-cache.md for the routing-strategy apply-ordering rationale
+                        // RAND is restored here, after link(P): it takes destinations from the connection matrix, so the single null-dest entry setRouting leaves is correct.
                         if (rs != RoutingStrategy.WRROBIN
-                                && rs != RoutingStrategy.RAND && rs != RoutingStrategy.PROB
-                                && rs != RoutingStrategy.SQ && rs != RoutingStrategy.RL) {
+                                && rs != RoutingStrategy.PROB
+                                && rs != RoutingStrategy.SQ) {
                             node.setRouting(jc, rs);
                         }
                     }
                 }
-                // SQ / RL: applied after the plain strategies so their
-                // parameters and the strategy are installed by one call.
+                // SQ: applied after the plain strategies so its parameter and
+                // the strategy are installed by one call.
                 for (Map.Entry<String, JsonElement> nodeEntry : rsObj.entrySet()) {
                     Node node = nodeMap.get(nodeEntry.getKey());
                     if (node == null) continue;
@@ -4191,7 +4631,7 @@ public class LineModelIO {
                         JobClass jc = classMap.get(classEntry.getKey());
                         if (jc == null) continue;
                         RoutingStrategy rs = parseRoutingStrategy(classEntry.getValue().getAsString());
-                        if (rs != RoutingStrategy.SQ && rs != RoutingStrategy.RL) {
+                        if (rs != RoutingStrategy.SQ) {
                             continue;
                         }
                         JsonObject params = null;
@@ -4212,42 +4652,6 @@ public class LineModelIO {
                             } else {
                                 node.setSQRouting(jc, params.get("d").getAsInt());
                             }
-                        } else {
-                            if (params == null || !params.has("valueFunction")) {
-                                line_warning(mfilename(new Object() {
-                        }),
-                                        "Node %s routes class %s by RL but the file carries no "
-                                                + "routingParams.valueFunction; routing degrades to the "
-                                                + "JSQ fallback.",
-                                        node.getName(), jc.getName());
-                                node.setRouting(jc, RoutingStrategy.RL);
-                                continue;
-                            }
-                            Matrix vf = jsonToRowVector(params.getAsJsonArray("valueFunction"));
-                            int[] vfShape = new int[0];
-                            if (params.has("vfShape")) {
-                                JsonArray sa = params.getAsJsonArray("vfShape");
-                                vfShape = new int[sa.size()];
-                                for (int si = 0; si < sa.size(); si++) {
-                                    vfShape[si] = sa.get(si).getAsInt();
-                                }
-                            }
-                            int stateSize = params.has("stateSize")
-                                    ? params.get("stateSize").getAsInt() : -1;
-                            List<Integer> actList = new ArrayList<Integer>();
-                            if (params.has("actionNodes")) {
-                                for (JsonElement ae : params.getAsJsonArray("actionNodes")) {
-                                    Node an = nodeMap.get(ae.getAsString());
-                                    if (an != null) {
-                                        actList.add(an.getNodeIndex());
-                                    }
-                                }
-                            }
-                            int[] actIdx = new int[actList.size()];
-                            for (int ai = 0; ai < actList.size(); ai++) {
-                                actIdx[ai] = actList.get(ai);
-                            }
-                            node.setRLRouting(jc, vf, vfShape, actIdx, stateSize);
                         }
                     }
                 }
@@ -4271,6 +4675,20 @@ public class LineModelIO {
                     }
                 }
             }
+        }
+
+        // Krzesinski state-dependent routing, restored after link(P) and after the
+        // non-PROB strategies above: link writes the uniform placeholder into the
+        // entry row and routingStrategies names that row SDR, neither of which says
+        // what the subnetwork looks like. See _kb/16-state-dependent-routing.md
+        if (modelObj.has("stateDepRouting")) {
+            restoreStateDepRouting(modelObj.getAsJsonObject("stateDepRouting"), nodeMap, classMap);
+        }
+
+        // Global (Whittle) dependence phi(n), rebuilt from the materialized slot lattice
+        if (modelObj.has("globalDependence")) {
+            restoreGlobalDependence(model, modelObj.getAsJsonObject("globalDependence"),
+                    nodeMap, classMap);
         }
 
         // Finite capacity regions
@@ -4401,6 +4819,9 @@ public class LineModelIO {
                 if (hostObj.has("replication")) {
                     host.setReplication(hostObj.get("replication").getAsInt());
                 }
+                if (hostObj.has("admissionConstraints")) {
+                    applyLincon(host, hostObj.getAsJsonArray("admissionConstraints"));
+                }
                 hostMap.put(hostName, host);
             }
         }
@@ -4429,8 +4850,9 @@ public class LineModelIO {
                     String replStr = taskObj.has("replacementStrategy") ? taskObj.get("replacementStrategy").getAsString() : "FIFO";
                     ReplacementStrategy repl = parseReplacementStrategy(replStr);
                     task = new CacheTask(model, taskName, totalItems, itemCap, repl, mult, sched);
-                } else if ("FunctionTask".equals(taskType)) {
-                    task = new FunctionTask(model, taskName, mult, sched);
+                } else if ("SetupTask".equals(taskType) || "FunctionTask".equals(taskType)) {
+                    // FunctionTask is the legacy name of SetupTask on the wire
+                    task = new SetupTask(model, taskName, mult, sched);
                 } else {
                     task = new Task(model, taskName, mult, sched);
                 }
@@ -4444,7 +4866,12 @@ public class LineModelIO {
                 if (taskObj.has("replication")) {
                     task.setReplication(taskObj.get("replication").getAsInt());
                 }
-                if (taskObj.has("thinkTimeMean")) {
+                // Both spellings are accepted; the object form wins because it
+                // carries the whole distribution, where the mean alone can only
+                // be rebuilt as an exponential.
+                if (taskObj.has("thinkTime") && taskObj.get("thinkTime").isJsonObject()) {
+                    task.setThinkTime(deserializeDistribution(taskObj.getAsJsonObject("thinkTime")));
+                } else if (taskObj.has("thinkTimeMean")) {
                     double thinkMean = taskObj.get("thinkTimeMean").getAsDouble();
                     task.setThinkTime(thinkMean);
                 }
@@ -4453,9 +4880,9 @@ public class LineModelIO {
                 }
                 if (taskObj.has("fanIn")) {
                     JsonObject fanInObj = taskObj.getAsJsonObject("fanIn");
-                    String src = fanInObj.get("source").getAsString();
-                    int val = fanInObj.get("value").getAsInt();
-                    task.setFanIn(src, val);
+                    for (Map.Entry<String, JsonElement> fi : fanInObj.entrySet()) {
+                        task.setFanIn(fi.getKey(), fi.getValue().getAsInt());
+                    }
                 }
                 if (taskObj.has("fanOut")) {
                     JsonObject fanOutObj = taskObj.getAsJsonObject("fanOut");
@@ -4463,13 +4890,20 @@ public class LineModelIO {
                         task.setFanOut(fo.getKey(), fo.getValue().getAsInt());
                     }
                 }
-                if (taskObj.has("setupTimeMean")) {
+                if (taskObj.has("setupTime") && taskObj.get("setupTime").isJsonObject()) {
+                    task.setSetupTime(deserializeDistribution(taskObj.getAsJsonObject("setupTime")));
+                } else if (taskObj.has("setupTimeMean")) {
                     double setupMean = taskObj.get("setupTimeMean").getAsDouble();
                     task.setSetupTime(setupMean);
                 }
-                if (taskObj.has("delayOffTimeMean")) {
+                if (taskObj.has("delayOffTime") && taskObj.get("delayOffTime").isJsonObject()) {
+                    task.setDelayOffTime(deserializeDistribution(taskObj.getAsJsonObject("delayOffTime")));
+                } else if (taskObj.has("delayOffTimeMean")) {
                     double delayOffMean = taskObj.get("delayOffTimeMean").getAsDouble();
                     task.setDelayOffTime(delayOffMean);
+                }
+                if (taskObj.has("admissionConstraints")) {
+                    applyLincon(task, taskObj.getAsJsonArray("admissionConstraints"));
                 }
                 taskMap.put(taskName, task);
             }
@@ -5053,6 +5487,21 @@ public class LineModelIO {
      * (single row) or a 2-D array-of-arrays. The MATLAB linemodel_save
      * encoder emits 1x1 matrices as bare scalars.
      */
+    /**
+     * A block array that may sit under "params" (what linemodel_save.m and
+     * linemodel_io.py write) or at the top level (what this class wrote before
+     * 2026-08-01). BMAP and MarkedMMPP were unreachable across codebases while
+     * the two disagreed: a MATLAB or Python model.json carrying a BMAP service
+     * failed to load with "BMAP requires D0 and at least one batch matrix".
+     */
+    private static JsonArray blockArray(JsonObject obj, String key) {
+        JsonObject params = obj.getAsJsonObject("params");
+        if (params != null && params.getAsJsonArray(key) != null) {
+            return params.getAsJsonArray(key);
+        }
+        return obj.getAsJsonArray(key);
+    }
+
     private static Matrix jsonToMatrix2DLenient(JsonElement el) {
         if (el == null || el.isJsonNull()) {
             return new Matrix(0, 0);
@@ -5181,7 +5630,6 @@ public class LineModelIO {
         if ("SQ".equals(upper)) return RoutingStrategy.SQ;
         if ("DISABLED".equals(upper)) return RoutingStrategy.DISABLED;
         if ("FIRING".equals(upper)) return RoutingStrategy.FIRING;
-        if ("RL".equals(upper)) return RoutingStrategy.RL;
         return null;
     }
 
@@ -5198,12 +5646,364 @@ public class LineModelIO {
     }
 
     /**
+     * Serialize the Krzesinski (1987) state-dependent routing declaration, or null
+     * when the model carries none.
+     *
+     * <p>Centers travel by NODE NAME, which is what makes the block language
+     * independent: a node reordering on either side cannot shift a center. Branch
+     * index 1 denotes the complement M-V and is written as an empty list, keeping
+     * the paper's own numbering, so the array read back is index-for-index the one
+     * {@link Node#setStateDepRouting} expects.</p>
+     *
+     * <p>Only one declaration is carried, which is the same restriction the
+     * struct itself has: {@link NetworkStruct#sdr} holds a single structure.</p>
+     */
+    private static JsonObject serializeStateDepRouting(Network model) {
+        List<Node> nodes = model.getNodes();
+        List<JobClass> classes = model.getClasses();
+        for (int i = 0; i < nodes.size(); i++) {
+            Node node = nodes.get(i);
+            for (int r = 0; r < classes.size(); r++) {
+                StateDepRouting sdr = node.getStateDepRouting(classes.get(r));
+                if (sdr == null || sdr.branchNodes == null) {
+                    continue;
+                }
+                JsonObject out = new JsonObject();
+                out.addProperty("entry", node.getName());
+                out.addProperty("departure", sdr.departureNode.getName());
+                out.addProperty("class", classes.get(r).getName());
+                JsonArray branches = new JsonArray();
+                for (int b = 0; b < sdr.branchNodes.size(); b++) {
+                    JsonArray bn = new JsonArray();
+                    List<Node> centers = sdr.branchNodes.get(b);
+                    if (centers != null) {
+                        for (int q = 0; q < centers.size(); q++) {
+                            bn.add(centers.get(q).getName());
+                        }
+                    }
+                    branches.add(bn);
+                }
+                out.add("branches", branches);
+                JsonArray level = new JsonArray();
+                for (int b = 0; b < sdr.level.length; b++) {
+                    level.add(sdr.level[b]);
+                }
+                JsonArray cArr = new JsonArray();
+                for (int t = 0; t < sdr.C.length; t++) {
+                    cArr.add(sdr.C[t]);
+                }
+                JsonArray dArr = new JsonArray();
+                for (int t = 0; t < sdr.d.length; t++) {
+                    JsonArray row = new JsonArray();
+                    for (int b = 0; b < sdr.d[t].length; b++) {
+                        row.add(sdr.d[t][b]);
+                    }
+                    dArr.add(row);
+                }
+                out.add("level", level);
+                out.add("C", cArr);
+                out.add("d", dArr);
+                return out;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Restore a state-dependent routing declaration onto a loaded model.
+     *
+     * <p>Called AFTER link(P), whose uniform placeholder in the entry row the
+     * declaration supersedes, and after the non-PROB strategies, which have named
+     * that row SDR without saying what the subnetwork looks like.</p>
+     */
+    private static void restoreStateDepRouting(JsonObject sdrObj, Map<String, Node> nodeMap,
+                                               Map<String, JobClass> classMap) {
+        Node entry = nodeMap.get(sdrObj.get("entry").getAsString());
+        Node departure = nodeMap.get(sdrObj.get("departure").getAsString());
+        JobClass jobClass = classMap.get(sdrObj.get("class").getAsString());
+        if (entry == null || departure == null || jobClass == null) {
+            line_warning(mfilename(new Object() {
+            }), "The stateDepRouting block names a node or class the model does not declare; "
+                    + "the declaration is not restored.");
+            return;
+        }
+        JsonArray branchArr = sdrObj.getAsJsonArray("branches");
+        List<List<Node>> branches = new ArrayList<List<Node>>();
+        for (int b = 0; b < branchArr.size(); b++) {
+            JsonArray bn = branchArr.get(b).getAsJsonArray();
+            List<Node> centers = new ArrayList<Node>();
+            for (int q = 0; q < bn.size(); q++) {
+                Node c = nodeMap.get(bn.get(q).getAsString());
+                if (c == null) {
+                    line_warning(mfilename(new Object() {
+                    }), "The stateDepRouting block names node '%s', which the model does not "
+                            + "declare; the declaration is not restored.", bn.get(q).getAsString());
+                    return;
+                }
+                centers.add(c);
+            }
+            branches.add(centers);
+        }
+        JsonArray levelArr = sdrObj.getAsJsonArray("level");
+        int[] level = new int[levelArr.size()];
+        for (int b = 0; b < levelArr.size(); b++) {
+            level[b] = levelArr.get(b).getAsInt();
+        }
+        JsonArray cArr = sdrObj.getAsJsonArray("C");
+        double[] C = new double[cArr.size()];
+        for (int t = 0; t < cArr.size(); t++) {
+            C[t] = cArr.get(t).getAsDouble();
+        }
+        JsonArray dArr = sdrObj.getAsJsonArray("d");
+        double[][] d = new double[dArr.size()][];
+        for (int t = 0; t < dArr.size(); t++) {
+            JsonArray row = dArr.get(t).getAsJsonArray();
+            d[t] = new double[row.size()];
+            for (int b = 0; b < row.size(); b++) {
+                d[t][b] = row.get(b).getAsDouble();
+            }
+        }
+        entry.setStateDepRouting(jobClass, departure, branches, level, C, d);
+    }
+
+    /**
      * Per-class cutoffs for materializing a class-dependence handle onto a
      * bounded lattice. A closed class cannot exceed its population; an open
      * class is unbounded, so it gets the same saturation cutoff the OI/PAS rate
      * table uses, beyond which beta is taken to be constant. Mirrors the rule in
      * the MATLAB writer (linemodel_save).
      */
+    private static final int GD_MAX_LATTICE = 200000;
+
+    /**
+     * Materialize the network-level global (Whittle) dependence phi(n) onto the wire.
+     * n is the full (nstations x nclasses) population matrix, but only the slots a
+     * class can occupy carry a coordinate: a Source holds no jobs and a class with
+     * zero per-class capacity at a station never appears there, so those entries are
+     * pinned to 0. The restriction is lossless, since no DEP or PHASE event ever
+     * fires at a slot the class cannot occupy. Mirrors gd_block in linemodel_save.m.
+     */
+    private static JsonObject serializeGlobalDependence(Network model) {
+        NetworkStruct sn = model.getStruct();
+        int M = sn.nstations;
+        int K = sn.nclasses;
+        int wcut = model.getGlobalDependenceCutoff();
+        SerializableFunction<Matrix, Matrix> phi = model.getGlobalDependence();
+        Matrix peak = model.getGlobalDependencePeak();
+
+        List<String> stationNames = new ArrayList<String>();
+        for (int i = 0; i < M; i++) {
+            stationNames.add(model.getNodes().get((int) sn.stationToNode.get(i)).getName());
+        }
+        List<String> classNames = new ArrayList<String>();
+        for (int r = 0; r < K; r++) {
+            classNames.add(model.getClasses().get(r).getName());
+        }
+
+        List<Integer> slotSt = new ArrayList<Integer>();
+        List<Integer> slotCl = new ArrayList<Integer>();
+        List<Integer> cuts = new ArrayList<Integer>();
+        for (int i = 0; i < M; i++) {
+            if (sn.nodetype.get((int) sn.stationToNode.get(i)) == NodeType.Source) {
+                continue;
+            }
+            for (int r = 0; r < K; r++) {
+                double cap = sn.classcap.get(i, r);
+                if (!(cap > 0)) {
+                    continue;
+                }
+                double nj = sn.njobs.get(r);
+                int c = Double.isFinite(nj) ? (int) Math.round(nj) : wcut;
+                if (Double.isFinite(cap)) {
+                    c = Math.min(c, (int) Math.round(cap));
+                }
+                slotSt.add(i);
+                slotCl.add(r);
+                cuts.add(Math.max(c, 0));
+            }
+        }
+
+        int P = cuts.size();
+        long total = 1;
+        for (int d = 0; d < P; d++) {
+            total *= (cuts.get(d) + 1);
+            if (total > GD_MAX_LATTICE) {
+                throw new IllegalArgumentException(
+                        "The global dependence lattice exceeds the wire limit of " + GD_MAX_LATTICE
+                        + " points (" + P + " varying station-class slots). Lower the wireCutoff "
+                        + "argument of setGlobalDependence, or solve the model natively.");
+            }
+        }
+
+        JsonObject blk = new JsonObject();
+        blk.addProperty("type", "globalDependent");
+        JsonArray stArr = new JsonArray();
+        for (String nm : stationNames) stArr.add(nm);
+        blk.add("stations", stArr);
+        JsonArray clArr = new JsonArray();
+        for (String nm : classNames) clArr.add(nm);
+        blk.add("classes", clArr);
+        JsonArray slotArr = new JsonArray();
+        JsonArray cutArr = new JsonArray();
+        for (int d = 0; d < P; d++) {
+            JsonObject sm = new JsonObject();
+            sm.addProperty("station", stationNames.get(slotSt.get(d)));
+            sm.addProperty("class", classNames.get(slotCl.get(d)));
+            slotArr.add(sm);
+            cutArr.add(cuts.get(d));
+        }
+        blk.add("slots", slotArr);
+        blk.add("cutoffs", cutArr);
+        blk.addProperty("cutoff", wcut);
+
+        JsonObject tbl = new JsonObject();
+        int[] c = new int[P];
+        for (long li = 0; li < total; li++) {
+            long rem = li;
+            for (int d = 0; d < P; d++) {
+                c[d] = (int) (rem % (cuts.get(d) + 1));
+                rem /= (cuts.get(d) + 1);
+            }
+            Matrix n = new Matrix(M, K);
+            for (int d = 0; d < P; d++) {
+                n.set(slotSt.get(d), slotCl.get(d), c[d]);
+            }
+            Matrix v = phi.apply(n);
+            JsonArray va = new JsonArray();
+            for (int i = 0; i < M; i++) {
+                for (int r = 0; r < K; r++) {
+                    double x;
+                    if (v.getNumElements() == 1) {
+                        x = v.get(0);
+                    } else if (v.getNumCols() == 1) {
+                        x = v.get(i, 0);
+                    } else {
+                        x = v.get(i, r);
+                    }
+                    va.add(Double.isFinite(x) ? x : 0.0);
+                }
+            }
+            StringBuilder sb = new StringBuilder();
+            if (P == 0) {
+                sb.append("0");
+            } else {
+                for (int d = 0; d < P; d++) {
+                    if (d > 0) sb.append(",");
+                    sb.append(c[d]);
+                }
+            }
+            tbl.add(sb.toString(), va);
+        }
+        blk.add("scaling", tbl);
+
+        JsonArray pkArr = new JsonArray();
+        for (int i = 0; i < M; i++) {
+            for (int r = 0; r < K; r++) {
+                pkArr.add(peak == null || peak.isEmpty() ? 1.0 : peak.get(i, r));
+            }
+        }
+        blk.add("peak", pkArr);
+        return blk;
+    }
+
+    /**
+     * Rebuild the network-level global (Whittle) dependence from the slot lattice
+     * written by {@link #serializeGlobalDependence(Network)} and install it on the
+     * model. Slots carry station and class NAMES, resolved through the model's own
+     * index spaces, so a reordering on the writing side cannot shift a coordinate.
+     */
+    private static void restoreGlobalDependence(Network model, JsonObject blk,
+                                                Map<String, Node> nodeMap,
+                                                Map<String, JobClass> classMap) {
+        if (blk == null || !blk.has("scaling")) {
+            return;
+        }
+        String type = blk.has("type") ? blk.get("type").getAsString() : "";
+        if (!"globalDependent".equals(type)) {
+            return;
+        }
+        NetworkStruct sn = model.getStruct();
+        final int M = sn.nstations;
+        final int K = sn.nclasses;
+
+        List<Integer> slotStList = new ArrayList<Integer>();
+        List<Integer> slotClList = new ArrayList<Integer>();
+        if (blk.has("slots")) {
+            for (JsonElement el : blk.getAsJsonArray("slots")) {
+                JsonObject sm = el.getAsJsonObject();
+                Node node = nodeMap.get(sm.get("station").getAsString());
+                JobClass jc = classMap.get(sm.get("class").getAsString());
+                if (node == null || jc == null) {
+                    return;
+                }
+                slotStList.add((int) sn.nodeToStation.get(node.getNodeIndex()));
+                slotClList.add(jc.getIndex() - 1);
+            }
+        }
+        final int P = slotStList.size();
+        final int[] slotSt = new int[P];
+        final int[] slotCl = new int[P];
+        for (int d = 0; d < P; d++) {
+            slotSt[d] = slotStList.get(d);
+            slotCl[d] = slotClList.get(d);
+        }
+        final int[] cuts = new int[P];
+        if (blk.has("cutoffs")) {
+            JsonArray ca = blk.getAsJsonArray("cutoffs");
+            for (int d = 0; d < P && d < ca.size(); d++) {
+                cuts[d] = ca.get(d).getAsInt();
+            }
+        }
+        int wcut = blk.has("cutoff") ? blk.get("cutoff").getAsInt() : 10;
+
+        final HashMap<String, double[]> tbl = new HashMap<String, double[]>();
+        for (Map.Entry<String, JsonElement> e : blk.getAsJsonObject("scaling").entrySet()) {
+            JsonArray va = e.getValue().getAsJsonArray();
+            double[] v = new double[va.size()];
+            for (int i = 0; i < va.size(); i++) {
+                v[i] = va.get(i).getAsDouble();
+            }
+            tbl.put(e.getKey(), v);
+        }
+
+        Matrix peak = new Matrix(M, K);
+        if (blk.has("peak")) {
+            JsonArray pa = blk.getAsJsonArray("peak");
+            for (int i = 0; i < M; i++) {
+                for (int r = 0; r < K; r++) {
+                    int flat = i * K + r;
+                    peak.set(i, r, flat < pa.size() ? pa.get(flat).getAsDouble() : 1.0);
+                }
+            }
+        } else {
+            peak = Matrix.ones(M, K);
+        }
+
+        SerializableFunction<Matrix, Matrix> phi = (Matrix n) -> {
+            StringBuilder sb = new StringBuilder();
+            if (P == 0) {
+                sb.append("0");
+            } else {
+                for (int d = 0; d < P; d++) {
+                    int x = (int) Math.round(n.get(slotSt[d], slotCl[d]));
+                    if (x < 0) x = 0;
+                    if (x > cuts[d]) x = cuts[d];
+                    if (d > 0) sb.append(",");
+                    sb.append(x);
+                }
+            }
+            double[] v = tbl.get(sb.toString());
+            Matrix out = new Matrix(M, K);
+            for (int i = 0; i < M; i++) {
+                for (int r = 0; r < K; r++) {
+                    out.set(i, r, v == null ? 1.0 : v[i * K + r]);
+                }
+            }
+            return out;
+        };
+        model.setGlobalDependence(phi, peak, wcut);
+    }
+
     private static int[] classDependenceCutoffs(Network model, int K) {
         int[] maxc = new int[K];
         for (int r = 0; r < K; r++) {

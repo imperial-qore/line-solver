@@ -1,0 +1,76 @@
+{
+  "class": {
+    "AG": "deterministic",
+    "CTMC": "deterministic",
+    "MVA": "deterministic"
+  },
+  "example": "ag_closed_network",
+  "solvers": {
+    "AG": [
+      {
+        "ArvR": 0.99485,
+        "JobClass": "Class1",
+        "QLen": 2.4134,
+        "ResidT": 1.6567,
+        "RespT": 1.6567,
+        "Station": "Queue1",
+        "Tput": 1.4568,
+        "Util": 0.72839
+      },
+      {
+        "ArvR": 1.4568,
+        "JobClass": "Class1",
+        "QLen": 8.1985,
+        "ResidT": 8.2409,
+        "RespT": 8.2409,
+        "Station": "Queue2",
+        "Tput": 0.99485,
+        "Util": 0.99485
+      }
+    ],
+    "CTMC": [
+      {
+        "ArvR": 0.99951,
+        "JobClass": "Class1",
+        "QLen": 0.99463,
+        "ResidT": 0.99511,
+        "RespT": 0.99511,
+        "Station": "Queue1",
+        "Tput": 0.99951,
+        "Util": 0.49976
+      },
+      {
+        "ArvR": 0.99951,
+        "JobClass": "Class1",
+        "QLen": 9.0054,
+        "ResidT": 9.0098,
+        "RespT": 9.0098,
+        "Station": "Queue2",
+        "Tput": 0.99951,
+        "Util": 0.99951
+      }
+    ],
+    "MVA": [
+      {
+        "ArvR": 0.99951,
+        "JobClass": "Class1",
+        "QLen": 0.99463,
+        "ResidT": 0.99511,
+        "RespT": 0.99511,
+        "Station": "Queue1",
+        "Tput": 0.99951,
+        "Util": 0.49976
+      },
+      {
+        "ArvR": 0.99951,
+        "JobClass": "Class1",
+        "QLen": 9.0054,
+        "ResidT": 9.0098,
+        "RespT": 9.0098,
+        "Station": "Queue2",
+        "Tput": 0.99951,
+        "Util": 0.99951
+      }
+    ]
+  }
+}

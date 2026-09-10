@@ -6,10 +6,18 @@
 package jline.lang.processes;
 
 import jline.util.matrix.Matrix;
+import jline.api.mc.Dtmc_stochcomp;
 
+import static jline.api.mc.Dtmc_hitting_time.dtmc_hitting_time;
+import static jline.api.mc.Dtmc_isfeasible.dtmc_isfeasible;
 import static jline.api.mc.Dtmc_makestochastic.dtmc_makestochastic;
 import static jline.api.mc.Dtmc_rand.dtmc_rand;
+import static jline.api.mc.Dtmc_solve.dtmc_solve;
+import static jline.api.mc.Dtmc_stochcomp.dtmc_stochcomp;
+import static jline.api.mc.Dtmc_stochcomp.dtmc_stochcomp_full;
+import static jline.api.mc.Dtmc_uniformization.dtmc_uniformization;
 import static jline.api.mc.Dtmc_timereverse.dtmc_timereverse;
+import static jline.api.mc.Dtmc_transient.dtmc_transient;
 
 /**
  * A class for a discrete time Markov chain
@@ -66,6 +74,83 @@ public class MarkovChain extends Process {
      */
     public Matrix getTransMat() {
         return transMat;
+    }
+
+    /**
+     * Solve the DTMC for steady-state probabilities. Twin of MarkovProcess.solve.
+     * @return the steady-state probability vector
+     */
+    public Matrix solve() {
+        return dtmc_solve(transMat);
+    }
+
+    /**
+     * Distribution at each step 0,...,steps.
+     *
+     * @param pi0   initial distribution, uniform when null
+     * @param steps number of steps
+     * @return matrix with one row per step
+     */
+    public Matrix transientProb(Matrix pi0, int steps) {
+        return dtmc_transient(transMat, pi0, steps);
+    }
+
+    /**
+     * Mean number of steps to reach any target state.
+     *
+     * @param targetStates 0-based indices of the target states
+     * @return column vector of mean hitting times
+     */
+    public Matrix hittingTime(int[] targetStates) {
+        return dtmc_hitting_time(transMat, targetStates);
+    }
+
+    /**
+     * Stochastic complement of a subset of states.
+     *
+     * @param I 0-based indices of the states to retain
+     * @return the transition matrix of the complement on those states
+     */
+    public Matrix stochComp(java.util.List<Integer> I) {
+        return dtmc_stochcomp(transMat, I);
+    }
+
+    /**
+     * Stochastic complement of a subset of states together with the four blocks
+     * of the transition matrix partitioned by I and its complement. Twin of the
+     * MATLAB [S,P11,P12,P21,P22] = dtmc.stochCompFull(I) and of the Python
+     * stochCompFull.
+     *
+     * @param I 0-based indices of the states to retain
+     * @return the complement and the blocks it was built from
+     */
+    public Dtmc_stochcomp.DtmcStochCompResult stochCompFull(java.util.List<Integer> I) {
+        return dtmc_stochcomp_full(transMat, I);
+    }
+
+    /**
+     * Distribution at time t of the DTMC seen through uniformization. The chain
+     * is read as the randomized image of a CTMC, so t is continuous here,
+     * unlike the step count taken by transientProb.
+     *
+     * @param pi0 initial distribution, uniform when null
+     * @param t   time point
+     * @return the distribution at time t
+     */
+    public Matrix transientUnif(Matrix pi0, double t) {
+        int n = transMat.getNumRows();
+        Matrix start = new Matrix(1, n);
+        for (int i = 0; i < n; i++) {
+            start.set(0, i, (pi0 == null || pi0.length() != n) ? 1.0 / n : pi0.get(i));
+        }
+        return dtmc_uniformization(start, transMat, t).pi;
+    }
+
+    /**
+     * @return true when the transition matrix is stochastic
+     */
+    public boolean isFeasible() {
+        return dtmc_isfeasible(transMat) > 0;
     }
 
     /**

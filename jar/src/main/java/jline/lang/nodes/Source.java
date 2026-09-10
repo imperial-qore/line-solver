@@ -193,7 +193,7 @@ public class Source extends Station implements Serializable {
      * releases. A {@code Geometric(a)} interarrival time with a
      * {@code Geometric(beta)} batch size is the Geo^X arrival process of a
      * discrete-time queue, whose analytical counterpart is
-     * {@code jline.api.qsys.Qsys_geoxgeo1}.
+     * {@code jline.api.dqsys.Dqsys_geoxgeo1}.
      *
      * <p>The batch size must be supported on {1,2,...}: an epoch that releases
      * no job is not an arrival epoch. Batch laws are therefore rejected here if
@@ -205,6 +205,11 @@ public class Source extends Station implements Serializable {
     public void setArrivalBatch(JobClass jobClass, jline.lang.processes.DiscreteDistribution batchSize) {
         if (batchSize == null) {
             this.arrivalBatch.remove(jobClass);
+            // sn.arrivalbatch is populated only by the full struct build, so a batch set or
+            // cleared after anything had built the struct never reached it: the recorder read
+            // the node object and emitted BatchArrival while every sn-based predicate saw
+            // none. Same defect as Queue.setNumberOfServers, fixed 2026-09-05.
+            invalidateStruct();
             return;
         }
         if (batchSize.getMean() < 1.0) {
@@ -213,6 +218,7 @@ public class Source extends Station implements Serializable {
                     + "; a batch must carry at least one job, so its support must be {1,2,...}");
         }
         this.arrivalBatch.put(jobClass, batchSize);
+        invalidateStruct();
     }
 
     /**

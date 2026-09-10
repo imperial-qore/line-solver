@@ -8,7 +8,7 @@ flows in business process analysis and workflow pattern recognition.
 Based on AUTO_Branch_Detector.m from the MDN toolbox.
 
 References:
-    Original Kotlin: jar/src/main/kotlin/jline/api/wf/Wf_branch_detector.kt
+    Original JAR: jar/src/main/java/jline/api/wf/Wf_branch_detector.java
 """
 
 import numpy as np

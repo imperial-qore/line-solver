@@ -65,6 +65,24 @@ public class Uniform extends ContinuousDistribution implements Serializable {
         return (Math.exp(-s * minVal) - FastMath.exp(-s * maxVal)) / (s * (maxVal - minVal));
     }
 
+    /**
+     * The transform at a COMPLEX argument, exact and analytic, where the CDF sum
+     * of {@link Distribution#evalLST(org.apache.commons.math3.complex.Complex)}
+     * would only approximate it.
+     */
+    @Override
+    public org.apache.commons.math3.complex.Complex evalLST(
+            org.apache.commons.math3.complex.Complex s) {
+        final double minVal = (double) this.getParam(1).getValue();
+        final double maxVal = (double) this.getParam(2).getValue();
+        if (s.abs() < 1e-14) {
+            return new org.apache.commons.math3.complex.Complex(1.0, 0.0);
+        }
+        final org.apache.commons.math3.complex.Complex num =
+                s.multiply(-minVal).exp().subtract(s.multiply(-maxVal).exp());
+        return num.divide(s.multiply(maxVal - minVal));
+    }
+
     public double getMean() {
         // Get distribution mean
         return ((double) this.getParam(1).getValue() + (double) this.getParam(2).getValue()) / 2.0;
@@ -120,45 +138,45 @@ public class Uniform extends ContinuousDistribution implements Serializable {
         return representation;
     }
 
-    // =================== KOTLIN-STYLE PROPERTY ALIASES ===================
+    // =================== PROPERTY ALIASES ===================
     
     /**
-     * Kotlin-style property alias for getMean()
+     * Property alias for getMean
      */
     public double mean() {
         return getMean();
     }
     
     /**
-     * Kotlin-style property alias for getRate()
+     * Property alias for getRate
      */
     public double rate() {
         return getRate();
     }
     
     /**
-     * Kotlin-style property alias for getSCV()
+     * Property alias for getSCV
      */
     public double scv() {
         return getSCV();
     }
     
     /**
-     * Kotlin-style property alias for getSkewness()
+     * Property alias for getSkewness
      */
     public double skewness() {
         return getSkewness();
     }
     
     /**
-     * Kotlin-style property alias for getVar()
+     * Property alias for getVar
      */
     public double var() {
         return getVar();
     }
     
     /**
-     * Kotlin-style property alias for getProcess()
+     * Property alias for getProcess
      */
     public MatrixCell process() {
         return getProcess();

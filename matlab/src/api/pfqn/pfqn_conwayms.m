@@ -16,6 +16,7 @@
  % @param type Scheduling strategy type per station (default: FCFS).
  % @param tol Convergence tolerance (default: 1e-8).
  % @param maxiter Maximum number of iterations (default: 1000).
+ % @param QN0 (M x R) queue lengths that warm-start the Bard-Schweitzer initialization; empty for the default cold start.
  % @return Q Mean queue lengths.
  % @return U Utilization.
  % @return R Residence times.
@@ -74,10 +75,21 @@ for i=1:M
             N_1 = oner(N,s);
             pop = sum(N_1);
             if nservers(i)>1
+                if pop == 0
+                    % empty network: the station is idle with probability one
+                    P(i,1+(1:(nservers(i)-1)),1+s) = 0;
+                    PB(i,1+s) = 0;
+                    P(i,1+0,1+s) = 1;
+                    continue
+                end
                 for j=1:(nservers(i)-1)
                     P(i,1+j,1+s) = 2*sum(Q(i,:,1+s))/(pop*(pop+1));
                 end
-                PB(i,1+s) = 2*sum(Q(i,:,1+s))/(pop+1-nservers(i))/(pop*(pop+1));
+                if pop > nservers(i)-1
+                    PB(i,1+s) = 2*sum(Q(i,:,1+s))/(pop+1-nservers(i))/(pop*(pop+1));
+                else % fewer jobs than servers: they cannot all be busy
+                    PB(i,1+s) = 0;
+                end
                 P(i,1+0,1+s) = 1 - PB(i,1+s) - sum(P(i,1+(1:(nservers(i)-1)),1+s));
             end
         end
@@ -98,7 +110,7 @@ for I=1:2
         for r=1:R
             for s=1:R
                 Ns = oner(N,s);
-                if N(s)>2
+                if N(s)>2 && N(r)>0 % an empty class has no F_ir to correct
                     Delta(i,r,s) = Q(i,r,1+s)/Ns(r) - Q(i,r,1+0)/N(r);
                 end
             end
@@ -129,6 +141,7 @@ end
 function [Q,W,T,P,PB,iter] = Core(L,M,R,N_1,Z,nservers,Q,P,PB,Delta,type,tol,maxiter)
 hasConverged = false;
 W = L;
+Wlast = [];
 T = zeros(1,R);
 iter = 1;
 while ~hasConverged
@@ -137,7 +150,17 @@ while ~hasConverged
     [Q_1,P_1,PB_1,T_1] = Estimate(M,R,N_1,nservers,Q,P,PB,Delta,W);
     % Forward MVA
     [Q,W,T,P,PB] = ForwardMVA(L,M,R,N_1,Z,nservers,type,Q_1,P_1,PB_1,T_1);
-    if norm(Q-Qlast)<tol || iter > maxiter
+    % W must enter the test: Q alone is satisfied on the FIRST sweep whenever Q
+    % cannot move (M=1 seeds Q at its own fixed point), and the residence times
+    % returned then are still the seed W=L, so T_1=Q/W is unbounded and the
+    % throughput exceeds the station's own service capacity.
+    if isempty(Wlast)
+        moved = Inf;
+    else
+        moved = max(norm(Q-Qlast), norm(W-Wlast));
+    end
+    Wlast = W;
+    if moved < tol || iter > maxiter
         hasConverged = true;
     end
     iter = iter + 1;
@@ -163,18 +186,34 @@ for i=1:M
     for r=1:R
         for s=1:R
             Ns = oner(N_1,s);
-            Q_1(i,r,1+s) = Ns(r)*(Q(i,r,1+0)/N_1(r) + Delta(i,r,s));
+            if N_1(r) > 0
+                Q_1(i,r,1+s) = Ns(r)*(Q(i,r,1+0)/N_1(r) + Delta(i,r,s));
+            else % a class with no jobs left has an empty queue everywhere
+                Q_1(i,r,1+s) = 0;
+            end
         end
     end
 end
+% T_1 is Little's law over the queueing part of the cycle, sum_i Q_1 / sum_i W,
+% and not the ratio at the FIRST station with a positive residence time: the
+% per-station estimates disagree, so picking one made the answer depend on the
+% station order. The demand matrix carries no order, so a model symmetric under
+% permuting classes and stations together must return equal class throughputs,
+% and with the single-station pick it did not.
 for r=1:R
     for s=1:R
         Nr = oner(N_1,r);
+        num = 0; den = 0;
         for i=1:M
-            if W(i,s,1+0)>0
-                T_1(s,1+r) = Nr(s)*(Q(i,s,1+0)/N_1(s) + Delta(i,r,s))/W(i,s,1+0);
-                break;
+            if W(i,s,1+0)>0 && N_1(s)>0 % a class with no jobs left has no throughput
+                % Delta is indexed (station, queued class, removed class), as the
+                % Q_1 loop above uses it: here class s queues and class r is removed
+                num = num + Nr(s)*(Q(i,s,1+0)/N_1(s) + Delta(i,s,r));
+                den = den + W(i,s,1+0);
             end
+        end
+        if den > 0
+            T_1(s,1+r) = max(0, num/den);
         end
     end
 end
@@ -219,7 +258,11 @@ for ist=1:M
                 end
                 [s,n]=sprod(s,S,D);
             end
-            XR(ist,r) = XR(ist,r) / C(ist,1+r);
+            if C(ist,1+r) > 0
+                XR(ist,r) = XR(ist,r) / C(ist,1+r);
+            else % Br empty: fewer jobs than servers, so all of them can never be busy
+                XR(ist,r) = 0;
+            end
         end
     end
 end
@@ -242,7 +285,11 @@ for ist=1:M
                     end
                     [s,n]=sprod(s,S,D);
                 end
-                XE(ist,r,c) = XE(ist,r,c) / Cx(ist,1+r);
+                if Cx(ist,1+r) > 0
+                    XE(ist,r,c) = XE(ist,r,c) / Cx(ist,1+r);
+                else % Axr empty: class c has no job left in N_1-e_r, so its term is 0
+                    XE(ist,r,c) = 0;
+                end
             end
         end
     end
@@ -278,30 +325,42 @@ for r=1:R
         Q(ist,r) = T(r) * W(ist,r);
     end
 end
-% Compute marginal probabilities
+% Queue-length marginals. The relations
+%   p_j = A*p_{j-1}/j,  pB = A*(pB + p_{ms-1})/ms,  p_0 = 1 - pB - sum_j p_j
+% with A = sum_s X_s*L_is the mean number of busy servers are solved in closed
+% form rather than iterated. As a Jacobi iteration they amplify by A per sweep,
+% and since the convergence test watches Q and W but not P the routine returned
+% marginals whose mass had run to 334 behind the p_0 = max(0,1-...) floor.
+% Estimate hands the same marginals to every reduced population, so the
+% population corrections that pfqn_linearizerms carries here are all zero.
 for ist=1:M
-    if nservers(ist) > 1
-        P(ist,:) = 0;
-        for j=1:(nservers(ist)-1)
-            for c=1:R
-                P(ist,1+j) = P(ist,1+j) + L(ist,c)*T(c)*P_1(ist,1+(j-1),1+c)/j;
+    ms = nservers(ist);
+    if ms > 1 && isfinite(ms)
+        A = 0;
+        for s=1:R
+            A = A + L(ist,s)*T(s);
+        end
+        if A >= ms
+            % Saturated: the closed form is singular and its limit is the
+            % degenerate marginal, every server busy with probability one.
+            % N = m with Z = 0 reaches it exactly, so this is a legal input.
+            for j=0:(ms-1)
+                P(ist,1+j) = 0;
             end
-        end
-    end
-end
-for ist=1:M
-    if nservers(ist) > 1
-        PB(ist) = 0;
-        for c=1:R
-            PB(ist) = PB(ist) + L(ist,c)*T(c)*(PB_1(ist,1+c)+P_1(ist,1+nservers(ist)-1,1+c))/nservers(ist);
-        end
-    end
-end
-for ist=1:M
-    if nservers(ist) > 1
-        P(ist,1+0) = max(0,1 - PB(ist));
-        for j=1:(nservers(ist)-1)
-            P(ist,1+0) = max(0,P(ist,1+0) - P(ist,1+j));
+            PB(ist) = 1;
+        else
+            % p_j = alpha(1+j)*p_0
+            alpha = zeros(1,ms);
+            alpha(1) = 1;
+            for j=1:(ms-1)
+                alpha(1+j) = A*alpha(j)/j;
+            end
+            alphaB = A*alpha(ms)/(ms-A);
+            P(ist,1+0) = 1/(1 + sum(alpha(2:ms)) + alphaB);
+            for j=1:(ms-1)
+                P(ist,1+j) = alpha(1+j)*P(ist,1+0);
+            end
+            PB(ist) = alphaB*P(ist,1+0);
         end
     end
 end

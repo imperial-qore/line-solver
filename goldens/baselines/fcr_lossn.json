@@ -1,0 +1,93 @@
+{
+  "class": {
+    "JMT": "stochastic",
+    "NC": "deterministic"
+  },
+  "example": "fcr_lossn",
+  "solvers": {
+    "JMT": [
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class1",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.29989,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class2",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.20024,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.29913,
+        "JobClass": "Class1",
+        "QLen": 0.29949,
+        "ResidT": 1.0024,
+        "RespT": 1.0024,
+        "Station": "Delay",
+        "Tput": 0.29901,
+        "Util": 0.29949
+      },
+      {
+        "ArvR": 0.19982,
+        "JobClass": "Class2",
+        "QLen": 0.25002,
+        "ResidT": 1.2487,
+        "RespT": 1.2487,
+        "Station": "Delay",
+        "Tput": 0.19982,
+        "Util": 0.25002
+      }
+    ],
+    "NC": [
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class1",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.29898,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class2",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.19958,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.29898,
+        "JobClass": "Class1",
+        "QLen": 0.29898,
+        "ResidT": 1.0,
+        "RespT": 1.0,
+        "Station": "Delay",
+        "Tput": 0.29898,
+        "Util": 0.29898
+      },
+      {
+        "ArvR": 0.19958,
+        "JobClass": "Class2",
+        "QLen": 0.24947,
+        "ResidT": 1.25,
+        "RespT": 1.25,
+        "Station": "Delay",
+        "Tput": 0.19958,
+        "Util": 0.24947
+      }
+    ]
+  }
+}

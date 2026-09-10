@@ -14,7 +14,7 @@ from typing import Tuple, Optional
 from dataclasses import dataclass
 
 from .mva import pfqn_mva
-from .ncld import pfqn_gldsingle
+from .ncld import pfqn_lldsingle
 from .nc import pfqn_nc
 
 
@@ -141,7 +141,7 @@ def pfqn_rd(
     sld = s[s > 1]
     vmax = min(int(np.sum(sld - 1)), total_pop)
 
-    # Debug: compare with MATLAB/Kotlin
+    # Debug: compare with MATLAB/Java
     import os
     _debug = os.environ.get('DEBUG_RD')
 
@@ -161,8 +161,8 @@ def pfqn_rd(
     lEN[0] = 0  # ln(1) = 0
 
     for vtot in range(1, vmax + 1):
-        # Reshape rhoN to column (M, 1) so pfqn_gldsingle sees M stations, 1 class
-        lEN[vtot] = np.real(pfqn_gldsingle(rhoN.reshape(-1, 1), vtot, beta).lG)
+        # Reshape rhoN to column (M, 1) so pfqn_lldsingle sees M stations, 1 class
+        lEN[vtot] = np.real(pfqn_lldsingle(rhoN.reshape(-1, 1), vtot, beta).lG)
 
     # Compute Cgamma
     for vtot in range(vmax + 1):

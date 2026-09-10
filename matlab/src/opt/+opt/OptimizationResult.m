@@ -16,8 +16,8 @@ classdef OptimizationResult < handle
 
     methods
         function obj = OptimizationResult()
-            obj.variableValues = containers.Map('KeyType', 'char', 'ValueType', 'any');
-            obj.constraintViolations = containers.Map('KeyType', 'char', 'ValueType', 'double');
+            obj.variableValues = configureDictionary('string', 'cell');
+            obj.constraintViolations = configureDictionary('string', 'double');
         end
 
         function tf = isFeasible(obj)
@@ -27,14 +27,14 @@ classdef OptimizationResult < handle
             v = obj.objectiveValue;
         end
         function v = getVariableValue(obj, name)
-            if isKey(obj.variableValues, name), v = obj.variableValues(name); else, v = []; end
+            if isKey(obj.variableValues, name), v = obj.variableValues{name}; else, v = []; end
         end
         function v = getConstraintViolation(obj, name)
             if isKey(obj.constraintViolations, name), v = obj.constraintViolations(name); else, v = 0.0; end
         end
         function v = getTotalViolation(obj)
-            if obj.constraintViolations.Count == 0, v = 0.0;
-            else, v = sum(cell2mat(values(obj.constraintViolations))); end
+            if numEntries(obj.constraintViolations) == 0, v = 0.0;
+            else, v = sum(values(obj.constraintViolations)); end
         end
     end
 end

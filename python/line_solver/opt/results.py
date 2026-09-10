@@ -25,7 +25,7 @@ class EvaluationResult:
     """
     Result from evaluating a LINE network model.
 
-    Contains performance metrics extracted from SolverAuto analysis.
+    Contains performance metrics extracted from SolverAUTO analysis.
 
     Attributes:
         feasible: Whether the model was successfully solved
@@ -36,7 +36,7 @@ class EvaluationResult:
         system_response_times: End-to-end response time per chain/class
         system_throughputs: System throughput per chain/class
         solve_time: Time spent solving the model (seconds)
-        solver_used: Name of solver selected by SolverAuto
+        solver_used: Name of solver selected by SolverAUTO
     """
     feasible: bool = True
     response_times: Dict[tuple, float] = field(default_factory=dict)
@@ -49,6 +49,38 @@ class EvaluationResult:
     solver_used: str = ""
     # see _kb/05-solvers-overview.md (LineOpt: opt/results.py sensitivities) for rationale
     sensitivities: Any = None
+
+    # camelCase views of the fields, under the names MATLAB's EvaluationResult
+    # exposes, so an `opt.` script reads the result the same way in both.
+    @property
+    def solverUsed(self) -> str:
+        """Name of the solver that answered (alias of solver_used)."""
+        return self.solver_used
+
+    @property
+    def solveTime(self) -> float:
+        """Time spent solving the model (alias of solve_time)."""
+        return self.solve_time
+
+    @property
+    def responseTimes(self) -> Dict[tuple, float]:
+        """Response time by (station, class) (alias of response_times)."""
+        return self.response_times
+
+    @property
+    def queueLengths(self) -> Dict[tuple, float]:
+        """Queue length by (station, class) (alias of queue_lengths)."""
+        return self.queue_lengths
+
+    @property
+    def systemResponseTimes(self) -> Dict[str, float]:
+        """End-to-end response time by chain (alias of system_response_times)."""
+        return self.system_response_times
+
+    @property
+    def systemThroughputs(self) -> Dict[str, float]:
+        """System throughput by chain (alias of system_throughputs)."""
+        return self.system_throughputs
 
     def getResponseTime(self, station: str, jobclass: str = None) -> float:
         """
@@ -208,6 +240,43 @@ class OptimizationResult:
     model_evaluations: int = 0
     convergence_history: List[float] = field(default_factory=list)
     terminated_by: str = ""
+
+    # camelCase views of the fields, under the names MATLAB's OptimizationResult
+    # exposes, so an `opt.` script reads the result the same way in both.
+    @property
+    def objectiveValue(self) -> float:
+        """Final objective function value (alias of objective_value)."""
+        return self.objective_value
+
+    @property
+    def variableValues(self) -> Dict[str, Any]:
+        """Optimal values by variable name (alias of variable_values)."""
+        return self.variable_values
+
+    @property
+    def constraintViolations(self) -> Dict[str, float]:
+        """Violation by constraint name (alias of constraint_violations)."""
+        return self.constraint_violations
+
+    @property
+    def modelEvaluations(self) -> int:
+        """Number of LINE model evaluations (alias of model_evaluations)."""
+        return self.model_evaluations
+
+    @property
+    def solveTime(self) -> float:
+        """Total optimization time in seconds (alias of solve_time)."""
+        return self.solve_time
+
+    @property
+    def convergenceHistory(self) -> List[float]:
+        """Objective value per iteration (alias of convergence_history)."""
+        return self.convergence_history
+
+    @property
+    def terminatedBy(self) -> str:
+        """Reason for termination (alias of terminated_by)."""
+        return self.terminated_by
 
     def isFeasible(self) -> bool:
         """Check if solution satisfies all constraints."""

@@ -8,7 +8,7 @@ import jline.solvers.NetworkAvgTable;
 import jline.solvers.Solver;
 import jline.solvers.SolverOptions;
 import jline.solvers.ctmc.SolverCTMC;
-import jline.solvers.fluid.SolverFluid;
+import jline.solvers.fluid.SolverFLD;
 import jline.solvers.wrappers.jmt.SolverJMT;
 import jline.solvers.mam.SolverMAM;
 import jline.solvers.mva.SolverMVA;
@@ -453,21 +453,21 @@ public class ClosedExamplesTest {
         Network model = ClosedModel.cqn_repairmen();
         
         final NetworkAvgTable[] avgTableHolder = new NetworkAvgTable[1];
-        final SolverFluid[] solverHolder = new SolverFluid[1];
+        final SolverFLD[] solverHolder = new SolverFLD[1];
         withSuppressedOutput(() -> {
-            SolverFluid solver = new SolverFluid(model);
+            SolverFLD solver = new SolverFLD(model);
             solverHolder[0] = solver;
             avgTableHolder[0] = solver.getAvgTable();
         });
         NetworkAvgTable avgTable = avgTableHolder[0];
-        SolverFluid solver = solverHolder[0];
+        SolverFLD solver = solverHolder[0];
         
         assertNotNull(avgTable);
         
         // Verify the executed method
         assertNotNull(solver.result, "Solver result should not be null");
-        assertEquals("default/matrix", solver.result.method, 
-            "Fluid solver should use default/matrix method");
+        assertEquals("default/minnormal", solver.result.method, 
+            "Fluid solver should use default/minnormal method");
         
         // Expected values from ground truth Fluid solver
         // Order: Delay(Class1), Queue1(Class1)
@@ -603,30 +603,30 @@ public class ClosedExamplesTest {
         Network model = ClosedModel.cqn_twoclass_hyperl();
         
         final NetworkAvgTable[] avgTableHolder = new NetworkAvgTable[1];
-        final SolverFluid[] solverHolder = new SolverFluid[1];
+        final SolverFLD[] solverHolder = new SolverFLD[1];
         withSuppressedOutput(() -> {
-            SolverFluid solver = new SolverFluid(model);
+            SolverFLD solver = new SolverFLD(model);
             solverHolder[0] = solver;
             avgTableHolder[0] = solver.getAvgTable();
         });
         NetworkAvgTable avgTable = avgTableHolder[0];
-        SolverFluid solver = solverHolder[0];
+        SolverFLD solver = solverHolder[0];
         
         assertNotNull(avgTable);
         
         // Verify the executed method
         assertNotNull(solver.result, "Solver result should not be null");
-        assertEquals("default/matrix", solver.result.method,
-            "Fluid solver should use default/matrix method");
+        assertEquals("default/minnormal", solver.result.method,
+            "Fluid solver should use default/minnormal method");
         
         // Previous MAPE: 2.0814%, Max APE: 3.3634%
         // Updated expected values based on actual Fluid solver output
-        double[] expectedQLen = {0.9537434396502236, 0.21077730016269938, 0.07707311293788252, 2.7584061472505326};
-        double[] expectedUtil = {0.9537434396502236, 0.21077730016269938, 0.027181688301848243, 0.9728183181714111};
-        double[] expectedRespT = {0.6666666666666667, 0.21666666666666665, 0.5387410559483884, 2.8354792418336228};
-        double[] expectedResidT = {0.3968253968253969, 0.08769841269841266, 0.03206791999692788, 1.1476939788374185};
-        double[] expectedArvR = {1.4306151694896414, 0.97281830958772, 0.14306151594753352, 0.972818308443228};
-        double[] expectedTput = {1.4306151594753351, 0.972818308443228, 0.14306151737814865, 0.9728183181714111};
+        double[] expectedQLen = {0.9383556441783039, 0.20739159336787205, 0.07758333604892656, 2.776669426425287};
+        double[] expectedUtil = {0.9383556441783039, 0.20739159336787205, 0.026742873827372015, 0.957121416413736};
+        double[] expectedRespT = {0.6666660078344281, 0.21667266700248258, 0.5512061591420204, 2.9010634684033514};
+        double[] expectedResidT = {0.39682500466335013, 0.08770084140576676, 0.03280989042512027, 1.1742399753061186};
+        double[] expectedArvR = {1.4075320720894804, 0.9571224660807418, 0.14075348572614674, 0.9571654617861689};
+        double[] expectedTput = {1.4075348572614672, 0.9571654617861689, 0.14075193965482688, 0.9571212269800748};
         
         assertEquals(4, avgTable.getQLen().size(), "Expected 4 entries (2 stations × 2 classes)");
         
@@ -725,17 +725,22 @@ public class ClosedExamplesTest {
         
         // Verify the executed method
         assertNotNull(solver.result, "Solver result should not be null");
-        assertEquals("default/dec.source", solver.result.method, 
-            "MAM solver should use default/dec.source method");
-        
-        // Expected values from MATLAB MAM solver output
+        assertEquals("default/bgchain", solver.result.method,
+            "MAM solver should use default/bgchain method");
+
+        // Expected values from MATLAB MAM solver (default/bgchain), re-recorded
+        // 2026-08-16. The closed default routes here rather than to dec.source,
+        // and the chain queue is now split across classes by DEMAND rather than
+        // by visit share, so these are the EXACT product-form values: every
+        // column below equals the exact/ca golden of testCqnTwoclassHyperlNC to
+        // 15 digits. Java, MATLAB and Python agree on all six columns.
         // Order: Delay(Class1), Delay(Class2), Queue1(Class1), Queue1(Class2)
-        double[] expectedQLen = {0.953743443013829, 0.210777300906056, 0.084210526191793, 3.0138504110747};
-        double[] expectedUtil = {0.953743443013829, 0.210777300906056, 0.0271816881258941, 0.972818311874106};
-        double[] expectedRespT = {0.666666666666667, 0.216666666666667, 0.588631578080633, 3.09806093726649};
-        double[] expectedResidT = {0.396825396825397, 0.0876984126984127, 0.035037593933371, 1.25397704603644};
-        double[] expectedArvR = {1.43061516452074, 0.972818311874106, 0.143061516452074, 0.972818311874106};
-        double[] expectedTput = {1.43061516452074, 0.972818311874106, 0.143061516452074, 0.972818311874106};
+        double[] expectedQLen = {0.930779105496238, 0.205702182314669, 0.0778352725773859, 2.78568343961171};
+        double[] expectedUtil = {0.930779105496238, 0.205702182314669, 0.0265272045066428, 0.949394687606163};
+        double[] expectedRespT = {0.666666666666667, 0.216666666666667, 0.557491905564343, 2.93416792402286};
+        double[] expectedResidT = {0.396825396825397, 0.0876984126984127, 0.0331840419978776, 1.18763939781878};
+        double[] expectedArvR = {1.39616865824436, 0.949394687606163, 0.139616865824436, 0.949394687606163};
+        double[] expectedTput = {1.39616865824436, 0.949394687606163, 0.139616865824436, 0.949394687606163};
         
         assertEquals(4, avgTable.getQLen().size(), "Expected 4 entries (2 stations × 2 classes)");
         
@@ -862,30 +867,38 @@ public class ClosedExamplesTest {
         Network model = ClosedModel.cqn_threeclass_hyperl();
         
         final NetworkAvgTable[] avgTableHolder = new NetworkAvgTable[1];
-        final SolverFluid[] solverHolder = new SolverFluid[1];
+        final SolverFLD[] solverHolder = new SolverFLD[1];
         withSuppressedOutput(() -> {
-            SolverFluid solver = new SolverFluid(model);
+            SolverFLD solver = new SolverFLD(model);
             solverHolder[0] = solver;
             avgTableHolder[0] = solver.getAvgTable();
         });
         NetworkAvgTable avgTable = avgTableHolder[0];
-        SolverFluid solver = solverHolder[0];
+        SolverFLD solver = solverHolder[0];
         
         assertNotNull(avgTable);
         
         // Verify the executed method
         assertNotNull(solver.result, "Solver result should not be null");
-        assertEquals("default/matrix", solver.result.method, 
-            "Fluid solver should use default/matrix method");
+        assertEquals("default/minnormal", solver.result.method, 
+            "Fluid solver should use default/minnormal method");
         
-        // Previous MAPE: 1.5762%, Max APE: 4.4739%
-        // Updated expected values based on actual Fluid solver output
-        double[] expectedQLen = {1.1366865586173494, 0.2512077294544342, 0.7499999999999999, 0.03239556692059447, 0.5797101448948483, 0.24999999999999997};
-        double[] expectedUtil = {1.1366865586173494, 0.2512077294544342, 0.7499999999999999, 0.016197783460297235, 0.28985507244742414, 0.12499999999999997};
-        double[] expectedRespT = {0.6666666666666666, 0.21666666666666667, 1.0, 0.19000000000000003, 0.5, 0.33333333333333337};
-        double[] expectedResidT = {0.39682539682539686, 0.08769841269841268, 1.0, 0.011309523809523811, 0.20238095238095236, 0.33333333333333337};
-        double[] expectedArvR = {1.7050298379260242, 1.1594202897896966, 0.7499999999999998, 0.17050298379260242, 1.1594202897896964, 0.7499999999999999};
-        double[] expectedTput = {1.7050298379260242, 1.1594202897896964, 0.7499999999999999, 0.17050298379260245, 1.1594202897896966, 0.7499999999999998};
+        // Re-recorded 2026-09-08, superseding the 2026-09-01 record. 34ca22581
+        // replaced the min-normal moment closure with the joint share-capacity one,
+        // which MOVES the converged answer, so the row it replaces was stale rather
+        // than wrong -- see _kb/11-conventions-and-gotchas.md.
+        //
+        // MATLAB IS THE SECOND WITNESS AGAIN. The 2026-09-01 record noted R2026a
+        // sitting 1.3e-2 away on this model and told the reader not to move the pin
+        // toward MATLAB; that dissent is CLOSED. All four codebases now answer the
+        // row below -- MATLAB R2026a to 1.4e-6, native python to 1.3e-7, C++ to the
+        // six figures line-cli prints -- so the reference is back inside the pin.
+        double[] expectedQLen = {1.1249286340420808, 0.24860922812329328, 0.7430458318151975, 0.03315520572386616, 0.5933069323577268, 0.25695416818480155};
+        double[] expectedUtil = {1.1249286340420808, 0.24860922812329328, 0.7430458318151975, 0.016030233035093853, 0.28685680168070987, 0.12384097196919297};
+        double[] expectedRespT = {0.6666666666666615, 0.2166666666666668, 1.0, 0.19648775765589996, 0.5170758797433754, 0.3458120040281834};
+        double[] expectedResidT = {0.39682539682539386, 0.08769841269841275, 1.0, 0.011695699860470237, 0.20929261799136628, 0.3458120040281834};
+        double[] expectedArvR = {1.687392951063091, 1.1474272067228883, 0.7430458318151962, 0.16873929510631344, 1.1474272067228912, 0.7430458318151975};
+        double[] expectedTput = {1.6873929510631342, 1.1474272067228912, 0.7430458318151975, 0.1687392951062598, 1.1474272067228988, 0.7430458318151962};
         
         assertEquals(6, avgTable.getQLen().size(), "Expected 6 entries (2 stations × 3 classes)");
         
@@ -989,17 +1002,19 @@ public class ClosedExamplesTest {
         
         // Verify the executed method
         assertNotNull(solver.result, "Solver result should not be null");
-        assertEquals("default/dec.source", solver.result.method, 
-            "MAM solver should use default/dec.source method");
-        
-        // Expected values from MATLAB MAM solver (default/dec.source), refreshed
-        // after the mmap_compress/dec.mmap decomposition fixes; Java matches MATLAB.
-        double[] expectedQLen = {1.17283507128526, 0.259196550754043, 0.769367803227189, 0.03342579953163, 0.598145886355484, 0.256455934409063};
-        double[] expectedUtil = {1.17283507128526, 0.259196550754043, 0.769367803227189, 0.016712899765815, 0.299072943177742, 0.128227967204531};
-        double[] expectedRespT = {0.666666666666667, 0.216666666666667, 1.0, 0.19, 0.5, 0.333333333333333};
-        double[] expectedResidT = {0.396825396825397, 0.0876984126984127, 1.0, 0.0113095238095238, 0.202380952380952, 0.333333333333333};
-        double[] expectedArvR = {1.75925260692789, 1.19629177271097, 0.769367803227189, 0.175925260692789, 1.19629177271097, 0.769367803227189};
-        double[] expectedTput = {1.75925260692789, 1.19629177271097, 0.769367803227189, 0.175925260692789, 1.19629177271097, 0.769367803227189};
+        assertEquals("default/bgchain", solver.result.method,
+            "MAM solver should use default/bgchain method");
+
+        // Expected values from MATLAB MAM solver (default/bgchain), re-recorded
+        // 2026-08-16. The closed default routes here rather than to dec.source,
+        // and the chain queue is now split across classes by DEMAND rather than
+        // by visit share. Java matches MATLAB to 15 digits on every column below.
+        double[] expectedQLen = {1.12353163924182, 0.248300492272442, 0.741320219717244, 0.0332456532067660, 0.594922215278971, 0.258679780282756};
+        double[] expectedUtil = {1.12353163924182, 0.248300492272442, 0.741320219717244, 0.0160103258591959, 0.286500568006664, 0.123553369952874};
+        double[] expectedRespT = {0.666666666666667, 0.216666666666667, 1.0, 0.197268755328218, 0.519128303495311, 0.348944725103306};
+        double[] expectedResidT = {0.396825396825397, 0.0876984126984127, 1.0, 0.0117421878171558, 0.210123360938578, 0.348944725103306};
+        double[] expectedArvR = {1.68529745886273, 1.14600227202666, 0.741320219717244, 0.168529745886273, 1.14600227202666, 0.741320219717244};
+        double[] expectedTput = {1.68529745886273, 1.14600227202666, 0.741320219717244, 0.168529745886273, 1.14600227202666, 0.741320219717244};
         
         assertEquals(6, avgTable.getQLen().size(), "Expected 6 entries (2 stations × 3 classes)");
         
@@ -1194,29 +1209,40 @@ public class ClosedExamplesTest {
         Network model = ClosedModel.cqn_scheduling_dps();
         
         final NetworkAvgTable[] avgTableHolder = new NetworkAvgTable[1];
-        final SolverFluid[] solverHolder = new SolverFluid[1];
+        final SolverFLD[] solverHolder = new SolverFLD[1];
         withSuppressedOutput(() -> {
-            SolverFluid solver = new SolverFluid(model);
+            SolverFLD solver = new SolverFLD(model);
             solverHolder[0] = solver;
             avgTableHolder[0] = solver.getAvgTable();
         });
         NetworkAvgTable avgTable = avgTableHolder[0];
-        SolverFluid solver = solverHolder[0];
+        SolverFLD solver = solverHolder[0];
         
         assertNotNull(avgTable);
         
         // Verify the executed method
         assertNotNull(solver.result, "Solver result should not be null");
-        assertEquals("default/closing", solver.result.method,
-            "Fluid solver should use default/closing method");
+        assertEquals("default/minnormal", solver.result.method,
+            "Fluid solver should use default/minnormal method");
         
-        // Expected values from MATLAB Fluid solver
-        double[] expectedQLen = {0.0162901556671062, 0.661767350435568, 0.146611401003956, 0.231618572652449, 1.83709869584965, 0.106614076912012};
-        double[] expectedUtil = {0.0162901556671062, 0.661767350435568, 0.146611401003956, 0.231618572652449, 0.775091832491582, 0.106614076912012};
-        double[] expectedRespT = {0.333333333333333, 2.0, 10.0, 1.0, 23.7016908040972, 0.474033816081943};
-        double[] expectedResidT = {0.333333333333333, 2.0, 3.0, 0.7, 16.591183562868, 0.142210144824583};
-        double[] expectedArvR = {0.0921703233495538, 0.456526740160867, 0.0146611401003956, 0.231618572652449, 0.0342093269009231, 0.0992651025653352};
-        double[] expectedTput = {0.0488704670013187, 0.330883675217784, 0.0146611401003956, 0.231618572652449, 0.0775091832491582, 0.224908167508418};
+        // Re-recorded 2026-09-08. 34ca22581 replaced the min-normal moment closure
+        // with the joint share-capacity one, which MOVES the converged answer, so
+        // the row it replaces was stale rather than wrong -- see
+        // _kb/11-conventions-and-gotchas.md.
+        //
+        // MATLAB IS THE SECOND WITNESS AGAIN, and so is every other codebase: the
+        // 6.4e-2 dissent the 2026-09-01 record reported is CLOSED, with R2026a
+        // reproducing the row below to 2.2e-6, native python to 3.5e-7 and C++ to
+        // the six figures line-cli prints. Util[5] agrees too -- native python used
+        // to report U = X*S (0.0918482) at the DPS station where the JAR reported
+        // U = QLen (0.0859689); both now report 0.0908799, so that separate
+        // pre-existing split is closed as well.
+        double[] expectedQLen = {0.038569413816838344, 0.6058659154273145, 0.5152133650347483, 0.3032541973085183, 1.4462172211475472, 0.09087988726550979};
+        double[] expectedUtil = {0.038569413816838344, 0.6058659154273145, 0.3471247769897349, 0.212053070755417, 0.8099576367798875, 0.09087988726550979};
+        double[] expectedRespT = {0.33333333333333337, 2.0, 14.842310292646847, 1.4300863280508356, 17.855467440213395, 1.0};
+        double[] expectedResidT = {0.33333333333333337, 2.0, 4.452693087794055, 1.001060429635585, 12.498827208149375, 0.30000000000000004};
+        double[] expectedArvR = {0.11570824137696226, 0.3029329580209268, 0.034712472435154504, 0.21205307039956006, 0.08099576901536051, 0.09087988731409717};
+        double[] expectedTput = {0.11570824145051502, 0.30293295771365725, 0.03471247769897349, 0.212053070755417, 0.08099576367798877, 0.09087988726550979};
         
         assertEquals(6, avgTable.getQLen().size(), "Expected 6 entries (3 stations × 2 classes)");
         
@@ -1246,13 +1272,14 @@ public class ClosedExamplesTest {
         assertEquals("default/egflin", solver.result.method,
             "MVA solver should use default/egflin method");
         
-        // Expected values from MATLAB MVA solver
-        double[] expectedQLen = {0.031360241857983, 0.578257853787658, 0.429927225369267, 0.308298209285898, 1.53873833540475, 0.113433396054299};
-        double[] expectedUtil = {0.031359216171832, 0.578264108714177, 0.282232945546488, 0.202392438049962, 0.658543539608472, 0.0867396163071265};
-        double[] expectedRespT = {0.333344235882102, 1.99997836654074, 15.2330630478592, 1.52326940796964, 23.3657798286137, 1.30774611283332};
-        double[] expectedResidT = {0.333344235882102, 1.99997836654074, 4.56991891435776, 1.06628858557875, 16.3560458800296, 0.392323833849997};
-        double[] expectedArvR = {0.094077648515496, 0.289132054357088, 0.0282232945546488, 0.202392438049962, 0.0658543539608472, 0.0867396163071265};
-        double[] expectedTput = {0.094077648515496, 0.289132054357088, 0.0282232945546488, 0.202392438049962, 0.0658543539608472, 0.0867396163071265};
+        // Expected values from MATLAB MVA solver, re-recorded after 58eb739f1
+        // dropped the arriving chain from the AMVA arrival queue
+        double[] expectedQLen = {0.0312799329095249, 0.590069041728519, 0.423971454983237, 0.294074988063171, 1.54474932045884, 0.115855603889658};
+        double[] expectedUtil = {0.0312799212244751, 0.590069258037095, 0.281519291020276, 0.206524240312983, 0.656878345713976, 0.0885103887055643};
+        double[] expectedRespT = {0.333333457854639, 1.99999926683665, 15.0601208693973, 1.4239248023259, 23.5165206851173, 1.30894921583793};
+        double[] expectedResidT = {0.333333457854639, 1.99999926683665, 4.51803626081918, 0.99674736162813, 16.4615644795821, 0.392684764751378};
+        double[] expectedArvR = {0.0938397636734252, 0.295034629018547, 0.0281519291020276, 0.206524240312983, 0.0656878345713976, 0.0885103887055642};
+        double[] expectedTput = {0.0938397636734252, 0.295034629018547, 0.0281519291020276, 0.206524240312983, 0.0656878345713976, 0.0885103887055643};
         
         assertEquals(6, avgTable.getQLen().size(), "Expected 6 entries (3 stations × 2 classes)");
         

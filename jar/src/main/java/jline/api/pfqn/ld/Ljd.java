@@ -40,4 +40,28 @@ public final class Ljd {
         }
         return idx;
     }
+
+    /**
+     * Inverse of {@link #ljd_linearize}: the population vector behind an index.
+     *
+     * <p>The forward map is a mixed-radix numeral with class k in radix
+     * (Nk+1), so the inverse is the digit-by-digit division that reads it
+     * back. It is what lets a caller walk a tabulated dependence in index
+     * order and still know which population each entry belongs to.</p>
+     *
+     * @param idx 0-based linearized index
+     * @param cutoffs per-class population cutoffs
+     * @return the per-class population vector
+     */
+    public static Matrix ljd_delinearize(int idx, Matrix cutoffs) {
+        int K = cutoffs.length();
+        Matrix nvec = new Matrix(1, K);
+        int rem = idx;
+        for (int k = 0; k < K; k++) {
+            int radix = (int) cutoffs.get(k) + 1;
+            nvec.set(0, k, rem % radix);
+            rem /= radix;
+        }
+        return nvec;
+    }
 }

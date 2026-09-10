@@ -26,8 +26,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from ..api.fjnative import fj_ordstat_exp, sn_join_quorum
 from ..api.io.logging import line_debug, line_warning
 from ..api.sn.network_struct import NodeType
+from ..api.sn.transforms import get_chain_for_class
 from ..constants import GlobalConstants
 
 
@@ -87,6 +89,9 @@ class ForkJoinDriverMixin:
         """
         res = getattr(solver, '_result', None)
         if res is None:
+            # SolverFLD keeps its result in `result`, not `_result`.
+            res = getattr(solver, 'result', None)
+        if res is None:
             return None
         if isinstance(res, dict):
             return res
@@ -100,6 +105,20 @@ class ForkJoinDriverMixin:
             if val is not None:
                 out[key] = val
         return out
+
+    @staticmethod
+    def _fj_sys_tput(solver):
+        """Per-class system throughput of an inner solve, as a 1-D array.
+
+        getAvgSysTput returns a per-class vector on SolverMVA and SolverNC but a
+        single aggregate float on SolverFLD, so the driver reads the result
+        container's XN first and falls back to the getter only when there is
+        none. Without this the fluid inner solve handed the merge a scalar.
+        """
+        res = ForkJoinDriverMixin._fj_result_dict(solver)
+        if res is not None and res.get('XN') is not None:
+            return np.asarray(res['XN'], dtype=float).ravel()
+        return np.atleast_1d(np.asarray(solver.getAvgSysTput(), dtype=float))
 
     def _fj_avg_tuple(self, solver):
         """(QN, UN, RN, TN, AN, WN) from an inner solve, container-independent."""
@@ -145,6 +164,7 @@ class ForkJoinDriverMixin:
         For open fork-join networks:
         Returns None to fall back to standard analysis which then gets post-processed.
         """
+        self._fj_quorum_clamped = False
         from ..api.sn.network_struct import NodeType
         from itertools import combinations
 
@@ -414,7 +434,7 @@ class ForkJoinDriverMixin:
                 if nonfj_result is None:
                     return None
                 QN_new, UN_new, RN, TN, AN, WN = nonfj_result
-                XN = nonfj_solver.getAvgSysTput()
+                XN = self._fj_sys_tput(nonfj_solver)
             except Exception as e:
                 import warnings
                 warnings.warn(f"MVA failed: {e}")
@@ -430,6 +450,9 @@ class ForkJoinDriverMixin:
 
             # Use pre-computed routing matrix from MMT (avoids expensive refresh_struct)
             P_precomputed = mmt_result.routing_matrix
+            # loop-invariant: MATLAB flattens the cell routing matrix once per solve
+            P_combined = (self._get_combined_routing_matrix(P_precomputed, nonfjstruct, nonfjmodel)
+                          if P_precomputed is not None else None)
 
             for f in fork_indices:
                 # MATLAB lines 200-206: Compute TNfork
@@ -490,23 +513,14 @@ class ForkJoinDriverMixin:
                             continue
 
                     # MATLAB lines 222-225: Find paths using findPathsCS
-                    try:
-                        P = P_precomputed
-                        if P is not None:
-                            P_combined = self._get_combined_routing_matrix(P, nonfjstruct, nonfjmodel)
-                            to_merge = [r, aux_class_idx]
-                            ri = ModelAdapter.find_paths_cs(
-                                sn, P_combined, f, join_idx, r,
-                                to_merge, QN_new, TN, 0.0,
-                                fjclassmap, fjforkmap, nonfjmodel
-                            )
-                        else:
-                            ri = np.array([GlobalConstants.FineTol, GlobalConstants.FineTol])
-                    except Exception as e:
-                        if debug_mmt:
-                            print(f"    find_paths_cs exception: {e}")
-                            import traceback
-                            traceback.print_exc()
+                    if P_combined is not None:
+                        to_merge = [r, aux_class_idx]
+                        ri = ModelAdapter.find_paths_cs(
+                            sn, P_combined, f, join_idx, r,
+                            to_merge, QN_new, TN, 0.0,
+                            fjclassmap, fjforkmap, nonfjmodel
+                        )
+                    else:
                         ri = np.array([GlobalConstants.FineTol, GlobalConstants.FineTol])
 
                     ri = np.maximum(ri, GlobalConstants.FineTol)
@@ -514,21 +528,35 @@ class ForkJoinDriverMixin:
                     if len(ri) == 0:
                         continue
 
-                    # MATLAB lines 226-232: Compute E[max] using inclusion-exclusion
-                    lambdai = 1.0 / ri
-                    d0 = 0.0
-                    parallel_branches = len(ri)
-                    for pow_val in range(parallel_branches):
-                        combos = list(combinations(lambdai, pow_val + 1))
-                        current_sum = sum(1.0 / sum(combo) for combo in combos)
-                        d0 += ((-1) ** pow_val) * current_sum
+                    # tasksPerLink = w sends w IDENTICAL tasks down each link, so the
+                    # join synchronises on w*B siblings and not on B: the sibling set
+                    # is each branch's completion time REPLICATED w times, and the
+                    # order statistic is taken over that multiset. Scaling E[X_(k)]
+                    # by w instead (what this did before) is w*H_B/mu where the answer
+                    # is H_(w*B)/mu, which OVER-states the delay by more the larger w
+                    # is. w = 1 replicates to itself, so nothing moves there.
+                    w = max(1, int(round(self._get_fanout(sn, f))))
+                    ri = np.tile(np.asarray(ri).ravel(), w)
 
-                    # Get fanout (tasksPerLink) - MATLAB: sn.nodeparam{f}.fanOut
-                    f_fanout = self._get_fanout(sn, f)
+                    # The join fires on the k-th sibling completion, k = len(ri) on a
+                    # standard join and the declared quorum on a PARTIAL one. The
+                    # quorum is declared against the SIBLING count w*B, which is what
+                    # the replicated length is (see sn_join_siblings).
+                    kreq = sn_join_quorum(sn, join_idx, r, len(ri))
+                    d0 = fj_ordstat_exp(ri, kreq)
 
                     # MATLAB lines 234-235: Set sync delay
                     mean_ri = np.mean(ri)
-                    sync_delay = max(d0 * f_fanout - mean_ri, GlobalConstants.FineTol)
+                    sync_delay = d0 - mean_ri
+                    if sync_delay < 0:
+                        # The quorum is met BEFORE the branch the transform's own method name
+                        # walks, so the parent ought to leave ahead of it. The MMT cannot
+                        # express that: its token is a job of the closed chain and must
+                        # finish its branch, and that closed token is what keeps the branch
+                        # stable, so it cannot be made open either. The delay floors here,
+                        # which OVER-states the cycle time.
+                        self._fj_quorum_clamped = True
+                    sync_delay = max(sync_delay, GlobalConstants.FineTol)
 
                     if debug_mmt and (fork_iter <= 5 or fork_iter % 50 == 0):
                         print(f"  Fork {f}, r={r}: ri={ri}, d0={d0:.6f}, sync_delay={sync_delay:.6f}")
@@ -613,6 +641,14 @@ class ForkJoinDriverMixin:
         if fork_loop and fork_iter >= max_iter:
             line_warning('solver_mva',
                          'The fork-join (mmt) fixed point did not converge in options.iter_max=%d iterations; returning the interim solution.\n' % max_iter)
+        if getattr(self, '_fj_quorum_clamped', False):
+            line_warning('solver_mva',
+                         'A quorum join fires before the branch the fork-join transformation follows, '
+                         'which it cannot represent: the synchronisation delay is floored at zero, '
+                         'which OVER-states the cycle time and so under-states the throughput. '
+                         'SolverLDES and SolverJMT simulate the quorum on their sample path; '
+                         'SolverCTMC and SolverSSA refuse it, because a quorum fork-join has '
+                         'an unbounded state space.\n')
         # Retain the MMT iterate so that a subsequent runAnalyzer call on this
         # solver (an outer LN iteration) resumes the fixed point from here.
         self._fj_fork_lambda = np.asarray(fork_lambda).copy()
@@ -1121,9 +1157,12 @@ class ForkJoinDriverMixin:
             nonfj_sn = nonfjmodel._sn
 
             from . import SolverMVA
-            transformed_solver = self._fj_inner_solver(nonfjmodel)
+            # method='amva' as in the closed loop above: mvaDispatch.m:211-215
+            # forces the inner sub-solve of a forked model to the AMVA linearizer.
+            # `_force_method` is read by nothing, so this path was running exact
+            # mixed MVA and converging to a different fixed point.
+            transformed_solver = self._fj_inner_solver(nonfjmodel, method='amva')
             transformed_solver._skip_fork_join = True  # Avoid recursion
-            transformed_solver._force_method = 'amva'
 
             try:
                 transformed_solver.runAnalyzer()
@@ -1278,22 +1317,20 @@ class ForkJoinDriverMixin:
                             print(f"DEBUG findPaths: SKIPPING sync delay, len(ri)={len(ri)} < 2")
                         continue
 
-                    # MATLAB lines 226-232: Compute d0 using order statistics
-                    lambdai = 1.0 / ri
-                    d0 = 0.0
-                    parallel_branches = len(ri)
-                    for pow_k in range(parallel_branches):
-                        current_sum = 0.0
-                        for subset in combinations(range(parallel_branches), pow_k + 1):
-                            lambda_sum = np.sum(lambdai[list(subset)])
-                            if lambda_sum > 0:
-                                current_sum += 1.0 / lambda_sum
-                        d0 += ((-1) ** pow_k) * current_sum
+                    # The join fires on the k-th branch completion, k = len(ri) on a
+                    # standard join and the declared quorum on a PARTIAL one.
+                    kreq = sn_join_quorum(sn, join_idx, r, len(ri))
+                    d0 = fj_ordstat_exp(ri, kreq)
 
                     # MATLAB lines 234-236: Set sync delay at Join
                     fan_out = SolverMVA._get_fanout(sn, f)
 
-                    sync_delay = max(0, d0 * fan_out - np.mean(ri))
+                    sync_delay = d0 * fan_out - np.mean(ri)
+                    if sync_delay < 0:
+                        # see the first mmt site for why the floor is a boundary of the
+                        # transform and not a choice
+                        self._fj_quorum_clamped = True
+                    sync_delay = max(0, sync_delay)
                     if DEBUG_MMT and fork_iter <= 3:
                         print(f"DEBUG sync_delay: d0={d0}, fan_out={fan_out}, mean(ri)={np.mean(ri)}, sync_delay={sync_delay}")
 
@@ -1526,7 +1563,16 @@ class ForkJoinDriverMixin:
                 for c in range(len(nonfjstruct.visits)):
                     print(f"  Chain {c}: {nonfjstruct.visits[c]}")
 
-            nonfj_solver = self._fj_inner_solver(nonfjmodel, method=getattr(self, 'method', None))
+            # Same substitution the two MMT sites already make and that
+            # mvaDispatch.m:211-215 / MVARunner.java:606 / mva_dispatch.h:969
+            # make: the fork transform leaves a MIXED model (auxiliary
+            # near-zero-rate open classes beside the closed ones) with no Fork
+            # node, so the 'default' ladder sends it to exact mixed MVA, which
+            # degenerates to zero throughput there.
+            _fj_method = getattr(self, 'method', None)
+            if _fj_method is None or str(_fj_method).lower() == 'default':
+                _fj_method = 'amva'
+            nonfj_solver = self._fj_inner_solver(nonfjmodel, method=_fj_method)
             nonfj_solver._skip_fork_join = True
 
             try:
@@ -1693,19 +1739,23 @@ class ForkJoinDriverMixin:
                     if debug_ht:
                         print(f"    parallel_branches={parallel_branches}")
 
-                    # Compute E[max] using H-T inclusion-exclusion formula
-                    lambdai = 1.0 / ri_arr
-                    d0 = 0.0
-                    for pow_val in range(parallel_branches):
-                        combos = list(combinations(lambdai, pow_val + 1))
-                        current_sum = sum(1.0 / sum(combo) for combo in combos)
-                        d0 += ((-1) ** pow_val) * current_sum
+                    # The join fires on the k-th branch completion, k = the branch
+                    # count on a standard join and the declared quorum on a PARTIAL one.
+                    kreq = sn_join_quorum(sn, join_idx, r, parallel_branches)
+                    d0 = fj_ordstat_exp(ri_arr, kreq)
 
                     if debug_ht:
-                        print(f"    lambdai={lambdai}, d0={d0:.6f}")
+                        print(f"    ri={ri_arr}, k={kreq}, d0={d0:.6f}")
 
-                    # Individual sync delays: di = d0 * fanout - ri
+                    # Individual sync delays: di = d0 * fanout - ri. Under a quorum the
+                    # k-th completion can precede a branch's own, and then that branch
+                    # waits no further.
                     di = d0 * fanout - ri_arr
+                    if np.any(di < 0):
+                        # see the first mmt site for why the floor is a boundary of the
+                        # transform and not a choice
+                        self._fj_quorum_clamped = True
+                    di = np.maximum(di, 0.0)
 
                     if debug_ht:
                         print(f"    di = d0*fanout - ri = {d0:.6f}*{fanout} - {ri_arr} = {di}")
@@ -2285,8 +2335,10 @@ class ForkJoinDriverMixin:
                     ri_arr = np.array(ri)
                     num_branches = len(ri_arr)
 
-                    # Compute expected max using H-T formula with response times
-                    d0 = self._compute_sync_delay(ri_arr)
+                    # The join fires on the k-th branch completion, k = the branch
+                    # count on a standard join and the declared quorum on a PARTIAL one.
+                    kreq = sn_join_quorum(sn, int(join_idx), r, num_branches)
+                    d0 = self._compute_sync_delay(ri_arr, kreq)
                     # Sync delay at join = E[max] - mean (waiting for slowest)
                     sync_delay = d0 - np.mean(ri_arr)
                     sync_delay = max(0, sync_delay)
@@ -2415,44 +2467,31 @@ class ForkJoinDriverMixin:
 
         return branches
 
-    def _compute_sync_delay(self, path_times: np.ndarray) -> float:
+    def _compute_sync_delay(self, path_times: np.ndarray, k: Optional[int] = None) -> float:
         """
-        Compute synchronization delay using Heidelberger-Trivedi formula.
+        Compute the instant the join fires, by the Heidelberger-Trivedi formula.
 
-        For K parallel branches with response times r_1, ..., r_K,
-        the expected maximum E[max(r_1, ..., r_K)] is computed using
-        inclusion-exclusion with exponential approximation.
+        For K parallel branches with response times r_1, ..., r_K, the join fires at the
+        k-th of them: the expected maximum E[max(r_1, ..., r_K)] on a standard join, and
+        the k-th order statistic under a quorum. Both come from fj_ordstat_exp, whose
+        inclusion-exclusion sum reduces to the classical one at k = K.
 
         Args:
             path_times: Array of response times for parallel paths
+            k: quorum; None or K is the standard join
 
         Returns:
-            Expected maximum (synchronization point) time
+            Expected synchronization point time
         """
-        from itertools import combinations
-
         if len(path_times) == 0:
             return 0.0
         if len(path_times) == 1:
             return path_times[0]
 
-        # Convert to rates (1/response_time)
         path_times = np.asarray(path_times)
         # Avoid division by zero
         path_times = np.maximum(path_times, 1e-10)
-        lambdai = 1.0 / path_times
-
-        d0 = 0.0
-        parallel_branches = len(lambdai)
-
-        for pow_val in range(parallel_branches):
-            # Get all combinations of (pow_val + 1) elements
-            for combo in combinations(range(parallel_branches), pow_val + 1):
-                combo_sum = np.sum(lambdai[list(combo)])
-                if combo_sum > 0:
-                    d0 += ((-1) ** pow_val) * (1.0 / combo_sum)
-
-        return d0
+        return fj_ordstat_exp(path_times, len(path_times) if k is None else k)
 
     def _find_node_type_indices(self, nodetype_list, target_type) -> np.ndarray:
         """

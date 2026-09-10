@@ -95,3 +95,28 @@ solver{2} = LN(model, @(model) MVA(model, options), lnoptions);
 AvgTable{2} = solver{2}.getAvgTable;
 fprintf(1, '\nLN(MVA) Results:\n');
 disp(AvgTable{2});
+
+% ORACLES. LN(MVA) is not merely approximate on this model, it is wrong: it puts
+% QLen 325.9 in R1_Task, whose multiplicity is 100, and reports Tput 0.0215
+% against 0.125-0.144. LDES and lqsim are the ground truth here; LQNS agrees with
+% them. Read the two simulators, not the analytical fixed point.
+ldesoptions = LDES.defaultOptions;
+ldesoptions.verbose = 0;
+ldesoptions.samples = 2e4;
+ldesoptions.seed = 23000;
+solver{3} = LDES(model, ldesoptions);
+AvgTable{3} = solver{3}.getAvgTable;
+fprintf(1, '\nLDES Results:\n');
+disp(AvgTable{3});
+
+% Second oracle: the layered simulator behind LQNS. It reproduces the LDES sample
+% path to within simulation noise, which is what makes the LN(MVA) gap a defect
+% rather than the two simulators disagreeing with an approximation.
+simoptions = LQNS.defaultOptions;
+simoptions.method = 'lqsim';
+simoptions.samples = 1e5;
+simoptions.verbose = 0;
+solver{4} = LQNS(model, simoptions);
+AvgTable{4} = solver{4}.getAvgTable;
+fprintf(1, '\nLQNS(lqsim) Results:\n');
+disp(AvgTable{4});

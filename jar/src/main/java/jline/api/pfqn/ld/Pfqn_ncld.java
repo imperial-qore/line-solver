@@ -309,7 +309,7 @@ public final class Pfqn_ncld {
                     muz = Matrix.concatRows(mu, tmp.repmat(D, 1), null);
                 }
                 if (R == 1) {
-                    lG = Pfqn_gldsingle.pfqn_gldsingle(Lz, N, muz, options).lG;
+                    lG = Pfqn_lldsingle.pfqn_lldsingle(Lz, N, muz, options).lG;
                     method = "exact/gld";
                 } else if (M == 1 && Z.elementMax() > 0) {
                     // see _kb/03-api-layer.md for rationale
@@ -337,23 +337,37 @@ public final class Pfqn_ncld {
             // see _kb/03-api-layer.md for rationale
             lG = Pfqn_clw_lld.pfqn_clw_lld(L, N, Z.sumCols(), mu).lG;
             method = "clw";
-        } else if ("panacea".equals(options.method) || "panaceald".equals(options.method)) {
+        } else if ("pana".equals(options.method) || "panald".equals(options.method)) {
             // Mitra-McKenna load-dependent PANACEA asymptotic expansion. Delay
             // terms may arrive either in Z or as mu(i,n)=n rows of L, both are
             // recognized by Pfqn_panaceald.
             lG = Pfqn_panaceald.pfqn_panaceald(L, N, Z.sumCols(), mu).lG;
-            method = "panaceald";
+            method = "panald";
             if (Double.isNaN(lG)) {
                 // normal usage (1 - lambda_i/mu_i(Ntot) > 0 at every queueing
                 // center) is the domain of the expansion, not a numerical failure
-                throw new RuntimeException("The model is not in normal usage, so the \"panaceald\" asymptotic expansion does not apply. Use \"exact\", \"clw\" or an approximate load-dependent method instead.");
+                throw new RuntimeException("The model is not in normal usage, so the \"panald\" asymptotic expansion does not apply. Use \"exact\", \"clw\" or an approximate load-dependent method instead.");
             }
+        } else if ("divdiff".equals(options.method)) {
+            // Divided-difference closed form with the limited load-dependent kernel of
+            // Casale-Harrison-Ong (Perform. Eval. 2021), Theorem 1. A think time would have to
+            // enter g_sigma, whose closed form covers queues only, so it is refused here as
+            // Pfqn_nc refuses it in the fixed-rate case. Unlike the default route this one keeps
+            // Pfqn_explicit_ld's warnings, since a caller that named the method has no fallback.
+            if (Z.elementSum() > 0) {
+                throw new RuntimeException("The \"divdiff\" method requires a model without think time, which needs the integral form of Corollary 3.4. Use \"exact\" or \"default\".");
+            }
+            Pfqn_explicit_ld.Result exres = Pfqn_explicit_ld.pfqn_explicit_ld(L, N, mu);
+            lG = exres.lG;
+            method = "divdiff.ld/" + exres.method;
         } else if ("rd".equals(options.method)) {
             lG = Pfqn_rd.pfqn_rd(L, N, Z, mu, options).lG;
         } else if ("nrp".equals(options.method)) {
             lG = Pfqn_nrp.pfqn_nrp(L, N, Z, mu, options);
         } else if ("nrl".equals(options.method)) {
             lG = Pfqn_nrl.pfqn_nrl(L, N, Z, mu, options);
+        } else if ("nre".equals(options.method)) {
+            lG = Pfqn_nre.pfqn_nre(L, N, Z, mu, options);
         } else if ("comomld".equals(options.method)) {
             if (M <= 1 || Z.elementSum() <= GlobalConstants.Zero) {
                 lG = Pfqn_comomrm_ld.pfqn_comomrm_ld(L, N, Z, mu, options).lG;

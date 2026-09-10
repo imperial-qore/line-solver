@@ -59,17 +59,15 @@ public final class Mmap_super_safe {
         }
         final List<Double> scvFinal = scv_unmarked;
         // Sorting flows by SCV is a numerical heuristic (superpose the smoothest flow
-        // first), but it also fixes the MARK order of the result: mmap_super
-        // concatenates the marks of its operands in superposition order, and callers
-        // read back mark k as class k. Ordering by a raw Double.compare therefore lets
-        // meaningless floating-point noise permute the class-to-mark mapping: two
-        // Poisson streams both have SCV 1, yet an aggregate accumulated through
-        // super/scale carries a few ulp of error (e.g. 1.0000000000000004), which
-        // sorts it AFTER an exactly-1.0 flow and silently swaps two classes' results.
-        // Treat SCVs that agree to within tolerance as equal so the (stable) sort keeps
-        // them in caller order, which is class order. MATLAB's sort() is likewise
-        // stable and, getting an exact 1.0, keeps the same order; this makes the
-        // agreement robust rather than accidental.
+        // first). It must NOT decide the mark order of the result: mmap_super
+        // concatenates the marks of its operands in superposition order and callers
+        // read back mark k as class k, so a fold order other than caller order renames
+        // the classes. That is repaired unconditionally below, by mark provenance.
+        // The tolerance here remains so that meaningless floating-point noise does not
+        // reshuffle the Kronecker factors either: two Poisson streams both have SCV 1,
+        // yet an aggregate accumulated through super/scale carries a few ulp of error
+        // (e.g. 1.0000000000000004) and would sort after an exactly-1.0 flow. MATLAB's
+        // sort() is likewise stable and, getting an exact 1.0, keeps the same order.
         // See matlab/lib/m3a/m3a/mmap/mmap_super_safe.m.
         Arrays.sort(indices, new Comparator<Integer>() {
             @Override
@@ -88,9 +86,21 @@ public final class Mmap_super_safe {
             sortedIndices[i] = indices[i].intValue();
         }
 
+        // Mark provenance: a zero-rate component has SCV NaN and sorts last, so a
+        // chain that never visits the station used to push its marks ahead of one
+        // that does, renaming both chains' classes.
+        int[] markbase = new int[MMAPS.size() + 1];
+        for (int i = 0; i < MMAPS.size(); i++) {
+            markbase[i + 1] = markbase[i] + (MMAPS.get(i).size() - 2);
+        }
+        List<Integer> outorder = new ArrayList<Integer>();
+
         for (int i = 0; i < sortedIndices.length; i++) {
             int smallest_value = sortedIndices[i];
             MatrixCell flow = MMAPS.get(smallest_value);
+            for (int j = markbase[smallest_value]; j < markbase[smallest_value + 1]; j++) {
+                outorder.add(Integer.valueOf(j));
+            }
             // Bound the order of each individual flow to maxorder. A single flow
             // whose order already exceeds maxorder (e.g. a high-order Erlang from a
             // near-deterministic APH fit) would otherwise pass through uncapped as
@@ -117,6 +127,27 @@ public final class Mmap_super_safe {
                 } else {
                     sup = Mmap_super.mmap_super(sup, flow, method);
                 }
+            }
+        }
+
+        // Restore the caller's mark order; "match" keeps one mark per class and
+        // fails the count test, so it is left alone.
+        if (sup.size() - 2 == outorder.size()) {
+            boolean sorted = true;
+            for (int j = 1; j < outorder.size(); j++) {
+                if (outorder.get(j).intValue() < outorder.get(j - 1).intValue()) {
+                    sorted = false;
+                    break;
+                }
+            }
+            if (!sorted) {
+                MatrixCell out = new MatrixCell();
+                out.set(0, sup.get(0));
+                out.set(1, sup.get(1));
+                for (int j = 0; j < outorder.size(); j++) {
+                    out.set(2 + outorder.get(j).intValue(), sup.get(2 + j));
+                }
+                sup = out;
             }
         }
 

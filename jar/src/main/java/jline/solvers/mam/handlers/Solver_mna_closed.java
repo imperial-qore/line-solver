@@ -78,7 +78,10 @@ public final class Solver_mna_closed {
         Matrix lambda_lb = new Matrix(1, K, K);
         Matrix lambda_ub = new Matrix(1, K, K);
         for (int kk = 0; kk < K; kk++) {
-            for (int i = 0; i < I; i++) {
+            // The reference bounds the throughput by min(rates(nservers<Inf, k)),
+            // which ranges over STATIONS; ranging over nodes instead read past the
+            // end of nservers as soon as link() inserted a ClassSwitch node.
+            for (int i = 0; i < M; i++) {
                 if (sn.nservers.get(i) != Double.POSITIVE_INFINITY) {
                     if (lambda_ub.get(kk) == 0.0) {
                         lambda_ub.set(kk, sn.rates.get(i, kk));
@@ -226,13 +229,14 @@ public final class Solver_mna_closed {
                         } else {
                             SchedStrategy sched = sn.sched.get(sn.stations.get(ist));
                             if (sched == SchedStrategy.INF) {
-                                for (int i = 0; i < M; i++) {
-                                    for (int r = 0; r < K; r++) {
-                                        for (int s = 0; s < K; s++) {
-                                            d2.set(ist, s, a2.get(ist, s));
-                                        }
-                                    }
-                                }
+                                // The reference writes the whole row into what it declared as
+                                // an (M,1) vector, so the value its splitting step later reads
+                                // back as d2(ist) is a2(ist,1), the FIRST class's flow SCV.
+                                // Store exactly that: the wider write is out of bounds here
+                                // and threw "Outside of matrix bounds" on any multiclass model
+                                // with a Delay, which is every closed model the default now
+                                // routes to this analyzer.
+                                d2.set(ist, a2.get(ist, 0));
                                 for (int c = 0; c < C; c++) {
                                     Matrix inchain = sn.inchain.get(c);
                                     for (int k1 = 0; k1 < inchain.length(); k1++) {

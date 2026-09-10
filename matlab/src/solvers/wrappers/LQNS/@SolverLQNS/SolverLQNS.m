@@ -11,10 +11,9 @@ classdef SolverLQNS < Solver
             self.setOptions(Solver.parseOptions(varargin, self.defaultOptions));
             if ~SolverLQNS.isAvailable() && ~self.options.config.remote
                 line_error(mfilename,['SolverLQNS requires the lqns and lqsim commands to be available on the system path.\n' ...
-                    'You can install them from: http://www.sce.carleton.ca/rads/lqns/\n\n' ...
-                    'Alternatively, use remote execution via Docker:\n' ...
-                    '  1. Pull and run: docker run -d -p 8080:8080 imperialqore/line-lqns-rest:latest\n' ...
-                    '  2. Configure remote execution in MATLAB:\n' ...
+                    'Obtain them from their authors at: http://www.sce.carleton.ca/rads/lqns/\n' ...
+                    'LINE ships no LQNS binary and does not redistribute one.\n\n' ...
+                    'Alternatively, point LINE at a host that already runs LQNS:\n' ...
                     '     options = SolverOptions(@()SolverLQNS);\n' ...
                     '     options.config.remote = true;\n' ...
                     '     options.config.remote_url = ''http://localhost:8080'';\n' ...
@@ -32,8 +31,19 @@ classdef SolverLQNS < Solver
             [varargout{1:nargout}] = getEnsembleAvg(varargin{:});
         end
 
-        function [AvgTable,QT,UT,RT,WT,AT,TT] = getAvgTable(self)
+        function varargout = getAvgTable(self, varargin)
             % [AVGTABLE,QT,UT,RT,WT,TT] = GETAVGTABLE()
+            % The result recorder captures the returned table together with the solver
+            % that produced it -- see LineResultRecorder. Recording an ensemble here
+            % rather than in the member solver it delegates to is what keeps an
+            % AUTO/LN/ENV/UQ answer from being filed under the member's name.
+            [scope, scopeGuard] = LineResultRecorder.enter(); %#ok<ASGLU>
+            [varargout{1:max(nargout,1)}] = self.getAvgTable_impl(varargin{:});
+            LineResultRecorder.capture(scope, self, 'avg', varargout{1});
+        end
+
+        function [AvgTable,QT,UT,RT,WT,AT,TT] = getAvgTable_impl(self)
+            % GETAVGTABLE_IMPL Implementation of GETAVGTABLE; see the wrapper above.
             if (GlobalConstants.DummyMode)
                 [AvgTable, QT, UT, RT, TT, WT] = deal([]);
                 return
@@ -119,6 +129,13 @@ classdef SolverLQNS < Solver
             % methods are deterministic.
             bool = any(strcmpi(method, {'sim','lqsim'}));
         end
+
+        function [bool, reason] = supportsModelMethod(self, method)
+            % [BOOL, REASON] = SUPPORTSMODELMETHOD(METHOD)
+            % The method-aware gate model.help and SolverAUTO ask; the rules
+            % and their second caller, runAnalyzer, are in LQNS_METHOD_REFUSAL.
+            [bool, reason] = lqns_method_refusal(self.model, method);
+        end
     end
 
     methods (Static)
@@ -135,56 +152,19 @@ classdef SolverLQNS < Solver
             end
         end
 
-        function img = getDockerImage(requested)
-            %GETDOCKERIMAGE Resolve an LQNS Docker image to run, or '' if unavailable
-            %
-            % REQUESTED may be:
-            %   '' or 'auto' or true -> pick a known imperialqore/lqns image
-            %   an explicit image name/tag -> use that image if present locally
-            %
-            % Returns '' when Docker is not usable or no matching image exists.
-            img = '';
-            if nargin < 1 || isempty(requested)
-                requested = 'auto';
-            end
-            if islogical(requested)
-                if requested
-                    requested = 'auto';
-                else
-                    return;
-                end
-            end
-            % Docker bind-mount dispatch is supported on unix hosts only.
-            if ispc
-                return;
-            end
-            % Is the Docker daemon reachable?
-            if unix('docker info >/dev/null 2>&1') ~= 0
-                return;
-            end
-            if strcmpi(requested, 'auto') || strcmpi(requested, 'true')
-                % see _kb/06-solver-catalog.md (Wrappers: LQNS Docker image candidate list)
-                candidates = {'imperialqore/line-lqns-rest:latest', 'imperialqore/line-lqns-rest', ...
-                    'imperialqore/lqns:6.2.28', 'imperialqore/lqns:latest', 'imperialqore/lqns'};
-            else
-                candidates = {requested};
-            end
-            for i = 1:numel(candidates)
-                [st, out] = unix(['docker images -q ', candidates{i}, ' 2>/dev/null']);
-                if st == 0 && ~isempty(strtrim(out))
-                    img = candidates{i};
-                    return;
-                end
-            end
-        end
-
         function bool = isAvailable()
-            %ISAVAILABLE Check if LQNS is available natively or via Docker
+            %ISAVAILABLE Check if a local lqns binary is installed
+            %
+            % LINE never runs LQNS from a container image: its licence is an
+            % evaluation agreement that forbids redistribution, so the binary
+            % must be one the user installed themselves. To exercise a
+            % containerised LQNS in the test suite, put a shim on the PATH with
+            % run-tests.sh --lqns-docker.
             bool = true;
             if ispc
                 [~, ret] = dos('lqns -V -H');
                 if contains(ret, 'not recognized', 'IgnoreCase', true)
-                    bool = ~isempty(SolverLQNS.getDockerImage('auto'));
+                    bool = false;
                     return;
                 end
                 if contains(ret, 'Version 5', 'IgnoreCase', true) || ...
@@ -198,7 +178,7 @@ classdef SolverLQNS < Solver
             else
                 [~, ret] = unix('lqns -V -H');
                 if contains(ret, 'command not found', 'IgnoreCase', true)
-                    bool = ~isempty(SolverLQNS.getDockerImage('auto'));
+                    bool = false;
                     return;
                 end
                 if contains(ret, 'Version 5', 'IgnoreCase', true) || ...
@@ -212,35 +192,107 @@ classdef SolverLQNS < Solver
             end
         end
 
-        function [bool, featSupported] = supports(model)
-            %SUPPORTS Check if the used features are supported
-            featUsed = model.getUsedLangFeatures();
-            featSupported = SolverFeatureSet;
-            featSupported.setTrue({ ...
-                'Sink', ...
-                'Source', ...
-                'Queue', ...
-                'Coxian', ...
-                'Erlang', ...
-                'Exp', ...
-                'HyperExp', ...
-                'Buffer', ...
-                'Server', ...
-                'JobSink', ...
-                'RandomSource', ...
-                'ServiceTunnel', ...
-                'SchedStrategy_PS', ...
-                'SchedStrategy_FCFS', ...
-                'ClosedClass' ...
-                });
-
-            bool = true;
-            numLayers = model.getNumberOfLayers();
-            for idx = 1:numLayers
-                bool = bool && SolverFeatureSet.supports( ...
-                    featSupported, featUsed{idx} ...
-                    );
+        function reasons = unsupportedLNConstructs(model)
+            % REASONS = UNSUPPORTEDLNCONSTRUCTS(MODEL)
+            % The LQN-level constructs neither lqns nor lqsim can model, named
+            % one by one, or {} when the model carries none.
+            %
+            % THE FEATURE SET USED TO ADMIT THESE, and that is why the loss was
+            % silent. `supports` below tests model.getUsedLangFeatures(), which
+            % reports the features of the FLATTENED per-layer Networks and has no
+            % vocabulary for a CacheTask, an ItemEntry or a task setup time; the
+            % LQN-level construct therefore could not fail a check that never saw
+            % it. The .lqnx writer now carries all three (see the LINE dialect in
+            % writeXML.m), so lqns is handed a file it parses no further --
+            % "Unexpected element <cache items=...>" -- which reports a
+            % third-party syntax error for what is really a modelling limit of
+            % the binary. Name the limit here instead. The writer stays correct
+            % and unguarded: it is this feature set that was lying.
+            reasons = {};
+            for t = 1:numel(model.tasks)
+                task = model.tasks{t};
+                if isa(task, 'CacheTask')
+                    reasons{end+1} = sprintf(['task ''%s'' is a CacheTask, and neither lqns nor ' ...
+                        'lqsim models a cache'], task.name); %#ok<AGROW>
+                end
+                entries = task.entries;
+                for e = 1:numel(entries)
+                    if isa(entries(e), 'ItemEntry')
+                        reasons{end+1} = sprintf(['entry ''%s'' on task ''%s'' is an ItemEntry, and ' ...
+                            'neither lqns nor lqsim models an item reference stream'], ...
+                            entries(e).name, task.name); %#ok<AGROW>
+                    end
+                end
+                if isprop(task, 'setupTimeMean') && ~isempty(task.setupTimeMean) ...
+                        && task.setupTimeMean > GlobalConstants.FineTol
+                    reasons{end+1} = sprintf(['task ''%s'' declares a setup time (%g), which neither ' ...
+                        'lqns nor lqsim charges'], task.name, task.setupTimeMean); %#ok<AGROW>
+                end
+                if isprop(task, 'delayOffTimeMean') && ~isempty(task.delayOffTimeMean) ...
+                        && task.delayOffTimeMean > GlobalConstants.FineTol
+                    reasons{end+1} = sprintf(['task ''%s'' declares a delay-off time (%g), which ' ...
+                        'neither lqns nor lqsim charges'], task.name, task.delayOffTimeMean); %#ok<AGROW>
+                end
             end
+            % A queue-dependent service rate and a compatibility declaration are
+            % both LQN-level and both invisible to the per-layer feature sets, for
+            % the same reason the three above are. lqns has NO vocabulary for
+            % either: its processors take a multiplicity and one of
+            % {fcfs,hol,inf,ps,rand,pri}, its nine multiserver approximations are
+            % all homogeneous, and the only class-differentiating mechanisms it
+            % offers are priority and CFS group SHARES -- none of which is a
+            % per-(server, class) eligibility. Answering for a homogeneous pool of
+            % the same total size is a different system, so name the limit rather
+            % than write a .lqnx that silently drops the structure.
+            servers = [model.hosts(:); model.tasks(:)];
+            for k = 1:numel(servers)
+                elem = servers{k};
+                if ~isa(elem, 'LayeredNetworkElement')
+                    continue
+                end
+                if ismethod(elem, 'hasServerPools') && elem.hasServerPools()
+                    reasons{end+1} = sprintf(['''%s'' declares heterogeneous server pools with a ' ...
+                        'class-compatibility graph, which neither lqns nor lqsim models: their ' ...
+                        'multiserver is homogeneous'], elem.name); %#ok<AGROW>
+                end
+                if isprop(elem, 'lldScaling') && ~isempty(elem.lldScaling)
+                    reasons{end+1} = sprintf(['''%s'' declares a load-dependent service rate, which ' ...
+                        'neither lqns nor lqsim models'], elem.name); %#ok<AGROW>
+                end
+                if isprop(elem, 'lcdScaling') && ~isempty(elem.lcdScaling)
+                    reasons{end+1} = sprintf(['''%s'' declares a class-dependent service rate, which ' ...
+                        'neither lqns nor lqsim models'], elem.name); %#ok<AGROW>
+                end
+                if isprop(elem, 'ljdScaling') && ~isempty(elem.ljdScaling)
+                    reasons{end+1} = sprintf(['''%s'' declares a joint-dependent service rate, which ' ...
+                        'neither lqns nor lqsim models'], elem.name); %#ok<AGROW>
+                end
+            end
+        end
+
+        function assertSupported(model, method)
+            % ASSERTSUPPORTED(MODEL, METHOD)
+            % Refuse a model this wrapper cannot serve, naming the construct.
+            % Called before the .lqnx is written, so the answer is LINE's own and
+            % not the binary's parse error. The rules are LQNS_METHOD_REFUSAL's,
+            % the predicate the gate asks, so both speak one sentence.
+            if nargin < 2
+                method = '';
+            end
+            [ok, reason] = lqns_method_refusal(model, method);
+            if ~ok
+                line_error(mfilename, reason);
+            end
+        end
+
+        function [bool, featSupported] = supports(model)
+            %SUPPORTS Whether lqns can read this LayeredNetwork, whatever the method.
+            % The method-neutral half of LQNS_METHOD_REFUSAL; see there for why
+            % the per-layer feature comparison this used to make refused every
+            % layered model. The second output keeps the signature the ensemble
+            % callers expect: an LQN carries no flat feature set to compare.
+            bool = lqns_method_refusal(model, '');
+            featSupported = SolverFeatureSet;
         end
 
         function options = defaultOptions()

@@ -9,8 +9,12 @@ Implements full parity with MATLAB SolverENV using transient analysis
 with iteration until convergence.
 """
 
+import os as _os
+import warnings
+
 import numpy as np
 from typing import Optional, List, Dict, Any, Union, Callable, Tuple
+from .constants import VerboseLevel
 import pandas as pd
 
 
@@ -232,63 +236,46 @@ def _eval_cdf(dist, t) -> np.ndarray:
         return 1.0 - np.exp(-rate * t)
 
 
-def _interpolate_for_cdf(t_vals, q_metric, u_tran_ir, t_tran_ir, dist,
-                         n_interp=500, min_points=50):
-    """Interpolate transient data onto a finer time grid for CDF weighting.
+def _finite_span(ts):
+    """[t0, t1] as floats when both are finite and t1 > t0, else None."""
+    if ts is None:
+        return None
+    try:
+        t0 = float(ts[0])
+        t1 = float(ts[1])
+    except (TypeError, ValueError, IndexError, KeyError):
+        return None
+    if not (np.isfinite(t0) and np.isfinite(t1) and t1 > t0):
+        return None
+    return [t0, t1]
 
-    When the ODE solver produces very sparse adaptive time points (e.g., 13
-    points over [0, 1000] for a linear ODE), the CDF-weighted average is
-    inaccurate because most CDF mass falls in a single coarse interval.
-    This function interpolates the metrics onto a denser grid concentrated
-    where the CDF has significant probability mass.
 
-    Only activates when the ODE solver produces fewer than min_points time
-    points. When the solver produces enough points, adaptive placement is
-    already adequate for CDF weighting.
+def _cdf_refine_grid(t_vals, mean_sojourn, n_interp):
+    """Build the refinement grid the CDF-weighted exit average is summed on.
 
-    Args:
-        t_vals: Original time points from ODE solver
-        q_metric: Queue length metric values at t_vals
-        u_tran_ir: Utilization transient result (TranResult or dict)
-        t_tran_ir: Throughput transient result (TranResult or dict)
-        dist: Transition distribution (for determining CDF time scale)
-        n_interp: Number of interpolation points to create
-        min_points: Minimum ODE points before interpolation is skipped
-
-    Returns:
-        Tuple of (t_fine, q_fine, u_fine, t_fine_data) where each is an array
-        on the finer grid, or None for u/t if not available.
+    The grid holds 90% of its points under 5*E[S], where the holding-time CDF
+    carries essentially all of its mass, and spreads the rest across the tail
+    up to the horizon. It is REBUILT UNCONDITIONALLY: keeping the integrator's
+    own grid when it happened to be dense stops wherever its steps fell rather
+    than where the sum converged, and it makes MATLAB, the JAR, C++ and this
+    port sum different points. See _interpolate_for_cdf_map for the measured
+    convergence sequence.
     """
-    if len(t_vals) >= n_interp:
-        # Already denser than interpolation target — no interpolation needed
-        _, u_metric = _get_tran_data(u_tran_ir)
-        _, t_metric = _get_tran_data(t_tran_ir)
-        return t_vals, q_metric, u_metric, t_metric
-
-    # Determine CDF time scale from the distribution mean
-    rate = _get_rate(dist)
-    if rate > 0:
-        mean_sojourn = 1.0 / rate
-    else:
-        mean_sojourn = (t_vals[-1] - t_vals[0]) / 10.0
-
-    # Build a fine grid concentrated where the CDF has mass (up to ~5 mean sojourns)
-    # but also covering the full time range for completeness
     t_cdf_end = min(t_vals[-1], 5.0 * mean_sojourn)
     if t_cdf_end <= t_vals[0]:
         t_cdf_end = t_vals[-1]
 
-    # Dense grid in CDF-active region, sparse beyond
     n_dense = int(0.9 * n_interp)
     n_tail = n_interp - n_dense
     t_dense = np.linspace(t_vals[0], t_cdf_end, n_dense)
     if t_cdf_end < t_vals[-1] and n_tail > 1:
         t_tail = np.linspace(t_cdf_end, t_vals[-1], n_tail + 1)[1:]  # Exclude overlap
-        t_fine = np.concatenate([t_dense, t_tail])
-    else:
-        t_fine = t_dense
+        return np.concatenate([t_dense, t_tail])
+    return t_dense
 
-    # Interpolate metrics using linear interpolation
+
+def _resample_on(t_fine, t_vals, q_metric, u_tran_ir, t_tran_ir):
+    """Linearly resample the queue, utilization and throughput onto t_fine."""
     q_fine = np.interp(t_fine, t_vals, q_metric)
 
     _, u_metric = _get_tran_data(u_tran_ir)
@@ -300,8 +287,39 @@ def _interpolate_for_cdf(t_vals, q_metric, u_tran_ir, t_tran_ir, dist,
     return t_fine, q_fine, u_fine, t_fine_data
 
 
+def _interpolate_for_cdf(t_vals, q_metric, u_tran_ir, t_tran_ir, dist,
+                         n_interp=5000):
+    """Interpolate transient data onto a finer time grid for CDF weighting.
+
+    The ODE grid is chosen for the HORIZON, not for the holding time, so the
+    CDF-weighted average reads whatever points the integrator left inside the
+    sojourn support. This resamples the metrics onto a grid concentrated where
+    the CDF has mass, using the distribution mean as the time scale.
+
+    Args:
+        t_vals: Original time points from ODE solver
+        q_metric: Queue length metric values at t_vals
+        u_tran_ir: Utilization transient result (TranResult or dict)
+        t_tran_ir: Throughput transient result (TranResult or dict)
+        dist: Transition distribution (for determining CDF time scale)
+        n_interp: Number of interpolation points to create
+
+    Returns:
+        Tuple of (t_fine, q_fine, u_fine, t_fine_data) where each is an array
+        on the finer grid, or None for u/t if not available.
+    """
+    rate = _get_rate(dist)
+    if rate > 0:
+        mean_sojourn = 1.0 / rate
+    else:
+        mean_sojourn = (t_vals[-1] - t_vals[0]) / 10.0
+
+    t_fine = _cdf_refine_grid(t_vals, mean_sojourn, n_interp)
+    return _resample_on(t_fine, t_vals, q_metric, u_tran_ir, t_tran_ir)
+
+
 def _interpolate_for_cdf_map(t_vals, q_metric, u_tran_ir, t_tran_ir, D0, D1,
-                             n_interp=500, min_points=50):
+                             n_interp=5000):
     """Interpolate transient data onto a finer time grid for MAP CDF weighting.
 
     Same as _interpolate_for_cdf but uses MAP {D0, D1} matrices to determine
@@ -315,16 +333,10 @@ def _interpolate_for_cdf_map(t_vals, q_metric, u_tran_ir, t_tran_ir, D0, D1,
         D0: MAP sub-generator matrix
         D1: MAP completion matrix
         n_interp: Number of interpolation points to create
-        min_points: Minimum ODE points before interpolation is skipped
 
     Returns:
         Tuple of (t_fine, q_fine, u_fine, t_fine_data)
     """
-    if len(t_vals) >= min_points:
-        _, u_metric = _get_tran_data(u_tran_ir)
-        _, t_metric = _get_tran_data(t_tran_ir)
-        return t_vals, q_metric, u_metric, t_metric
-
     # Compute mean sojourn from MAP: mean = 1 / (alpha @ D1 @ e)
     alpha = _map_prob(D0, D1)
     e = np.ones(D0.shape[0])
@@ -334,28 +346,20 @@ def _interpolate_for_cdf_map(t_vals, q_metric, u_tran_ir, t_tran_ir, D0, D1,
     else:
         mean_sojourn = (t_vals[-1] - t_vals[0]) / 10.0
 
-    t_cdf_end = min(t_vals[-1], 5.0 * mean_sojourn)
-    if t_cdf_end <= t_vals[0]:
-        t_cdf_end = t_vals[-1]
+    # THE GRID IS REBUILT UNCONDITIONALLY as of 2026-08-11. The former rule kept
+    # the solver's own grid when at least 50 of its points fell inside the
+    # sojourn support, which stops wherever the integrator's steps happened to
+    # fall rather than where the sum has converged: measured on
+    # renv_node_breakdown with every stage refined, the exit average runs
+    # 0.462260, 0.460580, 0.459704, 0.459272, 0.459138, 0.459122 as n_interp
+    # goes 500 to 5e4. Rebuilding always is also what makes MATLAB, the JAR, C++
+    # and this port sum the SAME points; each then differs only by its own
+    # trajectory. The error is first order because the sum reads the RIGHT
+    # endpoint and an unstable stage's queue grows linearly in t, so the mass
+    # beyond 5*E[S] multiplies a large metric.
 
-    n_dense = int(0.9 * n_interp)
-    n_tail = n_interp - n_dense
-    t_dense = np.linspace(t_vals[0], t_cdf_end, n_dense)
-    if t_cdf_end < t_vals[-1] and n_tail > 1:
-        t_tail = np.linspace(t_cdf_end, t_vals[-1], n_tail + 1)[1:]
-        t_fine = np.concatenate([t_dense, t_tail])
-    else:
-        t_fine = t_dense
-
-    q_fine = np.interp(t_fine, t_vals, q_metric)
-
-    _, u_metric = _get_tran_data(u_tran_ir)
-    u_fine = np.interp(t_fine, t_vals, u_metric) if u_metric is not None else None
-
-    _, t_metric = _get_tran_data(t_tran_ir)
-    t_fine_data = np.interp(t_fine, t_vals, t_metric) if t_metric is not None else None
-
-    return t_fine, q_fine, u_fine, t_fine_data
+    t_fine = _cdf_refine_grid(t_vals, mean_sojourn, n_interp)
+    return _resample_on(t_fine, t_vals, q_metric, u_tran_ir, t_tran_ir)
 
 
 def _get_tran_data(tran_result):
@@ -406,6 +410,63 @@ class Environment:
     """
 
     __getattr__ = _snake_camel_getattr
+
+
+    def findSolver(self, metric: str = '', showAll: bool = False):
+        """Which solvers and solver methods can analyze THIS model.
+
+            model.findSolver()                # every (solver, method) pair that runs
+            model.findSolver('cdf')           # ... that returns a passage-time law
+            model.findSolver('getCdfRespT')   # the same question, asked by accessor
+            model.findSolver('', True)        # also the pairs that are refused, and why
+
+        The returned DataFrame has one row per pair, with columns Solver,
+        Method, Runnable, Class ('exact', 'approx', 'bound' or 'simulation'),
+        Metrics and Reason. Method is the method name to pass as a solver method, so
+        a row can be acted on directly::
+
+            T = model.findSolver('cdf')
+            solver = LINE(model, T.Method[0])
+
+        findMethod and help are aliases of this method.
+
+        Args:
+            metric: measure group ('cdf') or accessor ('getCdfRespT') to narrow
+                the report to; '' or 'any' keeps every pair.
+            showAll: also list the refused pairs, with the reason each was
+                refused.
+
+        Returns:
+            pandas.DataFrame with the six columns above.
+        """
+        # The gate lives in SolverAUTO, which is the class that already knows
+        # every family, how to build one and what each refuses. Asking it here
+        # rather than reimplementing the walk is what keeps the model's answer
+        # and AUTO's own dispatch from being two opinions.
+        from .solvers.solver_auto.solver_auto import SolverAUTO
+        # silenced() wraps the CONSTRUCTION too: it probes every candidate
+        # with supports(model), which warns on a model one of them refuses.
+        with SolverAUTO.silenced():
+            auto = SolverAUTO(self, verbose=False)
+        return auto.findSolver(metric, showAll)
+
+    def findMethod(self, metric: str = '', showAll: bool = False):
+        """Alias of findSolver: which solvers and solver methods can analyze
+        this model.
+
+        The two names exist because the question is asked both ways round --
+        "which solver do I use" and "which method do I pass" -- and the answer
+        is the same table, whose Method column carries the method name either caller
+        needs.
+        """
+        return self.findSolver(metric, showAll)
+
+    def help(self, metric: str = '', showAll: bool = False):
+        """Alias of findSolver: what can this model be solved with?"""
+        return self.findSolver(metric, showAll)
+
+    find_solver = findSolver
+    find_method = findMethod
 
     def __init__(self, name: str, num_stages: int = 0):
         """
@@ -460,16 +521,26 @@ class Environment:
         self.proc = [[None for _ in range(E)] for _ in range(E)]
         self.resetFun = [[lambda q: q for _ in range(E)] for _ in range(E)]
 
-    def add_stage(self, index: int, name: str, stage_type: str, model: Any) -> None:
+    def add_stage(self, index, name=None, stage_type: str = None, model: Any = None) -> None:
         """
         Add or update a stage in the environment.
 
+        Two forms, so a MATLAB script transliterates unchanged:
+
+        - ``add_stage(index, name, type, model)`` places the stage at a 0-based
+          index, overwriting whatever was there.
+        - ``add_stage(name, type, model)`` APPENDS, as MATLAB's
+          ``Environment.addStage(name, type, model)`` does. Selected when the
+          first argument is a string.
+
         Args:
-            index: Stage index (0-based)
-            name: Name of the stage
-            stage_type: Type of stage ('UP', 'DOWN', etc.)
+            index: Stage index (0-based), or the stage NAME in the append form
+            name: Name of the stage, or the type in the append form
+            stage_type: Type of stage ('UP', 'DOWN', ...), or the model
             model: Network model for this stage
         """
+        if isinstance(index, str):
+            index, name, stage_type, model = len(self._stages), index, name, stage_type
         # Expand arrays if needed
         while len(self._stages) <= index:
             self._stages.append({})
@@ -488,17 +559,33 @@ class Environment:
         if len(self.env) < self.num_stages:
             self._init_env_matrix(self.num_stages)
 
-    def add_transition(self, from_stage: int, to_stage: int, distribution: Any,
+    def _stage_index(self, stage) -> int:
+        """The 0-based index of a stage given by index or by name."""
+        if isinstance(stage, str):
+            try:
+                return self._stage_names.index(stage)
+            except ValueError:
+                raise ValueError("[%s] no environment stage named '%s'; the stages are %s"
+                                 % (self.name, stage, self._stage_names))
+        return int(stage)
+
+    def add_transition(self, from_stage, to_stage, distribution: Any,
                        reset_rule: Optional[Callable[[np.ndarray], np.ndarray]] = None) -> None:
         """
         Add a transition between stages with an optional reset rule.
 
+        Either endpoint may be given as a stage NAME instead of an index, as in
+        MATLAB's ``Environment.addTransition(fromName, toName, dist)``; an
+        unknown name is an error rather than a silently appended stage.
+
         Args:
-            from_stage: Source stage index
-            to_stage: Destination stage index
+            from_stage: Source stage index, or its name
+            to_stage: Destination stage index, or its name
             distribution: Distribution for the transition time (e.g., Exp(rate))
             reset_rule: Optional function that transforms queue lengths when transition occurs.
         """
+        from_stage = self._stage_index(from_stage)
+        to_stage = self._stage_index(to_stage)
         # Ensure env matrix is large enough
         E = max(from_stage + 1, to_stage + 1, self.num_stages)
         if len(self.env) < E:
@@ -557,34 +644,34 @@ class Environment:
         # Compute hold time MMAP for each stage by combining competing transitions
         self.holdTime = []
         for e in range(E):
-            # Start with the first valid transition from e
-            hold_mmap = None
+            # SEEDED WITH THE SELF TRANSITION, then every other destination folded
+            # in, exactly as Environment.init does. Skipping e -> e made the stage
+            # sojourn the time to LEAVE rather than the time to SWITCH: on
+            # renv_twostages_repairmen, whose Stage2 competes a 0.5 self arc with a
+            # 0.5 arc back, the mean read 2 against MATLAB's 1, and the self origin
+            # vanished from probOrig (1.0/0.0 against 0.5/0.5). A disabled arc is
+            # the 1x1 zero pair and is the neutral element of the superposition, so
+            # seeding with it costs nothing when there is no self transition.
+            hold_mmap = [m.copy() for m in emmap[e][e]]
             for h in range(E):
                 if h != e and self.env[e][h] is not None:
-                    if hold_mmap is None:
-                        hold_mmap = [m.copy() for m in emmap[e][h]]
-                    else:
-                        # Combine using Kronecker sums (following MATLAB algorithm)
-                        n1 = hold_mmap[0].shape[0]
-                        n2 = emmap[e][h][0].shape[0]
+                    # Combine using Kronecker sums (following MATLAB algorithm)
+                    n1 = hold_mmap[0].shape[0]
+                    n2 = emmap[e][h][0].shape[0]
 
-                        # D0: Kronecker sum
-                        D0_new = _krons(hold_mmap[0], emmap[e][h][0])
+                    # D0: Kronecker sum
+                    D0_new = _krons(hold_mmap[0], emmap[e][h][0])
 
-                        # D1 and class-specific matrices: Kronecker sum, then redirect to first column
-                        new_mmap = [D0_new]
-                        for j in range(1, E + 2):  # indices 1 to E+1 (D1 and class-specific)
-                            Dj_combined = _krons(hold_mmap[j], emmap[e][h][j])
-                            completion_rates = Dj_combined @ np.ones(n1 * n2)
-                            Dj_new = np.zeros((n1 * n2, n1 * n2))
-                            Dj_new[:, 0] = completion_rates
-                            new_mmap.append(Dj_new)
+                    # D1 and class-specific matrices: Kronecker sum, then redirect to first column
+                    new_mmap = [D0_new]
+                    for j in range(1, E + 2):  # indices 1 to E+1 (D1 and class-specific)
+                        Dj_combined = _krons(hold_mmap[j], emmap[e][h][j])
+                        completion_rates = Dj_combined @ np.ones(n1 * n2)
+                        Dj_new = np.zeros((n1 * n2, n1 * n2))
+                        Dj_new[:, 0] = completion_rates
+                        new_mmap.append(Dj_new)
 
-                        hold_mmap = _mmap_normalize(new_mmap)
-
-            if hold_mmap is None:
-                # No outgoing transitions from this stage
-                hold_mmap = [np.zeros((1, 1)), np.zeros((1, 1))] + [np.zeros((1, 1)) for _ in range(E)]
+                    hold_mmap = _mmap_normalize(new_mmap)
 
             self.holdTime.append(hold_mmap)
 
@@ -801,13 +888,15 @@ class Environment:
     getRelTable = get_reliability_table
 
     # CamelCase aliases for MATLAB API compatibility
-    def addStage(self, index: int, name: str, stage_type: str, model: Any) -> None:
-        """Alias for add_stage (MATLAB compatibility)."""
+    def addStage(self, index, name=None, stage_type: str = None, model: Any = None) -> None:
+        """Alias for add_stage (MATLAB compatibility), including its append form
+        ``addStage(name, type, model)``."""
         return self.add_stage(index, name, stage_type, model)
 
-    def addTransition(self, from_stage: int, to_stage: int, distribution: Any,
+    def addTransition(self, from_stage, to_stage, distribution: Any,
                       reset_rule: Optional[Callable[[np.ndarray], np.ndarray]] = None) -> None:
-        """Alias for add_transition (MATLAB compatibility)."""
+        """Alias for add_transition (MATLAB compatibility); either endpoint may
+        be a stage name."""
         return self.add_transition(from_stage, to_stage, distribution, reset_rule)
 
     def print_stage_table(self) -> None:
@@ -1153,6 +1242,24 @@ class _ExponentialDist:
         return 1.0 - np.exp(-self.rate * t)
 
 
+def _env_verbose(value) -> bool:
+    """Whether this `verbose` asks for output.
+
+    A PLAIN TRUTHINESS TEST IS WRONG HERE, because the slot holds a
+    `VerboseLevel` and every Enum member is truthy -- `VerboseLevel.SILENT`
+    included, value 0 notwithstanding. Asking ENV for SILENT therefore got STD:
+    `renv_basic` printed its `ENV analysis [...]` banner, and with it the
+    environment-averaged table stopped reading as the stage solver's (see
+    `Solver._process_verbose_option`, which makes the same distinction for
+    every network solver).
+    """
+    if isinstance(value, VerboseLevel):
+        return value != VerboseLevel.SILENT
+    # `verbose = 0` is the MATLAB spelling and reaches here as a plain int, so
+    # anything outside the enum is read by truthiness, where it is meaningful.
+    return bool(value)
+
+
 class SolverENV:
     """
     Environment solver for random environment models.
@@ -1191,6 +1298,8 @@ class SolverENV:
         # Ensemble state (mirrors MATLAB)
         self.ensemble = env_model.ensemble
         self.results = {}  # results[it, e] = result for iteration it, stage e
+        # stages whose unspecified horizon has been announced (see _stage_horizon)
+        self._horizon_warned = set()
 
         # Final result
         self.result = None
@@ -1212,13 +1321,19 @@ class SolverENV:
 
     def _normalize_options(self, options) -> Dict:
         """Normalize options to a dictionary."""
+        # `lang` and `arith` are carried through because a normalization that
+        # drops them would let a caller ask for lang='cpp' and be answered
+        # natively, which is the one substitution the delegation forbids.
         if options is None:
             return {
                 'method': 'default',
                 'iter_max': 100,
                 'iter_tol': 1e-4,
-                'verbose': False,
-                'config': None
+                # STD like every other solver; see default_options
+                'verbose': VerboseLevel.STD,
+                'config': None,
+                'lang': _os.environ.get('LINE_SOLVER_LANG', 'python'),
+                'arith': None
             }
 
         if isinstance(options, dict):
@@ -1226,9 +1341,11 @@ class SolverENV:
                 'method': options.get('method', 'default'),
                 'iter_max': options.get('iter_max', 100),
                 'iter_tol': options.get('iter_tol', 1e-4),
-                'verbose': options.get('verbose', False),
+                'verbose': options.get('verbose', VerboseLevel.STD),
                 'sojourn': options.get('sojourn', None),
-                'config': options.get('config', None)
+                'config': options.get('config', None),
+                'lang': options.get('lang', _os.environ.get('LINE_SOLVER_LANG', 'python')),
+                'arith': options.get('arith', None)
             }
             return opts
 
@@ -1237,9 +1354,11 @@ class SolverENV:
             'method': getattr(options, 'method', 'default'),
             'iter_max': getattr(options, 'iter_max', 100),
             'iter_tol': getattr(options, 'iter_tol', 1e-4),
-            'verbose': getattr(options, 'verbose', False),
+            'verbose': getattr(options, 'verbose', VerboseLevel.STD),
             'sojourn': getattr(options, 'sojourn', None),
-            'config': getattr(options, 'config', None)
+            'config': getattr(options, 'config', None),
+            'lang': getattr(options, 'lang', _os.environ.get('LINE_SOLVER_LANG', 'python')),
+            'arith': getattr(options, 'arith', None)
         }
 
     def getNumberOfModels(self) -> int:
@@ -1412,9 +1531,12 @@ class SolverENV:
         self.compressionResult. Mirrors the environment-aggregation portion of
         MATLAB SolverENV.applyCompression.
 
-        Note: the compressed re-solve of the ensemble (weighted-average
-        macro-state networks) is not applied in the native Python solver; the
-        NCD analysis is exposed via compressionResult for inspection.
+        The ensemble is then REPLACED by the compressed one: each macro-state
+        carries a copy of its first micro-state network whose service rates are
+        the pmicro-weighted averages over the block, and probEnv/probOrig are
+        rebuilt on the macro chain. Computing the partition and leaving the
+        ensemble alone reports a compression that never happened -- every
+        subsequent solve still ran the full environment.
 
         Returns:
             self.compressionResult (dict with p, eps, epsMax, q, MS, pMacro, pmicro).
@@ -1437,7 +1559,83 @@ class SolverENV:
             'p': p, 'eps': eps, 'epsMax': epsMax, 'q': q,
             'MS': MS, 'pMacro': pMacro, 'pmicro': pmicro,
         }
+        if eps is not None and epsMax is not None and eps > epsMax:
+            warnings.warn('SolverENV: environment cannot be effectively '
+                          'compressed (eps > epsMax).')
+        if Ecomp < E:
+            self._rebuild_compressed_ensemble(MS, pMacro, pmicro)
         return self.compressionResult
+
+    def _computeMacroRate(self, MS, pmicro, from_macro, to_macro):
+        """Aggregate transition rate between two macro-states, weighted by the
+        micro-state conditional probabilities. Mirrors MATLAB computeMacroRate."""
+        rate = 0.0
+        for mi in np.asarray(MS[from_macro]).ravel():
+            for mj in np.asarray(MS[to_macro]).ravel():
+                rate += float(pmicro[int(mi)]) * float(self.E0[int(mi), int(mj)])
+        return rate
+
+    def _rebuild_compressed_ensemble(self, MS, pMacro, pmicro):
+        """Replace the ensemble, solvers and structs by their macro-state
+        aggregates. Mirrors the second half of MATLAB SolverENV.applyCompression.
+        """
+        from .distributions import Exp
+
+        Ecomp = len(MS)
+        sn0 = self.ensemble[0].get_struct()
+        M, K = int(sn0.nstations), int(sn0.nclasses)
+
+        # Embedding weights on the macro chain
+        new_embweight = np.zeros((Ecomp, Ecomp))
+        for e in range(Ecomp):
+            denom = sum(pMacro[h] * self._computeMacroRate(MS, pmicro, h, e)
+                        for h in range(Ecomp) if h != e)
+            for k in range(Ecomp):
+                if k != e and denom > 0:
+                    new_embweight[k, e] = (pMacro[k]
+                                           * self._computeMacroRate(MS, pmicro, k, e)
+                                           / denom)
+        self.env_model.probEnv = pMacro
+        self.env_model.probOrig = new_embweight
+
+        macro_ensemble, macro_solvers, macro_sn = [], [], []
+        for i in range(Ecomp):
+            block = np.asarray(MS[i]).ravel().astype(int)
+            first = int(block[0])
+            model_i = self.ensemble[first].copy()
+            for m in range(M):
+                for k in range(K):
+                    rate_sum = 0.0
+                    for micro in block:
+                        rate_sum += float(pmicro[micro]) * float(
+                            np.asarray(self.ensemble[micro].get_struct().rates)[m, k])
+                    if not (rate_sum > 0):
+                        continue
+                    station = model_i.get_stations()[m]
+                    jobclass = model_i.get_classes()[k]
+                    cls_names = {c.__name__ for c in type(station).__mro__}
+                    if cls_names & {'Queue', 'Delay'}:
+                        station.setService(jobclass, Exp(rate_sum))
+            model_i.refresh_struct()
+            macro_ensemble.append(model_i)
+            macro_sn.append(model_i.get_struct())
+            macro_solvers.append(self._rebuild_stage_solver(first, model_i))
+
+        self.ensemble = macro_ensemble
+        self._solvers = macro_solvers
+        self.sn = macro_sn
+
+    def _rebuild_stage_solver(self, micro_idx, model):
+        """A stage solver for a macro-state network, of the same class and with
+        the same options as the micro-state solver it replaces."""
+        proto = self._solvers[micro_idx] if micro_idx < len(self._solvers) else None
+        if proto is None:
+            from .solvers.solver_fld import SolverFLD
+            return SolverFLD(model)
+        try:
+            return type(proto)(model, options=getattr(proto, 'options', None))
+        except Exception:
+            return type(proto)(model)
 
     def getSamplePathTable(self, sample_path):
         """Compute transient performance metrics along a sample path through
@@ -1565,6 +1763,146 @@ class SolverENV:
                         opts.odemaxstep = ts[1] / 100.0
                         opts._ode_maxstep_set = True
 
+
+    def _solve_env_limit(self, method: str):
+        """Closed-form fast/slow random-environment limits (method 'avg'/'dec').
+
+        These treat the environment (stage) process as either infinitely fast or
+        infinitely slow relative to the base-model dynamics and therefore need no
+        inter-stage coupling iteration, only steady-state stage solves:
+
+        - 'avg' (fast-environment limit): the base model sees the
+          stationary-probability-weighted average of the modulated rates. A
+          single rate-averaged model is built and solved once. Exact as the
+          stage-switching rate -> Inf.
+        - 'dec' (slow-environment / quasi-stationary decomposition): each stage
+          is solved independently in steady state and the per-stage metrics are
+          averaged with weights probEnv(e). Exact as the stage-switching rate -> 0.
+
+        Mirrors matlab @SolverENV/SolverENV.m solveEnvLimit().
+        """
+        self.init()
+        E = self.getNumberOfModels()
+        prob_env = np.asarray(self.env_model.probEnv, dtype=float).ravel()
+
+        def _stage_avg(solver):
+            out = solver.getAvg()
+            Q, U, T = out[0], out[1], out[3]
+            return np.asarray(Q, dtype=float), np.asarray(U, dtype=float), np.asarray(T, dtype=float)
+
+        # A Cache carries its result on the NODE, not in the Q/U/T tables, so an
+        # aggregate that only sums those tables leaves getHitRatio() at None and
+        # the caller reads a missing number as a missing class. Mirrors MATLAB
+        # solveEnvLimit, which accumulates the weighted hit/miss ratios here and
+        # writes them onto the stage-1 reference model.
+        ref_nodes = self.ensemble[0].get_nodes()
+        cache_idx = [c for c, nd in enumerate(ref_nodes)
+                     if type(nd).__name__ == 'Cache' or hasattr(nd, 'set_result_hit_prob')]
+        acc = {c: {'hit': None, 'miss': None, 'hitl': None} for c in cache_idx}
+
+        def _accum_cache(model, w):
+            """The w-weighted hit/miss ratios of `model`'s caches (MATLAB accumCacheMetric)."""
+            nodes = model.get_nodes()
+            for c in cache_idx:
+                if c >= len(nodes):
+                    continue
+                node = nodes[c]
+                for key, getter in (('hit', 'get_hit_ratio'),
+                                    ('miss', 'get_miss_ratio'),
+                                    ('hitl', 'get_hit_ratio_by_list')):
+                    fn = getattr(node, getter, None)
+                    if fn is None:
+                        continue
+                    v = fn()
+                    if v is None:
+                        continue
+                    v = np.asarray(v, dtype=float)
+                    if v.size == 0:
+                        continue
+                    if acc[c][key] is None:
+                        acc[c][key] = np.zeros_like(v)
+                    acc[c][key] += w * v
+
+        def _populate_node_metrics(solver):
+            """The cache metrics ride the NODE table, which getAvg does not build."""
+            fn = getattr(solver, 'getAvgNodeTable', None) or getattr(solver, 'get_avg_node_table', None)
+            if fn is not None:
+                fn()
+
+        if method == 'dec':
+            Qval = Uval = Tval = None
+            for e in range(E):
+                solver = self.getSolver(e)
+                if hasattr(solver, 'reset'):
+                    solver.reset()
+                Qe, Ue, Te = _stage_avg(solver)
+                if Qval is None:
+                    Qval = np.zeros_like(Qe)
+                    Uval = np.zeros_like(Ue)
+                    Tval = np.zeros_like(Te)
+                Qval += prob_env[e] * Qe
+                Uval += prob_env[e] * Ue
+                Tval += prob_env[e] * Te
+                if cache_idx:
+                    _populate_node_metrics(solver)
+                    _accum_cache(self.ensemble[e], prob_env[e])
+        else:
+            avg_model = self._build_rate_averaged_model(prob_env)
+            template = self.getSolver(0)
+            inner = type(template)(avg_model, template.options) if hasattr(template, 'options') \
+                else type(template)(avg_model)
+            Qval, Uval, Tval = _stage_avg(inner)
+            if cache_idx:
+                _populate_node_metrics(inner)
+                _accum_cache(avg_model, 1.0)
+
+        for c in cache_idx:
+            node = ref_nodes[c]
+            for key, setter in (('hit', 'set_result_hit_prob'),
+                                ('miss', 'set_result_miss_prob'),
+                                ('hitl', 'set_result_hit_prob_list')):
+                if acc[c][key] is None:
+                    continue
+                fn = getattr(node, setter, None)
+                if fn is not None:
+                    fn(acc[c][key])
+
+        self.result = {'Avg': {'Q': Qval, 'U': Uval, 'T': Tval}}
+
+    def _build_rate_averaged_model(self, prob_env):
+        """Fast-environment model: every stage-varying station rate replaced by
+        its probEnv-weighted average, as an exponential. Non-modulated parameters
+        keep their original distribution."""
+        from .distributions import Exp
+
+        E = self.getNumberOfModels()
+        sn = [m.getStruct() for m in self.ensemble]
+        avg_model = self.ensemble[0].copy()
+        stations = avg_model.get_stations()
+        classes = avg_model.get_classes()
+        M = len(stations)
+        K = len(classes)
+        for i in range(M):
+            node = stations[i]
+            # a stateful or absorbing node carries no service rate to average
+            if type(node).__name__ in ('Cache', 'Sink'):
+                continue
+            for k in range(K):
+                rates = np.array([sn[e].rates[i, k] for e in range(E)], dtype=float)
+                if np.any(np.isnan(rates)) or np.any(rates <= 0):
+                    continue  # disabled for some stage: leave as configured
+                if (rates.max() - rates.min()) <= 1e-12 * max(1.0, rates.max()):
+                    continue  # not modulated: keep the original distribution
+                ravg = float(np.dot(prob_env, rates))
+                if callable(getattr(node, 'set_arrival', None)) and type(node).__name__ == 'Source':
+                    node.set_arrival(classes[k], Exp(ravg))
+                elif callable(getattr(node, 'set_service', None)):
+                    node.set_service(classes[k], Exp(ravg))
+        # The copy inherited a cached NetworkStruct from the stage model; force a
+        # hard rebuild so the averaged rates take effect.
+        avg_model.refresh_struct()
+        return avg_model
+
     def pre(self, it: int):
         """Pre-iteration operations.
 
@@ -1625,6 +1963,13 @@ class SolverENV:
                             model.initFromMarginal(QN)
                         elif hasattr(model, 'init_from_marginal'):
                             model.init_from_marginal(QN)
+
+                        # The model state alone does not reach a fluid stage;
+                        # see the same call in post(). Without it the FIRST
+                        # sweep integrates from the empty state instead of the
+                        # seed just computed.
+                        if hasattr(solver, 'setInitialState'):
+                            solver.setInitialState(np.asarray(QN, dtype=float))
                     except Exception:
                         pass
 
@@ -1656,6 +2001,32 @@ class SolverENV:
         if solver is None:
             return result_e, 0.0
 
+        # The resolved horizon is set for THIS stage solve and put back after
+        # it, as MATLAB's analyze_ does: it lands after pre(), which reads a
+        # non-finite horizon as "start from the steady state", and before
+        # getTranAvg, which would otherwise resolve it by the fluid handler's
+        # own rule; and leaving it on the solver would change what a later
+        # per-stage getter answers.
+        ts_saved = None
+        ts_stage = self._stage_horizon(e)
+        if ts_stage is not None:
+            opts = getattr(solver, 'options', None)
+            ts_saved = opts.get('timespan') if isinstance(opts, dict) else getattr(opts, 'timespan', None)
+            self._set_stage_timespan(e, ts_stage)
+
+        # ASK FOR THE POINTS THE SOJOURN WEIGHT NEEDS, as MATLAB's analyze_
+        # does. Reading them off a linear interpolation of the integrator's own
+        # grid (what post() still does as a fallback) is a first-order error
+        # that the ODE's continuous extension does not have. A stage solver
+        # that ignores the request is resampled in post() exactly as before.
+        grid = self._cdf_grid_for_stage(e)
+        if grid is not None:
+            opts = getattr(solver, 'options', None)
+            if isinstance(opts, dict):
+                opts['tranpoints'] = grid
+            elif opts is not None:
+                opts.tranpoints = grid
+
         # Reset solver so it re-reads model state (MATLAB: self.solvers{e}.reset())
         if hasattr(solver, 'reset'):
             solver.reset()
@@ -1684,7 +2055,21 @@ class SolverENV:
                 result_e['Tran']['Avg']['U'] = [[{'t': t_vals, 'metric': np.array([UN[i, r], UN[i, r]])} for r in range(K)] for i in range(M)]
                 result_e['Tran']['Avg']['T'] = [[{'t': t_vals, 'metric': np.array([TN[i, r], TN[i, r]])} for r in range(K)] for i in range(M)]
         except Exception as ex:
-            pass
+            # A STAGE THAT DID NOT SOLVE IS NOT A STAGE THAT SOLVED TO ZERO.
+            # Swallowing this left result_e carrying None metrics, so the
+            # ensemble finished with self.result unset and avg_table() then
+            # failed on an unpack of None -- an opaque TypeError in place of the
+            # stage solver's own diagnosis. MATLAB's analyze_ lets the stage
+            # error out, which is what lets SolverAUTO's ENV pool fall through
+            # from a stage solver that cannot run the transient to one that can.
+            if ts_saved is not None:
+                self._set_stage_timespan(e, ts_saved)
+            raise RuntimeError(
+                "SolverENV: stage %d could not be analyzed by %s: %s"
+                % (e, type(solver).__name__, ex)) from ex
+
+        if ts_saved is not None:
+            self._set_stage_timespan(e, ts_saved)
 
         runtime = time.time() - t0
         return result_e, runtime
@@ -1742,23 +2127,23 @@ class SolverENV:
             M = len(Q_tran)
             K = len(Q_tran[0]) if M > 0 else 0
 
+            # The handoff averages over the SOJOURN, not over the e->h clock:
+            # competing exponentials leave the exit time independent of the
+            # destination, so the weight is holdTime[e] for every h and does not
+            # depend on h. see _kb/06-solver-catalog.md (ENV meanfield)
+            hold_mmap = self.env_model.holdTime[e]
+            D0_e = np.asarray(hold_mmap[0], dtype=float)
+            D1_e = np.asarray(hold_mmap[1], dtype=float)
+
             for h in range(E):
                 Qexit[(e, h)] = np.zeros((M, K))
                 Uexit[(e, h)] = np.zeros((M, K))
                 Texit[(e, h)] = np.zeros((M, K))
 
-                # Get MAP representation of transition distribution for CDF weighting
-                # JAR uses: map_cdf(proc[e][h].get(0), proc[e][h].get(1), t)
-                dist_eh = self.env_model.proc[e][h]
-                if dist_eh is None:
+                if self.env_model.proc[e][h] is None:
                     continue
 
-                D0_eh, D1_eh = _get_map_representation(dist_eh)
-                # Normalize MAP
-                Q_map = D0_eh + D1_eh
-                for row in range(D0_eh.shape[0]):
-                    D0_eh[row, row] = 0
-                    D0_eh[row, row] = -np.sum(D0_eh[row, :]) - np.sum(D1_eh[row, :])
+                D0_eh, D1_eh = D0_e, D1_e
 
                 for i in range(M):
                     if i < len(isExtStation) and isExtStation[i]:
@@ -1852,6 +2237,14 @@ class SolverENV:
                     model.initFromMarginal(Qentry)
                 elif hasattr(model, 'init_from_marginal'):
                     model.init_from_marginal(Qentry)
+
+                # The model state alone does not reach a fluid stage: SolverFLD
+                # takes its ODE initial condition from options.init_sol, so
+                # without this the transient starts at the stage's OWN steady
+                # state, sits flat, and the exit average collapses to the
+                # quasi-stationary blend regardless of the coupling.
+                if solver is not None and hasattr(solver, 'setInitialState'):
+                    solver.setInitialState(np.asarray(Qentry, dtype=float))
 
     def _round_marginal_for_discrete_solver(self, Q, stage_idx):
         """Round fractional queue lengths to integers using the largest remainder method,
@@ -2069,7 +2462,7 @@ class SolverENV:
                 Rcost = getattr(ch, 'accost', None)
                 if Rcost is None:
                     Rcost = [[_default_routing(h) for _ in range(n)] for _ in range(u)]
-                gamma, _, _, _ = cache_gamma_lp(lam, Rcost)
+                gamma, _, _, _, _ = cache_gamma_lp(lam, Rcost)
                 infos.append(dict(node=ind, gamma=gamma, m=m, lam=lam, arate=arate,
                                   strat=getattr(ch, 'replacestrat', None)))
             stage_info.append(infos)
@@ -2197,15 +2590,25 @@ class SolverENV:
         - If max_iter hit without convergence: average last 10% of iterations
         - finish() for CDF-weighted aggregation
         """
+
+        method = str(self.options.get('method', 'default')).lower()
+        if method in ('avg', 'dec'):
+            self._solve_env_limit(method)
+            return
+
         self.init()
 
         it = 0
         iter_max = self.options.get('iter_max', 100)
-        verbose = self.options.get('verbose', False)
+        verbose = _env_verbose(self.options.get('verbose', False))
 
         # State-vector analyzer: carries the full per-stage distribution across
         # environment switches (mirrors MATLAB/JAR options.method='statevec').
-        if str(self.options.get('method', 'default')).lower() == 'statevec':
+        # 'blend' is the documented alias for 'statevec' in MATLAB, the JAR and
+        # C++ alike; accepting only the one spelling here silently ran the
+        # MEAN-FIELD analyzer instead, which is a different approximation, not a
+        # slower route to the same number.
+        if str(self.options.get('method', 'default')).lower() in ('statevec', 'blend'):
             # see _kb/06-solver-catalog.md (ENV: Python environment.py additional notes) for rationale
             for e in range(len(self.ensemble)):
                 if type(self.ensemble[e]).__name__ == 'LayeredNetwork':
@@ -2443,6 +2846,15 @@ class SolverENV:
 
         return renvInfGen_flat, stageInfGen
 
+    def get_generator(self) -> Tuple[np.ndarray, List[np.ndarray]]:
+        """Alias of :meth:`generator`, under the name MATLAB's
+        `@SolverENV/getGenerator` uses. Returns the same
+        `(renvInfGen, stageInfGen)` pair; MATLAB's single-output call takes the
+        first element."""
+        return self.generator()
+
+    getGenerator = get_generator
+
     def _ctmc_makeinfgen(self, Q: np.ndarray) -> np.ndarray:
         """
         Normalize a matrix to be a valid infinitesimal generator.
@@ -2474,6 +2886,194 @@ class SolverENV:
 
         return Q
 
+    def stage_timespan(self):
+        """The finite horizon each stage transient is integrated over, or None.
+
+        THE HORIZON LIVES ON THE STAGE SOLVER, not on the ensemble: an example
+        writes `ENV(env, lambda m: FLD(m, timespan=[0, 1000]))`, so a bridge that
+        forwards only the ENV solver's own options states nothing and the engine
+        falls back to its default 100. The stages are then integrated over a
+        different interval and the exit averages are a different quadrature --
+        worth 6e-3 relative on renv_twostages_repairmen, whose stages ask for
+        [0, 1e3]. The ENV options are the fallback, for a caller that states the
+        horizon there instead.
+        """
+        for e, s in enumerate(self._solvers):
+            if s is None:
+                continue
+            opts = getattr(s, 'options', None)
+            ts = None
+            if isinstance(opts, dict):
+                ts = opts.get('timespan')
+            elif opts is not None:
+                ts = getattr(opts, 'timespan', None)
+            span = _finite_span(ts)
+            if span is not None:
+                return span
+            # A NON-finite horizon is not "unstated": the native path resolves
+            # it to 30/minrate and integrates that, so a bridge that dropped it
+            # here would have the remote engine answer over its own default of
+            # 100 instead -- a different question, and most of the parity slack
+            # renv_fourstages_repairmen used to carry.
+            span = _finite_span(self._stage_horizon(e))
+            if span is not None:
+                return span
+        return _finite_span(self.options.get('timespan'))
+
+    def _stage_horizon(self, e):
+        """Stage e's transient horizon, resolved; None when it already has one.
+
+        A stage solver left at `timespan=[0, inf]` -- what the renv examples
+        write when they have no particular horizon in mind -- is otherwise
+        resolved by each backend's own convention, and the conventions
+        disagree: MATLAB's getTranAvg takes `30/minrate`, the native fluid
+        handler takes `min(timespan[1], 10*iter_max/min_rate)`, and the C++/JAR
+        `-s env` arm falls back to 100. Each codebase then integrates a
+        DIFFERENT interval and the exit averages are different quadratures --
+        that, and not the integrator, was most of the parity slack on
+        renv_fourstages_repairmen. MATLAB is ground truth, so its rule is the
+        one used here too.
+
+        PURE ON PURPOSE, as MATLAB's stageHorizon_ is: writing it onto the
+        stage solver would outlive the ENV solve and change what a later
+        per-stage getter answers.
+        """
+        try:
+            s = self._solvers[e]
+        except (IndexError, TypeError):
+            return None
+        if s is None:
+            return None
+        opts = getattr(s, 'options', None)
+        if opts is None:
+            return None
+        ts = opts.get('timespan') if isinstance(opts, dict) else getattr(opts, 'timespan', None)
+        if ts is None or len(ts) < 2 or np.isfinite(ts[1]):
+            return None
+        sn = self._stage_struct(e)
+        if sn is None:
+            return None
+        rates = np.asarray(sn.rates, dtype=float)
+        finite = rates[np.isfinite(rates)]
+        if finite.size == 0:
+            return None
+        minrate = float(np.min(finite))
+        if not (minrate > 0):
+            return None
+        t0 = 0.0 if not np.isfinite(ts[0]) else float(ts[0])
+        resolved = [t0, 30.0 / minrate]
+        if e not in self._horizon_warned:
+            self._horizon_warned.add(e)
+            from .api.io.logging import line_warning
+            line_warning('SolverENV',
+                         "End time of transient analysis unspecified for stage %d, setting its "
+                         "timespan option to [%g,%g]. Pass a stage solver with timespan=[0,T] "
+                         "to customize." % (e + 1, resolved[0], resolved[1]))
+        return resolved
+
+    def _set_stage_timespan(self, e, ts):
+        """Put stage e's horizon back."""
+        opts = getattr(self._solvers[e], 'options', None)
+        if opts is None:
+            return
+        if isinstance(opts, dict):
+            opts['timespan'] = ts
+        else:
+            opts.timespan = ts
+
+    def _cdf_grid_for_stage(self, e):
+        """The instants stage e's exit average is summed over, or None.
+
+        Mirrors cdfGrid_ in solver_env_meanfield_analyzer.m: the same 5000
+        points, 90% of them below 5*E[S], built from the stage HORIZON rather
+        than from a trajectory, so it can be requested before the solve. None
+        when the horizon is not finite, i.e. when there is no grid to ask for.
+        """
+        solver = self.getSolver(e)
+        if solver is None:
+            return None
+        opts = getattr(solver, 'options', None)
+        if opts is None:
+            return None
+        ts = opts.get('timespan') if isinstance(opts, dict) else getattr(opts, 'timespan', None)
+        if ts is None or len(ts) < 2 or not np.isfinite(ts[1]) or not (ts[1] > ts[0]):
+            return None
+        try:
+            hold = self.env_model.holdTime[e]
+        except (AttributeError, IndexError, TypeError):
+            return None
+        if hold is None or len(hold) < 2:
+            return None
+        mean_sojourn = _map_mean(np.asarray(hold[0]), np.asarray(hold[1]))
+        if not (mean_sojourn > 0) or not np.isfinite(mean_sojourn):
+            mean_sojourn = (float(ts[1]) - float(ts[0])) / 10.0
+        return _cdf_refine_grid(np.array([float(ts[0]), float(ts[1])]), mean_sojourn, 5000)
+
+    def _stage_struct(self, e):
+        """The NetworkStruct of stage e, or None when it cannot be built."""
+        try:
+            model = self.ensemble[e]
+        except (IndexError, TypeError):
+            return None
+        for name in ('getStruct', 'get_struct'):
+            fn = getattr(model, name, None)
+            if fn is not None:
+                try:
+                    return fn()
+                except Exception:
+                    return None
+        return None
+
+    def _assert_stages_delegable(self, lang):
+        """Refuse a delegated solve whose stage solver the engine cannot run.
+
+        THE CHOICE IS NOT IN THE MODEL, which is the root of this: model.json
+        carries the stage NETWORKS and the transition process, and the ensemble's
+        solver choice lives on this object. An engine that defaults to the fluid
+        transient therefore answered a DIFFERENT model in silence -- on
+        renv_threestages_repairmen, whose stages are SolverCTMC, `-s env`
+        returned Queue1 throughput 1.5577 against the 1.3333 the CTMC stages
+        give, a 17% substitution reported as that example's result.
+
+        Both engines now take `--stage-solver`, and both run the enumerated CTMC
+        as well as the fluid transient -- the JAR's `SolverENV` always handled a
+        non-fluid stage (`roundMarginalForDiscreteSolver` runs for exactly that
+        case) and only its CLI hardwired the factory. `_env_stage_solver` sends
+        the token on either route. A MIXED ensemble is still refused, since one
+        coupling runs one stage solver and sending the first stage's name would
+        answer for the rest under it.
+        """
+        names = sorted(set(type(s).__name__ for s in self._solvers if s is not None))
+        if all('FLD' in n or 'Fluid' in n for n in names):
+            return
+        if names and all('CTMC' in n for n in names):
+            return
+        raise ValueError(
+            "SolverENV does not support lang='%s' with %s stages: the %s ENV engine "
+            "solves every stage by the fluid transient. Use lang='python' or "
+            "lang='matlab' for an ensemble built on another stage solver."
+            % (lang, ', '.join(names) or 'these', 'C++' if lang == 'cpp' else 'JAR'))
+
+    def _print_banner(self, runtime, iterations):
+        """The completion line for an environment solve.
+
+        ANNOUNCE THE SOLVER, as every network solver does: an ensemble result
+        table that arrives with no banner belongs to nobody, and a reader that
+        has to guess will guess -- parity-static tags it UNKNOWN and its
+        agreement-gated generator then drops it as a parsing artifact. The text
+        is the one MATLAB's and the JAR's SolverENV print.
+        """
+        opts = self.options
+        if not _env_verbose(opts.get('verbose') if isinstance(opts, dict)
+                            else getattr(opts, 'verbose', False)):
+            return
+        method = str(opts.get('method', 'default') or 'default')
+        lang = str(opts.get('lang', 'python') or 'python')
+        from line_solver.solvers.base import print_solver_banner
+        print_solver_banner("ENV analysis [method: %s; type: approximate, deterministic; lang: %s; "
+              "env: python] completed in %fs. Iterations: %d."
+              % (method, lang, runtime, iterations))
+
     def avg(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Compute average performance metrics across environments.
@@ -2484,6 +3084,55 @@ class SolverENV:
         Returns:
             Tuple of (QN, UN, TN) - queue lengths, utilizations, throughputs
         """
+        import time as _time
+        # Solver console: avg() is the single point every ENV accessor reaches
+        # (getAvg, getEnsembleAvg and avg_table all land here), so the narrated
+        # run is opened around the WHOLE analysis. Opening it in iterate() left
+        # the stage solves outside it, and each of them narrated as a run of
+        # its own: 5274 lines for a two-stage model.
+        from line_solver.api.io import console as _console
+        _console.begin_run(self, self.options)
+        _t0 = _time.time()
+        try:
+            return self._avg()
+        finally:
+            _console.close_run(self)
+            # EVERY exit announces itself once: the native fixed point, the two
+            # bridges and the empty-result return leave by different paths, and
+            # a banner printed on only some of them labels some tables and
+            # leaves others anonymous.
+            iters = 0
+            for key in (self.results or {}):
+                if isinstance(key, tuple) and key:
+                    iters = max(iters, int(key[0]))
+            self._print_banner(_time.time() - _t0, iters)
+
+    def _avg(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        # lang='cpp' delegates the whole environment solve to line-cli's -s env
+        # arm. It is checked before iterate() because answering natively would
+        # report a python number under lang='cpp'.
+        if str(self.options.get('lang', 'python')) == 'cpp':
+            self._assert_stages_delegable('cpp')
+            from .solvers.cpp_dispatch import env_avg_via_cpp
+            Q, U, T = env_avg_via_cpp(self)
+            self.result = {'Avg': {'Q': Q, 'U': U, 'T': T}}
+            self._result = (Q, U, T)
+            return Q, U, T
+
+        # lang='java' delegates the WHOLE environment solve for the same reason,
+        # and it has to: running this coupling with JAR stage solves sends each
+        # stage's entry marginal over model.json, which carries no such state,
+        # so every stage restarted from the default and the loop settled on the
+        # uncoupled answer (renv_node_breakdown Server QLen 0.39634 at
+        # throughput 0.71574, against a source admitting 0.8).
+        if str(self.options.get('lang', 'python')) == 'java':
+            self._assert_stages_delegable('java')
+            from .solvers.jar_dispatch import env_avg_via_jar
+            Q, U, T = env_avg_via_jar(self)
+            self.result = {'Avg': {'Q': Q, 'U': U, 'T': T}}
+            self._result = (Q, U, T)
+            return Q, U, T
+
         if self.result is None:
             self.iterate()
 
@@ -2500,9 +3149,12 @@ class SolverENV:
     def getAvg(self):
         """Get average metrics (MATLAB compatibility).
 
-        Returns (QN, UN, TN) matching MATLAB getAvg -> getEnsembleAvg.
+        Returns (QN, UN, RN, TN, AN, WN): MATLAB's SolverENV.getAvg forwards to
+        getEnsembleAvg, so throughput is the FOURTH output and RN is NaN
+        throughout (ENV computes no response time). Use avg() for the bare
+        (Q, U, T) triple.
         """
-        return self.avg()
+        return self.getEnsembleAvg()
 
     def getEnsembleAvg(self):
         """Get ensemble average metrics (MATLAB compatibility).
@@ -2631,7 +3283,8 @@ class SolverENV:
             'method': 'default',
             'iter_max': 100,
             'iter_tol': 1e-4,
-            'verbose': False
+            'verbose': VerboseLevel.STD  # STD like every other solver; pass
+            # VerboseLevel.SILENT for a quiet run (see api/io/console.py)
         }
 
     @staticmethod
@@ -2678,9 +3331,16 @@ class SolverENV:
     def listValidMethods() -> List[str]:
         """Return list of valid solution methods.
 
-        Matches JAR SolverENV.listValidMethods().
+        SolverENV.m verbatim. Each name selects a COUPLING -- what crosses an
+        environment switch -- and each is dispatched here or in the analyzers:
+        'default'/'meanfield' carry the marginal means, 'statevec'/'blend' the
+        whole joint distribution, 'smp' lifts the Markovian-arc check for a
+        semi-Markov environment, 'statedep' makes the transition depend on the
+        state it leaves, and 'avg'/'dec' are the closed-form fast/slow
+        environment limits. This used to name only 'default' and 'smp' while
+        four more were dispatched.
         """
-        return ['default', 'smp']
+        return ['default', 'meanfield', 'smp', 'statedep', 'statevec', 'blend', 'avg', 'dec']
 
     def getStruct(self) -> List:
         """Return network structures for all stages.

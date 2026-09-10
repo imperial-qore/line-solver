@@ -18,6 +18,7 @@ Features
 - **Stochastic Simulation**: Euler-Maruyama SDE for closed systems (diffusion method)
 """
 
+import copy
 import numpy as np
 import pandas as pd
 import time
@@ -29,7 +30,8 @@ from .options import SolverFLDOptions, FLDResult
 from .utils import extract_metrics_from_handler_result, compute_response_times, compute_cycle_times, compute_system_throughput
 from ...api.sn.transforms import sn_get_residt_from_respt
 from ...api.sn import NodeType
-from ..base import NetworkSolver, method_label
+from ..base import NetworkSolver, method_label, method_type
+from ..fork_join_driver import ForkJoinDriverMixin
 from ...constants import GlobalConstants, VerboseLevel
 from ...indexed_table import IndexedTable
 
@@ -61,7 +63,7 @@ def _accost_is_linear(Rcost, h):
     return True
 
 
-class SolverFLD(NetworkSolver):
+class SolverFLD(ForkJoinDriverMixin, NetworkSolver):
     """Native Python solver for fluid approximation of queueing networks.
 
     Provides a unified interface to multiple fluid approximation algorithms,
@@ -89,20 +91,23 @@ class SolverFLD(NetworkSolver):
 
     Examples
     --------
-    Basic usage:
+    Basic usage::
+
         >>> solver = SolverFLD(network, method='mfq')
         >>> solver.runAnalyzer()
         >>> QN = solver.result.QN  # Access raw results
         >>> qlen = solver.getAvgQLen()  # Access aggregated metrics
 
-    Method comparison:
+    Method comparison::
+
         >>> results = {}
         >>> for method in ['matrix', 'mfq']:
         ...     s = SolverFLD(network, method=method)
         ...     s.runAnalyzer()
         ...     results[method] = s.result
 
-    Custom configuration:
+    Custom configuration::
+
         >>> opts = SolverFLDOptions(tol=1e-6, pstar=50, verbose=True)
         >>> solver = SolverFLD(network, options=opts)
         >>> solver.runAnalyzer()
@@ -122,6 +127,12 @@ class SolverFLD(NetworkSolver):
         'fluid.statedep': 'matrix',
         'closing': 'closing',
         'fluid.closing': 'closing',
+        'minnormal': 'minnormal',
+        'fluid.minnormal': 'minnormal',
+        # the refined mean field runs through the same solver, which reads the
+        # requested method name to decide whether to add the O(1/N) term
+        'refined': 'minnormal',
+        'fluid.refined': 'minnormal',
         'tbi': 'tbi',
         'fluid.tbi': 'tbi',
         'diffusion': 'diffusion',
@@ -129,10 +140,36 @@ class SolverFLD(NetworkSolver):
         'mfq': 'mfq',
         'fluid.mfq': 'mfq',
         'butools': 'mfq',
-        'aoi': 'aoi',
-        'fluid.aoi': 'aoi',
+        # 'butools' names the backend the MFQ branch calls and 'aoi' its
+        # age-of-information reading; both are ALIASES of 'mfq', not methods of
+        # their own, which is how MATLAB, the JAR and C++ spell them. Mapping
+        # 'aoi' to its own route bypassed _solve_mfq's aoi_is_aoi topology test
+        # and made SolverFLD(model,'aoi') refuse every model that is not a
+        # bufferless or single-buffer queue -- while the same model answered
+        # under 'mfq'. _solve_mfq still reaches the AoI solver, and attaches
+        # aoiResults, exactly when the topology qualifies.
+        'aoi': 'mfq',
+        'fluid.aoi': 'mfq',
         'rmf': 'rmf',
         'fluid.rmf': 'rmf',
+        'kp': 'kp',
+        'fluid.kp': 'kp',
+        'dae': 'dae',
+        'fluid.dae': 'dae',
+        # The single-station fluid limits.
+        'ggisgi.fluid': 'ggisgi.fluid',
+        'fluid.ggisgi': 'ggisgi.fluid',
+        # the SHORT spellings too, as the C++ fluid_qsys_canonical maps them
+        'ggisgi': 'ggisgi.fluid',
+        'ggingi.tga': 'ggingi.tga',
+        'fluid.tga': 'ggingi.tga',
+        'tga': 'ggingi.tga',
+        'tvms': 'tvms',
+        'fluid.tvms': 'tvms',
+        'mtginf': 'mtginf',
+        'fluid.mtginf': 'mtginf',
+        'mol': 'mol',
+        'fluid.mol': 'mol',
     }
 
     def __init__(
@@ -148,10 +185,13 @@ class SolverFLD(NetworkSolver):
         ----------
         network : NetworkStruct or object
             Network model specification. Can be either:
+
             - A NetworkStruct (compiled network structure)
             - An object with compileStruct() method (will be compiled automatically)
+
         method : str, optional
             Solution method to use. Valid options:
+
             - 'default', 'matrix', 'fluid.matrix', 'pnorm', 'fluid.pnorm':
               Matrix method with p-norm smoothing (default, recommended for most networks)
             - 'softmin', 'fluid.softmin': Softmin smoothing (open networks only)
@@ -160,6 +200,7 @@ class SolverFLD(NetworkSolver):
             - 'diffusion', 'fluid.diffusion': Euler-Maruyama SDE (closed networks only)
             - 'mfq', 'fluid.mfq', 'butools': Markovian fluid queue - exact M/M/c
               (single-queue networks only)
+
             Default is 'matrix' (mapped from 'default').
         options : SolverFLDOptions, optional
             Configuration object. If not provided, defaults are used. If both method
@@ -174,6 +215,7 @@ class SolverFLD(NetworkSolver):
         Notes
         -----
         Method selection guidelines:
+
         - **matrix** (default): Recommended starting point. Works for open and closed
           networks. Fast and numerically stable. Parameters: pstar (smoothing parameter,
           default 20)
@@ -186,17 +228,20 @@ class SolverFLD(NetworkSolver):
 
         Examples
         --------
-        Using with NetworkStruct directly:
+        Using with NetworkStruct directly::
+
             >>> from line_solver.api.sn import NetworkStruct
             >>> sn = NetworkStruct()  # ... configure ...
             >>> solver = SolverFLD(sn, method='mfq')
 
-        Using with Network object:
+        Using with Network object::
+
             >>> model = Network('TestModel')
             >>> # ... configure network ...
             >>> solver = SolverFLD(model, method='matrix')
 
-        With custom options:
+        With custom options::
+
             >>> opts = SolverFLDOptions(tol=1e-6, pstar=50)
             >>> solver = SolverFLD(model, options=opts)
         """
@@ -236,12 +281,16 @@ class SolverFLD(NetworkSolver):
         elif isinstance(method_or_options, SolverFLDOptions):
             options = method_or_options
             method = options.method
-        elif BaseSolverOptions is not None and isinstance(method_or_options, BaseSolverOptions):
-            # Convert base SolverOptions to SolverFLDOptions
+        elif (BaseSolverOptions is not None and isinstance(method_or_options, BaseSolverOptions)) \
+                or hasattr(method_or_options, 'method'):
+            # Convert base SolverOptions to SolverFLDOptions. The duck-typed arm
+            # catches options that are not BaseSolverOptions, such as the
+            # SolverLNOptions SolverLN hands to every layer solver; without it
+            # the object itself was stored as the method.
             base_opts = method_or_options
             method = getattr(base_opts, 'method', 'default')
             opts_kwargs = {}
-            for attr in ['method', 'tol', 'iter_max', 'iter_tol', 'verbose', 'timespan', 'samples', 'stiff', 'lang']:
+            for attr in ['method', 'tol', 'iter_max', 'iter_tol', 'verbose', 'timespan', 'samples', 'stiff', 'lang', 'arith']:
                 if hasattr(base_opts, attr):
                     val = getattr(base_opts, attr)
                     if val is not None:
@@ -270,6 +319,18 @@ class SolverFLD(NetworkSolver):
                 if hasattr(options, key):
                     setattr(options, key, value)
 
+        # The options are the SOLVER's, not the caller's. MATLAB passes a struct
+        # by value, so two solvers built from one options variable are
+        # independent; sharing the object here makes every per-solver write
+        # (setInitialState's init_sol above all) land on all of them, which is
+        # how an ensemble of stage solvers -- SolverENV builds them from one
+        # factory closure -- ended up integrating every stage from the LAST
+        # stage's initial state. `config` is copied too because it is mutated
+        # in place (nhpp_sched, rate_sched).
+        import copy as _copy
+        options = _copy.copy(options)
+        if isinstance(getattr(options, 'config', None), dict):
+            options.config = dict(options.config)
         self.options = options
         self.result = None
         self.runtime = 0.0
@@ -283,9 +344,10 @@ class SolverFLD(NetworkSolver):
         Matches MATLAB behavior where reset() invalidates the cached struct
         so the solver re-reads the model state on the next analysis run.
         """
-        self.result = None
+        self._clearResultStores()
         self.runtime = 0.0
         self.sn = None  # Force re-read of network struct (matching MATLAB)
+        self._sn_is_toph = False
 
     def setInitialState(self, Q: np.ndarray):
         """Set initial state from queue length marginals.
@@ -321,8 +383,8 @@ class SolverFLD(NetworkSolver):
             Path of the .tex file to write; empty returns the source only.
         notation : str, optional
             'scalar' (default) for one expanded ODE per state variable, or
-            'matrix' for the compact matrix notation (dx/dt = W'*theta(x) +
-            lambda for the matrix/pnorm methods, dx/dt = J*r(x) for the
+            'matrix' for the compact matrix notation (``dx/dt = W'*theta(x) +
+            lambda`` for the matrix/pnorm methods, ``dx/dt = J*r(x)`` for the
             closing/statedep/softmin methods).
 
         Returns
@@ -330,6 +392,13 @@ class SolverFLD(NetworkSolver):
         str
             LaTeX source of the exported ODE system.
         """
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            from ..cpp_dispatch import export_odes_via_cpp
+            tex = export_odes_via_cpp(self, notation=notation)
+            if filename:
+                with open(filename, 'w') as f:
+                    f.write(tex)
+            return tex
         from .symodes import solver_fluid_symodes, export_odes_latex
         if self.sn is None:
             self.sn = self._get_network_struct(self.network)
@@ -488,11 +557,88 @@ class SolverFLD(NetworkSolver):
         raise ValueError("Cannot extract network structure from model")
 
     def _dispatch_method(self, method_key):
+        """Solve with the resolved method, switching off a degenerate closure.
+
+        A non-hyperbolic fluid fixed point (balanced bottlenecks, a saturated
+        multiclass station, an overloaded open station) leaves the linear noise
+        approximation with no stationary covariance. It cannot be seen before
+        the mean is solved, so fluid_minnormal_applicable cannot decline it and
+        the moment closure raises at the Lyapunov step.
+
+        THE LADDER HAS TWO RUNGS, AND THE FIRST ONE KEEPS THE CLOSURE. Most of
+        these failures are not a property of the model at all: MinNormalSolver
+        must start its alternation at sigma2 = 0, where min(n,c) has no
+        derivative, so a saturated or balanced model's first-order fixed point
+        lands on the kink, sits on a continuum of equilibria, and the Jacobian
+        there is neutral. DaeSolver seeds the variance POSITIVE and never adopts
+        sigma2 = 0 as an iterate, so the smoothed E[min(X,c)] breaks the
+        degeneracy and the fixed point is isolated and hyperbolic -- it answers
+        the same closure, with a covariance, where the alternation cannot.
+        Dropping straight to first order instead is not merely a lost second
+        moment: on a balanced two-station PS cycle at N=10 it returns [9 1]
+        against the exact [5 5], because a first-order method has no reason to
+        prefer one point of the continuum over another.
+
+        The second rung is the first-order method, taken when 'dae' declines the
+        model in advance (fluid_dae_applicable) or fails on the same exception,
+        which is the genuinely non-hyperbolic case: an unstable open station has
+        no stationary distribution to approximate under any closure. Fall back
+        whether 'minnormal' was RESOLVED from 'default' or REQUESTED outright:
+        the closure has no stationary covariance either way, so refusing an
+        explicit request would only deny the caller the mean still available.
+
+        Mirrors MATLAB @SolverFLD/runAnalyzer and the JAR SolverFluid.
+        """
+        # A STOCHASTIC PETRI NET HAS ONE FLUID ROUTE, and it is 'dae'. Every
+        # other method builds its drift from the station/class/phase encoding,
+        # where an ordinary Place declares no service process and therefore
+        # contributes NO coordinate at all: the net would be integrated as an
+        # empty model and the table would report zeros with no warning.
+        # getMethodFeatureSet states the same limit so the gate refuses it one
+        # step earlier; this names the alternative.
+        if self._is_petri_net() and method_key not in ('dae', 'fluid.dae', 'default', 'fluid.default'):
+            raise ValueError(
+                "This model is a stochastic Petri net, which the '%s' method has no drift for. Use "
+                "options.method='dae' (the default for a Petri net), or SolverCTMC, SolverJMT, "
+                "SolverSSA or SolverLDES." % method_key)
+        from .methods.minnormal import FluidNonHyperbolicError
+        try:
+            return self._solve_with_method(method_key)
+        except FluidNonHyperbolicError as err:
+            if method_key != 'minnormal':
+                raise
+            debug = GlobalConstants.getVerbose() == VerboseLevel.DEBUG
+            from .dae_applicable import fluid_dae_applicable
+            dae_ok, dae_reason = fluid_dae_applicable(self.sn, self.options)
+            if dae_ok:
+                try:
+                    result = self._solve_with_method('dae')
+                    if debug:
+                        print("SolverFLD: minnormal declined at the Lyapunov step (%s); "
+                              "falling back to dae" % (err,))
+                    self._fallback_method = 'dae'
+                    return result
+                except FluidNonHyperbolicError as dae_err:
+                    if debug:
+                        print("SolverFLD: dae also declined at the Lyapunov step (%s)"
+                              % (dae_err,))
+            elif debug:
+                print("SolverFLD: dae not applicable as a fallback (%s)" % (dae_reason,))
+            fallback = 'closing' if self._has_dps_scheduling() else 'matrix'
+            if debug:
+                print("SolverFLD: moment closure declined at the Lyapunov step (%s); "
+                      "falling back to %s" % (err, fallback))
+            self._fallback_method = fallback
+            return self._solve_with_method(fallback)
+
+    def _solve_with_method(self, method_key):
         """Dispatch to the appropriate solver method and return the result."""
         if method_key == 'matrix':
             return self._solve_matrix()
         elif method_key == 'closing':
             return self._solve_closing()
+        elif method_key == 'minnormal':
+            return self._solve_minnormal()
         elif method_key == 'tbi':
             return self._solve_tbi()
         elif method_key == 'diffusion':
@@ -503,6 +649,12 @@ class SolverFLD(NetworkSolver):
             return self._solve_aoi()
         elif method_key == 'rmf':
             return self._solve_rmf()
+        elif method_key == 'kp':
+            return self._solve_kp()
+        elif method_key == 'dae':
+            return self._solve_dae()
+        elif method_key in ('ggisgi.fluid', 'ggingi.tga', 'tvms', 'mtginf', 'mol'):
+            return self._solve_qsys(method_key)
         else:
             raise ValueError(f"Unknown method: {method_key}")
 
@@ -682,6 +834,12 @@ class SolverFLD(NetworkSolver):
 
         return per_node_spaces, per_node_priors, stateful_nodes, cur_states
 
+    def supportsTransientAnalysis(self):
+        """Transient averages are available (fluid ODE integrated over options.timespan)."""
+        return True
+
+    supports_transient_analysis = supportsTransientAnalysis
+
     def runAnalyzer(self) -> 'SolverFLD':
         """Execute the fluid analysis using the configured method.
 
@@ -703,13 +861,17 @@ class SolverFLD(NetworkSolver):
             from ..jar_dispatch import populate_java_result
             populate_java_result(self)
             return self
-
-        # MATLAB FLD/@SolverFLD/runAnalyzer.m calls NetworkSolver.runAnalyzerChecks
-        # here: reject models using features outside the fluid feature set rather
-        # than integrating a mis-specified model and returning plausible numbers.
-        model = getattr(self, 'model', None)
-        if model is not None and hasattr(model, 'get_used_lang_features'):
-            self.runAnalyzerChecks(self.options)
+        # see _kb/06-solver-catalog.md ("Python lang='cpp' opt-in C++ delegation");
+        # an absent binary is the only automatic fallback, a C++ refusal propagates.
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            from ..cpp_dispatch import LineCliNotAvailable, populate_cpp_result
+            try:
+                populate_cpp_result(self)
+                return self
+            except LineCliNotAvailable as e:
+                import warnings
+                warnings.warn("SolverFLD: lang='cpp' requested but the C++ solver is "
+                              "unavailable (%s); falling back to lang='python'." % e)
 
         # Re-read network struct if invalidated by reset() (matching MATLAB)
         if self.sn is None:
@@ -720,27 +882,93 @@ class SolverFLD(NetworkSolver):
         # needs the acyclic-PH expansion. MATLAB does this at
         # FLD/@SolverFLD/runAnalyzer.m:29 and the JAR at SolverFluid.java:1077.
         # Without it the Python fluid path solved a Det service as exponential.
-        # sn_nonmarkov_toph reads options as a mapping (options.get('config')),
-        # so the options object is converted the same way SolverCTMC does at
-        # solver_ctmc.py:515.
-        from ...api.sn.transforms import sn_nonmarkov_toph
-        options_dict = dict(vars(self.options)) if hasattr(self.options, '__dict__') else {'config': {}}
-        # the fluid ODEs read mu*phi as a flow, so the surrogate must be a genuine
-        # phase-type: a matrix exponential has no such reading
-        cfg = dict(options_dict.get('config') or {})
-        cfg['phfit'] = 'ph'
-        options_dict['config'] = cfg
-        self.sn = sn_nonmarkov_toph(self.sn, options_dict)
+        self.sn = self._toph(self.sn)
+        self._sn_is_toph = True
+
+        # MATLAB FLD/@SolverFLD/runAnalyzer.m calls NetworkSolver.runAnalyzerChecks
+        # here: reject models using features outside the fluid feature set rather
+        # than integrating a mis-specified model and returning plausible numbers.
+        # It runs AFTER the phase-type conversion and therefore after 'default'
+        # can be resolved, because resolveMethod inspects the phase-resolved
+        # state and the gate must validate the method that will actually run.
+        model = getattr(self, 'model', None)
+        if model is not None and hasattr(model, 'get_used_lang_features'):
+            self.runAnalyzerChecks(self.options)
+
+        # THE TWO GATES BELOW READ THE RESOLVED METHOD, not the requested one:
+        # 'default' stands for 'dae' on exactly the models they refuse (see
+        # _resolve_default_method), so gating the literal name would refuse the
+        # run that is about to succeed.
+        resolved_method = self._resolve_method()
 
         # Finite Capacity Region: the fluid ODEs do not enforce the aggregate
         # per-region job limit and would silently return the unconstrained answer.
-        if getattr(self.sn, 'nregions', 0) > 0:
+        #
+        # 'dae' is the exception, and the only one. A region cap is a linear
+        # inequality on the state and blocking is a throttle on the admission flow
+        # that keeps it satisfied, so the DAE form has somewhere to put it -- an
+        # algebraic equation beside the drift -- where an ODE has not.
+        # capacity_constraints refuses the forms that are NOT constraints on this
+        # drift, by name. Every other method keeps the blanket refusal, because for
+        # them it is still true.
+        if getattr(self.sn, 'nregions', 0) > 0 and \
+                resolved_method not in ('dae', 'fluid.dae'):
             raise RuntimeError('This model uses a Finite Capacity Region (addRegion), which is '
                                'not supported by SolverFLD (the region\'s aggregate job limit is '
-                               'not enforced). Use SolverCTMC, SolverJMT, SolverSSA or SolverLDES, '
-                               'or setCapacity for a single-station limit.')
+                               'not enforced). Use options.method=\'dae\', or SolverCTMC, '
+                               'SolverJMT, SolverSSA or SolverLDES.')
+
+        # A BINDING STATION BUFFER WAS SILENTLY IGNORED, by every fluid method
+        # including this one: nothing in the fluid tree reads sn.cap or
+        # sn.classcap, so a capped station was integrated as an unbounded one and
+        # the table reported more jobs in the buffer than the buffer holds (a
+        # closed Delay->Queue(cap 2) model returned 2.19 jobs in a buffer of 2).
+        # MVA and NC have refused that model through the shared structural gate
+        # since they gained one; the fluid solver now does too, except on the
+        # route that can enforce it.
+        # 'mol' is exempt for the opposite reason to 'dae': a finite capacity is
+        # not something it ignores, it is the model. The approximation is stated
+        # for the Mt/G/s/0 LOSS system, so the server count IS the buffer, and
+        # refusing a capped station would refuse the only shape the method
+        # answers. The other single-station limits assume an unbounded waiting
+        # room and keep the guard.
+        if resolved_method not in ('dae', 'fluid.dae', 'mol', 'fluid.mol'):
+            model = getattr(self, 'model', None)
+            if model is not None and hasattr(model, 'get_used_lang_features'):
+                ok, reason = NetworkSolver.checkBindingCapacity(model, 'SolverFLD')
+                if not ok:
+                    raise RuntimeError(
+                        "%s Use options.method='dae', which carries the buffer as an algebraic "
+                        "constraint on the drift." % reason)
+
+        # Fork-join: the same solver-agnostic fixed point MVA and NC drive
+        # (ForkJoinDriverMixin), with a fluid inner solve. The MMT transformation
+        # emits only Source, Delay, Queue, Router and ClassSwitch, all of which
+        # the fluid drift already carries, so no fork-join code is added here.
+        # Intercepted after the feature gate so an unsupported feature is still
+        # named by its own message rather than by a failure inside the transform.
+        if self._has_fork_join() and not getattr(self, '_skip_fork_join', False):
+            # Not every method can run that fixed point. forkJoinAdmits is the
+            # same predicate supportsModelMethod asks, so the report and the run
+            # cannot disagree about which forks this method serves; without it
+            # an open fork-join model surfaced the DAE form's missing unknowns
+            # as an UnboundLocalError from inside the transform.
+            fj_ok, fj_reason = SolverFLD.forkJoinAdmits(self.sn, self.options.method)
+            if not fj_ok:
+                raise RuntimeError(fj_reason)
+            fj_t0 = time.time()
+            fj_result = self._run_fork_join_analysis()
+            if fj_result is not None:
+                self.runtime = time.time() - fj_t0
+                if self.result is not None:
+                    self.result.runtime = self.runtime
+                return self
 
         method_key = self._resolve_method()
+        # set by _dispatch_method when a resolved 'minnormal' is switched off a
+        # degenerate fixed point, so the banner and result.method name the
+        # method that actually produced the numbers
+        self._fallback_method = None
 
         if GlobalConstants.getVerbose() == VerboseLevel.DEBUG:
             print(f"SolverFLD: Using method '{method_key}'")
@@ -905,6 +1133,13 @@ class SolverFLD(NetworkSolver):
                 runtime=0.0, method=method_key
             )
 
+        # Name the method that actually produced the numbers, prefixed
+        # 'default/' when the request was 'default', as MATLAB
+        # @SolverFLD/runAnalyzer and the JAR SolverFluid both report it.
+        if self.result is not None:
+            self.result.method = method_label(
+                self.options.method, self._fallback_method or method_key)
+
         self.runtime = time.time() - start_time
 
         # For cache models solved with rmf, update hit/miss probs on model nodes
@@ -932,20 +1167,121 @@ class SolverFLD(NetworkSolver):
         if self.options.verbose:
             import sys as _sys
             py_version = f"{_sys.version_info.major}.{_sys.version_info.minor}.{_sys.version_info.micro}"
-            print(f"Fluid analysis [method: {method_label(self.options.method, method_key)}, lang: python, env: {py_version}] completed in {self.runtime:.6f}s.")
+            ran = self._fallback_method or method_key
+            from line_solver.solvers.base import print_solver_banner
+            print_solver_banner(f"Fluid analysis [method: {method_label(self.options.method, ran)}; type: {method_type('FLD', method_label(self.options.method, ran))}; lang: python; env: {py_version}] completed in {self.runtime:.6f}s.")
 
         return self
+
+    def _toph(self, sn):
+        """Acyclic-PH expansion of the non-Markovian renewal distributions.
+
+        sn_nonmarkov_toph reads options as a mapping (options.get('config')),
+        so the options object is converted the same way SolverCTMC does at
+        solver_ctmc.py:515. The fluid ODEs read mu*phi as a flow, so the
+        surrogate must be a genuine phase-type: a matrix exponential has no
+        such reading, hence phfit='ph'.
+        """
+        from ...api.sn.transforms import sn_nonmarkov_toph
+        options_dict = dict(vars(self.options)) if hasattr(self.options, '__dict__') else {'config': {}}
+        cfg = dict(options_dict.get('config') or {})
+        cfg['phfit'] = 'ph'
+        options_dict['config'] = cfg
+        return sn_nonmarkov_toph(sn, options_dict)
+
+    def _resolve_default_method(self):
+        """Concrete method that method='default' stands for.
+
+        Preference order: 'rmf' for cache models, then 'minnormal' wherever
+        fluid_minnormal_applicable accepts the model, then the historical
+        choice of 'closing' for DPS and 'matrix' otherwise. The second-order
+        closure dominates the first-order methods on every family measured
+        against exact CTMC and is the only method that can represent GPS at
+        all, so it is preferred wherever it applies. Mirrors the MATLAB
+        fluid_resolve_default_method and the JAR SolverFluid.
+
+        Returns:
+            (method, reason) with reason naming why 'minnormal' was declined,
+            empty when it was selected
+        """
+        if self._has_cache_nodes():
+            return 'rmf', 'the model has cache nodes'
+        # A BINDING BUFFER OR A CAPACITY REGION ALSO HAS ONE FLUID ROUTE, for
+        # the same reason a Petri net does: nothing else in the fluid tree reads
+        # sn.cap, sn.classcap or the region limit, so every other method
+        # integrates the capped station as an unbounded one -- which is exactly
+        # why runAnalyzer refuses them. Resolving 'default' to one of those
+        # turned a model this solver CAN answer into an error whose advice was
+        # to type the very method the resolution should have picked. The test is
+        # the gate's own, so the two cannot disagree; where the dae route
+        # declines, falling through leaves the refusal to the gate, which names
+        # the blocking feature.
+        if self._blocked_resolves_to_dae():
+            if getattr(self.sn, 'nregions', 0) > 0:
+                return 'dae', 'the model has a finite capacity region'
+            return 'dae', 'the model has a binding finite buffer'
+        # The applicability test counts PHASES, so it must see the same struct
+        # the analyzer will integrate: a Det or Gamma service carries one
+        # nominal phase before sn_nonmarkov_toph and its acyclic-PH expansion
+        # after it. Resolving on the raw struct would let the gate validate one
+        # method and the dispatch run another.
+        sn = self.sn if getattr(self, '_sn_is_toph', False) else self._toph(self.sn)
+        from .minnormal_applicable import fluid_minnormal_applicable
+        ok, reason = fluid_minnormal_applicable(sn, self.options)
+        if ok:
+            return 'minnormal', ''
+        if self._has_dps_scheduling():
+            return 'closing', reason
+        return 'matrix', reason
+
+    def _blocked_resolves_to_dae(self) -> bool:
+        """Does method='default' stand for 'dae' on this model?
+
+        True exactly when a station buffer or a capacity region BINDS and the
+        dae route accepts the model. The capacity test is
+        NetworkSolver.checkBindingCapacity, the one the gate in runAnalyzer
+        applies, so the resolution and the refusal cannot disagree. Mirrors the
+        MATLAB fluid_resolve_default_method and the JAR
+        SolverFluid.blockedResolvesToDae.
+        """
+        if self.sn is None:
+            self.sn = self._get_network_struct(self.network)
+        blocked = getattr(self.sn, 'nregions', 0) > 0
+        if not blocked:
+            model = getattr(self, 'model', None)
+            if model is not None and hasattr(model, 'get_used_lang_features'):
+                ok, _ = NetworkSolver.checkBindingCapacity(model, 'SolverFLD')
+                blocked = not ok
+        if not blocked:
+            return False
+        from .dae_applicable import fluid_dae_applicable
+        sn = self.sn if getattr(self, '_sn_is_toph', False) else self._toph(self.sn)
+        dae_ok, _ = fluid_dae_applicable(sn, self.options)
+        return dae_ok
 
     def _resolve_method(self) -> str:
         """Resolve method name to internal key.
 
-        Automatically selects 'rmf' for cache models and 'closing' when DPS
-        scheduling is present, as the matrix method does not support DPS.
+        Resolves 'default' through _resolve_default_method, and for an
+        explicit 'matrix' request selects 'rmf' for cache models and 'closing'
+        when DPS scheduling is present, as the matrix method supports neither.
 
         Returns:
             Internal method key
         """
         method = self.options.method
+        if method in ('default', 'fluid.default'):
+            # A PETRI NET RESOLVES TO 'dae', which is its only fluid route.
+            if self._is_petri_net():
+                return 'dae'
+            resolved, reason = self._resolve_default_method()
+            if GlobalConstants.getVerbose() == VerboseLevel.DEBUG:
+                if resolved == 'minnormal':
+                    print("SolverFLD: default method resolved to: minnormal")
+                else:
+                    print("SolverFLD: default resolved to %s, minnormal declined (%s)"
+                          % (resolved, reason))
+            return resolved
         resolved = self.METHODS.get(method, method)
 
         # Auto-select rmf for cache models
@@ -957,6 +1293,26 @@ class SolverFLD(NetworkSolver):
             return 'closing'
 
         return resolved
+
+    def resolveMethod(self, options):
+        """Concrete method the feature gate must validate.
+
+        The gate in NetworkSolver.runAnalyzerChecks validates
+        getMethodFeatureSet(method), and 'default' is not 'minnormal', so
+        without this override a GPS model would be rejected before the
+        resolution ever ran. Keeping the decision in one place is what stops
+        the gate and the dispatch from disagreeing.
+        """
+        requested = getattr(options, 'method', 'default')
+        if requested in ('default', 'fluid.default'):
+            if self.sn is None:
+                self.sn = self._get_network_struct(self.network)
+            if self._is_petri_net():
+                return 'dae'
+            return self._resolve_default_method()[0]
+        return self.METHODS.get(requested, requested)
+
+    resolve_method = resolveMethod
 
     def _has_cache_nodes(self) -> bool:
         """Check if network has Cache nodes.
@@ -970,6 +1326,24 @@ class SolverFLD(NetworkSolver):
             return False
         for nt in nodetype:
             if nt == NodeType.CACHE:
+                return True
+        return False
+
+    def _is_petri_net(self) -> bool:
+        """Whether the model holds a Transition node, i.e. is a Petri net.
+
+        The fluid Petri route is reached from the 'dae' branch only; every other
+        fluid method builds its drift from the station/class/phase encoding,
+        where an ordinary Place declares no service process and contributes NO
+        coordinate at all, so the net would be integrated as an empty model and
+        the table would report zeros with no warning.
+        """
+        from line_solver.api.sn import NodeType
+        nodetype = getattr(self.sn, 'nodetype', None)
+        if nodetype is None:
+            return False
+        for nt in nodetype:
+            if nt == NodeType.TRANSITION:
                 return True
         return False
 
@@ -1041,7 +1415,8 @@ class SolverFLD(NetworkSolver):
             timespan=self.options.timespan,
             pstar=pstar_list,
             num_cdf_pts=200,
-            init_sol=init_sol
+            init_sol=init_sol,
+            tranpoints=getattr(self.options, 'tranpoints', None)
         )
 
         # Solve
@@ -1109,6 +1484,71 @@ class SolverFLD(NetworkSolver):
         method = ClosingMethod(self.sn, self.options)
         return method.solve()
 
+    def _solve_minnormal(self) -> FLDResult:
+        """Solve using the second-order moment closure.
+
+        The drift uses E[min(X_i,c_i)] under a normal marginal whose variance
+        comes from the covariance (Lyapunov) equation, so mean and covariance
+        are solved self-consistently by fixed-point iteration. This is the only
+        FLD method that can represent GPS, whose capacity share depends on the
+        backlog indicator rather than on the populations.
+
+        Returns:
+            FLDResult
+        """
+        from .methods.minnormal import MinNormalSolver
+
+        # A cache model is a DECOMPOSITION, not one ODE: the caches are solved
+        # in isolation and the network with them relabeled as class switches.
+        # The closure applies to the queueing layer of that alternation, so the
+        # route is the same one 'rmf' takes, with the closure inside its
+        # network step (_solve_rmf reads options.method to decide).
+        if self._has_cache_nodes():
+            return self._solve_rmf()
+
+        method = MinNormalSolver(self.sn, self.options)
+        return method.solve()
+
+    def _solve_dae(self) -> FLDResult:
+        """Solve the min-normal closure as one differential-algebraic system.
+
+        Same closure as '_solve_minnormal' -- same drift, same rate factors,
+        same Lyapunov equation -- stated and solved as one system instead of by
+        successive substitution: population conservation becomes an EQUATION
+        rather than a consequence of the drift, and the transient carries a
+        time-varying covariance rather than the stationary one.
+
+        A CACHE MODEL IS REFUSED RATHER THAN REROUTED, which is where this
+        parts company with '_solve_minnormal' above. That method hands a cache
+        model to the 'rmf' alternation, whose network step can carry a closure;
+        there is no such route for the DAE form, because a decomposition has no
+        single drift for the algebraic constraint to be attached to.
+
+        Returns:
+            FLDResult
+        """
+        from .methods.dae import DaeSolver
+
+        # A STOCHASTIC PETRI NET TAKES ITS OWN ANALYZER, and returns from here.
+        # The route mirrors the MATLAB twin (solver_fluid_analyzer's Transition
+        # branch): a model with any Transition node is a different formalism,
+        # and the queueing post-processing below would overwrite the Petri
+        # conventions -- a Place is an INF station whose utilization is its
+        # token count and whose throughput is the firing rate of the modes
+        # consuming from it.
+        if self._is_petri_net():
+            from .methods.petri import PetriSolver
+            return PetriSolver(self.sn, self.options).solve()
+
+        if self._has_cache_nodes():
+            raise ValueError(
+                "The dae method does not support caching stations: a cache model is solved by "
+                "decomposition, so it has no single drift to constrain. Use "
+                "options.method='minnormal' for the same closure, or 'rmf'.")
+
+        method = DaeSolver(self.sn, self.options)
+        return method.solve()
+
     def _solve_tbi(self) -> FLDResult:
         """Solve using trajectory-based iteration (TBI).
 
@@ -1154,7 +1594,26 @@ class SolverFLD(NetworkSolver):
             result.method = 'mfq'
             return result
 
-        method = MFQMethod(self.sn, self.options)
+        # MFQ IS A SINGLE-QUEUE METHOD AND FALLS BACK, which is what the
+        # reference does: solver_fluid_analyzer.m warns "MFQ not applicable:
+        # ... Falling back to matrix method" and re-enters solver_fluid_matrix.
+        # Raising instead made 'mfq' -- and therefore its aliases 'butools' and
+        # 'aoi' -- refuse every multi-station model that MATLAB, the JAR and C++
+        # all answer.
+        try:
+            method = MFQMethod(self.sn, self.options)
+        except ValueError as not_applicable:
+            from ...api.io.logging import line_warning
+            line_warning('solver_fluid_analyzer',
+                         'MFQ not applicable: %s. Falling back to matrix method.'
+                         % (not_applicable,))
+            # `_fallback_method` is what runAnalyzer reports through
+            # method_label; setting result.method directly is overwritten there,
+            # and the label has to say `matrix` as MATLAB and the JAR both do.
+            self._fallback_method = 'matrix'
+            result = self._solve_matrix()
+            result.method = 'matrix'
+            return result
         return method.solve()
 
     def _solve_aoi(self) -> FLDResult:
@@ -1175,6 +1634,46 @@ class SolverFLD(NetworkSolver):
         method = AoIMethod(self.sn, self.options)
         return method.solve()
 
+    def _solve_kp(self) -> FLDResult:
+        """Fluid + diffusion limits of Ko and Pender (2017).
+
+        Integrates the mean and the covariance of the (MAP_t/Ph_t/inf)^N limit
+        jointly, so the result carries a variance trajectory that no other FLD
+        method provides.
+        """
+        from .methods.kp import solve_kp
+        return solve_kp(self.sn, self.options)
+
+    def _solve_qsys(self, method_key) -> FLDResult:
+        """One of the single-station fluid limits.
+
+        These are closed forms, not integrations of the network drift: they take
+        the whole model in one call and have no initial state to average over.
+        solver_fluid_qsys_analyzer refuses any model that is not the
+        Source -> Queue -> Sink shape they are stated for.
+        """
+        import time as _time
+        from ...api.solvers.fld.qsys import solver_fluid_qsys_analyzer
+        t0 = _time.time()
+        opts = copy.copy(self.options)
+        opts.method = method_key
+        out = solver_fluid_qsys_analyzer(self.sn, opts)
+        res = FLDResult(QN=out['QN'], UN=out['UN'], RN=out['RN'], TN=out['TN'],
+                        CN=out['CN'].reshape(1, -1), XN=out['XN'].reshape(1, -1),
+                        AN=out['AN'])
+        res.method = out['method']
+        res.iterations = 1
+        res.runtime = _time.time() - t0
+        if out['Qt']:
+            traj = out['Qt'][0][0]
+            res.t = np.asarray(traj)[:, 1]
+            for i in range(len(out['Qt'])):
+                for r in range(len(out['Qt'][i])):
+                    res.QNt[(i, r)] = np.asarray(out['Qt'][i][r])[:, 0]
+                    res.UNt[(i, r)] = np.asarray(out['Ut'][i][r])[:, 0]
+                    res.TNt[(i, r)] = np.asarray(out['Tt'][i][r])[:, 0]
+        return res
+
     def _solve_rmf(self) -> FLDResult:
         """Solve cache+queueing network using fixed-point iteration.
 
@@ -1185,17 +1684,37 @@ class SolverFLD(NetworkSolver):
 
         Matches MATLAB solver_fld_cacheqn_analyzer.m.
         """
+        sn = self.sn
+        I = sn.nnodes
+        K = sn.nclasses
+        M = sn.nstations
+
+        # THE CACHE REWRITE IS UNDONE ON THE WAY OUT, exception or not. The
+        # alternation below RELABELS each cache node as a class switch in
+        # `self.sn` itself, and the struct is what every later gate reads: leave
+        # it rewritten and `fluid_dae_applicable`, which declines a cache model
+        # by name, stops seeing one. The fallback ladder in `_dispatch_method`
+        # then admits `dae` for a model that has no dae route, and `dae` answers
+        # the REWRITTEN network -- measured on the cacheqn model as a total
+        # population of 4.2797 against N = 4, returned with no error at all.
+        # The JAR saves and restores `sn.rt` around the same rewrite for the
+        # same reason; see _kb/06-solver-catalog.md.
+        nodetype_orig = list(sn.nodetype) if sn.nodetype is not None else None
+        try:
+            return self._solve_rmf_inner(sn, I, K, M)
+        finally:
+            if nodetype_orig is not None:
+                for _i, _nt in enumerate(nodetype_orig):
+                    sn.nodetype[_i] = _nt
+
+    def _solve_rmf_inner(self, sn, I, K, M) -> FLDResult:
+        """The cache/queueing alternation itself; see :meth:`_solve_rmf`."""
         from ...api.sn.network_struct import NodeType
         from ...api.cache import (cache_miss_rmf, cache_miss_sfifo_rmf,
                                    cache_miss_fifo_rmf, cache_gamma_lp)
         from ...lang.base import ReplacementStrategy
         from ...api.mc.dtmc import dtmc_stochcomp
         from ...api.sn.transforms import sn_refresh_visits
-
-        sn = self.sn
-        I = sn.nnodes
-        K = sn.nclasses
-        M = sn.nstations
 
         # Build statefulNodesClasses list (matching MATLAB)
         stateful_nodes_classes = []
@@ -1220,6 +1739,8 @@ class SolverFLD(NetworkSolver):
 
         hitprob = np.zeros((len(cache_indices), K))
         missprob = np.zeros((len(cache_indices), K))
+        use_moments = str(getattr(self.options, 'method', '')).endswith('minnormal')
+        last_moments = None
 
         iter_max = self.options.iter_max if self.options.iter_max else 100
         iter_tol = self.options.iter_tol if hasattr(self.options, 'iter_tol') and self.options.iter_tol else 1e-6
@@ -1272,7 +1793,7 @@ class SolverFLD(NetworkSolver):
                         return mat
                     Rcost = [[_default_routing(h) for _ in range(n)] for _ in range(u)]
 
-                gamma, _, _, _ = cache_gamma_lp(lambda_cache, Rcost)
+                gamma, _, _, _, _ = cache_gamma_lp(lambda_cache, Rcost)
 
                 # Native fluid (drift-based) cache models: RANDOM(m) and FIFO(m)
                 # share the RAND(m) refined mean field (Gast15 Thm 1:
@@ -1341,14 +1862,29 @@ class SolverFLD(NetworkSolver):
             # Refresh visits
             sn_refresh_visits(sn)
 
-            # Solve the queueing network using fluid matrix method
+            # Solve the queueing network. The caches are already relabeled as
+            # class switches above, so this is a plain queueing network and the
+            # moment closure applies to it unchanged; 'minnormal' therefore
+            # reaches a cache model through the same decomposition as 'rmf',
+            # with the closure in place of the first-order matrix method.
             saved_method = self.options.method
-            self.options.method = 'matrix'
             saved_init_sol = self.options.init_sol
             self.options.init_sol = None  # Let solver compute init_sol from current sn
-            result = self._solve_matrix()
-            self.options.method = saved_method
-            self.options.init_sol = saved_init_sol
+            try:
+                if use_moments:
+                    self.options.method = 'minnormal'
+                    result = self._solve_minnormal()
+                    if result is not None:
+                        last_moments = getattr(result, 'moments', None)
+                else:
+                    self.options.method = 'matrix'
+                    result = self._solve_matrix()
+            finally:
+                # Restored on the way out however this leaves: the network step
+                # can raise FluidNonHyperbolicError, and the ladder that catches
+                # it reads options.method to decide what was being attempted.
+                self.options.method = saved_method
+                self.options.init_sol = saved_init_sol
 
             if result is None:
                 break
@@ -1416,17 +1952,123 @@ class SolverFLD(NetworkSolver):
                 break
             lambda_1 = lambda_arr.copy()
 
+        # The hit/miss split is a solver RESULT and belongs on the node, not only
+        # on this solver's result: getHitRatio reads it there, and so does any
+        # caller that solves here and reads elsewhere (the MATLAB lang='python'
+        # bridge rebuilds the hit-class and miss-class node throughputs from it).
+        # MATLAB's SolverFLD writes it at solve time for the same reason; without
+        # this, only the sn.nodeparam patch in getAvgNode carried it, so a plain
+        # getAvg left the node empty. Mirrors SolverFLD/runAnalyzer.m.
+        model_nodes = self.model.getNodes()
+        for cIdx, ind in enumerate(cache_indices):
+            cache_node = model_nodes[ind] if ind < len(model_nodes) else None
+            if cache_node is not None and hasattr(cache_node, 'set_result_hit_prob'):
+                cache_node.set_result_hit_prob(hitprob[cIdx, :])
+                cache_node.set_result_miss_prob(missprob[cIdx, :])
+
         # Store hit/miss probs in result's xvec for runAnalyzer to retrieve
         if result is not None:
-            result.method = 'rmf'
+            result.method = 'minnormal' if use_moments else 'rmf'
             # Attach cache hit/miss probs as extra attributes
             result._cacheHitProb = hitprob
             result._cacheMissProb = missprob
+            if use_moments:
+                # The moment report: the queueing fields as any other model
+                # returns them, plus the cache occupancy covariance evaluated at
+                # the converged isolated-cache inputs. The cache is re-solved
+                # once here rather than inside the sweep because only the FINAL
+                # arrival rates define the fixed point it linearises about.
+                moments = dict(last_moments) if last_moments else {}
+                moments['cache'] = self._cache_moments(cache_tran_inputs, K)
+                result.moments = moments
 
         # Expose the converged isolated-cache inputs for the transient path.
         self._cache_rmf_inputs = cache_tran_inputs
 
         return result
+
+    def _cache_moments(self, cache_inputs, nclasses):
+        """Second moment of each cache, at the converged isolated-cache inputs.
+
+        The linear noise approximation of the RANDOM(m) drift gives the
+        stationary covariance of the item occupancy. The per-item miss
+        indicator is coordinate (i, list 0), so its variance is the leading
+        n-item block of the diagonal; the miss probability a class sees is the
+        popularity-weighted sum of those indicators, hence a linear functional
+        whose variance is w' W00 w. Only RR/FIFO on the linear access chain have
+        the drift the covariance linearises, so a cache without one is omitted
+        rather than reported as a fabricated zero.
+
+        Twin of the MATLAB local `local_cache_moments` in
+        `solver_fld_cacheqn_analyzer`.
+        """
+        from ...api.cache import cache_rmf_lna
+        from ...lang.base import ReplacementStrategy
+
+        out = []
+        for entry in cache_inputs:
+            if entry is None:
+                continue
+            if entry.get('strat') not in (ReplacementStrategy.RR, ReplacementStrategy.FIFO):
+                continue
+            lam = np.asarray(entry['lambda_cache'], dtype=float)
+            m = np.asarray(entry['m'], dtype=float).ravel()
+            u, nitems = lam.shape[0], lam.shape[1]
+            h = len(m)
+            dim = nitems * (h + 1)
+
+            lam_i = np.zeros(nitems)
+            for v in range(u):
+                row = np.array(lam[v, :, 0], dtype=float)
+                row[~np.isfinite(row)] = 0.0
+                lam_i += row
+            if np.sum(lam_i) <= 0:
+                continue
+            p = lam_i / np.sum(lam_i)
+
+            # linearise at the SAME point the mean is reported at, i.e. the
+            # refined fixed point pi + V/n when it is finite, exactly as
+            # cache_miss_rmf does; the covariance of a different point is a
+            # different number
+            try:
+                from ...api.cache.rmf import _fixed_point, _expansion_steady_state, _idx
+                x0 = np.zeros(dim)
+                obj_idx = 0
+                for k in range(1, h + 1):
+                    for _ in range(int(m[k - 1])):
+                        if obj_idx < nitems:
+                            x0[_idx(obj_idx, k, nitems)] = 1.0
+                            obj_idx += 1
+                for i in range(obj_idx, nitems):
+                    x0[_idx(i, 0, nitems)] = 1.0
+                x = _fixed_point(x0, p, m, nitems, h, dim)
+                try:
+                    pi_mf, V = _expansion_steady_state(x0, p, m, nitems, h, dim)
+                    xref = pi_mf + V / nitems
+                    if np.all(np.isfinite(xref)):
+                        x = xref
+                except Exception:
+                    pass
+                W = cache_rmf_lna(x, p, m, nitems, h, dim)
+                pi0 = np.clip(x[:nitems], 0.0, 1.0)
+            except Exception:
+                continue
+
+            W00 = W[:nitems, :nitems]
+            miss_var = np.zeros(nclasses)
+            for r in range(min(nclasses, u)):
+                w = np.array(lam[r, :, 0], dtype=float)
+                w[~np.isfinite(w)] = 0.0
+                tot = np.sum(w)
+                if tot <= 0:
+                    continue
+                w = w / tot
+                miss_var[r] = max(0.0, float(w @ W00 @ w))
+
+            out.append({'node': entry['node'], 'pi0': np.asarray(pi0).ravel(),
+                        'Sigma': W, 'pi0Var': np.maximum(0.0, np.diag(W00)),
+                        'missProbVar': miss_var})
+        return out
 
     def _cacheqn_tran(self, tspan, x0cell=None):
         """Transient refined-mean-field cache trajectory.
@@ -1503,7 +2145,7 @@ class SolverFLD(NetworkSolver):
             DataFrame with columns: Station, JobClass, QLen, Util, RespT, ResidT, ArvR, Tput
         """
         if self.result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         # Extract station and class names
         nstations = self.sn.nstations
@@ -1822,12 +2464,22 @@ class SolverFLD(NetworkSolver):
             dict with keys 't', 'cdf', 'mean', 'var', 'method'
         """
         if self.result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         from .methods.passage_time import compute_passage_time_cdf
 
         # Get steady-state ODE vector for passage time analysis
         steady_state_vec = self.result.xvec if self.result.xvec is not None else None
+        # and the closure that solve closed its drift at, so the passage time is
+        # measured on the same drift (see compute_passage_time_cdf)
+        sigma2_drift = None
+        # getMoments(), not result.moments: a delegated solve carries the closure
+        # on the transport, not on the result object, and reading the attribute
+        # left lang='java' integrating the FIRST-ORDER drift while the mean it
+        # reports came from the closure.
+        moments = self.getMoments()
+        if isinstance(moments, dict):
+            sigma2_drift = moments.get('sigma2Drift')
 
         # If no station/class specified, return all in nested list format
         if station is None and job_class is None:
@@ -1842,27 +2494,22 @@ class SolverFLD(NetworkSolver):
                     if R is not None and i < R.shape[0] and r < R.shape[1]:
                         mean_resp_t = R[i, r]
                         if mean_resp_t > 0 and not np.isnan(mean_resp_t):
-                            # Use transient fluid analysis for CDF
-                            try:
-                                t_cdf, cdf_vals = compute_passage_time_cdf(
-                                    self.sn,
-                                    station_idx=i,
-                                    job_class=r,
-                                    options=self.options,
-                                    steady_state_vec=steady_state_vec,
-                                    t_span=t_span
-                                )
-                                # Return as 2D array with columns [cdf, time]
-                                cdf_data = np.column_stack([cdf_vals, t_cdf])
-                                station_data.append(cdf_data)
-                            except Exception:
-                                # Fallback to exponential approximation
-                                lambda_rate = 1.0 / mean_resp_t
-                                quantiles = np.linspace(0.001, 0.999, 100)
-                                times = -np.log(1 - quantiles) / lambda_rate
-                                cdf_vals = 1 - np.exp(-lambda_rate * times)
-                                cdf_data = np.column_stack([cdf_vals, times])
-                                station_data.append(cdf_data)
+                            # Use transient fluid analysis for CDF. No fallback:
+                            # an exponential substituted on failure reports the
+                            # WRONG distribution (SCV 1 for every station) with
+                            # nothing in the output to say so
+                            t_cdf, cdf_vals = compute_passage_time_cdf(
+                                self.sn,
+                                station_idx=i,
+                                job_class=r,
+                                options=self.options,
+                                steady_state_vec=steady_state_vec,
+                                t_span=t_span,
+                                sigma2=sigma2_drift
+                            )
+                            # Return as 2D array with columns [cdf, time]
+                            cdf_data = np.column_stack([cdf_vals, t_cdf])
+                            station_data.append(cdf_data)
                         else:
                             station_data.append(None)
                     else:
@@ -1884,7 +2531,8 @@ class SolverFLD(NetworkSolver):
                 job_class=job_class,
                 options=self.options,
                 steady_state_vec=steady_state_vec,
-                t_span=t_span
+                t_span=t_span,
+                sigma2=sigma2_drift
             )
 
             # Compute moments from CDF
@@ -1936,7 +2584,7 @@ class SolverFLD(NetworkSolver):
         >>> print(f"P(response_time <= 1.0) = {prob_less_than_1:.4f}")
         """
         if self.result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         # Get full CDF
         cdf_dict = self.getCdfRespT(station=station, job_class=job_class)
@@ -1968,6 +2616,8 @@ class SolverFLD(NetworkSolver):
             - 'softmin', 'fluid.softmin': Softmin smoothing variant
             - 'statedep', 'fluid.statedep': State-dependent variant
             - 'closing', 'fluid.closing': Closing approximation
+            - 'minnormal', 'fluid.minnormal': Second-order moment closure
+            - 'refined', 'fluid.refined': O(1/N) refined mean field (Gast)
             - 'diffusion', 'fluid.diffusion': Diffusion SDE method
             - 'mfq', 'fluid.mfq', 'butools': Markovian fluid queue
             - 'aoi', 'fluid.aoi': explicit AoI MFQ solver
@@ -1985,11 +2635,27 @@ class SolverFLD(NetworkSolver):
             'softmin', 'fluid.softmin',
             'statedep', 'fluid.statedep',
             'closing', 'fluid.closing',
+            'minnormal', 'fluid.minnormal',
+            'refined', 'fluid.refined',
             'tbi', 'fluid.tbi',
             'diffusion', 'fluid.diffusion',
             'mfq', 'fluid.mfq', 'butools',
             'rmf', 'fluid.rmf',
             'aoi', 'fluid.aoi',
+            'kp', 'fluid.kp',
+            'dae', 'fluid.dae',
+            # The single-station fluid limits (Source -> Queue -> Sink, one
+            # class). Unlike the MATLAB twin this list is static, so they are
+            # named on every model and the analyzer refuses the shapes they are
+            # not stated for -- the convention this solver already follows for
+            # 'mfq' and the rest.
+            # 'ggisgi' and 'tga' are the SHORT spellings, mapped onto the two
+            # primary names as the C++ fluid_qsys_canonical does
+            'ggisgi.fluid', 'fluid.ggisgi', 'ggisgi',
+            'ggingi.tga', 'fluid.tga', 'tga',
+            'tvms', 'fluid.tvms',
+            'mtginf', 'fluid.mtginf',
+            'mol', 'fluid.mol',
         ]
 
     @staticmethod
@@ -2027,9 +2693,408 @@ class SolverFLD(NetworkSolver):
         # More specific constraints (e.g., mfq requires single queue) checked at solve time
         return True, None
 
+    @staticmethod
+    def canonicalMethod(method):
+        """The one spelling of a fluid method that every gate tests against.
+
+        NOT `METHODS`, which is a DISPATCH map: it sends 'refined' to
+        'minnormal' because they share a solver routine, while their feature
+        envelopes differ ('refined' is closed-only). This collapses SPELLING
+        only: the 'fluid.' qualifier, the MFQ backend aliases 'butools' and
+        'aoi', and the short spellings of the two single-station limits.
+
+        Canonicalizing once is what keeps an alias from carrying a different
+        envelope than the name it resolves to, and it is the reason the four
+        codebases can no longer drift apart over a spelling. MATLAB
+        SolverFLD.canonicalMethod, the JAR and C++ apply the same three rules
+        in the same order.
+        """
+        if not isinstance(method, str):
+            return method
+        m = method[6:] if method.startswith('fluid.') else method
+        if m in ('butools', 'aoi'):
+            return 'mfq'
+        if m == 'ggisgi':
+            return 'ggisgi.fluid'
+        if m == 'tga':
+            return 'ggingi.tga'
+        return m
+
+    canonical_method = canonicalMethod
+
     def getMethodFeatureSet(self, method):
-        """All fluid methods share the solver-level feature envelope."""
-        return SolverFLD.getFeatureSet()
+        """Feature envelope of a method, narrowed for 'kp' and for GPS."""
+        feats = SolverFLD.getFeatureSet()
+        m = SolverFLD.canonicalMethod(method)
+        # GPS divides the server by weight among the BACKLOGGED classes, so its
+        # share is a function of the backlog INDICATOR. A first-order closure
+        # cannot express it at all: with continuous x_k > 0 every class is always
+        # backlogged and the share collapses to the constant w_k/sum_j w_j, the
+        # heavy-traffic limit, regardless of load. Only 'minnormal' supplies the
+        # P(X_k >= 1) the closure needs. Mirrors MATLAB SolverFLD and the JAR.
+        if m != 'minnormal':
+            feats = set(feats) - {'SchedStrategy_GPS'}
+        # Limited load dependence composes with the closure as a rate multiplier
+        # alpha(n_i) on the scheduling share, which only the closing family
+        # evaluates (_ode_rate_factors / closures.py). The matrix, pnorm, softmin,
+        # statedep, tbi, diffusion, mfq, kp and rmf paths build their drift
+        # independently and would silently return the alpha == 1 answer.
+        # 'dae' belongs in this list and was missing, so a load-dependent model
+        # was refused on the one closing-family method that evaluates alpha(n_i)
+        # as an algebraic system: 'dae' IS the min-normal closure, same drift and
+        # same rate factors, solved as one system instead of by substitution.
+        # MATLAB and C++ have always kept all four.
+        if m not in ('closing', 'minnormal', 'refined', 'dae'):
+            feats = set(feats) - {'LoadDependence'}
+        # Scheduling disciplines with no branch in the closing drift. A station
+        # without a case in _ode_rate_factors keeps rates = x, i.e. it is
+        # integrated as an INFINITE SERVER, and the answer is wrong without any
+        # warning: on Delay(Z=1) -> Queue(c=1), N=4, exact Q2 = 3.0154, the
+        # fall-through returns 2.0000. SIRO is worse still, because the closing
+        # metric reader accepts it AS FCFS: the ODE integrates it as INF while
+        # the metrics are read as if it shared the server. This port was the only
+        # one of the four with no such strip at all, so it answered all three
+        # silently where MATLAB, the JAR and C++ refuse. matrix/pnorm build a PS
+        # drift for every queueing station, the right aggregate for any
+        # work-conserving discipline, so they are unaffected.
+        if m in ('closing', 'statedep', 'softmin', 'tbi', 'minnormal', 'refined', 'dae'):
+            feats = set(feats) - {'SchedStrategy_SIRO', 'SchedStrategy_LCFS',
+                                  'SchedStrategy_LCFSPR'}
+        # HOL allocates capacity in PRIORITY order, not in proportion to
+        # population, and no fluid drift reads sn.classprio except the
+        # single-queue MFQ priority branch. Declaring it for every method, as
+        # this port did, offers a priority model to drifts that would answer it
+        # as if the classes shared the server proportionally.
+        if m != 'mfq':
+            feats = set(feats) - {'SchedStrategy_HOL'}
+        # A stochastic Petri net has no drift outside the DAE form: its conserved
+        # quantities are P-invariants rather than chain populations, and an
+        # immediate transition is an algebraic FLOW rather than an event with a
+        # rate. Every other fluid method builds its drift from the
+        # station/class/phase encoding, where a Place contributes no coordinate
+        # at all, so it would integrate the net as an empty model and report
+        # zeros without a warning.
+        if m != 'dae':
+            feats = set(feats) - {'Place', 'Transition', 'Enabling', 'Inhibiting',
+                                  'Timing', 'Firing', 'Storage', 'Linkage'}
+        if m == 'dae':
+            feats = set(feats)
+            # A CAPACITY LIMIT IS A LINEAR INEQUALITY ON THE STATE, which the DAE
+            # form can carry as an algebraic equation beside the drift and no ODE
+            # method can carry at all. The gate is where this has to be declared:
+            # runAnalyzer's own refusal sits downstream of runAnalyzerChecks, so
+            # without this the model is rejected as an unsupported feature before
+            # the method is ever consulted. capacity_constraints still refuses the
+            # region forms that are not constraints on this drift, by name.
+            feats.add('Region')
+            # DPS closes on the covariance BETWEEN a station's class coordinates,
+            # not on the station total. 'minnormal' carries those blocks through
+            # its outer iteration; the DAE has no unknown for them, since a matrix
+            # block per station restores the quartic cost that keeping Sigma out of
+            # the Newton vector avoids.
+            feats -= {'SchedStrategy_DPS'}
+        if m in ('ggisgi.fluid', 'ggingi.tga', 'tvms'):
+            # The only fluid methods in LINE stated for a queue customers
+            # ABANDON. Reneging stays out of the base FLD envelope: the network
+            # drift carries no abandonment flow, so every other method would
+            # integrate the model as if nobody left.
+            feats = set(feats) | {'Reneging'}
+        if m in ('ggisgi.fluid', 'ggingi.tga', 'tvms', 'mtginf', 'mol'):
+            # Every one of them is stated for a single open station; the base
+            # envelope's closed classes have no meaning there.
+            feats = set(feats) - {'ClosedClass', 'SelfLoopingClass'}
+        if m == 'refined':
+            # CLOSED MODELS ONLY, which the MATLAB runAnalyzer has always
+            # enforced by name and the featset never stated: the 1/N correction
+            # is solved on orth(D) over the FULL state, so on an open model it
+            # adds a perturbation to the SOURCE POOL mass, a normalisation
+            # constant rather than a population. Only 'minnormal' was validated
+            # open. Stating it here is what lets a report withdraw the pair
+            # instead of offering a run that stops -- on an open fork-join model
+            # the same restriction surfaced as a failure inside the MMT fixed
+            # point rather than as a refusal. The C++ twin asserts the same
+            # refusal (cpp/tests/test_fluid_moments.cpp).
+            feats = set(feats) - {'OpenClass', 'Source', 'Sink',
+                                  'RandomSource', 'JobSink'}
+        if m == 'diffusion':
+            # The diffusion SDE PROJECTS each class back onto its own fixed
+            # population at every step, which is the closed-network constraint
+            # itself: an open class has no population to project onto, and a
+            # Source is not a station the SDE has a coordinate for. Mirrors
+            # MATLAB SolverFLD.getMethodFeatureSet and the JAR.
+            feats = set(feats) - {'OpenClass', 'Source', 'Sink',
+                                  'RandomSource', 'JobSink'}
+        if m in ('diffusion', 'kp'):
+            # NEITHER OF THESE TWO INTEGRATES A FORK-JOIN MODEL, and each says so
+            # by answering rather than by refusing, which is the reason to state
+            # it here. Measured on a SYMMETRIC closed fork-join (Delay -> Fork ->
+            # two identical FCFS queues -> Join, N = 2) whose exact chain is
+            # Q1 = Q2 = 0.664, J = 0.624, D = 1.024: 'diffusion' returns the whole
+            # population on ONE station and zero elsewhere -- a different station
+            # on a rerun, so the SDE is not integrating this model at all -- and
+            # 'kp' returns an ALL-ZERO table on a symmetric OPEN fork-join fed at
+            # rate 0.5, an empty network where jobs are arriving. The C++ featset
+            # has always withheld the names; MATLAB and this port offered them
+            # and mis-answered.
+            feats = set(feats) - {'Fork', 'Join', 'Forker', 'Joiner', 'JoinPartial'}
+        if m == 'tbi':
+            # Trajectory-based iteration decomposes the CLOSED population into
+            # cells and relaxes the waveforms between them; there is no cell for
+            # an unbounded open stream. A cache model is solved by decomposition
+            # rather than by one drift, so the cell partition has nothing to
+            # partition -- use 'rmf'.
+            feats = set(feats) - {'OpenClass', 'Source', 'Sink',
+                                  'RandomSource', 'JobSink',
+                                  'Cache', 'CacheClassSwitcher',
+                                  'ReplacementStrategy_RR', 'ReplacementStrategy_FIFO',
+                                  'ReplacementStrategy_SFIFO'}
+        if m == 'kp':
+            # The Ko-Pender limits are proved for an OPEN network of stations
+            # fed by external arrival processes: a closed class has no arrival
+            # process to modulate and no source phase to carry, and the cache
+            # and class-switch machinery has no counterpart in the paper's
+            # event set. Narrow the envelope rather than fail at solve time.
+            feats = set(feats)
+            feats -= {'ClosedClass', 'SelfLoopingClass', 'Cache',
+                      'CacheClassSwitcher', 'ClassSwitch', 'StatelessClassSwitcher',
+                      'ReplacementStrategy_RR', 'ReplacementStrategy_FIFO',
+                      'ReplacementStrategy_SFIFO'}
+        # MULTISERVER (registry name since 2026-09-05): the drifts carry
+        # min(n,c) except the diffusion SDE, which is written for one or
+        # infinitely many servers. fluid_method_refusal keeps wording that
+        # refusal.
+        #
+        # 'mfq' is NOT withdrawn here, where MATLAB's SolverFLD.m does withdraw
+        # it. MATLAB can, because its gate asks about the RESOLVED method and
+        # SolverFLD.resolveMethod sends 'mfq' to 'matrix' off the single-queue
+        # shape fluid_mfq_admits decides; native python has no such resolution
+        # for 'mfq', so the withdrawal would be a refusal rather than a
+        # relabelling. It would also be untrue of this analyzer: _solve_mfq
+        # returns the exact M/M/c utilisation lambda/(c*mu), which is what
+        # test_solver_fld_matlab_parity::test_mmc_mfq_exact pins as MATLAB
+        # parity. A feature set states what its own analyzer honours.
+        if m == 'diffusion':
+            feats = set(feats) - {'MultiServer'}
+        return feats
+
+    def supportsModelMethod(self, method):
+        """The structural finite-capacity gate runAnalyzer enforces at solve
+        time, stated here so that a CALLER can see it before running.
+
+        Nothing in the fluid tree reads sn.cap or sn.classcap, so every method
+        but two integrates a capped station as an unbounded one. 'dae' carries
+        the buffer as an algebraic constraint on the drift, and 'mol' is stated
+        for the Mt/G/s/0 LOSS system, where the server count IS the buffer; the
+        rest keep the guard. There is no registry feature name for plain
+        capacity, hence the structural test -- SolverNC and SolverMVA gate the
+        same way.
+
+        Left only in runAnalyzer the rule was invisible to every gate above it,
+        and SolverAUTO.listValidMethods offered all 29 fluid methods on the
+        BAS-blocking model of cqn_bas_blocking, each of which then raised when
+        asked to run. Mirrors MATLAB @SolverFLD/supportsModelMethod.
+        """
+        ok, reason = super().supportsModelMethod(method)
+        if ok:
+            ok, reason = self._single_station_shape_admits(method)
+            if not ok:
+                return ok, reason
+        if ok and method in self._TIME_VARYING_METHODS:
+            # The time-varying single-station limits report a TRAJECTORY, so
+            # they need a finite options.timespan. A horizon is an option and
+            # not a model feature, hence the structural test; the predicate is
+            # the one solver_fluid_qsys_analyzer stops on, so the report and the
+            # run cannot answer differently.
+            from ...api.solvers.fld.qsys import fluid_qsys_horizon
+            hok, hreason, _, _ = fluid_qsys_horizon(self.options)
+            if not hok:
+                return False, ("The '%s' method reports a trajectory. %s" % (method, hreason))
+        # A fork-join model is answered by the MMT fixed point rather than by one
+        # drift, and not every method can run it. Fork and OpenClass are both
+        # declared names, so the featset cannot state a rule that is their
+        # CONJUNCTION; it is structural, and it is the predicate runAnalyzer
+        # stops on.
+        if ok:
+            model = getattr(self, 'model', None)
+            if model is not None and hasattr(model, 'get_struct'):
+                fok, freason = SolverFLD.forkJoinAdmits(model.get_struct(), method)
+                if not fok:
+                    return False, freason
+        # 'default' IS ASKED THROUGH ITS RESOLUTION, not as a name of its own:
+        # on a capped model it stands for 'dae' (see _resolve_default_method),
+        # so gating the literal name would refuse the very run that succeeds.
+        if ok and method in ('default', 'fluid.default') and self._blocked_resolves_to_dae():
+            return ok, reason
+        if ok and method not in ('dae', 'fluid.dae', 'mol', 'fluid.mol'):
+            model = getattr(self, 'model', None)
+            if model is not None and hasattr(model, 'get_used_lang_features'):
+                ok, reason = NetworkSolver.checkBindingCapacity(model, 'SolverFLD')
+                if not ok:
+                    reason = ("%s Use options.method='dae', which carries the buffer as an "
+                              "algebraic constraint on the drift." % reason)
+        return ok, reason
+
+    @staticmethod
+    def forkJoinAdmits(sn, method):
+        """Can ``method`` run the fluid fork-join fixed point on this model?
+
+        A fork-join model is not integrated as one drift: the MMT transform
+        replaces the fork by auxiliary classes and the answer is the fixed point
+        of solving that transformed model repeatedly. On a CLOSED model the
+        transform stays closed and every fluid method takes it. On an OPEN one
+        the auxiliary classes arrive at a Source, and the DAE form has no
+        unknowns for them: the inner solve fails on the class count rather than
+        returning a drift, so the method is refused by name instead.
+
+        'refined' is NOT listed here even though it fails the same way, because
+        it is already refused on every open model, fork-join or not, by its own
+        closed-model restriction (see getMethodFeatureSet).
+
+        Called by runAnalyzer, so the run stops on it, and by
+        supportsModelMethod, so a caller sees the same verdict before paying for
+        the fixed point. One predicate, two callers. Mirrors MATLAB
+        fluid_forkjoin_admits.
+
+        Args:
+            sn: NetworkStruct of the model.
+            method: the concrete method name.
+
+        Returns:
+            (ok, reason); reason is '' when ok is True.
+        """
+        if method not in ('dae', 'fluid.dae'):
+            return True, ''
+        nodetype = np.ravel(np.asarray(sn.nodetype, dtype=int))
+        if not np.any(nodetype == int(NodeType.FORK)):
+            return True, ''
+        if not np.any(np.isinf(np.ravel(np.asarray(sn.njobs, dtype=float)))):
+            return True, ''
+        return False, (
+            "The dae method has no route through the fork-join fixed point on an OPEN "
+            "model: the MMT transform hands the inner solve a mixed network whose "
+            "auxiliary open classes the DAE form carries no unknowns for. Use "
+            "options.method='minnormal', which is the same closure and does run that "
+            "fixed point.")
+
+    # The two single-station families and the shape each is stated for.
+    _SINGLE_STATION_METHODS = ('ggisgi.fluid', 'fluid.ggisgi', 'ggisgi',
+                               'ggingi.tga', 'fluid.tga', 'tga',
+                               'tvms', 'fluid.tvms',
+                               'mtginf', 'fluid.mtginf', 'mol', 'fluid.mol')
+    _ABANDONMENT_METHODS = ('ggisgi.fluid', 'fluid.ggisgi', 'ggisgi',
+                            'ggingi.tga', 'fluid.tga', 'tga',
+                            'tvms', 'fluid.tvms')
+    # The three limits that report a trajectory rather than a stationary point,
+    # and so need a finite options.timespan; 'ggisgi' and 'tga' are stationary.
+    _TIME_VARYING_METHODS = ('tvms', 'fluid.tvms',
+                             'mtginf', 'fluid.mtginf', 'mol', 'fluid.mol')
+
+    def _single_station_shape_admits(self, method):
+        """The shape rule the single-station fluid limits are stated for, asked
+        as a gate rather than raised at solve time.
+
+        WHY IT IS HERE AND NOT IN listValidMethods, which is where the MATLAB
+        twin puts it. That list is a @staticmethod in this port, deliberately
+        (see its own note), so it cannot see the model; the gate can, and a
+        gate is where a model-dependent rule belongs in any case. The two
+        codebases therefore reach the same answer by different routes, which is
+        what matters to a caller of findSolver: before this, SolverAUTO offered
+        'fluid.ggingi.tga' on a plain M/M/1 and the method then raised, because
+        the queue it needs customers to abandon has no patience law.
+
+        The rule mirrors @SolverFLD/listValidMethods.m: one open class through
+        one Source and one queueing station for the whole family, plus a
+        reneging patience law for the two abandonment limits.
+        """
+        if method not in self._SINGLE_STATION_METHODS:
+            return True, ''
+        model = getattr(self, 'model', None)
+        if model is None:
+            return True, ''
+        try:
+            sn = model.get_struct()
+            from ...api.solvers.fld.qsys import _station_of_type
+            from ...api.sn import sn_patience_handles
+            src = _station_of_type(sn, NodeType.SOURCE)
+            qi = _station_of_type(sn, NodeType.QUEUE)
+            if qi is None:
+                qi = _station_of_type(sn, NodeType.DELAY)
+        except Exception:
+            # A struct this port cannot build here says nothing about the
+            # shape; the analyzer's own check still stands behind the gate.
+            return True, ''
+        if src is None or qi is None or int(sn.nclasses) != 1 \
+                or int(getattr(sn, 'nclosedjobs', 0) or 0) > 0:
+            return False, ("The '%s' method is a single-station limit: it needs one open "
+                           "class through one Source and one queueing station." % method)
+        if method in self._ABANDONMENT_METHODS:
+            try:
+                h = sn_patience_handles(sn, qi, 0)
+            except Exception:
+                h = None
+            if not h:
+                return False, ("The '%s' method needs a reneging patience law on the queue "
+                               "(Queue.setPatience): it is a limit for a queue customers "
+                               "abandon." % method)
+        return True, ''
+
+    supports_model_method = supportsModelMethod
+
+    def _fj_inner_solver(self, nonfjmodel, method=None):
+        """Inner solve of the fork-join fixed point, on the fluid analyzer.
+
+        Overrides ForkJoinDriverMixin._fj_inner_solver, whose default is
+        SolverMVA. The transformed model carries no fork, so this never
+        re-enters the fixed point. The requested method is carried through: the
+        transform emits a plain mixed network, which every fluid method accepts
+        except 'statedep', so a caller who asked for one gets it.
+        """
+        opts = SolverFLD.defaultOptions()
+        # The driver passes method='amva' because it was written against the MVA
+        # inner solve; that method name names no fluid method, so keep this solver's
+        # own request instead of forwarding an MVA-only name.
+        opts.method = self.options.method
+        opts.verbose = self.options.verbose
+        opts.iter_max = self.options.iter_max
+        opts.iter_tol = self.options.iter_tol
+        opts.tol = self.options.tol
+        opts.stiff = self.options.stiff
+        return SolverFLD(nonfjmodel, options=opts)
+
+    def _fj_publish(self, result):
+        """Store the fork-join result in the fluid result container.
+
+        The driver speaks the plain-dict contract SolverMVA uses natively; the
+        fluid getters read an FLDResult, so the dict is mapped onto its fields
+        here. Only the steady-state means are carried: each pass of the fixed
+        point integrates a DIFFERENT transformed network, so a trajectory read
+        off the last pass would not be the trajectory of the model the caller
+        built, and getTranAvg stays unavailable on a fork-join model.
+        """
+        self.result = FLDResult(
+            QN=result['QN'], UN=result['UN'], RN=result['RN'], TN=result['TN'],
+            CN=result['CN'], XN=result['XN'],
+            AN=result.get('AN'), WN=result.get('WN'),
+            t=None, QNt={}, UNt={}, TNt={},
+            xvec=None, iterations=int(result.get('iter', 0)),
+            runtime=float(result.get('runtime', 0.0)),
+            method=str(result.get('method', 'mmt')),
+        )
+        return result
+
+    @property
+    def _sn(self):
+        """Struct under the name the shared fork-join driver uses.
+
+        SolverMVA and SolverNC keep the compiled struct in self._sn; SolverFLD
+        keeps it in self.sn. Aliasing here is what lets the three share one
+        ForkJoinDriverMixin rather than each carrying its own copy of the loop.
+        """
+        return self.sn
+
+    @_sn.setter
+    def _sn(self, value):
+        self.sn = value
 
     @staticmethod
     def getFeatureSet() -> set:
@@ -2048,14 +3113,45 @@ class SolverFLD(NetworkSolver):
             # i.e. flow was not conserved. Refusing the model is the honest
             # answer; the JAR SolverFluid does the same.
             'Cox2', 'Coxian', 'Erlang', 'Exp', 'HyperExp',
-            'APH', 'Det', 'NHPP',
+            # MAP and MMPP2 are accepted at their stationary rate. Under the
+            # 'closing' and 'matrix' methods a departure returns source mass
+            # through the STATIONARY arrival-instant pie, which replaces D1' by
+            # the rank-one map pie (x) (D1 e) -- that is the PH renewal process
+            # (pie, D0), so flow stays conserved but the autocorrelation is lost,
+            # exactly as in MATLAB SolverFLD. The 'kp' method does NOT lose it:
+            # it carries the paper's own A0/A1 events, in which an arrival-
+            # generating phase change acts through D1 itself.
+            'APH', 'Det', 'MAP', 'MMPP2', 'NHPP', 'MAPt', 'PHt',
             # Non-Markovian renewal distributions: converted to acyclic PH by
             # sn_nonmarkov_toph in runAnalyzer, so the fluid ODE can solve them.
             'Gamma', 'Lognormal', 'Pareto', 'Uniform', 'Weibull',
             'StatelessClassSwitcher', 'InfiniteServer', 'SharedServer', 'Buffer', 'Dispatcher',
             'Server', 'ServiceTunnel',
+            # Stochastic Petri nets: the 'dae' method only, see
+            # getMethodFeatureSet. A Transition node routes the model to
+            # methods/petri.py, which solves the marking as the same min-normal
+            # closure with the P-invariants as constraints and the immediate
+            # firing flows as algebraic unknowns. 'Storage'/'Linkage' ride along
+            # with any Place, as they do in the SSA and CTMC sets, so declaring
+            # Place without them refuses every Petri net at the gate.
+            # 'Inhibiting' is declared, but an inhibitor arc on an IMMEDIATE
+            # mode is answered wrongly when the inhibitor place's mean sits at
+            # its threshold; see _kb/06-solver-catalog.md.
+            'Place', 'Transition', 'Enabling', 'Inhibiting', 'Timing', 'Firing',
+            'Storage', 'Linkage',
+            # closing family only, see getMethodFeatureSet
+            'LoadDependence',
             'SchedStrategy_INF', 'SchedStrategy_PS',
             'SchedStrategy_DPS', 'SchedStrategy_FCFS',
+            # GPS is served only by the second-order closure: its share depends
+            # on the backlog INDICATOR, which a first-order closure collapses to
+            # the constant w_r/sum(w). See methods/minnormal.py.
+            'SchedStrategy_GPS',
+            # SIRO/LCFS/LCFSPR reach the matrix method, which builds a PS drift
+            # -- the right aggregate for any work-conserving discipline. The
+            # closing family has no drift branch for them and rejects them
+            # explicitly in _ode_rate_factors rather than silently integrating
+            # them as an infinite server.
             'SchedStrategy_SIRO', 'SchedStrategy_LCFS', 'SchedStrategy_LCFSPR',
             # Native fluid cache models: RANDOM(m)/FIFO(m) (refined mean field)
             # and strict FIFO(m) (position-resolved mean field). LRU/HLRU/CLIMB/
@@ -2064,7 +3160,23 @@ class SolverFLD(NetworkSolver):
             'ReplacementStrategy_SFIFO',
             'RoutingStrategy_PROB', 'RoutingStrategy_RAND',
             'ClosedClass', 'SelfLoopingClass', 'Replayer',
+            # Fork-join through the MMT transformation, driven by the shared
+            # ForkJoinDriverMixin (as in SolverMVA and SolverNC). The transform
+            # emits only Source, Delay, Queue, Router and ClassSwitch, all of
+            # which the fluid drift already carries.
+            'Fork', 'Forker', 'Join', 'Joiner',
+            # quorum join: the MMT fixed point charges the k-th branch completion (fj_ordstat_exp)
+            'JoinPartial',
             'RandomSource', 'Sink', 'Source', 'OpenClass', 'JobSink',
+            # c-server stations: the drifts carry min(n,c); withdrawn from
+            # 'diffusion' and 'mfq' in getMethodFeatureSet.
+            'MultiServer',
+            # A binding buffer: 'dae' carries it as an algebraic constraint,
+            # 'mol' IS the Mt/G/s/0 loss system and the AoI arm of 'mfq' is a
+            # bufferless or single-buffer queue. WHICH method serves one is the
+            # structural rule supportsModelMethod asks and runAnalyzer stops on,
+            # so no per-method delta duplicates it here.
+            'FiniteCapacity',
         }
 
     @staticmethod
@@ -2116,6 +3228,7 @@ class SolverFLD(NetworkSolver):
         -------
         tuple
             (perct_values, perct_table) where:
+
             - perct_values: np.ndarray of shape (n_percentiles,) with response time
               values corresponding to each percentile
             - perct_table: pd.DataFrame with columns ['Percentile', 'ResponseTime']
@@ -2151,7 +3264,7 @@ class SolverFLD(NetworkSolver):
         >>> p95 = values[2]  # Index corresponds to percentiles list
         """
         if self.result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         if percentiles is None:
             percentiles = [50.0, 90.0, 95.0, 99.0]
@@ -2218,7 +3331,7 @@ class SolverFLD(NetworkSolver):
             (M, K) array of residence times
         """
         if self.result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         # Compute ResidT using proper visit ratios from network structure
         if self.sn is not None and self.sn.visits:
@@ -2236,7 +3349,7 @@ class SolverFLD(NetworkSolver):
             (M,) array of waiting times
         """
         if self.result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         resp_t = self.result.RN
         wait_t = np.zeros(resp_t.shape[0])
@@ -2258,7 +3371,7 @@ class SolverFLD(NetworkSolver):
             (M,) array of arrival rates
         """
         if self.result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         if self.result.TN.ndim > 1:
             return np.sum(self.result.TN, axis=1)
@@ -2272,7 +3385,7 @@ class SolverFLD(NetworkSolver):
             (M,) array of throughputs
         """
         if self.result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         if self.result.TN.ndim > 1:
             return np.sum(self.result.TN, axis=1)
@@ -2283,34 +3396,193 @@ class SolverFLD(NetworkSolver):
     # PROBABILITY METHODS
     # =====================================================================
 
-    def getProbAggr(self, station: int) -> np.ndarray:
-        """Get aggregated state probabilities at station.
+    def getMoments(self) -> Optional[Dict[str, Any]]:
+        """Second-order results of the moment-closure methods.
 
-        For FLD, uses fluid level to approximate probability distribution.
+        Mirrors MATLAB `@SolverFLD/getMoments`: state-level covariance Sigma,
+        station-class queue-length variance QVar and standard deviation QStd,
+        per-station population variance sigma2, and the state-coordinate index
+        maps stationBlock/classBlock. None for every first-order method, which
+        computes no second moment at all.
+        """
+        # A delegated result carries no `moments` attribute, so without this arm
+        # the getter answered None for a minnormal solve that did compute the
+        # covariance -- indistinguishable from a first-order method, which is the
+        # one thing None is supposed to mean here.
+        if getattr(self.options, 'lang', 'python') == 'java':
+            from ..jar_dispatch import moments_via_jar
+            return moments_via_jar(self)
+
+        if self.result is None:
+            self._ensureAvgResults()
+        return getattr(self.result, 'moments', None)
+
+    def getProbAggr(self, ist: int) -> Tuple[float, float]:
+        """Probability of the current per-class job distribution at a station.
+
+        Returns P(n_1, ..., n_K at station ist) for the state the model is in.
+        Two evaluations are available and the analysis that ran decides which,
+        as `@SolverFLD/getProbAggr.m` does:
+
+        moment closure ('minnormal') -- the solved state carries a covariance,
+            so the JOINT law of the per-class populations at the station is the
+            multivariate normal of the linear noise approximation and the
+            answer is the probability it assigns to the unit cell around n.
+            Correlation between the classes is accounted for.
+
+        first-order methods -- no second moment exists, so the classes can only
+            be treated as independent: Schmidt's binomial per closed class,
+            Poisson (Delay) or multinomial-geometric (queue) per open class.
 
         Args:
-            station: Station index (0-based)
+            ist: Station index (1-based) or a station node
 
         Returns:
-            Probability vector P(n) for total jobs at station
+            (log_prob, prob)
         """
+        from ...api.solvers.mva.prob_methods import get_prob_aggr
+        from ...api.sn import SchedStrategy
+
+        if not isinstance(ist, (int, np.integer)):
+            ist = ist.get_station_index0() + 1
+
+        # A delegated solve leaves no covariance behind: `result.moments` is a
+        # native-python object and the JAR result container has none, so without
+        # this arm a lang='java' minnormal solve fell through to the first-order
+        # branch below and returned Schmidt's BINOMIAL under the name of the
+        # moment closure -- a silent downgrade, not an error. Delegate the whole
+        # query instead, so the engine that owns the covariance answers.
+        if getattr(self.options, 'lang', 'python') == 'java':
+            from ..jar_dispatch import prob_via_jar
+            # SolverFluid.getProbAggr reads its argument as a STATION index (it
+            # derives the stateful row from sn.stationToStateful itself), unlike
+            # SolverCTMC, which takes a node index -- hence raw_station. The cell
+            # is named explicitly because model.json carries no initial state, so
+            # a delegated query would otherwise be answered at the default one.
+            return prob_via_jar(self, 'prob-aggr', ist=int(ist), kind='logtuple',
+                                onebased=True, raw_station=True,
+                                state=self._station_class_counts(int(ist)))
+
         if self.result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
-        Q = self.result.QN
-        U = self.result.UN
+        sn = self._get_network_struct(self.model)
 
-        rho = np.mean(U[station, :])
-        if rho >= 1.0:
-            rho = 0.99
-        if rho <= 0:
-            rho = 0.01
+        # The moment closure supplies the joint law; a Source is excluded
+        # because its coordinate is a normalisation constant rather than a
+        # population and carries no covariance (see the minnormal terms).
+        moments = getattr(self.result, 'moments', None)
+        if moments and moments.get('Sigma') is not None and moments.get('classBlock') is not None \
+                and int(sn.sched[int(ist) - 1]) != int(SchedStrategy.EXT) \
+                and not self._has_open_class(sn, int(ist), moments):
+            return self._gaussian_cell_prob(sn, int(ist), moments)
 
-        max_n = max(10, int(Q[station, :].sum() * 3))
-        n = np.arange(max_n + 1)
-        prob = (1 - rho) * (rho ** n)
+        class ResultAdapter:
+            def __init__(self, outer):
+                self.Q = outer.result.QN
+                self.U = outer.result.UN
+                self.R = outer.result.RN
+                self.prob = None
 
-        return prob
+        return get_prob_aggr(sn, ResultAdapter(self), ist)
+
+    def _station_class_counts(self, ist: int) -> list:
+        """Per-class job counts at station `ist` (1-based) in the model's state."""
+        from ...api.state.marginal import toMarginal
+
+        sn = self._get_network_struct(self.model)
+        ind = int(np.asarray(sn.stationToNode).flatten()[ist - 1])
+        isf = int(np.asarray(sn.nodeToStateful).flatten()[ind])
+        state_i = np.atleast_2d(np.asarray(sn.state[isf], dtype=float))
+        _, nir_m, _, _ = toMarginal(sn, ind, state_i)
+        nir = np.asarray(nir_m).reshape(-1)[:int(sn.nclasses)]
+        return [int(round(v)) for v in nir]
+
+    @staticmethod
+    def _has_open_class(sn, ist: int, moments) -> bool:
+        """Whether an OPEN class is served at station ist.
+
+        The Gaussian cell is used only where it beats the alternative. For an
+        open class the first-order path is not an independence heuristic but the
+        exact product form of the underlying queue -- geometric at a queue,
+        Poisson at a Delay -- so replacing it by a normal approximation of the
+        same law would be a loss: on M/M/1 at rho = 0.5 the product form is exact
+        where the cell of the linear noise approximation returns 0.39 for the
+        empty queue against 0.50. The closure earns its place on the CLOSED
+        populations, where the alternative is Schmidt's binomial, itself an
+        approximation, and where correlation between the classes is real.
+        """
+        njobs = np.asarray(sn.njobs, dtype=float).ravel()
+        classBlock = moments['classBlock']
+        for r in range(sn.nclasses):
+            blk = np.asarray(classBlock[ist - 1][r], dtype=int).ravel()
+            if blk.size and not np.isfinite(njobs[r]):
+                return True
+        return False
+
+    def _gaussian_cell_prob(self, sn, ist: int, moments) -> Tuple[float, float]:
+        """Joint probability of the per-class populations at station ist under
+        the linear noise approximation solved by the moment closure.
+
+        The state coordinates of class r at the station are
+        moments['classBlock'][ist-1][r] (one per service phase), so the class
+        population is their sum: its mean is the reported QN[ist-1,r] and the
+        class-to-class covariance is the sum of the corresponding block of
+        moments['Sigma']. The integer count n is then read off the continuous
+        law as the unit cell [n-1/2, n+1/2], with the two ends extended to
+        infinity at the boundaries of the state space, so that the mass the
+        normal puts on negative populations lands on the empty station and the
+        mass above a closed population lands on the full one.
+        """
+        from .mvn_rectangle import mvn_rectangle
+        from ...api.state.marginal import toMarginal
+
+        i = ist - 1
+        K = sn.nclasses
+        ind = int(np.asarray(sn.stationToNode).flatten()[i])
+        isf = int(np.asarray(sn.nodeToStateful).flatten()[ind])
+        state_i = np.atleast_2d(np.asarray(sn.state[isf], dtype=float))
+        _, nir_m, _, _ = toMarginal(sn, ind, state_i)
+        nir = np.asarray(nir_m).reshape(-1)[:K]
+
+        Sigma = np.asarray(moments['Sigma'], dtype=float)
+        classBlock = moments['classBlock']
+        njobs = np.asarray(sn.njobs, dtype=float).ravel()
+
+        idx = []
+        m = []
+        a = []
+        b = []
+        for r in range(K):
+            blk = np.asarray(classBlock[i][r], dtype=int).ravel()
+            if blk.size == 0:
+                # the class has no service process here, so it has no
+                # coordinate: any positive count is impossible
+                if nir[r] > 0:
+                    return -np.inf, 0.0
+                continue
+            idx.append(r)
+            m.append(float(self.result.QN[i, r]))
+            a.append(-np.inf if nir[r] <= 0 else nir[r] - 0.5)
+            if np.isfinite(njobs[r]) and nir[r] >= njobs[r]:
+                b.append(np.inf)
+            else:
+                b.append(nir[r] + 0.5)
+
+        if not idx:
+            return 0.0, 1.0
+
+        nr = len(idx)
+        C = np.zeros((nr, nr))
+        for u in range(nr):
+            bu = np.asarray(classBlock[i][idx[u]], dtype=int).ravel()
+            for v in range(u, nr):
+                bv = np.asarray(classBlock[i][idx[v]], dtype=int).ravel()
+                C[u, v] = float(np.sum(Sigma[np.ix_(bu, bv)]))
+                C[v, u] = C[u, v]
+
+        prob, log_prob = mvn_rectangle(m, C, a, b)
+        return log_prob, prob
 
     def getProbMarg(self, station: int, jobclass: int) -> np.ndarray:
         """Get marginal queue-length distribution at station for class.
@@ -2323,7 +3595,7 @@ class SolverFLD(NetworkSolver):
             Marginal probability vector P(n_ir) for n=0,1,2,...
         """
         if self.result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         Q = self.result.QN
         U = self.result.UN
@@ -2348,7 +3620,7 @@ class SolverFLD(NetworkSolver):
             System state probability vector
         """
         if self.result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         Q = self.result.QN
         total_jobs = int(np.sum(Q))
@@ -2380,7 +3652,7 @@ class SolverFLD(NetworkSolver):
             Probability vector or list of vectors
         """
         if self.result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         if station is not None:
             return self.getProbAggr(station)
@@ -2410,6 +3682,13 @@ class SolverFLD(NetworkSolver):
         h: np.ndarray,
         t_values: np.ndarray,
     ) -> np.ndarray:
+        # F(t) = 1 - S(t) with S(t) = -g expm(A t) inv(A) h. (g,A,h) is a
+        # DENSITY triple -- g is normalized by -g inv(A) h, so g expm(A t) h is
+        # the density and g inv(A)^2 h the mean -- and the survival function
+        # carries the extra inv(A). Subtracting the density instead gives a
+        # curve that falls before it rises; the maximum.accumulate that used to
+        # sit on the return value MASKED exactly that, so it is gone with the
+        # defect it hid.
         cdf_values = np.zeros_like(t_values, dtype=float)
         g_row = np.asarray(g, dtype=float).reshape(1, -1)
         h_col = np.asarray(h, dtype=float).reshape(-1, 1)
@@ -2418,9 +3697,9 @@ class SolverFLD(NetworkSolver):
             if t <= 0:
                 cdf_values[idx] = 0.0
             else:
-                ccdf = g_row @ linalg.expm(amat * float(t)) @ h_col
-                cdf_values[idx] = float(np.clip(1.0 - np.real_if_close(ccdf).item(), 0.0, 1.0))
-        return np.maximum.accumulate(cdf_values)
+                surv = np.linalg.solve(amat.T, (g_row @ linalg.expm(amat * float(t))).T).T @ h_col
+                cdf_values[idx] = float(np.clip(1.0 + np.real_if_close(surv).item(), 0.0, 1.0))
+        return cdf_values
 
     def getAvgAoI(self) -> Tuple[Dict[str, float], Dict[str, float], pd.DataFrame]:
         """Get average AoI and Peak AoI statistics."""
@@ -2507,9 +3786,51 @@ class SolverFLD(NetworkSolver):
                 continue
             for c in range(sn.nclasses):
                 proc = arrivals.get(jobclasses[c])
-                if proc is not None and hasattr(proc, 'getRateSchedule'):
-                    sched.append({'station': i, 'class': c, 'nhpp': proc})
+                if proc is None or not hasattr(proc, 'getRateSchedule'):
+                    continue
+                # A MAPt or PHt also carries a rate schedule, but its matrix
+                # entries vary independently, so one scalar per (station,class)
+                # cannot express it and the closing method builds a per-event
+                # multiplier instead. Listing it here too would apply both
+                # channels and square the factor.
+                if proc.getName() in ('MAPt', 'PHt'):
+                    continue
+                sched.append({'station': i, 'class': c, 'nhpp': proc})
         return sched
+
+    def getTranAvgVar(self, *args):
+        """Transient queue-length VARIANCE per station and class.
+
+        Only the 'kp' method computes a second moment: it integrates the
+        covariance of the Ko-Pender diffusion limit alongside the fluid mean.
+        Returns (t, var) with var a dict keyed (station, class); the covariance
+        between blocks is available as result.Sigmat.
+        """
+        if self.options.method not in ('kp', 'fluid.kp'):
+            raise ValueError(
+                "getTranAvgVar needs options.method='kp'; the other fluid "
+                "methods integrate the mean only and carry no second moment.")
+        if self.result is None or getattr(self.result, 'QVart', None) is None:
+            self.runAnalyzer()
+        return self.result.t, self.result.QVart
+
+    def _has_matrix_schedule(self) -> bool:
+        """Whether any station-class carries a MAPt or PHt.
+
+        These are the schedule-bearing processes whose matrix entries vary
+        independently, so the schedule reaches the ODE as a per-event multiplier
+        built inside the closing method rather than through nhpp_sched.
+        """
+        from .utils.phase_type import is_mapt, is_pht
+
+        sn = self.sn
+        if sn is None or getattr(sn, 'procid', None) is None:
+            return False
+        for i in range(sn.nstations):
+            for c in range(sn.nclasses):
+                if is_mapt(sn, i, c) or is_pht(sn, i, c):
+                    return True
+        return False
 
     def getTranAvg(self, *args):
         """Get transient average metrics in MATLAB-compatible format.
@@ -2523,7 +3844,31 @@ class SolverFLD(NetworkSolver):
         if getattr(self.options, 'lang', 'python') == 'java':
             from ..jar_dispatch import tran_avg_via_jar
             return tran_avg_via_jar(self)
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            from ..cpp_dispatch import tran_avg_via_cpp
+            return tran_avg_via_cpp(self)
         from ...constants import TranResult
+
+        # The transient means are read off an INTEGRATED trajectory, so the
+        # method has to be one that produces one. The moment closure solves its
+        # mean and covariance to a fixed point and returns the converged state
+        # only; without this switch the loop below falls through to the
+        # steady-state value broadcast over the grid, i.e. a FLAT line reported
+        # as a transient -- which a caller that couples stages through their
+        # trajectories (SolverENV) cannot tell from a real one. MATLAB's
+        # @SolverFLD/getTranAvg makes the same switch for method='default'.
+        if self.sn is None:
+            self.sn = self._get_network_struct(self.network)
+        _resolved_tran = self._resolve_method()
+        if _resolved_tran in ('minnormal', 'refined'):
+            if self.options.method not in ('default', 'fluid.default'):
+                from ...api.io.logging import line_warning
+                line_warning('getTranAvg',
+                             "method '%s' solves a fixed point and returns no trajectory; "
+                             "integrating the closing ODE for the transient instead."
+                             % self.options.method)
+            self.options.method = 'closing'
+            self.result = None
 
         # Detect NHPP (non-homogeneous Poisson) sources and pass their
         # intensity schedules to the closing ODE, so the transient tracks
@@ -2558,8 +3903,15 @@ class SolverFLD(NetworkSolver):
             self.options.method = 'closing'
             self.result = None
 
+        # A MAPt or PHt needs the same switch: its per-event multiplier is built
+        # inside the closing ODE, and the 'matrix' method would silently solve
+        # the time-averaged nominal instead of the schedule.
+        if self._has_matrix_schedule() and self.options.method not in ('closing', 'tbi', 'fluid.tbi'):
+            self.options.method = 'closing'
+            self.result = None
+
         if self.result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         # Cache networks carry their own transient through the RMF drift: the
         # queueing part uses the closing/matrix ODE above, while each cache's
@@ -2611,35 +3963,6 @@ class SolverFLD(NetworkSolver):
     # UNIFIED METRICS METHOD
     # =====================================================================
 
-    def getAvg(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """Get all average metrics at once.
-
-        Returns:
-            Tuple of (Q, U, R, T, A, W) where:
-            - Q: Queue lengths (M x K)
-            - U: Utilizations (M x K)
-            - R: Response times (M x K)
-            - T: Throughputs (M x K)
-            - A: Arrival rates (M x K)
-            - W: Residence times (M x K)
-        """
-        if self.result is None:
-            self.runAnalyzer()
-
-        Q = self.result.QN
-        U = self.result.UN
-        R = self.result.RN
-        T = self.result.TN if self.result.TN.ndim > 1 else np.tile(self.result.TN, (Q.shape[0], 1))
-        A = T.copy()  # Arrival rate = throughput for open networks
-
-        # Residence time, not response time: MATLAB @NetworkSolver/getAvg
-        # returns sn_get_residt_from_respt as its sixth output.
-        W = getattr(self.result, 'WN', None)
-        if W is None:
-            W = sn_get_residt_from_respt(self.sn, R, None) if self.sn is not None \
-                and self.sn.visits else R.copy()
-
-        return Q, U, R, T, A, W
 
     # =====================================================================
     # CHAIN-LEVEL METHODS
@@ -2665,7 +3988,7 @@ class SolverFLD(NetworkSolver):
     def getAvgQLenChain(self) -> np.ndarray:
         """Get average queue lengths aggregated by chain."""
         if self.result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         Q = self.result.QN
         chains = self._get_chains()
@@ -2682,7 +4005,7 @@ class SolverFLD(NetworkSolver):
     def getAvgUtilChain(self) -> np.ndarray:
         """Get average utilizations aggregated by chain."""
         if self.result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         U = self.result.UN
         chains = self._get_chains()
@@ -2699,7 +4022,7 @@ class SolverFLD(NetworkSolver):
     def getAvgRespTChain(self) -> np.ndarray:
         """Get average response times aggregated by chain."""
         if self.result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         R = self.result.RN
         chains = self._get_chains()
@@ -2720,7 +4043,7 @@ class SolverFLD(NetworkSolver):
     def getAvgTputChain(self) -> np.ndarray:
         """Get average throughputs aggregated by chain."""
         if self.result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         T = self.result.TN
         if T.ndim == 1:
@@ -2780,7 +4103,9 @@ class SolverFLD(NetworkSolver):
                     'Tput': TN[i, c],
                 })
 
-        return pd.DataFrame(rows)
+        # five SIGNIFICANT digits like MATLAB's table, not pandas' five decimals
+        from line_solver.indexed_table import IndexedTable
+        return IndexedTable(pd.DataFrame(rows))
 
     # =====================================================================
     # NODE-LEVEL METHODS
@@ -2801,7 +4126,7 @@ class SolverFLD(NetworkSolver):
         from ...api.sn.network_struct import NodeType
 
         if self.result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         sn = self.sn
         I = sn.nnodes
@@ -2866,7 +4191,7 @@ class SolverFLD(NetworkSolver):
 
         # Throughput handle: 1 where the station-class has a valid throughput
         TH = np.zeros_like(TN)
-        TH[TN > 0] = 1.0
+        TH[TN > GlobalConstants.Zero] = 1.0
 
         # Node arrival rates and throughputs via shared helpers.
         # FLD's station-level result has no reliable arrival rates (ArvR is

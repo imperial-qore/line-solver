@@ -18,7 +18,7 @@ SolverOptions = _solvers_base.SolverOptions
 from .solver_mva import SolverMVA
 from .solver_ba import SolverBA
 from .solver_ln import SolverLN, SolverLNOptions
-from .solver_auto import SolverAuto, SolverAutoOptions, ModelAnalyzer
+from .solver_auto import SolverAUTO, SolverAUTOOptions, ModelAnalyzer
 from .wrappers.solver_qns import SolverQNS, QNSOptions, QNSResult
 from .wrappers.solver_lqns import SolverLQNS, LQNSOptions, LQNSResult
 try:
@@ -27,6 +27,7 @@ except ImportError:
     SolverLDES = None
 from .wrappers.solver_ldes.ldes_options import LDESOptions, LDESResult
 from .solver_mam import SolverMAM, SolverMAMOptions
+from .solver_ag import SolverAG, SolverAGOptions
 from .solver_fld import SolverFLD
 from .solver_fld.options import SolverFLDOptions, FLDResult
 from .solver_ctmc import SolverCTMC, SolverCTMCOptions
@@ -45,11 +46,13 @@ FLD = SolverFLD
 SolverFluid = SolverFLD  # MATLAB/wrapper class-name alias for portability
 Fluid = SolverFLD
 MAM = SolverMAM
+AG = SolverAG
 JMT = SolverJMT
 LDES = SolverLDES
-AUTO = SolverAuto
-SolverAUTO = SolverAuto  # MATLAB/JAR class-name alias for portability
-LINE = SolverAuto
+AUTO = SolverAUTO
+SolverAuto = SolverAUTO  # pre-rename name, kept for existing scripts
+SolverAutoOptions = SolverAUTOOptions
+LINE = SolverAUTO
 LN = SolverLN
 QNS = SolverQNS
 LQNS = SolverLQNS
@@ -63,8 +66,9 @@ __all__ = [
     'BA',
     'SolverLN',
     'SolverLNOptions',
-    'SolverAuto',
     'SolverAUTO',
+    'SolverAuto',
+    'SolverAUTOOptions',
     'SolverAutoOptions',
     'ModelAnalyzer',
     'SolverQNS',
@@ -78,6 +82,9 @@ __all__ = [
     'LDESResult',
     'SolverMAM',
     'SolverMAMOptions',
+    'SolverAG',
+    'SolverAGOptions',
+    'AG',
     'SolverFLD',
     'SolverFluid',
     'Fluid',

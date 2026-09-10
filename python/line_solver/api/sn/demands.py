@@ -256,3 +256,40 @@ def sn_get_demands_chain(sn: NetworkStruct) -> SnGetDemandsResult:
         SCVchain=SCVchain,
         refstatchain=refstatchain
     )
+
+
+def sn_interlock_chain(sn, ILclass):
+    """Aggregate a class-indexed interlock matrix to the chain basis of the MVA solvers.
+
+    ILclass[r,s] is the share of the class-s queue that a class-r arrival must not see,
+    the interlocked flow of Franks (1999), Eq. (4.7). Two classes of the same chain belong
+    to the same client, so the diagonal blocks carry no information and the chain diagonal
+    stays zero: an arrival always sees its own chain in full.
+
+    Reference: G. Franks, "Performance Analysis of Distributed Server Systems", PhD thesis,
+    Carleton University, 1999, Ch. 4.
+    """
+    import numpy as _np
+    if ILclass is None or _np.size(ILclass) == 0:
+        return None
+    ILclass = _np.asarray(ILclass, dtype=float)
+    R = int(sn.nclasses)
+    if ILclass.shape != (R, R):
+        raise ValueError(f"the interlock matrix is {ILclass.shape} but the model has {R} classes")
+    K = int(sn.nchains)
+    chains = _np.asarray(sn.chains)
+    ILchain = _np.zeros((K, K))
+    for cr in range(K):
+        memr = _np.where(chains[cr, :])[0]
+        if memr.size == 0:
+            continue
+        for cs in range(K):
+            if cs == cr:
+                continue
+            mems = _np.where(chains[cs, :])[0]
+            if mems.size == 0:
+                continue
+            ILchain[cr, cs] = float(_np.max(ILclass[_np.ix_(memr, mems)]))
+    if not _np.any(ILchain > 0):
+        return None
+    return ILchain

@@ -153,14 +153,15 @@ public class ClassSwitchExamplesTest {
 
         // Expected values for transient class model:
         // Class1 is transient (jobs eventually move to Class2 or Class3)
-        // In steady state: ~45.83% in Class2 cycle, ~54.17% in Class3 cycle
+        // Absorption into Class2 is 0.3/(0.3+0.5)=0.375 and into Class3 0.625; each cycle
+        // is two Exp(1) delays, so the single job spends 0.375*0.5 at Queue 1
         // Queue 0: visited by all classes, Queue 1: Class2 only, Queue 2: Class3 only
-        double[] expectedQLen = {0.5, 0.229166666666667, 0.270833333333333};
-        double[] expectedUtil = {0.5, 0.229166666666667, 0.270833333333333};
+        double[] expectedQLen = {0.5, 0.1875, 0.3125};
+        double[] expectedUtil = {0.5, 0.1875, 0.3125};
         double[] expectedRespT = {1.0, 1.0, 1.0};
-        double[] expectedResidT = {1.0, 0.458333333333333, 0.541666666666667};
-        double[] expectedArvR = {0.5, 0.229166666666667, 0.270833333333333};
-        double[] expectedTput = {0.5, 0.229166666666667, 0.270833333333333};
+        double[] expectedResidT = {1.0, 0.375, 0.625};
+        double[] expectedArvR = {0.5, 0.1875, 0.3125};
+        double[] expectedTput = {0.5, 0.1875, 0.3125};
 
         // Verify table size - 3 queues
         assertEquals(3, avgTable.getQLen().size(), "Expected 3 entries (Queue 0, 1, 2)");

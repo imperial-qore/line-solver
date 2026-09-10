@@ -23,7 +23,7 @@ classdef DecompositionWorkflow < handle
     methods
         function obj = DecompositionWorkflow(problem)
             obj.problem = problem;
-            obj.dependencyGraph = containers.Map('KeyType','char','ValueType','any');
+            obj.dependencyGraph = configureDictionary('string','cell');
             obj.solverOptions = opt.LineOptSolverOptions();
         end
 
@@ -32,35 +32,35 @@ classdef DecompositionWorkflow < handle
         function obj = setSolverOptions(obj, options), obj.solverOptions = options; end
 
         function obj = autoDecompose(obj)
-            byType = containers.Map('KeyType','char','ValueType','any');
+            byType = configureDictionary('string','cell');
             vars = obj.problem.getVariables();
             for i = 1:numel(vars)
                 t = vars{i}.getVariableType();
-                if isKey(byType, t), lst = byType(t); else, lst = {}; end
+                if isKey(byType, t), lst = byType{t}; else, lst = {}; end
                 lst{end+1} = vars{i}; %#ok<AGROW>
-                byType(t) = lst;
+                byType{t} = lst;
             end
             obj.subproblems = {};
-            used = containers.Map('KeyType','char','ValueType','logical');
+            used = configureDictionary('string','logical');
             for k = 1:numel(obj.DEFAULT_ORDER)
                 t = obj.DEFAULT_ORDER{k};
                 if isKey(byType, t)
-                    obj.subproblems{end+1} = opt.SubProblem(t, t, byType(t)); %#ok<AGROW>
+                    obj.subproblems{end+1} = opt.SubProblem(t, t, byType{t}); %#ok<AGROW>
                     used(t) = true;
                 end
             end
             bk = keys(byType);
             for k = 1:numel(bk)
-                if ~isKey(used, bk{k})
-                    obj.subproblems{end+1} = opt.SubProblem(bk{k}, bk{k}, byType(bk{k})); %#ok<AGROW>
+                if ~isKey(used, bk(k))
+                    obj.subproblems{end+1} = opt.SubProblem(char(bk(k)), char(bk(k)), byType{bk(k)}); %#ok<AGROW>
                 end
             end
         end
 
         function obj = setDependency(obj, fromProblem, toProblem)
-            if isKey(obj.dependencyGraph, toProblem), s = obj.dependencyGraph(toProblem); else, s = {}; end
+            if isKey(obj.dependencyGraph, toProblem), s = obj.dependencyGraph{toProblem}; else, s = {}; end
             s{end+1} = fromProblem;
-            obj.dependencyGraph(toProblem) = s;
+            obj.dependencyGraph{toProblem} = s;
         end
 
         function obj = addSubProblem(obj, name, variables, after)
@@ -72,20 +72,20 @@ classdef DecompositionWorkflow < handle
         end
 
         function ordered = getExecutionOrder(obj)
-            if obj.dependencyGraph.Count == 0
+            if numEntries(obj.dependencyGraph) == 0
                 ordered = obj.subproblems; return;
             end
             names = cellfun(@(sp) sp.name, obj.subproblems, 'UniformOutput', false);
-            indeg = containers.Map(names, num2cell(zeros(1, numel(names))));
-            adj = containers.Map('KeyType','char','ValueType','any');
-            for i = 1:numel(names), adj(names{i}) = {}; end
+            indeg = dictionary(string(names), zeros(1, numel(names)));
+            adj = configureDictionary('string','cell');
+            for i = 1:numel(names), adj{names{i}} = {}; end
             tks = keys(obj.dependencyGraph);
             for i = 1:numel(tks)
-                to = tks{i}; froms = obj.dependencyGraph(to);
+                to = tks(i); froms = obj.dependencyGraph{to};
                 for j = 1:numel(froms)
                     from = froms{j};
                     if isKey(adj, from) && isKey(indeg, to)
-                        a = adj(from); a{end+1} = to; adj(from) = a; %#ok<AGROW>
+                        a = adj{from}; a{end+1} = char(to); adj{from} = a; %#ok<AGROW>
                         indeg(to) = indeg(to) + 1;
                     end
                 end
@@ -96,7 +96,7 @@ classdef DecompositionWorkflow < handle
             while head <= numel(q)
                 n = q{head}; head = head + 1;
                 orderNames{end+1} = n; %#ok<AGROW>
-                succ = adj(n);
+                succ = adj{n};
                 for j = 1:numel(succ)
                     m = succ{j}; indeg(m) = indeg(m) - 1;
                     if indeg(m) == 0, q{end+1} = m; end %#ok<AGROW>
@@ -105,9 +105,9 @@ classdef DecompositionWorkflow < handle
             if numel(orderNames) ~= numel(obj.subproblems)
                 ordered = obj.subproblems; return;   % cycle: fall back
             end
-            byName = containers.Map(names, obj.subproblems);
+            byName = dictionary(string(names), obj.subproblems);
             ordered = cell(1, numel(orderNames));
-            for i = 1:numel(orderNames), ordered{i} = byName(orderNames{i}); end
+            for i = 1:numel(orderNames), ordered{i} = byName{orderNames{i}}; end
         end
 
         function result = solveSequential(obj, maxCycles, tolerance)
@@ -119,7 +119,7 @@ classdef DecompositionWorkflow < handle
                 result.converged = true; return;
             end
             ordered = obj.getExecutionOrder();
-            fixedValues = containers.Map('KeyType','char','ValueType','any');
+            fixedValues = configureDictionary('string','cell');
             prevObjective = inf;
             for cycle = 1:maxCycles
                 for si = 1:numel(ordered)
@@ -128,10 +128,10 @@ classdef DecompositionWorkflow < handle
                     spResult = opt.LineOptSolver(partial, obj.solverOptions).solve();
                     spr = opt.SubProblemResult(sp.name, spResult);
                     fk = keys(fixedValues);
-                    for i = 1:numel(fk), spr.variablesFixed(fk{i}) = fixedValues(fk{i}); end
-                    result.subproblemResults(sp.name) = spr;
+                    for i = 1:numel(fk), spr.variablesFixed{fk(i)} = fixedValues{fk(i)}; end
+                    result.subproblemResults{sp.name} = spr;
                     vk = keys(spResult.variableValues);
-                    for i = 1:numel(vk), fixedValues(vk{i}) = spResult.variableValues(vk{i}); end
+                    for i = 1:numel(vk), fixedValues{vk(i)} = spResult.variableValues{vk(i)}; end
                 end
                 currentObjective = obj.evaluateFullObjective(fixedValues);
                 result.objectiveHistory(end+1) = currentObjective;
@@ -147,7 +147,7 @@ classdef DecompositionWorkflow < handle
                 result.finalObjective = result.objectiveHistory(end);
             end
             fk = keys(fixedValues);
-            for i = 1:numel(fk), result.finalVariableValues(fk{i}) = fixedValues(fk{i}); end
+            for i = 1:numel(fk), result.finalVariableValues{fk(i)} = fixedValues{fk(i)}; end
             result.totalSolveTime = toc(t0);
         end
 
@@ -164,7 +164,7 @@ classdef DecompositionWorkflow < handle
             for i = 1:numel(vars)
                 nm = vars{i}.getName();
                 if ~any(strcmp(nm, subNames)) && isKey(fixedValues, nm)
-                    fixedPairs{end+1} = {vars{i}, fixedValues(nm)}; %#ok<AGROW>
+                    fixedPairs{end+1} = {vars{i}, fixedValues{nm}}; %#ok<AGROW>
                 end
             end
             partial.setFixedVariables(fixedPairs);
@@ -222,19 +222,19 @@ classdef DecompositionWorkflow < handle
             end
 
             % Group variables by their primary (first) layer.
-            groups = containers.Map('KeyType', 'char', 'ValueType', 'any');
+            groups = configureDictionary('string', 'cell');
             groupOrder = {};
             vars = obj.problem.getVariables();
             for i = 1:numel(vars)
                 layers = vars{i}.getLayer(model);
                 if isempty(layers), lkey = '_nolayer'; else, lkey = layers{1}; end
                 if isKey(groups, lkey)
-                    lst = groups(lkey);
+                    lst = groups{lkey};
                 else
                     lst = {}; groupOrder{end+1} = lkey; %#ok<AGROW>
                 end
                 lst{end+1} = vars{i}; %#ok<AGROW>
-                groups(lkey) = lst;
+                groups{lkey} = lst;
             end
 
             objective = obj.problem.getObjective();
@@ -242,8 +242,8 @@ classdef DecompositionWorkflow < handle
             evaluator = opt.LineEvaluator(model, vars, {});
 
             frozen = frozenLayers;
-            fixedValues = containers.Map('KeyType', 'char', 'ValueType', 'any');
-            prevSig = containers.Map('KeyType', 'char', 'ValueType', 'any');
+            fixedValues = configureDictionary('string', 'cell');
+            prevSig = configureDictionary('string', 'cell');
             havePrevSig = false;
             prevObjective = inf;
             modelEvaluations = 0;
@@ -253,7 +253,7 @@ classdef DecompositionWorkflow < handle
                 for gi = 1:numel(groupOrder)
                     layer = groupOrder{gi};
                     if any(strcmp(layer, frozen)), continue; end
-                    layerVars = groups(layer);
+                    layerVars = groups{layer};
                     partial = opt.OptimizationProblem(model);
                     for i = 1:numel(layerVars), partial.addVariable(layerVars{i}); end
                     subNames = cellfun(@(v) v.getName(), layerVars, 'UniformOutput', false);
@@ -261,7 +261,7 @@ classdef DecompositionWorkflow < handle
                     for i = 1:numel(vars)
                         nm = vars{i}.getName();
                         if ~any(strcmp(nm, subNames)) && isKey(fixedValues, nm)
-                            fixedPairs{end+1} = {vars{i}, fixedValues(nm)}; %#ok<AGROW>
+                            fixedPairs{end+1} = {vars{i}, fixedValues{nm}}; %#ok<AGROW>
                         end
                     end
                     partial.setFixedVariables(fixedPairs);
@@ -273,10 +273,10 @@ classdef DecompositionWorkflow < handle
                     modelEvaluations = modelEvaluations + spResult.modelEvaluations;
                     spr = opt.SubProblemResult(layer, spResult);
                     fk = keys(fixedValues);
-                    for i = 1:numel(fk), spr.variablesFixed(fk{i}) = fixedValues(fk{i}); end
-                    result.subproblemResults(layer) = spr;
+                    for i = 1:numel(fk), spr.variablesFixed{fk(i)} = fixedValues{fk(i)}; end
+                    result.subproblemResults{layer} = spr;
                     vk = keys(spResult.variableValues);
-                    for i = 1:numel(vk), fixedValues(vk{i}) = spResult.variableValues(vk{i}); end
+                    for i = 1:numel(vk), fixedValues{vk(i)} = spResult.variableValues{vk(i)}; end
                 end
 
                 % Full evaluation: objective + per-layer signatures for freezing.
@@ -284,7 +284,7 @@ classdef DecompositionWorkflow < handle
                 modelEvaluations = modelEvaluations + 1;
                 if ~evalResult.feasible
                     currentObjective = inf;
-                    sig = containers.Map('KeyType', 'char', 'ValueType', 'any');
+                    sig = configureDictionary('string', 'cell');
                 else
                     currentObjective = objective.evaluateWithPenalty( ...
                         evalResult, fixedValues, penaltyWeight);
@@ -297,12 +297,12 @@ classdef DecompositionWorkflow < handle
                 end
 
                 if autoFreeze && havePrevSig
-                    moved = containers.Map('KeyType', 'char', 'ValueType', 'double');
+                    moved = configureDictionary('string', 'double');
                     for gi = 1:numel(groupOrder)
                         L = groupOrder{gi};
                         a = []; b = [];
-                        if isKey(prevSig, L), a = prevSig(L); end
-                        if isKey(sig, L), b = sig(L); end
+                        if isKey(prevSig, L), a = prevSig{L}; end
+                        if isKey(sig, L), b = sig{L}; end
                         moved(L) = opt.DecompositionWorkflow.sigDelta(a, b);
                     end
                     activeMoved = false;
@@ -341,7 +341,7 @@ classdef DecompositionWorkflow < handle
                 result.finalObjective = result.objectiveHistory(end);
             end
             fk = keys(fixedValues);
-            for i = 1:numel(fk), result.finalVariableValues(fk{i}) = fixedValues(fk{i}); end
+            for i = 1:numel(fk), result.finalVariableValues{fk(i)} = fixedValues{fk(i)}; end
             result.totalSolveTime = toc(t0);
             result.frozenLayers = sort(frozen);
             result.modelEvaluations = modelEvaluations;
@@ -355,7 +355,7 @@ classdef DecompositionWorkflow < handle
             % node in the LQN average table; its metrics are the layer's
             % convergence signature. Layers without a matching node (e.g. the
             % '_nolayer' bucket) get an empty signature so they never auto-freeze.
-            sig = containers.Map('KeyType', 'char', 'ValueType', 'any');
+            sig = configureDictionary('string', 'cell');
             for i = 1:numel(layers)
                 L = layers{i};
                 util = evalResult.getUtilization(L);
@@ -364,7 +364,7 @@ classdef DecompositionWorkflow < handle
                 respt = evalResult.getResponseTime(L);
                 probe = [util, qlen, tput];
                 if any(probe ~= 0 & ~isinf(probe))
-                    sig(L) = [util, qlen, tput, respt];
+                    sig{L} = [util, qlen, tput, respt];
                 else
                     sig(L) = [];
                 end

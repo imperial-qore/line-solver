@@ -45,7 +45,9 @@ public enum ProcessType implements Serializable {
     PRIOR,
     DISCRETESAMPLER,
     ZIPF,
-    NHPP;
+    NHPP,
+    MAPT,
+    PHT;
 
     public static ProcessType fromDistribution(Distribution d) {
         return fromText(d.getName());
@@ -170,6 +172,10 @@ public enum ProcessType implements Serializable {
                 return ProcessType.ZIPF;
             case "NHPP":
                 return ProcessType.NHPP;
+            case "MAPt":
+                return ProcessType.MAPT;
+            case "PHt":
+                return ProcessType.PHT;
             default:
                 throw new IllegalArgumentException("Unknown ProcessType: " + name);
         }
@@ -242,6 +248,10 @@ public enum ProcessType implements Serializable {
                 return "Zipf";
             case NHPP:
                 return "NHPP";
+            case MAPT:
+                return "MAPt";
+            case PHT:
+                return "PHt";
             default:
                 return type.name();
         }

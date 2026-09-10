@@ -184,8 +184,22 @@ def test_gradient_modes_reduce_objective(mode):
                                             UtilizationConstraint)
     p.setObjective(MinimizeSystemResponseTime(
         'T1', subject_to=[UtilizationConstraint('P1', max_value=0.95)]))
+    # The stopping rule that defines this test is max_iterations/convergence, NOT
+    # the clock: the assertions below are about where the optimizer LANDS. At the
+    # former time_limit=180 the clock was the binding rule for 'fd', which needs
+    # two extra solves per variable per iteration and converges in 183.7s on an
+    # idle host -- 2% OVER its own budget. So the test passed or failed on host
+    # speed alone, and it duly failed on a loaded cluster node while passing
+    # locally. The limit is now a safety valve with real headroom (measured 184s,
+    # allowed 900s), which does not slow the passing case down: 'fd' stops itself
+    # at convergence and the other two modes at ~114s.
     res = p.solve(optimizer='gradient', lqn_gradient=mode,
-                  max_iterations=8, gradient_restarts=1, seed=1, time_limit=180)
+                  max_iterations=8, gradient_restarts=1, seed=1, time_limit=900)
+    # If the clock ever becomes binding again, say so here rather than let it
+    # surface as an unexplained variable value below.
+    assert res.terminated_by != 'time_limit', (
+        'the %s gradient run was cut off by its time limit, so the assertions '
+        'below would be testing host speed, not the optimizer' % mode)
     assert res.feasible
     # minimizing latency drives both demands to their lower bounds
     assert res.variable_values['AS1_hostdemand'] < 0.1

@@ -313,15 +313,23 @@ public class ToMarginal implements Serializable {
                     for (int i = 0; i < sir.getNumRows(); i++) nir.set(i, r, sir.get(i, r) + sumval.get(i));
                 }
                 break;
+            case FCFSPI:
+            case FCFSPR:
+            case FCFSPIPRIO:
+            case FCFSPRPRIO:
             case LCFSPI:
             case LCFSPR:
             case LCFSPIPRIO:
             case LCFSPRPRIO:
-                if (space_buf.length() > 1) {
-                    // space_buf = space_buf(1:2:end);
-                    Matrix sub_space_buf = new Matrix(1, (space_buf.getNumCols() * space_buf.getNumRows() + 1) / 2);
-                    for (int i = 0; i < sub_space_buf.getNumCols(); i++)
-                        sub_space_buf.set(0, i, space_buf.get(i * 2));
+                // all eight preempt disciplines store [class, phase] pairs
+                if (space_buf.getNumCols() > 1) {
+                    // slice the class columns per row: linear indexing would
+                    // flatten a multi-row state matrix into one bogus row
+                    int nbufcls = (space_buf.getNumCols() + 1) / 2;
+                    Matrix sub_space_buf = new Matrix(space_buf.getNumRows(), nbufcls);
+                    for (int i = 0; i < space_buf.getNumRows(); i++)
+                        for (int j = 0; j < nbufcls; j++)
+                            sub_space_buf.set(i, j, space_buf.get(i, j * 2));
 
                     for (int r = 0; r < R; r++) {
                         // Classes are stored in buffer as 1-based indices (jobClass + 1), so count r+1
@@ -554,6 +562,27 @@ public class ToMarginal implements Serializable {
             Ks = new Matrix(1, sn.phaseshift.getNumCols());
             Matrix.extract(sn.phaseshift, ist, ist + 1, 0, sn.phaseshift.getNumCols(), Ks, 0, 0);
         }
+        // Consistency with the twin, not a defensive addition. toMarginal
+        // carries this clamp at :216-229 because a caller threading the FULL
+        // (nstations x nclasses) matrix through made K.get(r) return the FIRST
+        // station's entry, slicing the per-class blocks at the wrong offsets
+        // and counting a class-0 job in phase 2 as class-1. This function had
+        // no such clamp, so the same mistake here would be silent.
+        // It REPRODUCES the self-extracting path above rather than merely
+        // resembling toMarginal's: both take ROW ist, and ist is derived the
+        // same way (:461, sn.nodeToStation.get(ind)). No current caller passes
+        // a multi-row K -- all nine pass null or a single row -- so this is a
+        // no-op today and exists so the convention cannot be got wrong later.
+        if (K.getNumRows() > 1) {
+            Matrix K1 = new Matrix(1, K.getNumCols());
+            Matrix.extract(K, ist, ist + 1, 0, K.getNumCols(), K1, 0, 0);
+            K = K1;
+        }
+        if (Ks.getNumRows() > 1) {
+            Matrix Ks1 = new Matrix(1, Ks.getNumCols());
+            Matrix.extract(Ks, ist, ist + 1, 0, Ks.getNumCols(), Ks1, 0, 0);
+            Ks = Ks1;
+        }
 
         if (space_var == null) {
             int col = (int) sn.nvars.sumRows(ind);
@@ -596,7 +625,8 @@ public class ToMarginal implements Serializable {
             }
         }
 
-        // MATLAB LINE does not handle LCFSPR, INF, PS, DPS, GPS cases
+        // INF/PS/DPS/GPS hold no buffer, so the server sum above is already the
+        // whole count and they fall through to the no-op default.
         // nir: class-r jobs at the station
         switch (sn.sched.get(sn.stations.get(ist))) {
             case EXT:
@@ -617,6 +647,27 @@ public class ToMarginal implements Serializable {
                         sumval = space_buf.countEachRow(r + 1);
                     }
                     for (int i = 0; i < nir.getNumRows(); i++) nir.set(i, r, nir.get(i, r) + sumval.get(i));
+                }
+                break;
+            case FCFSPI:
+            case FCFSPIPRIO:
+            case FCFSPR:
+            case FCFSPRPRIO:
+            case LCFSPI:
+            case LCFSPIPRIO:
+            case LCFSPR:
+            case LCFSPRPRIO:
+                // buffer holds [class, phase] pairs, so the class tags are the
+                // even columns. Without this arm a preempted job was invisible
+                // here and nir counted the server alone, unlike toMarginal.
+                if (space_buf.getNumCols() > 1) {
+                    int nbufcls = (space_buf.getNumCols() + 1) / 2;
+                    for (int i = 0; i < nir.getNumRows(); i++) {
+                        for (int j = 0; j < nbufcls; j++) {
+                            int cls = (int) space_buf.get(i, j * 2);
+                            if (cls >= 1 && cls <= R) nir.set(i, cls - 1, nir.get(i, cls - 1) + 1);
+                        }
+                    }
                 }
                 break;
             case POLLING:

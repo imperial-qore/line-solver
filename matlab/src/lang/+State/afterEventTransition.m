@@ -45,7 +45,7 @@ switch event
             end
             if isSimulation
                 if nargin>=7 && isobject(eventCache)
-                    eventCache(key) = {outprob, outspace,outrate};
+                    eventCache{key} = {outprob, outspace,outrate};
                 end
 
                 if size(outspace,1) > 1

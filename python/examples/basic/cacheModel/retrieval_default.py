@@ -4,13 +4,6 @@ in the top-level routing matrix P, and service from the read class's service
 distribution at each queue. Per-item overrides (set_item_routing_prob (with the cache as source/dest) / Queue.set_item_service_rate) then reconfigure one
 item at finer granularity."""
 
-# Ensure native line_solver is used (not python-wrapper)
-import sys
-import os
-_native_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
-if _native_path not in sys.path:
-    sys.path.insert(0, _native_path)
-
 from line_solver import *
 
 
@@ -71,7 +64,7 @@ if __name__ == "__main__":
 
     # Simulation
     print('SOLVER: SSA')
-    print(SSA(model, samples=5000, method='serial', seed=1).get_avg_cache_table().to_string(index=False))
+    print(SSA(model, samples=100000, method='serial', seed=1).get_avg_cache_table().to_string(index=False))
     print('SOLVER: LDES')
     print(LDES(model, samples=1000000, seed=1).get_avg_cache_table().to_string(index=False))
 

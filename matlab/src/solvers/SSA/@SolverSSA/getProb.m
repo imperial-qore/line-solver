@@ -1,4 +1,4 @@
-function Prob = getProb(self, node, state)
+function varargout = getProb(self,varargin)
 % PROBSTATE = GETPROBSTATE(NODE, STATE) Returns state probabilities estimated via simulation
 %
 % @brief Estimates steady-state marginal state probabilities at a node via SSA simulation
@@ -49,6 +49,39 @@ function Prob = getProb(self, node, state)
 % % Get all state probabilities
 % all_probs = solver.getProb(queue1);
 % @endcode
+% The result recorder captures the scalar this getter returned together
+% with the solver that produced it -- see LineResultRecorder. Six of the
+% statepr_* goldens hold exactly this number and nothing else, so recording
+% it is what makes those goldens attributable instead of "the first bare
+% number the example printed". The wrapper exists so that recording happens
+% on EVERY exit path of the implementation below.
+[scope, scopeGuard] = LineResultRecorder.enter(); %#ok<ASGLU>
+[varargout{1:max(nargout,1)}] = getProb_impl(self,varargin{:});
+LineResultRecorder.captureScalar(scope, self, 'prob', varargout{1});
+end
+
+function Prob = getProb_impl(self, node, state)
+% GETPROB_IMPL Implementation of GETPROB; see the wrapper above.
+
+
+% lang='cpp' answers this from the Prob column of -a prob, the DETAILED marginal
+% of the state the model carries; a state named in the CALL stays with the native
+% path. See CPPLINE.assertSingleState.
+if isfield(self.options,'lang') && strcmp(self.options.lang,'cpp')
+    if nargin >= 3
+        CPPLINE.cppUnsupported(self.name, 'getProb(node, state)', ...
+            ['line-cli reports the occupancy of the state the model carries and takes no ' ...
+            'per-call state, so answering a named one would mean writing it onto the ' ...
+            'caller''s model first']);
+    end
+    CPPLINE.assertSingleState(self.name, 'getProb', self.model);
+    if ~isnumeric(node), istc = node.index; else, istc = node; end
+    snc = self.getStruct;
+    istc = snc.nodeToStation(istc);  % the native reads nodeToStateful(node.index)
+    Prob = CPPLINE.probEntry(CPPLINE.probAggr(self.name, self.model, self.options), ...
+        'Prob', istc, self.name, 'getProb');
+    return
+end
 
 if GlobalConstants.DummyMode
     Prob = NaN;

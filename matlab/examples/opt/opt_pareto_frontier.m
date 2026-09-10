@@ -13,7 +13,7 @@ model.link(Network.serialRouting(source, queue, sink));
 
 problem = opt.OptimizationProblem(model);
 problem.addVariable(opt.ServerAllocation(queue, [1 10]));
-serverCost = containers.Map('KeyType','char','ValueType','double');
+serverCost = configureDictionary('string','double');
 serverCost('Server') = 10.0;
 problem.setObjective(opt.MinimizeCost(serverCost, [], [], {}));
 

@@ -149,13 +149,19 @@ def pfqn_mva(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
 
     Implements the exact MVA algorithm using population recursion.
     Computes exact performance measures for closed product-form networks
-    with load-independent stations.
+    with load-independent stations. Standard arrival theorem; for the interlocked-flow
+    correction of Franks (1999), Ch. 4, Eq. (4.7) call pfqn_mva_ilock instead.
 
     Args:
         L: Service demand matrix (M x R) where M is stations, R is classes
         N: Population vector (1 x R or R,) - number of jobs per class
         Z: Think time vector (1 x R or R,) - think time per class (default 0)
-        mi: Multiplicity vector (1 x M or M,) - servers per station (default 1)
+        mi: Additive term of the residence-time recursion
+            C(i,s)=L(i,s)*(mi(i)+Qarv), 1 for a queueing station (default 1).
+            THIS IS NOT A SERVER COUNT: mi(i)=c inflates the residence time by c
+            rather than adding c servers. For multiserver stations call
+            pfqn_mvams(lambda, L, N, Z, mi, S), which passes S to the
+            load-dependent recursion with mu(i,n)=min(n,S(i)).
 
     Returns:
         Tuple of (XN, CN, QN, UN, RN, TN, AN) where:
@@ -272,7 +278,8 @@ def pfqn_mva(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
             # Compute residence times: CN[i,s] = L_reduced[i,s] * (mi[i] + Q[pos_n_1s, i])
             CNtot = 0.0
             for i in range(M):
-                CN[i, s] = L_reduced[i, s] * (mi[i] + Q[pos_n_1s, i])
+                qarv = Q[pos_n_1s, i]
+                CN[i, s] = L_reduced[i, s] * (mi[i] + qarv)
                 CNtot += CN[i, s]
 
             # Compute throughput for class s
@@ -346,6 +353,248 @@ def pfqn_mva(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
     return XN, CN_total, QN, UN, RN, TN, AN
 
 
+
+def pfqn_mva_ilock(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
+                   mi: np.ndarray = None, IL: np.ndarray = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray,
+                                              np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Exact MVA recursion carrying the interlocked-flow correction.
+
+    The correction of Franks (1999), Ch. 4, Eq. (4.7) replaces the arrival theorem
+    term Q(n-1_s,i) by a per-class weighted sum, so the recursion has to carry
+    per-class queue lengths that pfqn_mva does not need. Closed single-server
+    models only.
+
+    The discounted arrival-instant queue is floored at the in-service component,
+    as in lqns MVA::queueOnly_adjusted, so the correction damps itself out as a
+    station saturates. That is a self-limiting guard, NOT a hard capacity test:
+    sum_s XN[s]*L[i,s] <= mi[i] is still asserted nowhere.
+    See git show 449847e7b:_kb/log.md.
+
+    Args:
+        L: Service demand matrix (M x R) where M is stations, R is classes
+        N: Population vector (1 x R or R,) - number of jobs per class
+        Z: Think time vector (1 x R or R,) - think time per class (default 0)
+        mi: Additive term of the residence-time recursion
+            C(i,s)=L(i,s)*(mi(i)+Qarv), 1 for a queueing station (default 1).
+            THIS IS NOT A SERVER COUNT: mi(i)=c inflates the residence time by c
+            rather than adding c servers. For multiserver stations call
+            pfqn_mvams(lambda, L, N, Z, mi, S), which passes S to the
+            load-dependent recursion with mu(i,n)=min(n,S(i)).
+        IL: Interlock matrix (R x R), IL[r,s] is the share of the class-s queue that a
+            class-r arrival cannot see, because that work was itself caused by the class-r
+            request (Franks 1999, Eq. 4.7). Required; pass None to pfqn_mva instead.
+
+    Returns:
+        Tuple of (XN, CN, QN, UN, RN, TN, AN) where:
+            - XN: Throughputs per class (1 x R)
+            - CN: Response times per class (1 x R) - total cycle time
+            - QN: Queue lengths (M x R)
+            - UN: Utilizations (M x R)
+            - RN: Residence times (M x R)
+            - TN: Node throughputs (M x R)
+            - AN: Arrival rates (M x R)
+    """
+    L = np.asarray(L, dtype=np.float64)
+    N = np.asarray(N, dtype=np.float64).flatten()
+    N = np.ceil(N).astype(int)
+
+    R = len(N)  # Number of classes
+    if L.ndim == 1:
+        L = L.reshape(-1, 1) if R == 1 else L.reshape(1, -1)
+    M_original = L.shape[0]  # Original number of stations
+
+    if L.shape[1] != R:
+        raise ValueError(f"Demand matrix columns ({L.shape[1]}) must match population size ({R})")
+
+    # Handle Z
+    if Z is None:
+        Z = np.zeros(R)
+    else:
+        Z = np.asarray(Z, dtype=np.float64).flatten()
+        if len(Z) != R:
+            raise ValueError(f"Think time vector length ({len(Z)}) must match number of classes ({R})")
+
+    # Handle mi
+    if mi is None:
+        mi = np.ones(M_original)
+    else:
+        mi = np.asarray(mi, dtype=np.float64).flatten()
+        if len(mi) != M_original:
+            raise ValueError(f"Multiplicity vector length ({len(mi)}) must match number of stations ({M_original})")
+
+    # see _kb/03-api-layer.md for rationale
+    L_reduced = L
+    mapping = np.arange(M_original)
+    M = M_original
+
+    # Empty population check
+    if not np.any(N > 0):
+        return (np.zeros((1, R)), np.zeros((1, R)), np.zeros((M_original, R)),
+                np.zeros((M_original, R)), np.zeros((M_original, R)), np.zeros((M_original, R)), np.zeros((M_original, R)))
+
+    # For single class, use simpler algorithm
+    if R == 1:
+        result = pfqn_mva_single_class(int(N[0]), L_reduced[:, 0], Z[0], mi)
+        XN = np.array([[result['X']]])
+        QN = result['Q'].reshape(-1, 1)
+        RN = result['R'].reshape(-1, 1)
+        UN = result['U'].reshape(-1, 1)
+
+        # Expand results back to original dimensions if stations were consolidated
+        if M < M_original:
+            QN, UN, RN = pfqn_expand(QN, UN, RN, mapping)
+
+        TN = XN * np.ones((M_original, 1))  # Node throughputs = system throughput
+        AN = TN.copy()  # Arrival rates = throughputs
+        CN = np.array([[RN.sum() + Z[0]]])
+        return XN, CN, QN, UN, RN, TN, AN
+
+    if IL is None or np.size(IL) == 0:
+        raise ValueError("an interlock matrix is required; use pfqn_mva for the standard arrival theorem")
+    IL = np.asarray(IL, dtype=np.float64)
+    if IL.shape != (R, R):
+        raise ValueError(f"the interlock matrix must be {R}x{R}, got {IL.shape}")
+    ILw = np.clip(1.0 - IL, 0.0, 1.0)
+    np.fill_diagonal(ILw, 1.0)  # a request always sees its own class in full
+
+    # Multi-class MVA using population recursion
+    totpop = int(np.prod(N + 1))
+
+    # Pure Python: Compute product of (N[i]+1) for indexing
+    prods = np.zeros(R - 1)
+    for w in range(R - 1):
+        prods[w] = np.prod(np.ones(R - w - 1) + N[w + 1:])
+
+    # Find first non-empty class (from the end)
+    first_non_empty = R - 1
+    while first_non_empty >= 0 and N[first_non_empty] == 0:
+        first_non_empty -= 1
+
+    if first_non_empty < 0:
+        return (np.zeros((1, R)), np.zeros((1, R)), np.zeros((M_original, R)),
+                np.zeros((M_original, R)), np.zeros((M_original, R)), np.zeros((M_original, R)), np.zeros((M_original, R)))
+
+    # Q[pop_idx, station] stores cumulative queue length at population index
+    Q = np.zeros((totpop, M))
+    # per-class queue lengths, needed by the interlock
+    Qc = np.zeros((totpop, M, R))
+    # per-class in-service component, the interlock's floor
+    Uc = np.zeros((totpop, M, R))
+
+    # Output arrays
+    XN = np.zeros((1, R))
+    QN = np.zeros((M, R))
+    CN = np.zeros((M, R))
+
+    # Log normalizing constant
+    lGN = 0.0
+
+    # Initialize population vector
+    n = np.zeros(R, dtype=int)
+    n[first_non_empty] = 1
+
+    currentpop = 1
+    ctr = totpop  # Process all populations including empty state indexing
+
+    while ctr > 0:
+        for s in range(R):
+            if n[s] > 0:
+                # Compute index for n - e_s (one less job in class s)
+                n[s] -= 1
+                pos_n_1s = int(n[R - 1])
+                for w in range(R - 1):
+                    pos_n_1s += int(n[w] * prods[w])
+                n[s] += 1
+            else:
+                pos_n_1s = 0
+
+            # Compute residence times: CN[i,s] = L_reduced[i,s] * (mi[i] + Q[pos_n_1s, i])
+            CNtot = 0.0
+            for i in range(M):
+                # In-service protection, as in lqns MVA::queueOnly_adjusted: the
+                # discount bites on the WAITING part only, never on the job already
+                # in service, so it damps itself out as the station saturates.
+                qarv = float(np.sum(np.maximum(ILw[s, :] * Qc[pos_n_1s, i, :],
+                                               Uc[pos_n_1s, i, :])))
+                CN[i, s] = L_reduced[i, s] * (mi[i] + qarv)
+                CNtot += CN[i, s]
+
+            # Compute throughput for class s
+            XN[0, s] = n[s] / (Z[s] + CNtot) if (Z[s] + CNtot) > 0 else 0.0
+
+            # Compute queue lengths and accumulate
+            for i in range(M):
+                QN[i, s] = XN[0, s] * CN[i, s]
+                Q[currentpop, i] += QN[i, s]
+                Qc[currentpop, i, s] = QN[i, s]
+                Uc[currentpop, i, s] = XN[0, s] * L_reduced[i, s]
+
+        # Update log normalizing constant
+        # Find last non-zero class position
+        nonzero_idx = np.where(n > 0)[0]
+        if len(nonzero_idx) > 0:
+            last_nnz = nonzero_idx[-1]
+            sumn = np.sum(n[:last_nnz])
+            sumN = np.sum(N[:last_nnz])
+            sumnprime = np.sum(n[last_nnz + 1:])
+            if sumn == sumN and sumnprime == 0 and XN[0, last_nnz] > 0:
+                lGN -= log(XN[0, last_nnz])
+
+        # Find next population vector
+        s = R - 1
+        while s >= 0 and (n[s] == N[s] or s > first_non_empty):
+            s -= 1
+
+        if s < 0:
+            break
+
+        n[s] += 1
+        for i in range(s + 1, R):
+            n[i] = 0
+
+        ctr -= 1
+        currentpop += 1
+
+    lGN = np.nan  # the interlock leaves the model outside product form
+
+    # Compute utilizations
+    UN = np.zeros((M, R))
+    for m in range(M):
+        for r in range(R):
+            UN[m, r] = XN[0, r] * L_reduced[m, r]
+
+    # Compute residence times (waiting times)
+    RN = np.zeros((M, R))
+    for m in range(M):
+        for r in range(R):
+            if XN[0, r] > 0:
+                RN[m, r] = QN[m, r] / XN[0, r]
+            else:
+                # see _kb/03-api-layer.md for rationale
+                RN[m, r] = CN[m, r]
+
+    # Expand results back to original dimensions if stations were consolidated
+    if M < M_original:
+        QN, UN, RN = pfqn_expand(QN, UN, RN, mapping)
+        CN, _, _ = pfqn_expand(CN, CN, CN, mapping)
+
+    # Node throughputs and arrival rates
+    TN = np.zeros((M_original, R))
+    AN = np.zeros((M_original, R))
+    for m in range(M_original):
+        for r in range(R):
+            TN[m, r] = XN[0, r]  # Closed network: all throughputs equal system throughput
+            AN[m, r] = XN[0, r]  # Arrival rate = departure rate = throughput
+
+    # Response time per class (sum of residence times + think time)
+    CN_total = np.zeros((1, R))
+    for r in range(R):
+        CN_total[0, r] = RN[:, r].sum() + Z[r]
+
+    return XN, CN_total, QN, UN, RN, TN, AN
+
+
 def pfqn_bs(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
             tol: float = 1e-6, maxiter: int = 1000,
             QN0: np.ndarray = None, type_sched: np.ndarray = None
@@ -360,7 +609,12 @@ def pfqn_bs(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
         L: Service demand matrix (M x R)
         N: Population vector
         Z: Think time vector (default 0)
-        tol: Convergence tolerance (default 1e-6)
+        tol: Convergence tolerance (default 1e-6); 'cn' or NaN selects the
+            published Linearizer termination test of Chandy and Neuse,
+            Commun. ACM 25(2), 1982, i.e. the cutoff pfqn_cntol(N) applied to
+            max_{i,r}|dQ(i,r)|/N_r instead of the relative-change metric used
+            by default. This is the test LQNS runs, since it sets it in
+            SchweitzerCommon.
         maxiter: Maximum iterations (default 1000)
         QN0: Initial queue lengths (default: uniform distribution)
         type_sched: Scheduling strategy per station (default: PS)
@@ -374,9 +628,14 @@ def pfqn_bs(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
             it: Number of iterations performed
     """
     from ...lang.base import SchedStrategy
+    from .cntol import is_cntol, pfqn_cntol
 
     L = np.asarray(L, dtype=np.float64)
     N = np.asarray(N, dtype=np.float64).flatten()
+
+    cntest = is_cntol(tol)
+    if cntest:
+        tol = pfqn_cntol(N)
 
     R = len(N)
     if L.ndim == 1:
@@ -451,10 +710,19 @@ def pfqn_bs(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
                 UN[ist, r] = XN[r] * L[ist, r]
 
         # Check convergence
-        with np.errstate(divide='ignore', invalid='ignore'):
-            rel_change = np.abs(1 - QN / QN_old)
-            rel_change = np.nan_to_num(rel_change, nan=0.0, posinf=0.0, neginf=0.0)
-        if np.max(rel_change) < tol:
+        if cntest:
+            # Chandy and Neuse (1982), p.129: absolute queue-length change
+            # scaled by the class population, over the non-empty classes only.
+            nz = N > 0
+            if not np.any(nz):
+                break
+            change = np.max(np.abs(QN[:, nz] - QN_old[:, nz]) / N[nz])
+        else:
+            with np.errstate(divide='ignore', invalid='ignore'):
+                rel_change = np.abs(1 - QN / QN_old)
+                rel_change = np.nan_to_num(rel_change, nan=0.0, posinf=0.0, neginf=0.0)
+            change = np.max(rel_change)
+        if change < tol:
             break
 
     # Compute residence times
@@ -470,29 +738,32 @@ def pfqn_bs(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
 
 
 def pfqn_aql(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
-             max_iter: int = 1000, tol: float = 1e-6, QN0: np.ndarray = None
+             tol: float = 1e-7, max_iter: int = 1000, QN0: np.ndarray = None
              ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray,
                         np.ndarray, np.ndarray, np.ndarray]:
     """
-    Approximate Queue Length (AQL) algorithm.
+    Aggregate Queue Length (AQL) approximate MVA for closed product-form networks.
 
-    Uses iterative approximation to compute queue lengths for large
-    populations where exact MVA would be computationally expensive.
+    Port of matlab/src/api/pfqn/pfqn_aql.m, cross-checked against
+    jar/src/main/java/jline/api/pfqn/mva/Pfqn_aql.java. The fixed point carries
+    K+1 population points (the full population and each N - e_s) and a
+    correction gamma(k,s) = Q_0(k)/sum(N) - Q_s(k)/(sum(N)-1) that removes the
+    Schweitzer proportionality error, in the manner of Linearizer.
 
     Args:
         L: Service demand matrix (M x R)
-        N: Population vector
+        N: Population vector (R,)
         Z: Think time vector (default 0)
+        tol: Relative tolerance on the full-population queue lengths (default 1e-7)
         max_iter: Maximum iterations (default 1000)
-        tol: Convergence tolerance (default 1e-6)
+        QN0: Warm start for the queue lengths (M x R), optional
 
     Returns:
-        Same format as pfqn_mva
+        Tuple of (XN, CN, QN, UN, RN, TN, AN); AN holds the arrival-instant
+        queue lengths Q_s(k), as in the MATLAB reference.
     """
     L = np.asarray(L, dtype=np.float64)
     N = np.asarray(N, dtype=np.float64).flatten()
-    N_total = N.sum()
-
     R = len(N)
     if L.ndim == 1:
         L = L.reshape(-1, 1) if R == 1 else L.reshape(1, -1)
@@ -503,60 +774,60 @@ def pfqn_aql(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
     else:
         Z = np.asarray(Z, dtype=np.float64).flatten()
 
-    # Initialize with balanced system solution
-    # pfqn_bs returns (XN, QN, UN, RN, it)
-    XN, QN, UN, RN, _ = pfqn_bs(L, N, Z, QN0=QN0)
-    # Compute TN and AN (node throughputs and arrival rates)
-    TN = np.tile(XN, (M, 1)) if XN.ndim == 1 else np.tile(XN, (M, 1))
-    AN = TN.copy()
+    if QN0 is None or np.size(QN0) == 0:
+        Q0 = np.tile(N, (M, 1)) / M
+    else:
+        Q0 = np.asarray(QN0, dtype=np.float64).reshape(M, R) + np.finfo(float).eps
 
-    # Pure Python iterative refinement (Schweitzer approximation)
-    for iteration in range(max_iter):
-        Q_old = QN.copy()
+    # Q[t], R[t], X[t] hold the solution at population N (t = 0) and at
+    # N - e_{t-1} (t = 1..R). Q is aggregate (per station), as in the reference.
+    # Q{t+1}(k,1)=QN0(k) in the reference: MATLAB linear indexing on an (M,R)
+    # array reads the FIRST column, so every population point starts there.
+    Qt = [Q0[:, 0].copy() for _ in range(R + 1)]
+    Rt = [np.zeros((M, R)) for _ in range(R + 1)]
+    Xt = [np.zeros(R) for _ in range(R + 1)]
+    gamma = np.zeros((M, R))
 
-        for r in range(R):
-            if N[r] <= 0:
-                continue
-
-            for m in range(M):
-                # Schweitzer approximation: E[Q_i | arrival of class r job]
-                # ≈ (N_r - 1) / N_r * Q_i
-                if N[r] > 1:
-                    Q_others = (N[r] - 1) / N[r] * Q_old[m, r]
-                else:
-                    Q_others = 0
-
-                # Add other class contributions
+    it = 0
+    while True:
+        Q_olditer = Qt[0].copy()
+        it += 1
+        for t in range(R + 1):
+            n = N.copy()
+            if t > 0:
+                n[t - 1] = max(n[t - 1] - 1.0, 0.0)
+            ntot = n.sum()
+            for k in range(M):
                 for s in range(R):
-                    if s != r:
-                        Q_others += Q_old[m, s]
-
-                # Update residence time
-                RN[m, r] = L[m, r] * (1 + Q_others)
-
-            # Throughput
-            R_total = RN[:, r].sum()
-            if Z[r] + R_total > 0:
-                XN[0, r] = N[r] / (Z[r] + R_total)
-            else:
-                XN[0, r] = 0
-
-            # Queue lengths
-            for m in range(M):
-                QN[m, r] = XN[0, r] * RN[m, r]
-                UN[m, r] = XN[0, r] * L[m, r]
-                TN[m, r] = XN[0, r]
-                AN[m, r] = XN[0, r]
-
-        # Check convergence
-        diff = np.abs(QN - Q_old).max()
-        if diff < tol:
+                    Rt[t][k, s] = L[k, s] * (1.0 + (ntot - 1.0) * (
+                        (Qt[t][k] / ntot if ntot > 0 else 0.0) - gamma[k, s]))
+            for s in range(R):
+                den = Z[s] + Rt[t][:, s].sum()
+                Xt[t][s] = n[s] / den if den > 0 else 0.0
+            for k in range(M):
+                Qt[t][k] = float(Xt[t] @ Rt[t][k, :])
+        Ntot = N.sum()
+        for k in range(M):
+            for s in range(R):
+                gamma[k, s] = (Qt[0][k] / Ntot if Ntot > 0 else 0.0) - (
+                    Qt[s + 1][k] / (Ntot - 1.0) if Ntot > 1 else 0.0)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            rel = np.abs((Q_olditer - Qt[0]) / np.where(Qt[0] != 0, Qt[0], np.inf))
+        if np.nanmax(rel) < tol or it == max_iter:
             break
 
-    # Response times
-    CN = np.zeros((1, R))
-    for r in range(R):
-        CN[0, r] = RN[:, r].sum() + Z[r]
+    XN = Xt[0].reshape(1, -1)
+    RN = Rt[0]
+    UN = np.zeros((M, R))
+    QN = np.zeros((M, R))
+    AN = np.zeros((M, R))
+    for k in range(M):
+        for s in range(R):
+            UN[k, s] = XN[0, s] * L[k, s]
+            QN[k, s] = UN[k, s] * (1.0 + Qt[s + 1][k])
+            AN[k, s] = Qt[s + 1][k]
+    TN = np.tile(XN, (M, 1))
+    CN = (RN.sum(axis=0) + Z).reshape(1, -1)
 
     return XN, CN, QN, UN, RN, TN, AN
 
@@ -622,7 +893,15 @@ def pfqn_sqni(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None
             U[queue_idx, r] = Xr * L[r]
             Q[queue_idx, r] = Xr * L[r]
     else:
+        # A Z=0 class (self-looping) has no delay to interpolate through: its
+        # queue length is its whole population and it is solved after the loop.
         for r in range(R):
+            if Z[r] == 0.0:
+                Q[queue_idx, r] = N[r]
+
+        for r in range(R):
+            if Z[r] == 0.0:
+                continue
             Nr = N[r]
             Lr = L[r]
             Zr = Z[r]
@@ -633,16 +912,16 @@ def pfqn_sqni(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None
 
             sumN = N.sum()
 
-            # Compute sumBrPart
+            # sumBrPart runs over EVERY class, class r included, as in MATLAB
+            # pfqn_sqni; skipping r shifted X by 1.6% on a 2-class model.
             sumBrPart = 0.0
             for i in range(R):
-                if i != r:
-                    Zi = Z[i]
-                    Li = L[i]
-                    Ni = Nvec_1r[i]
-                    denom = Zi + Li + Li * (sumN - 2)
-                    if denom > 0:
-                        sumBrPart += Zi * Ni / denom
+                Zi = Z[i]
+                Li = L[i]
+                Ni = Nvec_1r[i]
+                denom = Zi + Li + Li * (sumN - 2)
+                if denom > 0:
+                    sumBrPart += Zi * Ni / denom
 
             # Compute BrVec
             BrVec = np.zeros(R)
@@ -700,233 +979,6 @@ def pfqn_sqni(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None
             Q[queue_idx, r] = N[r] - Xr * Z[r]
 
     return Q, U, X
-
-
-def pfqn_qd(
-    L: np.ndarray,
-    N: np.ndarray,
-    ga: callable = None,
-    be: callable = None,
-    Q0: np.ndarray = None,
-    tol: float = 1e-6,
-    max_iter: int = 1000
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, int]:
-    """
-    Queue-Dependent (QD) Approximate MVA.
-
-    Implements the QD-AMVA algorithm that uses queue-dependent correction
-    factors to improve accuracy of approximate MVA for closed networks.
-
-    The algorithm iteratively computes queue lengths using:
-    - A correction factor delta = (N_tot - 1) / N_tot
-    - Per-class correction factor delta_r = (N_r - 1) / N_r
-    - Optional scaling functions ga(A) and be(A) for advanced corrections
-
-    Args:
-        L: Service demand matrix (M x R) - rows are stations, columns are classes
-        N: Population vector (R,) - number of jobs per class
-        ga: Gamma scaling function ga(A) -> array(M,) (default: ones)
-            A is the arrival queue seen by class, A[k] = 1 + delta * sum(Q[k,:])
-        be: Beta scaling function be(A) -> array(M, R) (default: ones)
-            A is the arrival queue per class, A[k,r] = 1 + delta_r * Q[k,r]
-        Q0: Initial queue length estimate (M x R) (default: proportional)
-        tol: Convergence tolerance (default 1e-6)
-        max_iter: Maximum iterations (default 1000)
-
-    Returns:
-        Tuple of (Q, X, U, iter) where:
-            Q: Mean queue lengths (M x R)
-            X: Class throughputs (R,)
-            U: Utilizations (M x R)
-            iter: Number of iterations performed
-
-    Reference:
-        Schweitzer, P.J. "Approximate analysis of multiclass closed networks
-        of queues." Proceedings of the International Conference on Stochastic
-        Control and Optimization (1979).
-    """
-    L = np.atleast_2d(np.asarray(L, dtype=float))
-    N = np.asarray(N, dtype=float).ravel()
-
-    M, R = L.shape
-    N_tot = np.sum(N)
-
-    # Default scaling functions (identity - return ones)
-    if ga is None:
-        def ga(A):
-            return np.ones(M)
-    if be is None:
-        def be(A):
-            return np.ones((M, R))
-
-    # Initialize queue lengths
-    if Q0 is None:
-        # Proportional initialization: Q_kr = L_kr / sum_k(L_kr) * N_r
-        L_sum = np.sum(L, axis=0, keepdims=True)
-        L_sum[L_sum == 0] = 1  # Avoid division by zero
-        Q = (L / L_sum) * N
-    else:
-        Q = np.asarray(Q0, dtype=float).copy()
-
-    # Queue-dependent correction factors
-    if N_tot > 0:
-        delta = (N_tot - 1) / N_tot
-    else:
-        delta = 0.0
-
-    deltar = np.zeros(R)
-    for r in range(R):
-        if N[r] > 0:
-            deltar[r] = (N[r] - 1) / N[r]
-        else:
-            deltar[r] = 0.0
-
-    # Initialize outputs
-    X = np.zeros(R)
-    U = np.zeros((M, R))
-    C = np.zeros((M, R))
-
-    # Storage for arrival queue vectors
-    Ak = [np.zeros(M) for _ in range(R)]
-    Akr = np.zeros((M, R))
-
-    # Iteration
-    Q_prev = Q * 10  # Ensure first iteration runs
-    iteration = 0
-
-    while np.max(np.abs(Q - Q_prev)) > tol and iteration < max_iter:
-        iteration += 1
-        Q_prev = Q.copy()
-
-        # Compute arrival queue vectors
-        for k in range(M):
-            Q_row_sum = np.sum(Q[k, :])
-            for r in range(R):
-                Ak[r][k] = 1 + delta * Q_row_sum
-                Akr[k, r] = 1 + deltar[r] * Q[k, r]
-
-        # Compute queue lengths and throughputs for each class
-        for r in range(R):
-            if N[r] <= 0:
-                X[r] = 0
-                Q[:, r] = 0
-                U[:, r] = 0
-                continue
-
-            # Get scaling factors
-            g = ga(Ak[r])
-            b = be(Akr)
-
-            # Compute cycle times C[k,r]
-            for k in range(M):
-                Q_row_sum = np.sum(Q_prev[k, :])
-                C[k, r] = L[k, r] * g[k] * b[k, r] * (1 + delta * Q_row_sum)
-
-            # Compute throughput
-            C_sum = np.sum(C[:, r])
-            if C_sum > 0:
-                X[r] = N[r] / C_sum
-            else:
-                X[r] = 0
-
-            # Compute queue lengths and utilizations
-            for k in range(M):
-                Q[k, r] = X[r] * C[k, r]
-                U[k, r] = L[k, r] * g[k] * b[k, r] * X[r]
-
-    return Q, X, U, iteration
-
-
-def pfqn_qdlin(
-    L: np.ndarray,
-    N: np.ndarray,
-    Z: np.ndarray = None,
-    tol: float = 1e-6,
-    max_iter: int = 1000
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
-    """
-    QD-Linearizer (QDLIN) Approximate MVA.
-
-    Combines Queue-Dependent (QD) correction with Linearizer iteration
-    for improved accuracy in multi-class closed networks.
-
-    Args:
-        L: Service demand matrix (M x R)
-        N: Population vector (R,)
-        Z: Think time vector (R,) (default: zeros)
-        tol: Convergence tolerance (default 1e-6)
-        max_iter: Maximum iterations (default 1000)
-
-    Returns:
-        Tuple of (Q, U, R, X, C, iter) where:
-            Q: Mean queue lengths (M x R)
-            U: Utilizations (M x R)
-            R: Residence times (M x R)
-            X: Class throughputs (1 x R)
-            C: Cycle times (1 x R)
-            iter: Number of iterations performed
-    """
-    L = np.atleast_2d(np.asarray(L, dtype=float))
-    N = np.asarray(N, dtype=float).ravel()
-    M, R = L.shape
-
-    if Z is None:
-        Z = np.zeros(R)
-    else:
-        Z = np.asarray(Z, dtype=float).ravel()
-
-    N_tot = np.sum(N)
-    if N_tot <= 0:
-        return (np.zeros((M, R)), np.zeros((M, R)), np.zeros((M, R)),
-                np.zeros((1, R)), np.zeros((1, R)), 0)
-
-    # QD correction factors
-    delta = (N_tot - 1) / N_tot if N_tot > 0 else 0.0
-    deltar = np.where(N > 0, (N - 1) / N, 0.0)
-
-    # Initialize with proportional distribution
-    L_sum = np.sum(L, axis=0, keepdims=True)
-    L_sum[L_sum == 0] = 1
-    Q = (L / L_sum) * N
-
-    X = np.zeros((1, R))
-    RN = np.zeros((M, R))
-    C = np.zeros((1, R))
-    U = np.zeros((M, R))
-
-    Q_prev = Q * 10
-    iteration = 0
-
-    while np.max(np.abs(Q - Q_prev)) > tol and iteration < max_iter:
-        iteration += 1
-        Q_prev = Q.copy()
-
-        for r in range(R):
-            if N[r] <= 0:
-                continue
-
-            # Compute residence times with QD correction
-            for k in range(M):
-                # Queue seen by arriving class-r job
-                Q_others = np.sum(Q_prev[k, :]) - Q_prev[k, r]
-                Q_seen = Q_others + deltar[r] * Q_prev[k, r]
-                RN[k, r] = L[k, r] * (1 + Q_seen)
-
-            # Throughput
-            R_total = np.sum(RN[:, r])
-            if Z[r] + R_total > 0:
-                X[0, r] = N[r] / (Z[r] + R_total)
-            else:
-                X[0, r] = 0
-
-            # Update queue lengths
-            for k in range(M):
-                Q[k, r] = X[0, r] * RN[k, r]
-                U[k, r] = X[0, r] * L[k, r]
-
-            C[0, r] = R_total
-
-    return Q, U, RN, X, C, iteration
 
 
 def pfqn_qli(
@@ -1147,126 +1199,6 @@ def pfqn_fli(
     return Q, U, RN, X, C, iteration
 
 
-def pfqn_bsfcfs(
-    L: np.ndarray,
-    N: np.ndarray,
-    Z: np.ndarray = None,
-    tol: float = 1e-6,
-    max_iter: int = 1000,
-    QN: np.ndarray = None,
-    weight: np.ndarray = None
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
-    """
-    Bard-Schweitzer approximate MVA for FCFS scheduling with weighted priorities.
-
-    Implements AMVA with FCFS approximation where classes can have
-    relative priority weights affecting the expected waiting times.
-
-    Args:
-        L: Service demand matrix (M x R) where M is stations, R is classes
-        N: Population vector (1 x R) - number of jobs per class
-        Z: Think time vector (1 x R) - default: zeros
-        tol: Convergence tolerance (default 1e-6)
-        max_iter: Maximum iterations (default 1000)
-        QN: Initial queue length matrix (M x R) - default: uniform distribution
-        weight: Weight matrix (M x R) for relative priorities - default: ones
-
-    Returns:
-        Tuple of (XN, QN, UN, RN, it) where:
-            XN: System throughput per class (1 x R)
-            QN: Mean queue lengths (M x R)
-            UN: Utilizations (M x R)
-            RN: Residence times (M x R)
-            it: Number of iterations performed
-
-    Reference:
-        Bard, Y. and Schweitzer, P.J. "Analyzing Closed Queueing Networks with Multiple
-        Job Classes and Multiserver Stations." Performance Evaluation Review 7.1-2 (1978).
-    """
-    L = np.atleast_2d(np.asarray(L, dtype=float))
-    N = np.asarray(N, dtype=float).ravel()
-
-    M, R = L.shape
-
-    if Z is None:
-        Z = np.zeros(R)
-    else:
-        Z = np.asarray(Z, dtype=float).ravel()
-
-    # Initialize queue lengths
-    if QN is None:
-        QN = np.tile(N, (M, 1)) / M
-    else:
-        QN = np.asarray(QN, dtype=float).copy() + 1e-12  # Avoid zero for numerical stability
-
-    # Initialize weight matrix
-    if weight is None:
-        weight = np.ones((M, R))
-    else:
-        weight = np.asarray(weight, dtype=float)
-
-    XN = np.zeros(R)
-    UN = np.zeros((M, R))
-    CN = np.zeros((M, R))
-    relprio = np.zeros((M, R))
-
-    for it in range(1, max_iter + 1):
-        QN_old = QN.copy()
-
-        # Compute relative priorities
-        for ist in range(M):
-            for r in range(R):
-                relprio[ist, r] = QN[ist, r] * weight[ist, r]
-
-        # Compute residence times with FCFS approximation
-        for r in range(R):
-            for ist in range(M):
-                CN[ist, r] = L[ist, r]
-                for s in range(R):
-                    if s != r:
-                        # FCFS approximation: weighted by relative priorities
-                        if relprio[ist, r] > 0:
-                            CN[ist, r] += L[ist, s] * QN[ist, s] * relprio[ist, s] / relprio[ist, r]
-                    else:
-                        # Same class contribution with arrival theorem correction
-                        if N[r] > 0 and relprio[ist, r] > 0:
-                            CN[ist, r] += L[ist, r] * QN[ist, r] * (N[r] - 1) / N[r] * relprio[ist, s] / relprio[ist, r]
-
-            # Compute throughput
-            CN_sum = np.sum(CN[:, r])
-            if Z[r] + CN_sum > 0:
-                XN[r] = N[r] / (Z[r] + CN_sum)
-            else:
-                XN[r] = 0
-
-        # Update queue lengths
-        for r in range(R):
-            for ist in range(M):
-                QN[ist, r] = XN[r] * CN[ist, r]
-
-        # Compute utilizations
-        for r in range(R):
-            for ist in range(M):
-                UN[ist, r] = XN[r] * L[ist, r]
-
-        # Check convergence
-        if QN_old.max() > 0:
-            rel_diff = np.abs(1 - QN / np.maximum(QN_old, 1e-12)).max()
-            if rel_diff < tol:
-                break
-
-    # Compute residence times from queue lengths
-    RN = np.zeros((M, R))
-    for r in range(R):
-        for ist in range(M):
-            if XN[r] > 0:
-                RN[ist, r] = QN[ist, r] / XN[r]
-            else:
-                RN[ist, r] = L[ist, r]
-
-    return XN.reshape(1, -1), QN, UN, RN, it
-
-
 def pfqn_joint(
     n: np.ndarray,
     L: np.ndarray,
@@ -1327,24 +1259,20 @@ def pfqn_joint(
         return factln(np.sum(x)) - np.sum(factln(x))
 
     if n.ndim == 1 or (n.ndim == 2 and n.shape[1] == 1):
-        # Joint probability of total queue lengths
+        # Joint probability of total queue lengths. The permanent identity owns
+        # this branch (pfqn_jointmarg); the aggregated think time is one extra
+        # infinite-server row, which is exact by the multinomial theorem.
         n = n.ravel()
 
         if np.sum(Z) > 0:
-            # With think time
             n0 = np.sum(N) - np.sum(n)
             if n0 < 0:
                 return 0.0
-
-            # Compute F_per for L extended with Z
             L_ext = np.vstack([L, Z.reshape(1, -1)])
             n_ext = np.concatenate([n, [n0]])
-
-            Fjoint = _fper(L_ext, N, n_ext.astype(int))
-            pjoint = np.exp(np.log(max(Fjoint, 1e-300)) - lGN - factln(n0))
+            pjoint, _ = pfqn_jointmarg(n_ext, L_ext, N, [M], lGN)
         else:
-            Fjoint = _fper(L, N, n.astype(int))
-            pjoint = np.exp(np.log(max(Fjoint, 1e-300)) - lGN)
+            pjoint, _ = pfqn_jointmarg(n, L, N, [], lGN)
 
     elif n.ndim == 2 and n.shape[1] == R:
         # Joint probability of per-class queue-lengths
@@ -1369,80 +1297,213 @@ def pfqn_joint(
     return max(0.0, pjoint)
 
 
-def _fper(L: np.ndarray, N: np.ndarray, m: np.ndarray) -> float:
+def pfqn_jointmarg(
+    n: np.ndarray,
+    L: np.ndarray,
+    N: np.ndarray,
+    infset=None,
+    lGN: float = None,
+    engine: str = 'exact'
+):
     """
-    Compute permanent-based function F_per for joint probability.
+    Joint probability of the per-station TOTAL queue lengths.
 
-    Internal helper for pfqn_joint.
+    Joint probability that station i holds n[i] jobs IN TOTAL, all classes
+    summed out, in a closed multiclass product-form network::
+
+        P(n_1,...,n_M) = perm(A) / ( prod_r N_r! * prod_{j in infset} n_j! * G(N) )
+
+    with A the demand matrix whose column r is repeated N[r] times and whose
+    row i is repeated n[i] times, so A is square of order sum(N). Unlike
+    pfqn_joint, which takes the delay as a single aggregated row, every
+    infinite-server station keeps its own row here and contributes its own
+    1/n_j!: the queueing stations contribute the n_i! that the permanent
+    identity supplies, the infinite servers do not.
+
+    Args:
+        n: (M,) per-station total queue lengths, infinite servers included;
+           sum(n) must equal sum(N)
+        L: (M, R) demand matrix, infinite-server rows included
+        N: (R,) per-class populations
+        infset: row indices of L that are infinite-server stations, empty by
+            default (every station is a queue)
+        lGN: log normalizing constant; computed with pfqn_ca when omitted,
+            aggregating the infinite-server rows into the think time (which is
+            exact: the delay stations aggregate by the multinomial theorem, so
+            G does not depend on how they are split)
+        engine: 'exact' (default), 'spm', 'bethe', 'heur', 'huberlaw' or
+            'adapart'. 'spm' is the only engine that does not expand the
+            matrix to order sum(N): it takes the row-replicated matrix with
+            the class populations as column multiplicities, which is the
+            regime its saddle-point expansion is asymptotically exact in, so
+            its cost does not grow with the population and its relative error
+            is O((R-1)/min(N)). Measured on a 3-station 2-class model, 12.8%
+            at N = (1,1), 4.2% at (3,3), 2.1% at (6,6); it degrades the other
+            way round, when the class count grows at fixed population (2.7% at
+            R = 2, 21% at R = 7, both at N_r = 3), because R-1 is the
+            dimension being expanded in. The bias is nearly constant across
+            the lattice, so a caller that renormalizes a full sweep keeps far
+            less of it: total variation distance 5.0e-3 at N = (1,1), 8.4e-4
+            at (3,3), 4.3e-4 at (5,5), better than 'bethe' and 'heur' at every
+            population measured
+
+    Returns:
+        (pjoint, lpjoint): the joint probability and its logarithm, which
+        survives populations the probability itself underflows at
+
+    The identity holds for load-independent single-server queues plus infinite
+    servers. Multiserver and load-dependent stations break the n_i! factor and
+    are the caller's responsibility to exclude.
+
+    ZERO ELEMENTS are safe under the exact engine and only under it: a station
+    holding no jobs contributes no row, a class with no jobs contributes no
+    column, a zero demand is an ordinary zero entry of A, and the permanent of
+    the empty matrix is 1. The approximate engines are REFUSED on a matrix with
+    a structural zero rather than having it floored at eps: Sinkhorn scaling
+    needs full support, and the Bethe gap is a state-dependent lower bound that
+    does not cancel when the estimates are normalized against each other.
+
+    References:
+        H. J. Ryser, "Combinatorial Mathematics", Carus Mathematical
+        Monographs 14, Mathematical Association of America, 1963.
     """
-    from math import factorial
-    from itertools import permutations
+    from .nc import pfqn_ca, pfqn_perm
+    from scipy.special import gammaln
 
+    L = np.atleast_2d(np.asarray(L, dtype=float))
+    n = np.asarray(n, dtype=float).ravel()
+    N = np.asarray(N, dtype=float).ravel()
     M, R = L.shape
-    m = np.asarray(m, dtype=int).ravel()
 
-    # Build matrix Ak
-    Ak_cols = []
-    for r in range(R):
-        N_r = int(N[r])
-        for _ in range(N_r):
-            Ak_cols.append(L[:, r])
-    Ak = np.column_stack(Ak_cols) if Ak_cols else np.zeros((M, 0))
+    if infset is None:
+        infset = []
+    infset = np.asarray(infset, dtype=int).ravel()
+    if engine is None or engine == '':
+        engine = 'exact'
+    engine = str(engine).lower()
 
-    # Build matrix A based on m
-    A_rows = []
-    for i in range(M):
-        if i < len(m) and m[i] > 0:
-            for _ in range(int(m[i])):
-                A_rows.append(Ak[i, :])
-    A = np.vstack(A_rows) if A_rows else np.zeros((0, Ak.shape[1]))
+    if n.size != M:
+        raise ValueError("pfqn_jointmarg: the occupancy vector has %d entries but L has %d rows."
+                         % (n.size, M))
+    if N.size != R:
+        raise ValueError("pfqn_jointmarg: the population vector has %d entries but L has %d columns."
+                         % (N.size, R))
+    if np.any(n < 0):
+        raise ValueError("pfqn_jointmarg: the occupancy vector has a negative entry.")
+    if infset.size > 0 and (np.any(infset < 0) or np.any(infset >= M)):
+        raise ValueError("pfqn_jointmarg: infset indexes a station outside 0..%d." % (M - 1))
 
-    # Compute permanent (simplified for small matrices)
-    if A.shape[0] == 0 or A.shape[1] == 0:
-        return 1.0
+    # Infeasible occupancies are not an error: the caller sweeps a lattice.
+    if int(round(np.sum(n))) != int(round(np.sum(N))):
+        return 0.0, -np.inf
 
-    n_rows, n_cols = A.shape
-    if n_rows > n_cols:
-        return 0.0
+    if lGN is None or not np.isfinite(lGN):
+        isinfrow = np.zeros(M, dtype=bool)
+        isinfrow[infset] = True
+        Lq = L[~isinfrow, :]
+        Z = np.sum(L[isinfrow, :], axis=0) if np.any(isinfrow) else np.zeros(R)
+        _, lGN = pfqn_ca(Lq, N.reshape(1, -1), Z.reshape(1, -1))
 
-    # Simple permanent computation (exponential but works for small n)
-    if n_rows <= 10:
-        perm = 0.0
-        from itertools import permutations as perms
-        for p in perms(range(n_cols), n_rows):
-            prod = 1.0
-            for i, j in enumerate(p):
-                prod *= A[i, j]
-            perm += prod
+    if np.sum(N) == 0:
+        lpjoint = -lGN
+        return float(np.exp(lpjoint)), float(lpjoint)
+
+    # The expanded matrix is square of order sum(N). 'spm' works on the
+    # unexpanded form, and building this would throw away the very property
+    # that makes it independent of the population.
+    A = None if engine == 'spm' else _replicate_demands(L, N, n)
+
+    if engine != 'exact':
+        zero = _first_zero_demand(L, N, n)
+        if zero is not None:
+            raise ValueError(
+                "pfqn_jointmarg: the '%s' permanent engine cannot be applied: the demand of class %d "
+                "at station %d is zero, so the replicated matrix has no full support. Use engine 'exact'."
+                % (engine, zero[1] + 1, zero[0] + 1))
+
+    if engine == 'exact':
+        F = pfqn_perm(A)
+    elif engine == 'spm':
+        # Never the expanded A: the saddle point is asymptotic in the column
+        # multiplicities, which are the class populations themselves.
+        from ..perm import perm_spm
+        Ar, mr = _replicate_rows(L, N, n)
+        F = perm_spm(Ar, mr)
+    elif engine == 'bethe':
+        from ..perm import perm_bethe
+        F = perm_bethe(A)
+    elif engine == 'heur':
+        from ..perm import perm_heur
+        F = perm_heur(A)
+    elif engine == 'huberlaw':
+        from ..perm import HuberLawSampler
+        F = HuberLawSampler(A, solve=True).value
+    elif engine == 'adapart':
+        from ..perm import AdaPartSampler
+        F = AdaPartSampler(A, solve=True).value
     else:
-        # For larger matrices, use approximation
-        perm = _permanent_approx(A)
+        raise ValueError("pfqn_jointmarg: unrecognized permanent engine '%s'. "
+                         "Use exact, spm, bethe, heur, huberlaw or adapart." % engine)
 
-    # Divide by product of factorials
-    prod_fact = 1.0
-    for r in range(R):
-        prod_fact *= factorial(int(N[r]))
+    if F <= 0:
+        return 0.0, -np.inf
 
-    return perm / prod_fact
+    lpjoint = float(np.log(F) - np.sum(gammaln(N + 1)) - np.sum(gammaln(n[infset] + 1)) - lGN)
+    return float(np.exp(lpjoint)), lpjoint
 
 
-def _permanent_approx(A: np.ndarray) -> float:
+def _replicate_rows(L: np.ndarray, N: np.ndarray, n: np.ndarray):
     """
-    Approximate permanent using Bethe approximation.
-    For small matrices, computes exact permanent.
+    Row i of L repeated n[i] times, with the class populations as multiplicities.
+
+    The same matrix _replicate_demands expands, one step earlier: perm(Ar, m)
+    equals perm(A), and perm_spm wants the unexpanded form because its
+    expansion is asymptotic in m. A class with no jobs is dropped rather than
+    passed with multiplicity zero, so a zero demand in such a column cannot
+    trip the full-support check.
     """
-    n_rows, n_cols = A.shape
-    if n_rows == 0:
-        return 1.0
+    keepc = np.flatnonzero(np.asarray(N).ravel() > 0)
+    m = np.asarray(N).ravel()[keepc]
+    rows = []
+    for i in range(L.shape[0]):
+        rows.extend([L[i, keepc]] * int(round(n[i])))
+    Ar = np.vstack(rows) if rows else np.zeros((0, keepc.size))
+    return Ar, m
 
-    # Simple approximation using product of sums
-    # This is an upper bound (van der Waerden)
-    perm = 1.0
-    for i in range(n_rows):
-        row_sum = np.sum(A[i, :])
-        perm *= row_sum
 
-    return perm
+def _replicate_demands(L: np.ndarray, N: np.ndarray, n: np.ndarray) -> np.ndarray:
+    """
+    Column r of L repeated N[r] times, then row i of that repeated n[i] times.
+
+    A station holding no jobs and a class holding no jobs each drop out here,
+    which is what makes a zero entry of the occupancy vector free of any
+    special case: the result stays square of order sum(N).
+    """
+    M = L.shape[0]
+    cols = []
+    for r in range(L.shape[1]):
+        cols.extend([L[:, r]] * int(round(N[r])))
+    Ak = np.column_stack(cols) if cols else np.zeros((M, 0))
+
+    rows = []
+    for i in range(M):
+        rows.extend([Ak[i, :]] * int(round(n[i])))
+    return np.vstack(rows) if rows else np.zeros((0, Ak.shape[1]))
+
+
+def _first_zero_demand(L: np.ndarray, N: np.ndarray, n: np.ndarray):
+    """
+    First (station, class) whose zero demand actually reaches the replicated
+    matrix. A class with no jobs or a station with no jobs contributes nothing,
+    so its zeros are irrelevant.
+    """
+    for i in range(L.shape[0]):
+        if n[i] == 0:
+            continue
+        for r in range(L.shape[1]):
+            if N[r] > 0 and L[i, r] <= 0:
+                return i, r
+    return None
 
 
 __all__ = [
@@ -1451,10 +1512,8 @@ __all__ = [
     'pfqn_bs',
     'pfqn_aql',
     'pfqn_sqni',
-    'pfqn_qd',
-    'pfqn_qdlin',
     'pfqn_qli',
     'pfqn_fli',
-    'pfqn_bsfcfs',
     'pfqn_joint',
+    'pfqn_jointmarg',
 ]

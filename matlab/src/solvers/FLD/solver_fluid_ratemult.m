@@ -1,11 +1,20 @@
-function [tgrid, Mmat] = solver_fluid_ratemult(numEvents, M, K, enabled, q_indices, Kic, Mu, eventIdx, options)
-% [TGRID, MMAT] = SOLVER_FLUID_RATEMULT(NUMEVENTS, M, K, ENABLED, Q_INDICES, KIC, MU, EVENTIDX, OPTIONS)
+function [tgrid, Mmat, tbreaks] = solver_fluid_ratemult(numEvents, M, K, enabled, q_indices, Kic, Mu, eventIdx, options)
+% [TGRID, MMAT, TBREAKS] = SOLVER_FLUID_RATEMULT(NUMEVENTS, M, K, ENABLED, Q_INDICES, KIC, MU, EVENTIDX, OPTIONS)
 %
 % Build the time-varying per-event rate multiplier for the closing fluid ODE.
 % Returns TGRID (1 x ngrid, strictly increasing) and MMAT (numEvents x ngrid);
 % event e is scaled at time t by fluid_interpcols(TGRID, MMAT, t)(e). Returns
 % [] when no time-varying source is configured, so the caller keeps the legacy
 % autonomous closure.
+%
+% TBREAKS lists the instants at which the multiplier JUMPS, i.e. the NHPP
+% schedule's own segment bounds. They are reported separately from TGRID
+% because they are the only grid instants an integrator must not step across:
+% the schedule is piecewise CONSTANT, so the drift is discontinuous there and
+% nothing in the right-hand side tells a step controller where the jump is.
+% SOLVER_FLUID_ITERATION makes each one an integration boundary. The other two
+% sources carry no breaks: RATE_TRAJ and RATE_SCHED are sampled trajectories
+% meant to be read as piecewise linear, which every integrator handles.
 %
 % Two independent, composable sources are honoured (both reduce to a per-event
 % multiplicative factor because the closing rate is rate = rateBase .* theta(x)
@@ -28,6 +37,7 @@ function [tgrid, Mmat] = solver_fluid_ratemult(numEvents, M, K, enabled, q_indic
 
 tgrid = [];
 Mmat = [];
+tbreaks = [];
 if ~isfield(options,'config') || isempty(options.config)
     return
 end
@@ -79,7 +89,8 @@ if isfield(cfg,'nhpp_sched') && ~isempty(cfg.nhpp_sched)
         else
             thi = tend;
         end
-        [seg_t, seg_r] = local_nhpp_steps(nh, t0, thi);
+        [seg_t, seg_r, seg_b] = local_nhpp_steps(nh, t0, thi);
+        tbreaks = [tbreaks, seg_b]; %#ok<AGROW>
         rowmult = seg_r / nominal;
         % rows: all events sourced at (i,c) across its phases
         rows = false(numEvents,1);
@@ -133,13 +144,15 @@ end
 % -- compose all sources ------------------------------------------------------
 [tgrid, Mmat] = local_merge(user_tg, user_M, nhpp_tg, nhpp_M, numEvents);
 [tgrid, Mmat] = local_merge(tgrid, Mmat, sched_tg, sched_M, numEvents);
+tbreaks = unique(tbreaks(:)');
 end
 
-function [seg_t, seg_r] = local_nhpp_steps(nh, t0, thi)
+function [seg_t, seg_r, seg_b] = local_nhpp_steps(nh, t0, thi)
 % Build a step-faithful (time, rate) sampling of a piecewise-constant NHPP
 % intensity over [t0, thi]. Each segment contributes two samples at its start
 % and just before its end, so clamped-linear interpolation reproduces the step
-% with a negligible transition ramp.
+% with a negligible transition ramp. SEG_B returns the INTERIOR segment bounds,
+% i.e. where that ramp sits and the intensity actually jumps.
 bp = nh.getBreakpoints();
 bp = bp(:)';
 period = nh.getPeriod();
@@ -166,6 +179,7 @@ for k = 1:nb
     seg_t(2*k) = max(a + neps, b - neps);
     seg_r(2*k) = r;
 end
+seg_b = bounds(2:end-1);
 end
 
 function [tg, Mg] = local_merge(tg1, M1, tg2, M2, numEvents)

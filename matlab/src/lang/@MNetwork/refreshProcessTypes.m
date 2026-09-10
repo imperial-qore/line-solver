@@ -41,7 +41,13 @@ for i=statSet
                 end
             otherwise
                 if ~hasOpenClasses || i ~= self.getIndexSourceStation
-                    if isempty(stations{i}.server.serviceProcess{r}) || stations{i}.server.serviceProcess{r}{end}.isDisabled
+                    % LENGTH FIRST, THEN EMPTY: a per-class cell that was never
+                    % padded to nclasses makes a bare {r} throw MATLAB's own
+                    % "Index exceeds the number of array elements", which names
+                    % neither station nor class. SANITIZE.m writes both halves.
+                    if r > numel(stations{i}.server.serviceProcess) || ...
+                            isempty(stations{i}.server.serviceProcess{r}) || ...
+                            stations{i}.server.serviceProcess{r}{end}.isDisabled
                         procid(i,r) = ProcessType.DISABLED;
                     elseif stations{i}.server.serviceProcess{r}{end}.isImmediate
                         procid(i,r) = ProcessType.IMMEDIATE;

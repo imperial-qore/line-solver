@@ -25,8 +25,8 @@ These tests exist because the expansion was previously covered only by
 all-exponential models, in which the dependency graph's arithmetic decode of a
 state index is still correct and its defects are therefore invisible: the
 failure mode is a quiet bias that GROWS with distance from exponential (see
-_kb/log.md [2026-07-17]). The Erlang/HyperExp/Coxian cases carry the signal; a
-green all-exponential suite proves nothing about them.
+git show 449847e7b:_kb/log.md [2026-07-17]). The Erlang/HyperExp/Coxian
+cases carry the signal; a green all-exponential suite proves nothing about them.
 
 Tolerance: at SAMPLES the single-seed noise floor on Q is sd ~= 0.002 (0.2%),
 calibrated by an 8-seed spread on the Exp control. REL_TOL is set to 1% -- ~5

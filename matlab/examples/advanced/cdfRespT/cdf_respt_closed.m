@@ -36,11 +36,24 @@ end
 solver = FLD(model);
 RDfluid = solver.getCdfRespT();
 %%
+% MIDPOINT RIEMANN-STIELTJES, and the rule is the LAW and not the taste.
+% A fluid CDF is a CONTINUOUS law read off an integrator grid: the mass dF of
+% an interval sits somewhere inside it, so the midpoint is the second-order
+% estimate and the right endpoint used above is first-order, i.e. carries a
+% bias that moves with whatever grid the integrator happened to choose. A
+% SIMULATED CDF jumps AT its samples, so up there the right endpoint IS the
+% sample and that sum is exact -- the two rules are not interchangeable.
+% Measured on this model, whose exact answers are the service laws above:
+% midpoint reads SCV 1.00032 and 0.33301 against 1 and 1/3, the right endpoint
+% 1.01715 and 0.33409, and the two hooks in options.odesolvers agree to the
+% fourth decimal under it where they agreed only to the second before.
 for i=1:model.getNumberOfStations
     for c=1:model.getNumberOfClasses
 %        plot(FC{i,c}(:,2),FC{i,c}(:,1)); hold all;
-        AvgRespTfromCDFFluid(i,c) = diff(RDfluid{i,c}(:,1))'*RDfluid{i,c}(2:end,2); %mean
-        PowerMoment2_R(i,c) = diff(RDfluid{i,c}(:,1))'*(RDfluid{i,c}(2:end,2).^2);
+        dF_R = diff(RDfluid{i,c}(:,1));
+        tmid_R = (RDfluid{i,c}(1:end-1,2)+RDfluid{i,c}(2:end,2))/2;
+        AvgRespTfromCDFFluid(i,c) = dF_R'*tmid_R; %mean
+        PowerMoment2_R(i,c) = dF_R'*(tmid_R.^2);
         Variance_R(i,c) = PowerMoment2_R(i,c)-AvgRespTfromCDFFluid(i,c)^2; %variance
         SqCoeffOfVariationRespTfromCDFFluid(i,c) = (Variance_R(i,c))/AvgRespTfromCDFFluid(i,c)^2; %scv
     end

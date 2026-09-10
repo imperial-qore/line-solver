@@ -74,12 +74,15 @@ I = eye(M);
 e = ones(M, 1);
 
 %% Compute MAP parameters
-% Stationary probability vector pi of the underlying Markov chain
-% Solve: pi*(C + D) = 0, pi*e = 1
+% Stationary probability vector pi of the underlying Markov chain,
+% pi*(C+D) = 0 with pi*e = 1. This is the LEFT null vector of Q: stacking Q
+% itself rather than Q' solves Q*z = 0, whose solution is e/M for any
+% generator, so the phase law came back uniform and lambda with it (0.85
+% against the true 0.785714 on a two-phase MAP, which map_lambda already
+% reported correctly).
 Q = C + D;
-A = [Q; e'];
-b = [zeros(M, 1); 1];
-pi = (A \ b)';
+pi = map_prob({C, D});
+pi = pi(:)';
 
 % Mean arrival rate
 lambda = pi * D * e;
@@ -149,29 +152,30 @@ end
 for idx = 1:num_points
     x_val = x(idx);
 
-    % Determine truncation points L and R for uniformization
-    % Find L and R such that: sum_{k=L}^R Poisson(theta+mu, x_val) > 1 - epsilon_prime
+    % Determine truncation points K_lo and K_max for uniformization: the
+    % smallest window with sum_{k=K_lo}^{K_max} Poisson(theta+mu, x_val)
+    % > 1 - epsilon_prime.
+    %
+    % The upper index MUST NOT be called R: R is the rate matrix computed above
+    % and is read again below as pi_0*R^n*D. Shadowing it made R^n a scalar
+    % power, so W_bar(0) came back as 0.2 instead of 1 and the tail grew to
+    % 1e+200 -- a complementary distribution outside [0,1] at every point.
     mean_val = (theta + mu) * x_val;
 
-    % Use Poisson quantiles to find L and R
     if mean_val > 0
-        L = max(0, floor(mean_val - 10*sqrt(mean_val)));
-        R = ceil(mean_val + 10*sqrt(mean_val));
+        K_lo = max(0, floor(mean_val - 10*sqrt(mean_val)));
+        K_max = ceil(mean_val + 10*sqrt(mean_val));
 
         % Refine to meet epsilon_prime requirement
-        pmf = poisspdf(L:R, mean_val);
-        cumsum_pmf = sum(pmf);
-        while cumsum_pmf < 1 - epsilon_prime && R < 10000
-            R = R + 10;
-            pmf = poisspdf(L:R, mean_val);
-            cumsum_pmf = sum(pmf);
+        cumsum_pmf = sum(poisspdf(K_lo:K_max, mean_val));
+        while cumsum_pmf < 1 - epsilon_prime && K_max < 10000
+            K_max = K_max + 10;
+            cumsum_pmf = sum(poisspdf(K_lo:K_max, mean_val));
         end
     else
-        L = 0;
-        R = 0;
+        K_lo = 0;
+        K_max = 0;
     end
-
-    K_max = R;
 
     if verbose && idx == 1
         fprintf('  K(epsilon_prime): %d (uniformization truncation)\n', K_max);
@@ -190,27 +194,36 @@ for idx = 1:num_points
     theta_plus_mu = theta + mu;
     exp_factor = exp(-theta_plus_mu * x_val);
 
+    Rpow = I;
     for n = 0:N_epsilon
-        % Compute pi_0 * R^n * D
-        if n == 0
-            weight = pi_0 * D;
-        else
-            weight = pi_0 * (R^n) * D;
-        end
+        % weight = pi_0 * R^n * D, accumulated so R^n costs one product
+        weight = pi_0 * Rpow * D;
 
         % Compute sum over k
         sum_k = zeros(M, 1);
-        for k = L:K_max
-            poisson_term = ((theta_plus_mu * x_val)^k / factorial(k)) * exp_factor;
+        for k = K_lo:K_max
+            poisson_term = exp(k*log(theta_plus_mu * x_val) - gammaln(k+1)) * exp_factor;
+            if x_val == 0
+                poisson_term = double(k == 0);
+            end
             sum_k = sum_k + poisson_term * h{n+1, k+1};
         end
 
         W_bar(idx) = W_bar(idx) + (1/lambda) * weight * sum_k;
 
-        % Store conditional distribution if requested
+        % Conditional CCDF given the arrival finds n customers: the phase law at
+        % such an arrival epoch is weight/(weight*e), so that
+        % sum_n P(N=n)*W_bar_n = W_bar with P(N=n) = weight*e/lambda.
         if nargout > 1
-            W_bar_n{n+1}(idx) = sum(sum_k) / M;  % Average over states
+            wsum = weight * ones(M, 1);
+            if wsum > 0
+                W_bar_n{n+1}(idx) = (weight * sum_k) / wsum;
+            else
+                W_bar_n{n+1}(idx) = 0;
+            end
         end
+
+        Rpow = Rpow * R;
     end
 end
 

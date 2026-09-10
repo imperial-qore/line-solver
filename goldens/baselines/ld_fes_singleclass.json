@@ -1,0 +1,73 @@
+{
+  "class": {
+    "MVA": "deterministic",
+    "NC": "deterministic"
+  },
+  "example": "ld_fes_singleclass",
+  "solvers": {
+    "MVA": [
+      {
+        "ArvR": 0.46666,
+        "JobClass": "Class1",
+        "QLen": 2.3333,
+        "ResidT": 5.0,
+        "RespT": 5.0,
+        "Station": "Delay",
+        "Tput": 0.46666,
+        "Util": 2.3333
+      },
+      {
+        "ArvR": 0.46666,
+        "JobClass": "Class1",
+        "QLen": 1.4069,
+        "ResidT": 3.0148,
+        "RespT": 3.0148,
+        "Station": "Q1",
+        "Tput": 0.46666,
+        "Util": 0.69999
+      },
+      {
+        "ArvR": 0.46666,
+        "JobClass": "Class1",
+        "QLen": 0.72959,
+        "ResidT": 1.5634,
+        "RespT": 1.5634,
+        "Station": "Q2",
+        "Tput": 0.46666,
+        "Util": 0.46666
+      },
+      {
+        "ArvR": 0.46666,
+        "JobClass": "Class1",
+        "QLen": 0.53021,
+        "ResidT": 1.1362,
+        "RespT": 1.1362,
+        "Station": "Q3",
+        "Tput": 0.46666,
+        "Util": 0.37333
+      }
+    ],
+    "NC": [
+      {
+        "ArvR": 0.46666,
+        "JobClass": "Class1",
+        "QLen": 2.3333,
+        "ResidT": 5.0,
+        "RespT": 5.0,
+        "Station": "Delay",
+        "Tput": 0.46666,
+        "Util": 2.3333
+      },
+      {
+        "ArvR": 0.46666,
+        "JobClass": "Class1",
+        "QLen": 2.6667,
+        "ResidT": 5.7145,
+        "RespT": 5.7145,
+        "Station": "FES",
+        "Tput": 0.46666,
+        "Util": 0.7705
+      }
+    ]
+  }
+}

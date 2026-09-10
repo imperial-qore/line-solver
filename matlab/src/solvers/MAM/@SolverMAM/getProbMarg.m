@@ -16,6 +16,7 @@ function [Pmarg, logPmarg] = getProbMarg(self, ist, jobclass, state_m)
 %   Pmarg    - Vector where Pmarg(n+1) = P(n jobs of this class)
 %   logPmarg - Log probabilities for numerical stability
 
+
 if nargin < 3
     line_error(mfilename,'getProbMarg requires station and job class parameters.');
 end
@@ -24,6 +25,22 @@ if nargin < 4
 end
 
 sn = self.getStruct;
+
+if isfield(self.options,'lang') && strcmp(self.options.lang,'cpp')
+    [~, marginal] = CPPLINE.mamProb(self.name, self.model, self.options, ...
+        sn.stationToNode(ist));
+    Pmarg = marginal{jobclass};
+    logPmarg = log(Pmarg);
+    logPmarg(Pmarg == 0) = -Inf;
+    if ~isempty(state_m)
+        if max(state_m) > length(Pmarg) - 1
+            line_error(mfilename,'Requested state exceeds maximum population for this class.');
+        end
+        Pmarg = Pmarg(state_m + 1);
+        logPmarg = logPmarg(state_m + 1);
+    end
+    return
+end
 
 % Check if station index is valid
 if ist > sn.nstations
@@ -52,7 +69,7 @@ end
 
 % Ensure results are available
 if isempty(self.result)
-    self.run;
+    runAnalyzer(self);
 end
 
 % Get model parameters needed for QBD solution
@@ -221,7 +238,7 @@ else
             % Multiple classes - superpose MAPs
             superMAP = arrMaps{1};
             for k = 2:K
-                superMAP = map_super({superMAP, arrMaps{k}});
+                superMAP = map_super(superMAP, arrMaps{k});
             end
             % Build MMAP with class marking based on arrival rates
             D_arr{1} = superMAP{1};  % D0

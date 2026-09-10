@@ -271,82 +271,28 @@ def _fit_m3pp2m_counting(S: np.ndarray, C: np.ndarray,
                          timescale: float, timescale_asy: float
                         ) -> List[np.ndarray]:
     """
-    Fit a multi-class M3PP using counting process statistics.
+    Fit a multi-class M3PP(2,m) from the counting process of the trace.
 
-    Uses approximate aggregation method.
+    Port of the m3afit_auto.m branch for NumStates == 2 and Method == 1, which
+    calls m3pp2m_fitc_trace with the 'approx_ag' split.
     """
-    classes = np.unique(C)
-    K = len(classes)
-
-    mean = np.mean(S)
-    lambda_avg = 1.0 / mean if mean > 0 else 1.0
-
-    # Compute counting statistics per class
-    probs = np.array([np.sum(C == c) / len(C) for c in classes])
-
-    # Build 2-state M3PP
-    D0 = np.array([
-        [-lambda_avg * 1.2, lambda_avg * 0.1],
-        [lambda_avg * 0.1, -lambda_avg * 0.9]
-    ])
-
-    # Marking matrices for each class
-    D_marks = []
-    D1 = np.zeros((2, 2))
-
-    for k, c in enumerate(classes):
-        p_k = probs[k]
-        D_k = np.array([
-            [lambda_avg * 1.1 * p_k, 0.0],
-            [0.0, lambda_avg * 0.8 * p_k]
-        ])
-        D_marks.append(D_k)
-        D1 = D1 + D_k
-
-    return [D0, D1] + D_marks
+    from .m3pp import m3pp2m_fitc_trace
+    return m3pp2m_fitc_trace(S, C, 'approx_ag', timescale, timescale_asy)
 
 
 def _fit_m3pp_superposition(S: np.ndarray, C: np.ndarray, n: int,
                             timescale: float, timescale_asy: float
                            ) -> List[np.ndarray]:
     """
-    Fit a multi-class M3PP using superposition of 2-state processes.
+    Fit a multi-class M3PP by superposing one second-order M3PP per class.
 
-    Creates n-state process through superposition.
+    Port of the m3afit_auto.m branch for NumStates > 2 and Method == 1, which
+    calls m3pp_superpos_fitc_trace. The resulting order is the number of
+    classes plus one, set by the superposition rather than by n.
     """
-    classes = np.unique(C)
-    K = len(classes)
-
-    mean = np.mean(S)
-    lambda_avg = 1.0 / mean if mean > 0 else 1.0
-
-    # Compute class arrival probabilities
-    probs = np.array([np.sum(C == c) / len(C) for c in classes])
-
-    # Build n-state MMAP through superposition
-    D0 = np.zeros((n, n))
-    for i in range(n):
-        D0[i, i] = -lambda_avg * (0.8 + 0.4 * i / n)
-        if i < n - 1:
-            D0[i, i + 1] = lambda_avg * 0.15 / n
-        if i > 0:
-            D0[i, i - 1] = lambda_avg * 0.15 / n
-
-    # Marking matrices for each class
-    D_marks = []
-    D1 = np.zeros((n, n))
-
-    for k, c in enumerate(classes):
-        p_k = probs[k]
-        D_k = np.zeros((n, n))
-        for i in range(n):
-            # Distribute arrivals across diagonal
-            rate = lambda_avg * (0.5 + 0.25 * i / n) * p_k
-            D_k[i, i] = rate
-        D_marks.append(D_k)
-        D1 = D1 + D_k
-
-    return [D0, D1] + D_marks
+    from .m3pp import m3pp_superpos_fitc_trace
+    fit, _ = m3pp_superpos_fitc_trace(S, C, timescale, timescale_asy)
+    return fit
 
 
 __all__ = [

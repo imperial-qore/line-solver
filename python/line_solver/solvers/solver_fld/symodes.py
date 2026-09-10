@@ -64,7 +64,6 @@ class SymODEs:
         self.factorType = None
         self.factorStation = None
         self.factorClass = None
-        self.factorC0 = None
         self.factorOthers = None
         self.dpsw = None
         self.fcfsPhaseW = None
@@ -375,12 +374,10 @@ def _build_jform(sys, sn, ph, M, K, method):
     ev_type = []
     ev_station = []
     ev_class = []
-    ev_c0 = []
     ev_others = []
 
     def add_event(from_idx, to_idx, base, schedi, i, c, ki):
         ftype = None
-        c0 = 0.0
         others = None
         coeff = base
         if method == 'closing':
@@ -395,10 +392,10 @@ def _build_jform(sys, sn, ph, M, K, method):
             elif schedi in (SchedStrategy.PS, SchedStrategy.FCFS):
                 ftype = 'min'
             elif schedi == SchedStrategy.DPS:
-                # the closing ODE uses denominator mean(w) + sum_r w_r*n_r
-                ftype = 'dps'
-                c0 = float(np.mean(dpsw[i, :]))
-                coeff = coeff * S[i] * dpsw[i, c]
+                # the share w_ir*x/ntilde_i of the capacity min(n_i,S_i), as in
+                # the closing rate factors: no additive seed, not the full S_i
+                ftype = 'dpsmin'
+                coeff = coeff * dpsw[i, c]
             else:
                 # strategies without a case in the closing rates keep rates = x
                 ftype = 'lin'
@@ -419,7 +416,6 @@ def _build_jform(sys, sn, ph, M, K, method):
         ev_type.append(ftype)
         ev_station.append(i)
         ev_class.append(c)
-        ev_c0.append(c0)
         ev_others.append(others)
 
     for i in range(M):
@@ -467,7 +463,6 @@ def _build_jform(sys, sn, ph, M, K, method):
     sys.factorType = ev_type
     sys.factorStation = np.array(ev_station, dtype=int)
     sys.factorClass = np.array(ev_class, dtype=int)
-    sys.factorC0 = np.array(ev_c0, dtype=float)
     sys.factorOthers = ev_others
     sys.nstates = nstates
     sys.S = S
@@ -599,9 +594,9 @@ def export_odes_latex(sys, model_name, notation, hide_immediate=False):
     L.append('\\end{tabular}')
     L.append('\\end{center}')
 
-    T, var_type, var_station, var_class, var_c0, var_others, const_term = _build_terms(sys)
+    T, var_type, var_station, var_class, var_others, const_term = _build_terms(sys)
 
-    defs = _build_defs(sys, var_type, var_station, var_class, var_c0)
+    defs = _build_defs(sys, var_type, var_station, var_class)
     if defs:
         L.append('\\subsection*{Definitions}')
         L.append('\\begin{align*}')
@@ -677,8 +672,8 @@ def export_odes_latex(sys, model_name, notation, hide_immediate=False):
     if sys.form == 'J':
         if any(t in ('fcfsw', 'fcfsws') for t in sys.factorType):
             L.append('\\item At FCFS stations, the mean phase residence times $w_{u} = -1/[D_{0}]_{kk}$ weight the backlog $\\hat{n}_{i}$; the factors $w_{u}$ of the departing phases are folded into the rate coefficients.')
-        if any(t == 'dps' for t in sys.factorType):
-            L.append('\\item At DPS stations, weights are normalized to sum to one and the products $S_{i} w_{ir}$ are folded into the rate coefficients; the constant added to $\\tilde{n}_{i}$ in the denominator mirrors the implementation in \\texttt{ode\\_rates\\_closing}.')
+        if any(t == 'dpsmin' for t in sys.factorType):
+            L.append('\\item At DPS stations, weights are normalized to sum to one and the weight $w_{ir}$ of the departing class is folded into the rate coefficient; the class shares $w_{ir}x/\\tilde{n}_{i}$ divide the station capacity $\\min(n_{i},S_{i})$, so they sum to one whenever the station is busy.')
     any_fcfs = any(sys.sched[sys.stateStation[s]] == SchedStrategy.FCFS for s in range(n))
     if any_fcfs and sys.method in ('matrix', 'closing'):
         L.append('\\item For FCFS stations with non-exponential service, the solver may iteratively re-fit the service distributions (non-exponential approximation); the exported system uses the nominal model parameters.')
@@ -696,7 +691,6 @@ def _build_terms(sys):
     var_type = [None] * n
     var_station = [0] * n
     var_class = [0] * n
-    var_c0 = [0.0] * n
     var_others = [None] * n
     const_term = np.zeros(n)
     if sys.form == 'W':
@@ -718,12 +712,11 @@ def _build_terms(sys):
                 var_type[v] = sys.factorType[e]
                 var_station[v] = sys.factorStation[e]
                 var_class[v] = sys.factorClass[e]
-                var_c0[v] = sys.factorC0[e]
                 var_others[v] = sys.factorOthers[e]
-    return T, var_type, var_station, var_class, var_c0, var_others, const_term
+    return T, var_type, var_station, var_class, var_others, const_term
 
 
-def _build_defs(sys, var_type, var_station, var_class, var_c0):
+def _build_defs(sys, var_type, var_station, var_class):
     defs = []
     n = sys.nstates
     M = len(sys.stationNames)
@@ -745,10 +738,11 @@ def _build_defs(sys, var_type, var_station, var_class, var_c0):
             need_n[i] = True
             gdef[i] = 'g_{%d}(\\mathbf{x}) &= \\Bigl(1 + \\bigl(n_{%d}(\\mathbf{x})/%s\\bigr)^{%s}\\Bigr)^{-1/%s}' % (
                 i + 1, i + 1, _fmtnum(sys.S[i]), _fmtnum(sys.pstar[i]), _fmtnum(sys.pstar[i]))
-        elif f == 'dps':
+        elif f == 'dpsmin':
+            need_n[i] = True
             need_nt[i] = True
-            gdef[i] = 'g_{%d}(\\mathbf{x}) &= \\frac{1}{%s + \\tilde{n}_{%d}(\\mathbf{x})}' % (
-                i + 1, _fmtnum(var_c0[v]), i + 1)
+            gdef[i] = 'g_{%d}(\\mathbf{x}) &= \\frac{\\min(n_{%d}(\\mathbf{x}),\\, %s)}{\\tilde{n}_{%d}(\\mathbf{x})}' % (
+                i + 1, i + 1, _fmtnum(sys.S[i]), i + 1)
         elif f == 'dpspw':
             need_n[i] = True
             need_nt[i] = True
@@ -826,7 +820,7 @@ def _render_equation(sys, sidx, T, var_type, var_station, var_class, var_others,
 def _factor_tex(v, ftype, station, class_idx, others):
     if ftype == 'lin':
         return 'x_{%d}' % (v + 1)
-    if ftype in ('min', 'pnorm', 'dps', 'fcfsw', 'fcfsws'):
+    if ftype in ('min', 'pnorm', 'dpsmin', 'fcfsw', 'fcfsws'):
         return 'x_{%d}\\,g_{%d}(\\mathbf{x})' % (v + 1, station + 1)
     if ftype == 'dpspw':
         return 'x_{%d}\\,g_{%d,%d}(\\mathbf{x})' % (v + 1, station + 1, class_idx + 1)
@@ -884,7 +878,7 @@ def _texesc(s):
 # Symbolic drift, for the computer algebra backend.
 # see _kb/06-solver-catalog.md (Fluid: "Symbolic drift and Jacobian") for which
 # factor types are smooth and exportable vs which carry a min/branch.
-_SMOOTH_FACTORS = ('lin', 'ext1', 'dps', 'fcfsws')
+_SMOOTH_FACTORS = ('lin', 'ext1', 'fcfsws')
 
 
 def state_variables(sys):
@@ -980,8 +974,8 @@ def _wform_drift(sys, variables, eps0):
 def _jform_drift(sys, variables, eps0):
     """dx/dt = J * r(x), with r_e = coeff(e) * factor_e(x). Only the smooth
     factor types are exportable: 'min' (PS/FCFS under closing and statedep),
-    'fcfsw' (statedep FCFS) and 'dpspw' (piecewise DPS) all carry a min or a
-    branch.
+    'fcfsw' (statedep FCFS), 'dpsmin' (closing DPS) and 'dpspw' (piecewise DPS)
+    all carry a min or a branch.
     """
     rate = [None] * sys.nevents
     for e in range(sys.nevents):
@@ -1002,12 +996,6 @@ def _jform_drift(sys, variables, eps0):
                 factor = '1'
             else:
                 factor = '(1 - (%s))' % ' + '.join(variables[int(k)] for k in others)
-        elif ftype == 'dps':
-            # ode_rates_closing seeds the denominator with mean(w) and adds no
-            # FineTol, so neither does this.
-            i = int(sys.factorStation[e])
-            ntilde = _weighted_station_sum(sys, i, sys.dpsw[i, :], variables, '0')
-            factor = '%s/(%s + %s)' % (v, _num(sys.factorC0[e]), ntilde)
         else:  # fcfsws
             i = int(sys.factorStation[e])
             # ode_softmin: ni is the raw station total, wni carries FineTol.
@@ -1049,17 +1037,6 @@ def _softmin_expr(x, y, alpha):
 def _station_sum(sys, i, variables, offset):
     """Total fluid mass at station i, plus the offset its consumer uses."""
     parts = [variables[k] for k in range(sys.nstates) if sys.stateStation[k] == i]
-    return _join_sum(parts, offset)
-
-
-def _weighted_station_sum(sys, i, w, variables, offset):
-    """sum_r w_ir * n_ir over the classes of station i (DPS denominator)."""
-    parts = []
-    for k in range(sys.nstates):
-        if sys.stateStation[k] == i:
-            wt = float(w[int(sys.stateClass[k])])
-            if wt != 0:
-                parts.append('(%s)*%s' % (_num(wt), variables[k]))
     return _join_sum(parts, offset)
 
 

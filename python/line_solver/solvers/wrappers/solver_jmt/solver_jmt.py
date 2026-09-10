@@ -52,7 +52,155 @@ from ....api.solvers.jmt.handler import (
     is_jmt_available,
     _get_jmt_jar_path,
 )
-from ...base import NetworkSolver, method_label
+from ...base import NetworkSolver, method_label, method_type
+
+
+#: The JMVA algorithms that solve a CLOSED product-form network only.
+#:
+#: RECAL, CoMoM, Chow, Bard-Schweitzer (both spellings), AQL, Linearizer and De
+#: Souza-Muntz Linearizer. Measured against JMT 1.2.x: each answers an open or a
+#: mixed model with ``jmt.common.exception.UnsupportedModelException: The
+#: selected solver cannot handle open classes, please choose another.`` and a
+#: load-dependent one with the same exception naming load-dependent stations,
+#: while the exact MVA engine behind 'jmva' and 'jmva.mva' serves both.
+_JMVA_CLOSED_ONLY = frozenset((
+    'jmva.amva', 'jmva.recal', 'jmva.comom', 'jmva.chow',
+    'jmva.bs', 'jmva.aql', 'jmva.lin', 'jmva.dmlin',
+))
+
+
+def jmva_is_closed_only(method):
+    """True for a JMVA algorithm restricted to closed single-server networks."""
+    return str(method or '').lower() in _JMVA_CLOSED_ONLY
+
+
+def jmt_method_refusal(sn, method, options=None):
+    """The structural half of SolverJMT's method gate; '' when admissible.
+
+    Three rules: a finite timespan for 'replication', single-server stations for
+    the eight closed-form JMVA algorithms, and a binding finite buffer, which
+    neither engine carries. None of them has a registry feature name.
+    ONE PREDICATE, TWO CALLERS:
+    ``supportsModelMethod`` asks it so findSolver and SolverAUTO never offer a
+    pair that would die at run time, and the analyzer asks it again so a caller
+    naming the method by hand gets the same sentence rather than a JMT stack
+    trace. A second copy of either rule is how the gate and the run drift into
+    two different answers.
+
+    Everything a feature name CAN state lives in ``getMethodFeatureSet``
+    instead: the JMVA envelope is narrower than the JSIM one, and the
+    closed-only algorithms additionally drop OpenClass and LoadDependence.
+    """
+    method = str(method or '')
+    if method.lower() == 'replication':
+        # The transient arm integrates over [0, T]: a mean at an unstated
+        # horizon is not a quantity. The horizon is an option, not a model
+        # feature, so a feature set cannot see it.
+        horizon = float('inf')
+        if options is not None:
+            horizon = getattr(options, 'max_simulated_time', float('inf'))
+        try:
+            horizon = float(horizon)
+        except (TypeError, ValueError):
+            horizon = float('inf')
+        if not np.isfinite(horizon):
+            return ("The replication method needs a finite timespan, e.g. "
+                    "SolverJMT(model, timespan=[0, 10]).")
+        return ''
+    if jmva_is_closed_only(method):
+        # JMVA implements these seven algorithms for SINGLE-SERVER stations
+        # only, which is why the JMVA writer refuses the model rather than
+        # emitting an <ldstation> the algorithm cannot read. A server count is
+        # not a declared feature, so it cannot ride in the feature set the way
+        # the load-dependent scaling of the same restriction does.
+        nservers = getattr(sn, 'nservers', None)
+        if nservers is not None:
+            ns = np.asarray(nservers, dtype=float).ravel()
+            ns = ns[np.isfinite(ns)]
+            if ns.size and float(np.max(ns)) > 1.0:
+                return '%s does not support multi-server stations.' % method
+    return jmt_buffer_capacity_refusal(sn, method)
+
+
+def jmt_buffer_capacity_refusal(sn, method):
+    """A binding finite buffer, which NEITHER engine can carry; '' otherwise.
+
+    The two engines fail it for opposite reasons, so the binding TEST is shared
+    and the verdict is not.
+
+    What makes a buffer BIND is not that ``sn.cap`` is finite: ``refresh_capacity``
+    DERIVES a finite cap for every station nobody capped. It is that the cap is
+    strictly below the population that can REACH the station, which is the JSIM
+    writer's own test, and an infinite-server station has no buffer at all. Both
+    are the writer's (``_jmt_reachable_population``), so the gate binds exactly
+    where the writer binds.
+
+    JSIM exports the buffer, but only for the rules JMT can read, and
+    ``_jmt_station_cap_assert`` -- the writer's own predicate, asked here without
+    letting it raise -- is what decides which. An open loss buffer and a declared
+    BAS one stay runnable; only the cases JMT would answer unconstrained go.
+
+    JMVA is refused OUTRIGHT: ``write_jmva`` emits a station type, a per-chain
+    service demand and a per-chain visit count and nothing else, so the document
+    has no capacity element for the buffer to ride in. Measured on a closed
+    Delay+FCFS model, N=4, cap 2: every jmva method reported 2.19 jobs at a
+    station that can hold 2, against the exact 1.33. This is the rule SolverMVA,
+    SolverNC and SolverQNS already apply -- and SolverQNS writes THIS SAME
+    DOCUMENT, so the jmva arm was the one hole in it.
+
+    WHICH ENGINE IS ASKED ABOUT matters, and this port derives it from the method
+    name because nothing else reaches the predicate: unlike MATLAB and the JAR,
+    SolverQNS here writes its own JMVA document rather than borrowing
+    SolverJMT.writeJMVA. A name SolverJMT does not implement therefore gets no
+    verdict rather than JSIM's.
+    """
+    from ....api.solvers.jmt.handler import (
+        _jmt_reachable_population, _jmt_station_cap_assert)
+    name = str(method or '').lower()
+    is_jmva = name.startswith('jmva')
+    if not is_jmva and name not in ('default', 'jsim', 'replication'):
+        return ''
+    cap = getattr(sn, 'cap', None)
+    if cap is None:
+        return ''
+    cap = np.asarray(cap, dtype=float).ravel()
+    nservers = np.asarray(getattr(sn, 'nservers', []), dtype=float).ravel()
+    from ....api.sn import NodeType
+    nodetype = getattr(sn, 'nodetype', None)
+    for ist in range(int(getattr(sn, 'nstations', 0))):
+        # A SOURCE AND A SINK HAVE NO BUFFER THAT CAN BIND. The Source IS the
+        # external world and the Sink absorbs, so neither ever holds a job a
+        # capacity could refuse, yet refresh_capacity writes them a row like any
+        # other station. Excluded on NODE TYPE, as the shared binding-capacity
+        # gate of SolverMVA/SolverNC excludes them, and not by name.
+        if nodetype is not None:
+            ntype = nodetype[int(sn.stationToNode[ist])]
+            if ntype in (NodeType.SOURCE, NodeType.SINK):
+                continue
+        # UNBOUNDED IS inf HERE. The JAR cannot carry inf on sn.cap -- its
+        # Station.cap is an int whose "no bound" value is Integer.MAX_VALUE, and
+        # refreshCapacity SUMS that sentinel across the classes served, so a
+        # mixed station comes out as 2147483647 + N there and needs
+        # SaveHandlers.jmtCapIsUnbounded. MATLAB, this port and C++ all default
+        # station.cap to inf, so isfinite is the whole test.
+        if ist >= cap.size or not np.isfinite(cap[ist]):
+            continue
+        if cap[ist] >= _jmt_reachable_population(sn, ist):
+            continue
+        if ist < nservers.size and np.isinf(nservers[ist]):
+            continue
+        if is_jmva:
+            return ("Station %s carries a finite capacity %d that binds. The JMVA document "
+                    "has no capacity element at all, so the analytical engine would solve the model "
+                    "as if the buffer were unbounded and report that as the answer. Use the "
+                    "'jsim' method, which exports the buffer with its drop rule when JMT can "
+                    "express it, or SolverCTMC, SolverSSA or SolverLDES."
+                    % (sn.nodenames[int(sn.stationToNode[ist])], int(cap[ist])))
+        try:
+            _jmt_station_cap_assert(sn, ist)
+        except ValueError as exc:
+            return str(exc)
+    return ''
 
 
 @dataclass
@@ -66,6 +214,19 @@ class SolverJMTOptions:
     max_rel_err: float = 0.03
     verbose: bool = field(default_factory=default_verbose)
     keep: bool = False  # Keep temp files after execution
+    timeout: float = float('inf')
+    # Backend selection, see api/solvers/jmt/runner.py. rest_url points at a
+    # JMT REST server (imperialqore/jmt-rest); container overrides the Docker
+    # image used when no local JVM exists. Both empty means the local JVM.
+    rest_url: Optional[str] = None
+    container: Optional[str] = None
+    # THIS FIELD WAS MISSING, and its absence is why `SolverJMT(model,
+    # lang='cpp')` looked wired and was not: the kwarg went into **kwargs, was
+    # never read, and every `options.lang` test in this file saw None. The
+    # solve itself stays JSIM either way -- what lang='cpp' selects is WHICH
+    # wrapper drives it, this one or `line-cli -s jmt`, so the two can be
+    # compared. Same default resolution as every other solver.
+    lang: str = field(default_factory=lambda: os.environ.get('LINE_SOLVER_LANG', 'python'))
 
 
 class SolverJMT(NetworkSolver):
@@ -140,15 +301,20 @@ class SolverJMT(NetworkSolver):
         # Parse options
         samples = kwargs.get('samples', 10000)
         seed = kwargs.get('seed', 23000)
-        verbose = kwargs.get('verbose', False)
+        verbose = kwargs.get('verbose', default_verbose())
         keep = kwargs.get('keep', False)
         conf_int = kwargs.get('conf_int', kwargs.get('confint', 0.99))
         max_rel_err = kwargs.get('max_rel_err', 0.03)
         max_simulated_time = kwargs.get('max_simulated_time',
                                         kwargs.get('timespan', [0, float('inf')])[1]
                                         if isinstance(kwargs.get('timespan'), list) else float('inf'))
+        timeout = kwargs.get('timeout', float('inf'))
+        rest_url = kwargs.get('rest_url', None)
+        container = kwargs.get('container', None)
+        lang = kwargs.get('lang', os.environ.get('LINE_SOLVER_LANG', 'python'))
 
         self.options = SolverJMTOptions(
+            lang=lang,
             method=self.method,
             samples=samples,
             seed=seed,
@@ -156,7 +322,10 @@ class SolverJMT(NetworkSolver):
             conf_int=conf_int,
             max_rel_err=max_rel_err,
             verbose=verbose,
-            keep=keep
+            keep=keep,
+            timeout=timeout,
+            rest_url=rest_url,
+            container=container
         )
 
         self._result: Optional[SolverJMTReturn] = None
@@ -205,6 +374,12 @@ class SolverJMT(NetworkSolver):
             "Cannot extract a native NetworkStruct from model. Native solvers "
             "accept only native Network / NetworkStruct inputs (no JAR wrapper).")
 
+    def supportsTransientAnalysis(self):
+        """Transient averages are available (simulation restricted to options.timespan)."""
+        return True
+
+    supports_transient_analysis = supportsTransientAnalysis
+
     def runAnalyzer(self) -> 'SolverJMT':
         """
         Run the JMT analyzer.
@@ -226,11 +401,26 @@ class SolverJMT(NetworkSolver):
         if model is not None and hasattr(model, 'get_used_lang_features'):
             self.runAnalyzerChecks(self.options)
 
+        # The structural half of the gate, asked again here so a caller who
+        # reaches the analyzer with the checks disabled still gets the gate's
+        # own sentence rather than a JMT stack trace.
+        structural = jmt_method_refusal(self._sn, self.options.method, self.options)
+        if structural:
+            raise RuntimeError(structural)
+
         if getattr(self._sn, 'immfeed', None) is not None and np.any(self._sn.immfeed):
             line_warning("SolverJMT", "SolverJMT does not support immediate feedback (immfeed); no solution returned.")
             return self
 
         method = self.options.method
+        if method == 'replication':
+            # TRANSIENT AVERAGES BY INDEPENDENT REPLICATION, the reference's own
+            # transient route for JMT: a single sample path is not the transient
+            # mean E[N](t), there being no time-ergodicity at a fixed t, so
+            # iter_max seeded replications are sampled and averaged onto a common
+            # time grid. Port of the 'replication' arm of
+            # @SolverJMT/runAnalyzer.m, which python did not carry at all.
+            return self._runReplication()
         if method in ('jsim', 'default'):
             line_debug("JMT: using JSIM method (discrete-event simulation), samples=%d, seed=%d",
                        self.options.samples, self.options.seed, options=self.options)
@@ -251,7 +441,10 @@ class SolverJMT(NetworkSolver):
             conf_int=self.options.conf_int,
             max_rel_err=self.options.max_rel_err,
             verbose=self.options.verbose,
-            keep=self.options.keep
+            keep=self.options.keep,
+            timeout=getattr(self.options, 'timeout', float('inf')),
+            rest_url=getattr(self.options, 'rest_url', None),
+            container=getattr(self.options, 'container', None)
         )
 
         # Call the handler (pass model for FCR region support)
@@ -262,7 +455,8 @@ class SolverJMT(NetworkSolver):
             py_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
             runtime = self._result.runtime if hasattr(self._result, 'runtime') else 0.0
             method = self._result.method if hasattr(self._result, 'method') else self.options.method
-            print(f"JMT analysis [method: {method_label(self.options.method, method)}, lang: python, env: {py_version}] completed in {runtime:.6f}s.")
+            from line_solver.solvers.base import print_solver_banner
+            print_solver_banner(f"JMT analysis [method: {method_label(self.options.method, method)}; type: {method_type('JMT', method_label(self.options.method, method))}; lang: python; env: {py_version}] completed in {runtime:.6f}s.")
 
         return self
 
@@ -274,7 +468,7 @@ class SolverJMT(NetworkSolver):
             DataFrame with columns: Station, Class, QLen, Util, RespT, Tput, ArvR
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         M = self._sn.nstations
         K = self._sn.nclasses
@@ -368,32 +562,63 @@ class SolverJMT(NetworkSolver):
     def getAvgQLen(self) -> np.ndarray:
         """Get average queue lengths (M x K matrix)."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         return self._result.Q if self._result.Q is not None else np.array([])
 
     def getAvgUtil(self) -> np.ndarray:
         """Get average utilizations (M x K matrix)."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         return self._result.U if self._result.U is not None else np.array([])
 
     def getAvgRespT(self) -> np.ndarray:
         """Get average response times (M x K matrix)."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         return self._result.R if self._result.R is not None else np.array([])
 
     def getAvgTput(self) -> np.ndarray:
         """Get average throughputs (M x K matrix)."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         return self._result.T if self._result.T is not None else np.array([])
 
     def getAvgArvR(self) -> np.ndarray:
         """Get average arrival rates (M x K matrix)."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         return self._result.A if self._result.A is not None else np.array([])
+
+    def getAvgFcr(self) -> np.ndarray:
+        """The finite-capacity-region rows, ((nregions*6) x nclasses) or empty.
+
+        WHY A SEPARATE ACCESSOR. `getAvg` returns the STATION metrics alone, and
+        a region is not a station: its rows live past the last one, which is
+        where `getAvgNodeTable` reads them from to fill the FCR pseudo-node. A
+        host bridging through `getAvg` (MATLAB `lang='python'`) therefore saw no
+        region at all and dropped the FCR row from its node table
+        (fcr_mm1waitq[M2P], "row FCR1 missing").
+
+        The six blocks are stacked in the order Q, U, R, W, A, T, each
+        (nregions x nclasses), so one marshalled matrix carries all of them.
+        Util and ArvR are NaN: JMT reports neither for a region.
+        """
+        if self._result is None:
+            self._ensureAvgResults()
+        F = int(getattr(self._sn, 'nregions', 0) or 0)
+        Qfcr = getattr(self._result, 'Qfcr', None)
+        if F <= 0 or Qfcr is None:
+            return np.array([])
+        K = int(self._sn.nclasses)
+        nan = np.full((F, K), np.nan)
+        zero = np.zeros((F, K))
+
+        def blk(name, default):
+            v = getattr(self._result, name, None)
+            return default if v is None else np.asarray(v, dtype=float).reshape(F, K)
+
+        return np.vstack([blk('Qfcr', zero), nan, blk('Rfcr', zero),
+                          blk('Wfcr', zero), nan, blk('Tfcr', zero)])
 
     def getAvgChainTable(self) -> pd.DataFrame:
         """
@@ -403,7 +628,7 @@ class SolverJMT(NetworkSolver):
             DataFrame with columns: Chain, QLen, Util, RespT, Tput
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         # Get chain information from model structure
         nchains = self._sn.nchains if hasattr(self._sn, 'nchains') else self._sn.nclasses
@@ -442,7 +667,9 @@ class SolverJMT(NetworkSolver):
                 'Tput': total_tput,
             })
 
-        return pd.DataFrame(rows)
+        # five SIGNIFICANT digits like MATLAB's table, not pandas' five decimals
+        from line_solver.indexed_table import IndexedTable
+        return IndexedTable(pd.DataFrame(rows))
 
     def getAvgSysTable(self) -> pd.DataFrame:
         """
@@ -452,7 +679,7 @@ class SolverJMT(NetworkSolver):
             DataFrame with columns: Chain, SysRespT, SysTput
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         chain_table = self.getAvgChainTable()
         CN = []
@@ -465,7 +692,7 @@ class SolverJMT(NetworkSolver):
     def getAvgSysRespT(self) -> np.ndarray:
         """Get system response times (1 x K)."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         # Sum response times across all stations for each class
         if self._result.R is not None:
             return np.nansum(self._result.R, axis=0, keepdims=True)
@@ -474,7 +701,7 @@ class SolverJMT(NetworkSolver):
     def getAvgSysTput(self) -> np.ndarray:
         """Get system throughputs (1 x K)."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         return self._result.X if self._result.X is not None else np.array([[]])
 
     def sampleSysAggr(self, num_events: Optional[int] = None) -> Optional[Dict[str, Any]]:
@@ -604,6 +831,15 @@ class SolverJMT(NetworkSolver):
             float: Estimated probability of the current system state.
                    Returns 0.0 if the state was not observed during simulation.
         """
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            import warnings
+            from ...cpp_dispatch import jmt_prob_aggr_via_cpp
+            r = jmt_prob_aggr_via_cpp(self)
+            if not r['sysStateSeen']:
+                warnings.warn("the system state was not seen in the simulation, "
+                              "so its probability is reported as 0")
+            return r['probSysAggr']
+
         if self._sn is None:
             self._extract_network_params()
 
@@ -667,14 +903,29 @@ class SolverJMT(NetworkSolver):
 
         return 0.0
 
-    def getProbAggr(self, station: int) -> np.ndarray:
-        """Get aggregated state probabilities at station.
+    def getProbAggr(self, station: int) -> float:
+        """Get the aggregated state probability at a station.
 
-        Note: JMT simulation does not directly compute state probabilities.
-        Returns empty array as placeholder.
+        Under lang='cpp' this is `-s jmt -a prob`: one logged JSIM run,
+        dwell-weighted over the time the station holds its declared state. The
+        native path here has no equivalent -- JSIM reports means and not state
+        occupancies to this wrapper -- and returns an empty array, which is what
+        it has always done.
         """
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            import warnings
+            from ...cpp_dispatch import jmt_prob_aggr_via_cpp
+            r = jmt_prob_aggr_via_cpp(self)
+            ist = int(station)
+            if not (0 <= ist < r['probAggr'].size):
+                raise ValueError("station index %r is outside 0..%d"
+                                 % (station, r['probAggr'].size - 1))
+            if ist < len(r['stateSeen']) and not r['stateSeen'][ist]:
+                warnings.warn("station %d's state was not seen in the simulation, "
+                              "so its probability is reported as 0" % ist)
+            return float(r['probAggr'][ist])
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         # Not supported in simulation - return empty
         return np.array([])
 
@@ -694,6 +945,9 @@ class SolverJMT(NetworkSolver):
         """List valid methods for this solver."""
         return [
             'default', 'jsim',
+            # TRANSIENT AVERAGES BY INDEPENDENT REPLICATION, the reference's own
+            # transient route for JMT; ported and dispatched in runAnalyzer.
+            'replication',
             'jmva', 'jmva.mva', 'jmva.amva', 'jmva.recal',
             'jmva.comom', 'jmva.chow', 'jmva.bs', 'jmva.aql',
             'jmva.lin', 'jmva.dmlin'
@@ -706,9 +960,9 @@ class SolverJMT(NetworkSolver):
         """
         if not method:
             return True  # default resolves to jsim simulation
-        tokens = re.split(r'[./]', str(method).lower())
-        if 'jmva' in tokens:
-            return any(tok in ('ls', 'mci', 'imci', 'sampling') for tok in tokens)
+        method_names = re.split(r'[./]', str(method).lower())
+        if 'jmva' in method_names:
+            return any(tok in ('ls', 'mci', 'imci', 'sampling') for tok in method_names)
         return True
 
     is_stochastic_method = isStochasticMethod
@@ -725,6 +979,12 @@ class SolverJMT(NetworkSolver):
             'Sink', 'Source', 'Router', 'ClassSwitch',
             'Delay', 'DelayStation', 'Queue',
             'Fork', 'Join', 'Forker', 'Joiner', 'Logger',
+            'JoinPartial',  # quorum join, written out as a jmt PartialJoin
+            # A variable forking level: saveForkStrategy turns isSimplifiedFork
+            # off and writes the per-branch entries, so jmt reads the counts,
+            # the probabilities and the degree distribution rather than sending
+            # one job down every link.
+            'ForkFanoutVector', 'ForkFanoutRandom', 'ForkBranchProbability',
             'Coxian', 'Cox2', 'APH', 'Erlang', 'Exp', 'HyperExp',
             'Det', 'Gamma', 'Lognormal', 'MAP', 'MMPP2',
             'Normal', 'PH', 'Pareto', 'Weibull', 'Replayer', 'Uniform',
@@ -737,6 +997,12 @@ class SolverJMT(NetworkSolver):
             'SchedStrategy_HOL', 'SchedStrategy_PSPRIO', 'SchedStrategy_DPSPRIO',
             'SchedStrategy_GPSPRIO', 'SchedStrategy_LCFS', 'SchedStrategy_LCFSPR',
             'SchedStrategy_LCFSPRIO', 'SchedStrategy_LCFSPRPRIO',
+            # LCFSPI is emitted by the writer (QueuePutStrategies.LCFSPIStrategy)
+            # and was not declared. The FCFS preemptive family is NOT added: this
+            # writer has no FCFSPRStrategy/FCFSPIStrategy branch, unlike MATLAB,
+            # the JAR and C++, so declaring it would promise an export that then
+            # falls through to the non-preemptive tail.
+            'SchedStrategy_LCFSPI',
             'SchedStrategy_SEPT', 'SchedStrategy_SRPT', 'SchedStrategy_SRPTPRIO', 'SchedStrategy_LEPT',
             'SchedStrategy_SJF', 'SchedStrategy_LJF', 'SchedStrategy_LPS',
             'SchedStrategy_POLLING', 'SchedStrategy_EXT',
@@ -745,20 +1011,118 @@ class SolverJMT(NetworkSolver):
             'RoutingStrategy_JSQ',
             'RoutingStrategy_SQ',
             'ClosedClass', 'SelfLoopingClass', 'OpenClass',
-            'Cache', 'CacheClassSwitcher',
-            'ReplacementStrategy_RR', 'ReplacementStrategy_FIFO',
-            'ReplacementStrategy_SFIFO', 'ReplacementStrategy_LRU',
+            # Cache, CacheClassSwitcher and the four replacement strategies are
+            # NOT declared here, and this port is the only one that withholds
+            # them. MATLAB (saveCacheStrategy.m), the JAR (SaveHandlers) and C++
+            # (jmt_writer.h) all serialize a Cache node; this writer has no
+            # cache branch at all -- its module header says so -- so it emits
+            # <node name="Cache"/> with no sections and jsim dies inside JMT
+            # with "Cannot invoke NodeSection.updateVisitPath ... inputSection
+            # is null". Declaring a name the writer cannot emit promises an
+            # export that is not there, which is the same rule that keeps the
+            # FCFS preemptive family out above.
             'Region',
+            # Limited load dependence reaches JMT only as a SERVER COUNT: the
+            # JSIM writer exports max(nservers, max(alpha)) and the JMVA writer
+            # the matching <ldstation>. That is exact for alpha(n) = min(n,c)
+            # and for nothing else, so supportsModelMethod refuses any other
+            # scaling by name.
+            'LoadDependence',
             # Exported as delayOffTime/setUpTime (_write_delayoff_strategy).
             'SetupDelayOff',
+            # Exported as classParallelism (_write_class_parallelism).
+            'ServerParallelism',
+            # Heterogeneous server pools: the type names, the servers per type
+            # and the compatibility matrix are exported as serverTypesNames /
+            # serverTypesNumOfServers / serverTypesCompatibilities, so jsim
+            # simulates the pools rather than a station of the same total size.
+            'HeteroServers',
             # Exported as Impatience/Reneging and Impatience/Balking strategies.
             'Reneging', 'Balking',
+            # c-server stations (the writer emits numberOfServers) and finite
+            # buffers with their drop rule (a capacity plus the dropStrategy
+            # text): jsim exports both, and the structural capacity gate keeps
+            # refusing the buffers JMT would answer unconstrained (closed WAITQ,
+            # BBS, RSRD, retrial-with-limit); the JMVA set withdraws the buffer.
+            # 'Retrial' is NOT declared, and this port is the only one that
+            # withholds it: MATLAB, the JAR and C++ pick the retrial Queue
+            # constructor and write the per-class orbit delay, while this writer
+            # has no such branch, so the orbit would simply not be exported.
+            'MultiServer', 'FiniteCapacity',
         }
 
-    def getMethodFeatureSet(self, method):
-        """All JMT methods share the solver-level feature envelope.
+    @staticmethod
+    def getJMVAFeatureSet() -> Set[str]:
+        """What the JMVA ANALYTICAL engine accepts, much less than JSIM.
 
-        Defining this is what lets the base runAnalyzerChecks gate name the
+        Derived from the writer rather than guessed: ``write_jmva`` emits, per
+        station, a ``<delaystation>``, a ``<listation>`` or an ``<ldstation>``,
+        a per-chain ``<servicetime>`` and a per-chain ``<visit>``, and at model
+        level the closed populations, the open arrival rates and the reference
+        station. NOTHING ELSE IN THE MODEL REACHES JMVA, so a construct whose
+        whole effect is not carried by (station type, demand, visits,
+        population) would be solved away silently.
+
+        Dropped from the JSIM set, and why:
+          * Fork/Join and the fan-out names -- no fork element exists, and a
+            visit ratio cannot express the join synchronization.
+          * Place/Transition and the Petri-net sections -- no counterpart.
+          * Region -- JMVA has no finite capacity region.
+          * Reneging/Balking -- no impatience element; the abandonment would
+            simply not happen.
+          * SetupDelayOff, ServerParallelism, HeteroServers -- each a
+            server-side attribute the JMVA document has no slot for.
+          * the non-BCMP disciplines -- the writer emits NO discipline at all,
+            so a priority, weighted, size-based or limited-sharing station
+            would be solved as an ordinary load-independent one. Only the four
+            BCMP station types survive the encoding, the same line SolverNC and
+            SolverMVA draw.
+          * the state-dependent routings (RROBIN, WRROBIN, JSQ, SQ) -- the
+            document carries mean visit counts, which is not what makes a
+            join-the-shortest-queue model behave as it does.
+
+        The DISTRIBUTIONS are deliberately kept: JMVA consumes a mean service
+        demand, so any renewal law with a finite mean is admissible, exactly as
+        it is for SolverMVA and SolverNC. Cache is absent from this port's JSIM
+        set already and so does not appear here either.
+        """
+        return SolverJMT.getFeatureSet() - {
+            'Fork', 'Join', 'Forker', 'Joiner', 'JoinPartial',
+            'ForkFanoutVector', 'ForkFanoutRandom', 'ForkBranchProbability',
+            'Place', 'Transition', 'Enabling', 'Inhibiting', 'Timing',
+            'Firing', 'Storage',
+            'Region',
+            'Reneging', 'Balking',
+            'SetupDelayOff', 'ServerParallelism', 'HeteroServers',
+            'SchedStrategy_DPS', 'SchedStrategy_GPS', 'SchedStrategy_HOL',
+            'SchedStrategy_PSPRIO', 'SchedStrategy_DPSPRIO', 'SchedStrategy_GPSPRIO',
+            'SchedStrategy_LCFSPI', 'SchedStrategy_LCFSPIPRIO',
+            'SchedStrategy_LCFSPRIO', 'SchedStrategy_LCFSPRPRIO',
+            'SchedStrategy_FCFSPR', 'SchedStrategy_FCFSPI',
+            'SchedStrategy_FCFSPRPRIO', 'SchedStrategy_FCFSPIPRIO',
+            'SchedStrategy_SEPT', 'SchedStrategy_LEPT',
+            'SchedStrategy_SJF', 'SchedStrategy_LJF',
+            'SchedStrategy_SRPT', 'SchedStrategy_SRPTPRIO',
+            'SchedStrategy_LPS', 'SchedStrategy_POLLING',
+            'RoutingStrategy_RROBIN', 'RoutingStrategy_WRROBIN',
+            'RoutingStrategy_JSQ', 'RoutingStrategy_SQ',
+            # the JMVA document has no capacity element at all
+            'FiniteCapacity',
+        }
+
+    get_jmva_feature_set = getJMVAFeatureSet
+
+    def getMethodFeatureSet(self, method):
+        """SolverJMT drives TWO ENGINES, and they accept different models.
+
+        'default', 'jsim' and 'replication' run the JSIM SIMULATOR, whose
+        envelope is ``getFeatureSet``. The 'jmva.*' names run the JMVA
+        ANALYTICAL engine, which reads a document carrying only a station type,
+        a per-chain demand, a per-chain visit count, the populations or arrival
+        rates and a reference station -- so declaring the JSIM envelope for
+        jmva was a promise the writer could not keep.
+
+        Defining this is also what lets the base runAnalyzerChecks gate name the
         offending features (mirrors MATLAB SolverJMT.getMethodFeatureSet):
         without it the coarse supports(model) is used, which accepts every
         model. A non-Network model (e.g. a LayeredNetwork) keeps the coarse
@@ -767,9 +1131,65 @@ class SolverJMT(NetworkSolver):
         model = getattr(self, 'model', None)
         if not isinstance(model, Network):
             return None
+        if str(method or '').lower().startswith('jmva'):
+            feats = SolverJMT.getJMVAFeatureSet()
+            if jmva_is_closed_only(method):
+                # RECAL, CoMoM, Chow, Bard-Schweitzer, AQL, Linearizer and De
+                # Souza-Muntz Linearizer are closed-network algorithms: JMT
+                # answers an open or a mixed model with "The selected solver
+                # cannot handle open classes" and a load-dependent one with the
+                # matching refusal. Exact MVA, which 'jmva' and 'jmva.mva'
+                # select, serves both.
+                # the eight closed-form algorithms are single-server ones
+                # (jmt_method_refusal words it); exact MVA carries the count
+                feats = feats - {'OpenClass', 'LoadDependence', 'MultiServer'}
+            return feats
         return SolverJMT.getFeatureSet()
 
     get_method_feature_set = getMethodFeatureSet
+
+    def supportsModelMethod(self, method):
+        """Structural gate for what no registry name can state.
+
+        Three rules: the finite timespan the 'replication' arm integrates over,
+        the single-server restriction of the closed-form JMVA algorithms (a
+        server count is not a declared feature), and the one feature JMT admits
+        in a RE-ENCODED form only. Limited load dependence has no
+        representation of its own in either JMT document: the JSIM writer turns
+        it into a server count and the JMVA writer into the matching
+        <ldstation>, so alpha(n) = min(n,c) with an integer c is written
+        exactly and any other scaling would be solved at a service rate JMT
+        never saw. The first two come from ``jmt_method_refusal``, which the
+        analyzer asks as well."""
+        from ....constants import GlobalConstants
+        from ....lang.network import Network
+        model = getattr(self, 'model', None)
+        if isinstance(model, Network):
+            # The same predicate the JMVA arm and the replication arm ask, so
+            # this gate and those runs cannot answer differently.
+            structural = jmt_method_refusal(model.getStruct(), method, self.options)
+            if structural:
+                return False, structural
+        lld = model.getStruct().lldscaling if isinstance(model, Network) else None
+        if lld is not None:
+            lld = np.atleast_2d(np.asarray(lld, dtype=float))
+            for ist in range(lld.shape[0] if lld.ndim == 2 else 0):
+                alpha = lld[ist, :]
+                if alpha.size == 0 or np.all(alpha == 1.0):
+                    continue
+                c = float(np.max(alpha))
+                shape = np.minimum(np.arange(1, alpha.size + 1, dtype=float), c)
+                if c != round(c) or c < 1 or np.any(np.abs(alpha - shape) > GlobalConstants.Zero):
+                    return False, (
+                        'Station %d uses a load-dependent scaling that is not the multiserver '
+                        'encoding alpha(n) = min(n,c): JMT has no representation for it, since '
+                        'both the JSIM and the JMVA writer carry the scaling as a server count, '
+                        'and the model would be solved at the nominal service rate. Use '
+                        'SolverCTMC, SolverNC, SolverMVA or SolverSSA, which read sn.lldscaling '
+                        'directly.' % (ist + 1))
+        return super().supportsModelMethod(method)
+
+    supports_model_method = supportsModelMethod
 
     @staticmethod
     def supports(model) -> bool:
@@ -927,12 +1347,20 @@ class SolverJMT(NetworkSolver):
     # =========================================================================
 
     def getTranCdfRespT(self, R=None):
-        """Get transient CDF of response times. Alias for getCdfRespT."""
-        return self.getCdfRespT(R)
+        """Get transient CDF of response times.
+
+        The same logged pipeline as getCdfRespT WITHOUT the steady-state seed:
+        the reference @SolverJMT/getTranCdfRespT.m starts the logged run from
+        the model's default initial state, so the collected samples cover the
+        transient, where getCdfRespT preloads the rounded steady-state queue
+        lengths to shorten the warmup.
+        """
+        return self._cdfRespTPipeline(R, init_from_steady=False)
 
     def getTranCdfPassT(self, R=None):
-        """Get transient CDF of passage times. Alias for getCdfRespT."""
-        return self.getCdfRespT(R)
+        """Get transient CDF of passage times. Delegates to getTranCdfRespT,
+        its own name in the reference's sibling file."""
+        return self.getTranCdfRespT(R)
 
     def getTranProbAggr(self, node=None):
         """Get transient aggregated state probabilities from simulation.
@@ -959,6 +1387,96 @@ class SolverJMT(NetworkSolver):
                 }
         return result
 
+    def _runReplication(self):
+        """Transient averages by independent replication.
+
+        Samples ``options.iter_max`` seeded system trajectories, interpolates each
+        onto the union of their time grids (previous-neighbour, capped at the
+        MINIMUM of their maxima so the state predictor never runs past the
+        constraints the shortest replication established) and averages them.
+
+        Utilization is read as ``min(n, c)/c`` at a finite server and as the raw
+        queue length at a delay; throughput follows it as ``U*c*mu`` and ``U*mu``.
+        Mirrors the 'replication' arm of MATLAB @SolverJMT/runAnalyzer.m.
+        """
+        import time as _time
+        sn = self._sn
+        M, K = sn.nstations, sn.nclasses
+        # The predicate supportsModelMethod asks, so the gate that decides
+        # whether to OFFER 'replication' and this run cannot drift apart.
+        structural = jmt_method_refusal(sn, 'replication', self.options)
+        if structural:
+            raise RuntimeError(structural)
+        t0 = _time.time()
+        init_seed = self.options.seed
+        reps = max(1, int(getattr(self.options, 'iter_max', 10) or 10))
+
+        paths = []
+        tumax = float('inf')
+        grid = set()
+        for it in range(reps):
+            self.options.seed = init_seed + it
+            try:
+                path = self.sampleSysAggr()
+            except Exception as exc:
+                line_warning("SolverJMT", "Replication %d failed (%s), skipping.", it + 1, exc)
+                continue
+            if not path or path.get('t') is None or len(path['t']) == 0:
+                line_warning("SolverJMT",
+                             "Replication %d produced empty/invalid time series, skipping.", it + 1)
+                continue
+            tv = np.asarray(path['t'], dtype=float).ravel()
+            paths.append((tv, path['state']))
+            tumax = min(tumax, float(np.max(tv)))
+            grid.update(tv.tolist())
+        self.options.seed = init_seed
+        if not paths:
+            raise RuntimeError("No valid replications produced. Cannot compute transient averages.")
+
+        tu = np.array(sorted(v for v in grid if v <= tumax), dtype=float)
+        nvalid = len(paths)
+
+        QNt, UNt, TNt = {}, {}, {}
+        nservers = np.asarray(sn.nservers, dtype=float).ravel()
+        for i in range(M):
+            c = nservers[i] if i < len(nservers) else 1.0
+            for k in range(K):
+                q = np.zeros(len(tu))
+                u = np.zeros(len(tu))
+                for tv, states in paths:
+                    st = states[i] if i < len(states) else None
+                    if st is None:
+                        continue
+                    st = np.asarray(st, dtype=float)
+                    if st.ndim != 2 or k >= st.shape[1] or not np.isfinite(st).any():
+                        continue
+                    col = st[:, k]
+                    # previous-neighbour interpolation; a grid point before the
+                    # first sample has no predecessor and reads 0, which is what
+                    # the reference's own NaN-to-zero step leaves
+                    idx = np.searchsorted(tv, tu, side='right') - 1
+                    valid = idx >= 0
+                    qv = np.zeros(len(tu))
+                    qv[valid] = np.nan_to_num(col[idx[valid]])
+                    q += qv / nvalid
+                    if np.isfinite(c) and c > 0:
+                        uv = np.zeros(len(tu))
+                        uv[valid] = np.nan_to_num(np.minimum(col[idx[valid]], c) / c)
+                    else:
+                        uv = qv
+                    u += uv / nvalid
+                rate = float(sn.rates[i, k]) if sn.rates is not None else 0.0
+                if not np.isfinite(rate):
+                    rate = 0.0
+                scale = (c * rate) if np.isfinite(c) else rate
+                QNt[(i, k)] = {'t': tu.copy(), 'metric': q}
+                UNt[(i, k)] = {'t': tu.copy(), 'metric': u}
+                TNt[(i, k)] = {'t': tu.copy(), 'metric': u * scale}
+
+        self._tran_avg = (QNt, UNt, TNt)
+        self._tran_runtime = _time.time() - t0
+        return self
+
     def getTranAvg(self):
         """Get transient average metrics from simulation.
 
@@ -967,9 +1485,14 @@ class SolverJMT(NetworkSolver):
         Returns:
             Tuple of (QNt, UNt, TNt) time series dicts, or None if unavailable.
         """
+        # method='replication' produced the real transient mean; return it rather
+        # than the constant series the steady-state fallback below builds.
+        tran = getattr(self, '_tran_avg', None)
+        if tran is not None:
+            return tran
         # Transient analysis runs the simulation with a finite timespan.
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         # JMT steady-state results don't have time series natively.
         # Return steady-state values as constant time series.
@@ -1009,7 +1532,7 @@ class SolverJMT(NetworkSolver):
             Float probability value, or dict of probabilities.
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         # For simulation-based solver, compute from trajectory
         result = self.sampleSysAggr(num_events=self.options.samples)
@@ -1096,15 +1619,26 @@ class SolverJMT(NetworkSolver):
         return prob_map
 
     def getProbNormConstAggr(self):
-        """Get normalizing constant. Not supported by simulation solver.
+        """Log normalizing constant, from the JMVA engine only.
+
+        A simulation computes no normalizing constant, but the analytical JMVA
+        algorithms report one in the result file's <normconst logValue>, which
+        MATLAB stores as result.Prob.logNormConstAggr. It is returned here for
+        the jmva* methods and refused for the simulation ones rather than
+        handing back the NaN placeholder.
 
         Raises:
-            NotImplementedError
+            NotImplementedError: on the simulation methods.
         """
-        raise NotImplementedError(
-            "getProbNormConstAggr() is not supported by SolverJMT. "
-            "Use SolverNC or SolverCTMC for normalizing constant computation."
-        )
+        from ....api.solvers.jmt.handler import _is_jmva_method
+        if not _is_jmva_method(self.method):
+            raise NotImplementedError(
+                "getProbNormConstAggr() is not supported by SolverJMT with method='%s'. "
+                "Use an analytical method (SolverJMT 'jmva'), SolverNC or SolverCTMC "
+                "for normalizing constant computation." % self.method)
+        if self._result is None:
+            self._ensureAvgResults()
+        return getattr(self._result, 'logNormConstAggr', float('nan'))
 
     # =========================================================================
     # Sampling Methods (Gap 3e)
@@ -1293,7 +1827,7 @@ class SolverJMT(NetworkSolver):
     def getAvgResidT(self) -> np.ndarray:
         """Get average residence times (M x K)."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         if self._sn is not None and hasattr(self._sn, 'visits') and self._sn.visits:
             return sn_get_residt_from_respt(self._sn, self._result.R, None)
         return self._result.R.copy() if self._result.R is not None else np.array([])
@@ -1301,7 +1835,7 @@ class SolverJMT(NetworkSolver):
     def getAvgWaitT(self) -> np.ndarray:
         """Get average waiting times (M x K). W = R - S."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         R = self._result.R.copy() if self._result.R is not None else np.array([])
         if len(R) == 0:
             return R
@@ -1322,7 +1856,7 @@ class SolverJMT(NetworkSolver):
             Tuple of (Q, U, R, T, A, W)
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         r = self._result
         Q = r.Q if r.Q is not None else np.array([])
         U = r.U if r.U is not None else np.array([])
@@ -1347,7 +1881,7 @@ class SolverJMT(NetworkSolver):
             Tuple of (QNn, UNn, RNn, WNn, ANn, TNn) - node-level metrics
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         sn = self._sn
         I = sn.nnodes
         M = sn.nstations
@@ -1391,6 +1925,11 @@ class SolverJMT(NetworkSolver):
         Returns:
             List of lists where RD[station][class] is a 2D array [cdf, time]
         """
+        return self._cdfRespTPipeline(R, init_from_steady=True)
+
+    def _cdfRespTPipeline(self, R=None, init_from_steady=True):
+        """The shared logged-run pipeline behind getCdfRespT (seeded from the
+        rounded steady-state queue lengths) and getTranCdfRespT (unseeded)."""
         import os
         import tempfile
         from ....api.solvers.jmt.handler import parse_tran_resp_t
@@ -1402,25 +1941,27 @@ class SolverJMT(NetworkSolver):
         # Initialize result structure
         RD = [[None for _ in range(K)] for _ in range(M)]
 
-        # Step 1: Get steady-state queue lengths (first JMT run)
-        QN = self.getAvgQLen()
-        n = QN.copy()
+        n = None
+        if init_from_steady:
+            # Step 1: Get steady-state queue lengths (first JMT run)
+            QN = self.getAvgQLen()
+            n = QN.copy()
 
-        # Adjust job numbers based on network constraints
-        for r in range(K):
-            if np.isinf(sn.njobs[r]):
-                # Open class - use floor of queue lengths
-                for i in range(M):
-                    n[i, r] = np.floor(QN[i, r])
-            else:
-                # Closed class - ensure total population equals njobs
-                for i in range(M):
-                    n[i, r] = np.floor(QN[i, r])
-                total_jobs = np.sum(n[:, r])
-                if total_jobs < sn.njobs[r]:
-                    # Put remaining jobs on bottleneck station
-                    imax = np.argmax(n[:, r])
-                    n[imax, r] = n[imax, r] + sn.njobs[r] - total_jobs
+            # Adjust job numbers based on network constraints
+            for r in range(K):
+                if np.isinf(sn.njobs[r]):
+                    # Open class - use floor of queue lengths
+                    for i in range(M):
+                        n[i, r] = np.floor(QN[i, r])
+                else:
+                    # Closed class - ensure total population equals njobs
+                    for i in range(M):
+                        n[i, r] = np.floor(QN[i, r])
+                    total_jobs = np.sum(n[:, r])
+                    if total_jobs < sn.njobs[r]:
+                        # Put remaining jobs on bottleneck station
+                        imax = np.argmax(n[:, r])
+                        n[imax, r] = n[imax, r] + sn.njobs[r] - total_jobs
 
         # Step 2: Copy model for CDF computation
         cdfmodel = self.model.copy()
@@ -1456,11 +1997,13 @@ class SolverJMT(NetworkSolver):
         log_path = tempfile.mkdtemp(prefix='jmt_cdf_logs_')
         cdfmodel.link_and_log(Plinked, is_node_logged, log_path)
 
-        # Initialize model state from marginal distribution
-        try:
-            cdfmodel.init_from_marginal(n)
-        except Exception:
-            pass  # May not be supported for all models
+        # Initialize model state from marginal distribution (seeded route only;
+        # the transient getter starts from the model's default initial state)
+        if init_from_steady and n is not None:
+            try:
+                cdfmodel.init_from_marginal(n)
+            except Exception:
+                pass  # May not be supported for all models
 
         # Step 4: Run JMT on logged model (second JMT run)
         cdf_solver = SolverJMT(cdfmodel, self.options)
@@ -1522,7 +2065,7 @@ class SolverJMT(NetworkSolver):
             percentiles = np.asarray(percentiles)
 
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         R = self._result.R
         M = self._sn.nstations
@@ -1579,6 +2122,7 @@ class SolverJMT(NetworkSolver):
     avg_waitt = getAvgWaitT
     avg_tput = getAvgTput
     avg_arv_r = getAvgArvR
+    avg_fcr = getAvgFcr
     avg_chain_table = getAvgChainTable
     avg_sys_table = getAvgSysTable
     avg_sys_resp_t = getAvgSysRespT
@@ -1608,7 +2152,7 @@ class SolverJMT(NetworkSolver):
         is 0; queue/delay rows reuse the station-level metrics.
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         from line_solver.api.sn import sn_get_node_arvr_from_tput
         from line_solver.lang.base import NodeType

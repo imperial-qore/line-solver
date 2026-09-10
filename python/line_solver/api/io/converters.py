@@ -378,7 +378,7 @@ def _has_incoming_routing(sn, node_i: int, class_r: int) -> bool:
 
 
 
-def lqn2qn(lqn_model):
+def lqn2qn(lqn_model, replication='auto'):
     """
     Convert a LayeredNetwork into an equivalent Network by expanding each
     entry's activity subgraph into a step graph.
@@ -389,6 +389,7 @@ def lqn2qn(lqn_model):
 
     Args:
         lqn_model: LayeredNetwork object
+        replication: 'auto', 'materialize' or 'pool', as in ``io.LQN2QN``
 
     Returns:
         Network model
@@ -397,7 +398,7 @@ def lqn2qn(lqn_model):
         MATLAB: matlab/src/io/LQN2QN.m
     """
     from ...io import LQN2QN
-    return LQN2QN(lqn_model)
+    return LQN2QN(lqn_model, replication=replication)
 
 
 @dataclass
@@ -423,128 +424,154 @@ class MMPP2Params:
 
 
 def mapqn2renv(model: Any, options: Optional[Dict] = None):
-    """
-    Transform a queueing network with MMPP service into a random environment model.
+    """Random-environment image of a network with MAP/MMPP service or arrivals.
 
-    This function transforms a queueing network where servers use MMPP2
-    (2-phase Markov Modulated Poisson Process) service distributions into
-    a random environment model with exponential services. The environment
-    has two stages (one per MMPP phase) with transitions defined by the
-    MMPP D0 matrix.
+    Retained name for the transformation now implemented by :func:`map2renv`,
+    which generalizes it from a single MMPP2 service process to any number of
+    MAP, MMPP2 or MMAP arrival and service processes of arbitrary phase order.
 
     Args:
-        model: Network with MMPP2 service distributions
-        options: Optional configuration dictionary (reserved for future use)
+        model: Network with at least one MAP/MMPP2/MMAP process
+        options: Optional solver options (config['map_env_maxstages'] caps the stages)
 
     Returns:
-        RandomEnvironmentModel with exponential services modulated by MMPP phases
-
-    Raises:
-        ValueError: If no MMPP2 distributions found or invalid parameters
-
-    The transformation works as follows:
-    - Input MMPP2 has D0 (phase transitions) and D1 (diagonal service rates)
-    - Output has 2 environment stages with exponential services
-    - Stage 0 uses service rate λ₀ = D1(1,1)
-    - Stage 1 uses service rate λ₁ = D1(2,2)
-    - Environment transitions: σ₀₁ = D0(1,2), σ₁₀ = D0(2,1)
-
-    Example:
-        >>> # Create network with MMPP2 service
-        >>> model = Network('MMPP_Queue')
-        >>> # ... setup with MMPP2 service distributions
-        >>> env_model = mapqn2renv(model)
-
-    References:
-        MATLAB: matlab/src/io/MAPQN2RENV.m
+        Environment model with exponential rates modulated by the phases.
     """
-    if options is None:
-        options = {}
-
-    # Get network structure
-    if hasattr(model, 'getStruct'):
-        sn = model.getStruct()
-    else:
-        sn = model
-
-    # Phase 1: Validate and extract MMPP parameters
-    mmpp_params = _validate_and_extract_mmpp(model, sn)
-
-    if mmpp_params is None:
-        raise ValueError('Network must contain at least one MMPP2 service distribution')
-
-    # Phase 2: Extract MMPP Parameters
-    D0 = mmpp_params.D0
-    D1 = mmpp_params.D1
-
-    # Extract service rates from D1 diagonal
-    lambda0 = D1[0, 0]
-    lambda1 = D1[1, 1]
-
-    # Extract transition rates from D0 off-diagonal
-    sigma01 = D0[0, 1]
-    sigma10 = D0[1, 0]
-
-    # Validate rates are non-negative
-    if lambda0 < 0 or lambda1 < 0 or sigma01 < 0 or sigma10 < 0:
-        raise ValueError('All extracted rates must be non-negative')
-
-    # Phase 3: Create Environment Model
-    model_name = getattr(model, 'name', 'model') if hasattr(model, 'name') else 'model'
-    env_name = f'{model_name}_RENV'
-
-    # Phase 4: Build Stage Networks
-    stages = []
-
-    # Stage 0 (Phase 0) - uses lambda0 service rate
-    stage0 = _build_stage_network_spec(sn, 'Phase0', lambda0)
-    stages.append(stage0)
-
-    # Stage 1 (Phase 1) - uses lambda1 service rate
-    stage1 = _build_stage_network_spec(sn, 'Phase1', lambda1)
-    stages.append(stage1)
-
-    # Phase 5: Add Environment Transitions
-    transitions = []
-
-    if sigma01 > 0:
-        transitions.append({
-            'from_stage': 'Phase0',
-            'to_stage': 'Phase1',
-            'rate': sigma01,
-            'distribution': 'Exp',
-        })
-
-    if sigma10 > 0:
-        transitions.append({
-            'from_stage': 'Phase1',
-            'to_stage': 'Phase0',
-            'rate': sigma10,
-            'distribution': 'Exp',
-        })
-
-    # Import Environment here to avoid circular imports
-    from line_solver.environment import Environment
-    from line_solver.distributions import Exp
-
-    # Create actual Environment object
-    env = Environment('MAPQN_Env', 2)
-
-    # Build stage networks and add to environment
-    stage_net0 = _build_stage_network(model, 'Phase0', lambda0)
-    env.add_stage(0, 'Phase0', 'item', stage_net0)
-
-    stage_net1 = _build_stage_network(model, 'Phase1', lambda1)
-    env.add_stage(1, 'Phase1', 'item', stage_net1)
-
-    # Add transitions
-    if sigma01 > 0:
-        env.add_transition(0, 1, Exp(sigma01))
-
-    if sigma10 > 0:
-        env.add_transition(1, 0, Exp(sigma10))
-
+    env, _ = map2renv(model, options)
     return env
+
+
+def map2renv(model: Any, options: Optional[Dict] = None):
+    """Markov-modulated image of a network as a queueing network in a random environment.
+
+    Every non-renewal process is a point process modulated by the CTMC with
+    generator Q = D0 + D1, whose conditional intensity in phase k is
+    lambda(k) = sum_j D1(k,j). The transformation freezes each phase into an
+    environment stage in which the process is the Poisson process of that
+    intensity, i.e. an exponential arrival or service time, and lets the
+    environment switch stages at the rates of Q. With P modulated processes the
+    stage set is the Cartesian product of their phase spaces and the environment
+    generator is the Kronecker sum of the individual Q's, so only one process
+    changes phase at a time, as in the original model.
+
+    The image is exact in structure for an MMPP (diagonal D1); for a general MAP
+    the phase jumps that occur AT an event epoch (off-diagonal D1) are aggregated
+    into Q, so the image matches the modulating chain and the conditional
+    intensities but not the full inter-event autocorrelation.
+
+    Populations are carried across stage switches unchanged (identity reset), as
+    a phase switch moves no job.
+
+    Mirrors matlab/src/io/map2renv.m.
+
+    Args:
+        model: Network with at least one MAP/MMPP2/MMAP process
+        options: Optional solver options; config['map_env_maxstages'] caps the
+            number of stages (default 64)
+
+    Returns:
+        Tuple (env, info) where info holds nstages, orders, is_mmpp, max_hold_time
+        and the modulation records.
+    """
+    from ...environment import Environment
+    from ...distributions import Exp
+    from ..sn import sn_map_modulation
+
+    zero = 1e-14
+    max_stages = 64
+    cfg = getattr(options, 'config', None) if options is not None else None
+    if isinstance(options, dict):
+        cfg = options.get('config', options)
+    if isinstance(cfg, dict) and cfg.get('map_env_maxstages'):
+        max_stages = int(cfg['map_env_maxstages'])
+
+    sn = model.getStruct() if hasattr(model, 'getStruct') else model.get_struct()
+    mods = sn_map_modulation(sn)
+    if not mods:
+        raise RuntimeError('The model declares no MAP, MMPP2 or MMAP process, '
+                           'so it has no random-environment image.')
+
+    orders = [int(m['order']) for m in mods]
+    nstages = int(np.prod(orders))
+    is_mmpp = all(m['is_mmpp'] for m in mods)
+    if nstages > max_stages:
+        raise RuntimeError(
+            'The random-environment image of this model has %d stages (phase orders %s), above the '
+            "options.config['map_env_maxstages'] cap of %d. Reduce the order of the modulating "
+            'processes or raise the cap.' % (nstages, orders, max_stages))
+
+    # Stage s enumerates the phase tuples in column-major order.
+    P = len(mods)
+    phase_of = np.zeros((nstages, P), dtype=int)
+    for s in range(nstages):
+        rem = s
+        for p in range(P):
+            phase_of[s, p] = rem % orders[p]
+            rem //= orders[p]
+
+    base_name = model.getName() if callable(getattr(model, 'getName', None)) else getattr(model, 'name', 'model')
+    env = Environment(base_name + '_renv', nstages)
+    names = []
+    for s in range(nstages):
+        name = 'Phase' + ''.join('_%d' % (phase_of[s, p] + 1) for p in range(P))
+        names.append(name)
+        env.add_stage(s, name, 'item', _build_map_stage(model, mods, phase_of[s], name, zero))
+
+    # Kronecker sum of the phase generators: one process changes phase at a time.
+    exit_rate = np.zeros(nstages)
+    for s in range(nstages):
+        for p in range(P):
+            Qp = mods[p]['D0'] + sum(mods[p]['D1'])
+            k = int(phase_of[s, p])
+            stride = int(np.prod(orders[:p])) if p > 0 else 1
+            for l in range(orders[p]):
+                if l == k or Qp[k, l] <= zero:
+                    continue
+                t = s + (l - k) * stride
+                env.add_transition(s, t, Exp(float(Qp[k, l])))
+                exit_rate[s] += Qp[k, l]
+
+    env.init()
+    positive = exit_rate[exit_rate > 0]
+    max_hold = float(np.max(1.0 / positive)) if positive.size else 0.0
+    info = {'nstages': nstages, 'orders': orders, 'is_mmpp': bool(is_mmpp),
+            'max_hold_time': max_hold, 'mods': mods}
+    return env, info
+
+
+def _build_map_stage(model: Any, mods, phases, stage_name: str, zero: float):
+    """Copy of the base model with every modulated process frozen to its
+    phase-conditional exponential rate."""
+    from ...distributions import Exp
+
+    stage_net = model.copy()
+    base_name = model.getName() if callable(getattr(model, 'getName', None)) else getattr(model, 'name', 'model')
+    if callable(getattr(stage_net, 'setName', None)):
+        stage_net.setName('%s_%s' % (base_name, stage_name))
+    else:
+        stage_net.name = '%s_%s' % (base_name, stage_name)
+    stations = stage_net.get_stations()
+    classes = stage_net.get_classes()
+    for p, mod in enumerate(mods):
+        station = stations[mod['ist']]
+        for c, r in enumerate(mod['classes']):
+            rate = float(np.sum(mod['D1'][c][int(phases[p]), :]))
+            if mod['arrival']:
+                # A silent phase (zero intensity) is an ON/OFF source: keep it as
+                # a rate rather than a disabled class, so that the class still
+                # exists in every stage and the rate-averaged limit averages a zero.
+                station.set_arrival(classes[r], Exp(max(rate, zero)))
+            else:
+                if rate <= zero:
+                    raise RuntimeError(
+                        'Phase %d of the service process of class %d at station %d has zero completion rate: '
+                        'the station never empties while the environment sits in that stage, so the stage has '
+                        'no steady state and the random-environment image is not defined. Model the stalled '
+                        'server as a breakdown stage instead.' % (int(phases[p]) + 1, r + 1, mod['ist'] + 1))
+                station.set_service(classes[r], Exp(rate))
+    stage_net.refresh_struct()
+    return stage_net
+
 
 
 def _validate_and_extract_mmpp(model: Any, sn: Any) -> Optional[MMPP2Params]:
@@ -894,6 +921,7 @@ __all__ = [
     'qn2lqn',
     'lqn2qn',
     'mapqn2renv',
+    'map2renv',
     'RandomEnvironmentModel',
     'MMPP2Params',
 ]

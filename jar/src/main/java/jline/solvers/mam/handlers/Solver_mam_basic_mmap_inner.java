@@ -21,7 +21,9 @@ import jline.api.mam.Mmap_hide;
 import jline.api.mam.Mmap_lambda;
 import jline.api.mam.Qbd_depproc_etaqa;
 import jline.api.mam.Qbd_depproc_etaqa_ps;
+import jline.api.qsys.Qsys_mmapg1k;
 import jline.api.qsys.Qsys_mmck;
+import jline.api.qsys.QsysMmapG1kResult;
 import jline.api.sn.SnBuildFjSyncMap;
 import jline.lang.NetworkStruct;
 import jline.lang.constant.NodeType;
@@ -170,6 +172,8 @@ public final class Solver_mam_basic_mmap_inner {
                                 Mam_detect_mmck.Result det = Mam_detect_mmck.mam_detect_mmck(sn, ist, K, arv);
                                 double meanQ_fc;
                                 double lossProb_fc;
+                                // Per-class loss, exact MMAP/G/1/K branch only
+                                Matrix lossPerClass = null;
                                 if (det.isMmck) {
                                     Matrix lam = Mmap_lambda.mmap_lambda(arv);
                                     double aggrLambda = 0.0;
@@ -181,6 +185,21 @@ public final class Solver_mam_basic_mmap_inner {
                                             (int) sn.nservers.get(ist), capK);
                                     meanQ_fc = ex.meanQueueLength;
                                     lossProb_fc = ex.lossProbability;
+                                } else if (sn.nservers.get(ist) == 1) {
+                                    // Exact MMAP[K]/G/1/K with per-class loss ratio;
+                                    // see _kb/06-solver-catalog.md for rationale
+                                    MatrixCell marks = arrivalMarks(arv, K);
+                                    Mam_svc_mixture.Result mix = Mam_svc_mixture.mam_svc_mixture(
+                                            marks, pie.get(ist), D0.get(ist));
+                                    List<Matrix> D1c = new ArrayList<Matrix>();
+                                    for (int k = 0; k < K; k++) {
+                                        D1c.add(marks.get(k + 1));
+                                    }
+                                    QsysMmapG1kResult ex = Qsys_mmapg1k.qsys_mmapg1k(marks.get(0),
+                                            D1c, mix.toServiceLaw(), capK);
+                                    meanQ_fc = ex.meanQueueLength;
+                                    lossProb_fc = ex.lossAggregate;
+                                    lossPerClass = ex.lossRatio;
                                 } else {
                                     Mam_truncate_renorm.Result tr = Mam_truncate_renorm.mam_truncate_renorm(
                                             arrivalMarks(arv, K), pie.get(ist), D0.get(ist), capK);
@@ -193,7 +212,9 @@ public final class Solver_mam_basic_mmap_inner {
                                 for (int k = 0; k < K; k++) {
                                     double v = lambdaInflow.get(k);
                                     if (Double.isNaN(v)) v = 0.0;
-                                    TN_eff[k] = v * (1 - lossProb_fc);
+                                    double lossk = (lossPerClass != null) ? lossPerClass.get(0, k)
+                                            : lossProb_fc;
+                                    TN_eff[k] = v * (1 - lossk);
                                     sumTN += TN_eff[k];
                                 }
                                 double[] S_actual = new double[K];

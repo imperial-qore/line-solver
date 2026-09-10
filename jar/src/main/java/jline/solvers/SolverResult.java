@@ -152,6 +152,14 @@ public class SolverResult {
      * Transient queue lengths [time_points][stations x classes].
      * Time steps are stored separately in matrix 't' for efficiency.
      */
+    /**
+     * `options.config.runLengthPlan`: the run length the caller would need for
+     * the precision they asked for, as computed by
+     * {@link jline.api.sim.SimRunlength#sim_runlength_plan}. Null unless the
+     * option was set and the solver produced confidence intervals.
+     */
+    public java.util.Map<String, Object> runLengthPlan;
+
     public Matrix[][] QNt;
 
     /**

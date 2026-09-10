@@ -77,10 +77,9 @@ public class SolverLQNS extends Solver {
         if (!isAvailable() && !options.config.remote) {
             throw new RuntimeException(
                     "SolverLQNS requires the 'lqns' and 'lqsim' commands to be available in your system PATH.\n" +
-                            "You can install them from: http://www.sce.carleton.ca/rads/lqns/\n\n" +
-                            "Alternatively, use remote execution via Docker:\n" +
-                            "  1. Pull and run: docker run -d -p 8080:8080 imperialqore/line-lqns-rest:latest\n" +
-                            "  2. Configure remote execution:\n" +
+                            "Obtain them from their authors at: http://www.sce.carleton.ca/rads/lqns/\n" +
+                            "LINE ships no LQNS binary and does not redistribute one.\n\n" +
+                            "Alternatively, point LINE at a host that already runs LQNS:\n" +
                             "     options.config.remote = true;\n" +
                             "     options.config.remote_url = \"http://localhost:8080\";\n\n");
         }
@@ -114,7 +113,19 @@ public class SolverLQNS extends Solver {
         return s;
     }
 
+    /**
+     * True if LQNS can run: a native lqns binary is on the PATH. LINE never runs
+     * LQNS from a container image, because its licence is an evaluation
+     * agreement that forbids redistribution, so the binary must be one the user
+     * installed. To exercise a containerised build in the test suite, put a shim
+     * on the PATH with {@code run-tests.sh --lqns-docker}.
+     */
     public static boolean isAvailable() {
+        return hasNativeLqns();
+    }
+
+    /** True if a native lqns binary is available on the PATH. */
+    public static boolean hasNativeLqns() {
         Process process = null;
         try {
             // Use --help instead of --version because lqsim --version hangs waiting for input
@@ -173,18 +184,27 @@ public class SolverLQNS extends Solver {
     }
 
     public final LayeredNetworkAvgTable getAvgTable() {
+        return jline.io.LineResultRecorder.around(this, "layered", () -> getAvgTableImpl());
+    }
+
+    /**
+     * Body of {@link #getAvgTable()}, split out so {@link jline.io.LineResultRecorder}
+     * sees what the getter RETURNED. The JAVA cross-codebase parity row is
+     * measured from that rather than from what an example printed.
+     */
+    protected final LayeredNetworkAvgTable getAvgTableImpl() {
         LayeredSolverResult result = (LayeredSolverResult) this.getAvg();
         LayeredNetworkStruct lqn = this.getStruct();
 
         List<String> nodeNames = new ArrayList<>(lqn.names.values());
         List<String> nodeTypes = new ArrayList<>();
         for (int o = 0; o < nodeNames.size(); o++) {
-            switch ((int) lqn.type.get(1 + o)) {
+            switch ((int) lqn.type.get(o)) {
                 case LayeredNetworkElement.PROCESSOR:
                     nodeTypes.add("Processor");
                     break;
                 case LayeredNetworkElement.TASK:
-                    if (lqn.sched.get(1 + o) == SchedStrategy.REF) {
+                    if (lqn.sched.get(o) == SchedStrategy.REF) {
                         nodeTypes.add("RefTask");
                     } else {
                         nodeTypes.add("Task");
@@ -220,36 +240,12 @@ public class SolverLQNS extends Solver {
         lqnsResult.UN = ((LayeredSolverResult) this.result).PN.copy();
         lqnsResult.RN = ((LayeredSolverResult) this.result).SN.copy();
 
-        // LQNS reports proc-utilization summed over all instances of the host
-        // processor; LN reports the per-server fraction. Rescale UN to match LN.
-        LayeredNetworkStruct lqnNorm = this.getStruct();
-        for (int idx = 1; idx <= lqnNorm.nidx; idx++) {
-            double m = hostProcessorMult(lqnNorm, idx);
-            if (m > 1.0) {
-                double v = lqnsResult.UN.get(idx - 1);
-                if (!Double.isNaN(v)) {
-                    lqnsResult.UN.set(idx - 1, v / m);
-                }
-            }
-        }
-
+        // UN is lqns' proc-utilization, verbatim for hosts, tasks and activities
+        // and aggregated over the activity graph for entries, which lqns itself
+        // reports as 0 in the activity-graph form. Both lqns and SolverLN report
+        // the processor utilization summed over the host's servers, so no
+        // rescaling by the host multiplicity applies.
         return lqnsResult;
-    }
-
-    private static double hostProcessorMult(LayeredNetworkStruct lqn, int idx) {
-        int cur = idx;
-        for (int hops = 0; hops <= lqn.nidx; hops++) {
-            if (cur < 1 || cur > lqn.nidx) return 1.0;
-            int t = (int) lqn.type.get(cur);
-            if (t == LayeredNetworkElement.PROCESSOR) {
-                double m = lqn.mult.get(cur);
-                return (m > 0 && !Double.isInfinite(m)) ? m : 1.0;
-            }
-            int p = (int) lqn.parent.get(cur);
-            if (p <= 0 || p == cur) return 1.0;
-            cur = p;
-        }
-        return 1.0;
     }
 
     public LayeredNetworkStruct getStruct() {
@@ -265,6 +261,35 @@ public class SolverLQNS extends Solver {
 
         // Implementation of listValidMethods
         return Arrays.asList("default", "lqns", "srvn", "exactmva", "srvn.exactmva", "sim", "lqsim", "lqnsdefault");
+    }
+
+    /**
+     * 1-based position of the layered element called {@code name} whose kind is
+     * {@code elemType}, or -1 when the struct carries no such element.
+     *
+     * The kind is part of the key, and has to be: a LINE-generated layered model
+     * routinely gives a processor, its task and that task's entry the same name,
+     * and lqn.names holds all three, so a name-only scan resolves to whichever
+     * one it meets last and writes one element's .lqxo row into another's slot.
+     * The result file states which kind each row describes -- it is the tag being
+     * read -- so the ambiguity does not have to exist. Mirrors MATLAB
+     * findlqnelem.m and the native-python _find_lqn_elem. See BUGS.md BUG-94.
+     */
+    private static int findLqnElem(LayeredNetworkStruct lqn, String name, int elemType) {
+        int found = -1;
+        for (Map.Entry<Integer, String> nameEntry : lqn.names.entrySet()) {
+            int idx = nameEntry.getKey().intValue();
+            if (!Objects.equals(name, nameEntry.getValue())) {
+                continue;
+            }
+            if (lqn.type == null || idx >= lqn.type.getNumElements() || (int) lqn.type.get(idx) != elemType) {
+                continue;
+            }
+            if (found < 0 || idx < found) {
+                found = idx; // first declaration wins, as MATLAB find(...)(1) does
+            }
+        }
+        return found;
     }
 
     public SolverResult parseXMLResults(String filename) throws IOException {
@@ -350,21 +375,16 @@ public class SolverLQNS extends Solver {
                 String procName = procElement.getAttribute("name");
 
                 // Find the position of procName
-                int procPos = 0;
-                for (Map.Entry<Integer, String> entry : lqn.names.entrySet()) {
-                    if (Objects.equals(procName, entry.getValue())) {
-                        procPos = entry.getKey().intValue();
-                    }
-                }
+                int procPos = findLqnElem(lqn, procName, LayeredNetworkElement.HOST);
                 NodeList procResultList = procElement.getElementsByTagName("result-processor");
-                if (procResultList.getLength() > 0) {
+                if (procResultList.getLength() > 0 && procPos >= 0) {
                     Element procResultElement = (Element) procResultList.item(0);
                     String utilizationStr = procResultElement.getAttribute("utilization");
                     double uRes = 0.0;
                     if (!utilizationStr.isEmpty()) {
                         uRes = Double.parseDouble(utilizationStr);
                     }
-                    AvgNodesProcUtilization.set(procPos - 1, uRes);
+                    AvgNodesProcUtilization.set(procPos, uRes);
                 }
 
                 // Assuming procElement is already defined as an Element and lqn.names is a List or array.
@@ -375,12 +395,7 @@ public class SolverLQNS extends Solver {
                     String taskName = taskElement.getAttribute("name");
 
                     // Find the position of taskName
-                    int taskPos = 0;
-                    for (Map.Entry<Integer, String> entry : lqn.names.entrySet()) {
-                        if (Objects.equals(taskName, entry.getValue())) {
-                            taskPos = entry.getKey().intValue();
-                        }
-                    }
+                    int taskPos = findLqnElem(lqn, taskName, LayeredNetworkElement.TASK);
                     NodeList taskResult = taskElement.getElementsByTagName("result-task");
                     Element resultElement = (Element) taskResult.item(0);
 
@@ -397,23 +412,20 @@ public class SolverLQNS extends Solver {
                     }
                     double tRes = Double.parseDouble(resultElement.getAttribute("throughput"));
                     double puRes = Double.parseDouble(resultElement.getAttribute("proc-utilization"));
-                    AvgNodesUtilization.set(taskPos - 1, uRes);
-                    AvgNodesPhase1Utilization.set(taskPos - 1, p1uRes);
-                    AvgNodesThroughput.set(taskPos - 1, tRes);
-                    AvgNodesProcUtilization.set(taskPos - 1, puRes);
-                    AvgNodesPhase2Utilization.set(taskPos - 1, p2uRes);
+                    if (taskPos >= 0) {
+                        AvgNodesUtilization.set(taskPos, uRes);
+                        AvgNodesPhase1Utilization.set(taskPos, p1uRes);
+                        AvgNodesThroughput.set(taskPos, tRes);
+                        AvgNodesProcUtilization.set(taskPos, puRes);
+                        AvgNodesPhase2Utilization.set(taskPos, p2uRes);
+                    }
 
                     NodeList entryList = doc.getElementsByTagName("entry");
                     for (int k = 0; k < entryList.getLength(); k++) {
                         Element entryElement = (Element) entryList.item(k);
                         String entryName = entryElement.getAttribute("name");
                         // Find the position of entryName
-                        int entryPos = 0;
-                        for (Map.Entry<Integer, String> entry : lqn.names.entrySet()) {
-                            if (Objects.equals(entryName, entry.getValue())) {
-                                entryPos = entry.getKey().intValue();
-                            }
-                        }
+                        int entryPos = findLqnElem(lqn, entryName, LayeredNetworkElement.ENTRY);
                         NodeList entryResult = entryElement.getElementsByTagName("result-entry");
                         Element firstEntryResult = (Element) entryResult.item(0);
 
@@ -479,13 +491,15 @@ public class SolverLQNS extends Solver {
                             }
                         }
 
-                        AvgNodesUtilization.set(entryPos - 1, uRes);
-                        AvgNodesPhase1Utilization.set(entryPos - 1, p1uRes);
-                        AvgNodesPhase2Utilization.set(entryPos - 1, p2uRes);
-                        AvgNodesPhase1ServiceTime.set(entryPos - 1, p1stRes);
-                        AvgNodesPhase2ServiceTime.set(entryPos - 1, p2stRes);
-                        AvgNodesThroughput.set(entryPos - 1, tRes);
-                        AvgNodesProcUtilization.set(entryPos - 1, puRes);
+                        if (entryPos >= 0) {
+                            AvgNodesUtilization.set(entryPos, uRes);
+                            AvgNodesPhase1Utilization.set(entryPos, p1uRes);
+                            AvgNodesPhase2Utilization.set(entryPos, p2uRes);
+                            AvgNodesPhase1ServiceTime.set(entryPos, p1stRes);
+                            AvgNodesPhase2ServiceTime.set(entryPos, p2stRes);
+                            AvgNodesThroughput.set(entryPos, tRes);
+                            AvgNodesProcUtilization.set(entryPos, puRes);
+                        }
                     }
                 }
 
@@ -500,11 +514,9 @@ public class SolverLQNS extends Solver {
                                 String actName = actElement.getAttribute("name");
 
                                 // Find the position of actName
-                                int actPos = 0;
-                                for (Map.Entry<Integer, String> entry : lqn.names.entrySet()) {
-                                    if (Objects.equals(actName, entry.getValue())) {
-                                        actPos = entry.getKey().intValue();
-                                    }
+                                int actPos = findLqnElem(lqn, actName, LayeredNetworkElement.ACTIVITY);
+                                if (actPos < 0) {
+                                    continue;
                                 }
                                 NodeList actResult = actElement.getElementsByTagName("result-activity");
                                 double uRes = Double.parseDouble(actResult.item(0).getAttributes().getNamedItem("utilization").getNodeValue());
@@ -517,11 +529,11 @@ public class SolverLQNS extends Solver {
                                 }
                                 double mypuRes = Double.parseDouble(actResult.item(0).getAttributes().getNamedItem("proc-utilization").getNodeValue());
 
-                                AvgNodesUtilization.set(actPos - 1, uRes);
-                                AvgNodesPhase1ServiceTime.set(actPos - 1, stRes);
-                                AvgNodesThroughput.set(actPos - 1, tRes);
-                                AvgNodesProcWaiting.set(actPos - 1, pwRes);
-                                AvgNodesProcUtilization.set(actPos - 1, mypuRes);
+                                AvgNodesUtilization.set(actPos, uRes);
+                                AvgNodesPhase1ServiceTime.set(actPos, stRes);
+                                AvgNodesThroughput.set(actPos, tRes);
+                                AvgNodesProcWaiting.set(actPos, pwRes);
+                                AvgNodesProcUtilization.set(actPos, mypuRes);
 
                                 String actID = lqn.names.get(actPos);
                                 // Synchronous calls
@@ -529,23 +541,24 @@ public class SolverLQNS extends Solver {
                                 for (int m = 0; m < synchCalls.getLength(); m++) {
                                     Element callElement = (Element) synchCalls.item(m);
                                     String destName = callElement.getAttribute("dest");
-                                    int destPos = 0;
-                                    for (Map.Entry<Integer, String> entry : lqn.names.entrySet()) {
-                                        if (Objects.equals(destName, entry.getValue())) {
-                                            destPos = entry.getKey().intValue();
-                                        }
+                                    int destPos = findLqnElem(lqn, destName, LayeredNetworkElement.ENTRY);
+                                    if (destPos < 0) {
+                                        continue;
                                     }
                                     String destID = lqn.names.get(destPos);
-                                    int callPos = 0;
+                                    int callPos = -1;
 
                                     for (Map.Entry<Integer, String> entry : lqn.callnames.entrySet()) {
                                         if (Objects.equals(actID + "=>" + destID, entry.getValue())) {
                                             callPos = entry.getKey().intValue();
                                         }
                                     }
+                                    if (callPos < 0) {
+                                        continue;
+                                    }
                                     NodeList callResult = callElement.getElementsByTagName("result-call");
                                     double wRes = Double.parseDouble(((Element) callResult.item(0)).getAttribute("waiting"));
-                                    AvgEdgesWaiting.set(callPos - 1, wRes);
+                                    AvgEdgesWaiting.set(callPos, wRes);
                                 }
 
                                 // Asynchronous calls
@@ -553,22 +566,23 @@ public class SolverLQNS extends Solver {
                                 for (int m = 0; m < asynchCalls.getLength(); m++) {
                                     Element callElement = (Element) asynchCalls.item(m);
                                     String destName = callElement.getAttribute("dest");
-                                    int destPos = 0;
-                                    for (Map.Entry<Integer, String> entry : lqn.names.entrySet()) {
-                                        if (Objects.equals(destName, entry.getValue())) {
-                                            destPos = entry.getKey().intValue();
-                                        }
+                                    int destPos = findLqnElem(lqn, destName, LayeredNetworkElement.ENTRY);
+                                    if (destPos < 0) {
+                                        continue;
                                     }
                                     String destID = lqn.names.get(destPos);
-                                    int callPos = 0;
+                                    int callPos = -1;
                                     for (Map.Entry<Integer, String> entry : lqn.callnames.entrySet()) {
                                         if (Objects.equals(actID + "->" + destID, entry.getValue())) {
                                             callPos = entry.getKey().intValue();
                                         }
                                     }
+                                    if (callPos < 0) {
+                                        continue;
+                                    }
                                     NodeList callResult = callElement.getElementsByTagName("result-call");
                                     double wRes = Double.parseDouble(((Element) callResult.item(0)).getAttribute("waiting"));
-                                    AvgEdgesWaiting.set(callPos - 1, wRes);
+                                    AvgEdgesWaiting.set(callPos, wRes);
                                 }
                             }
                         }
@@ -601,41 +615,36 @@ public class SolverLQNS extends Solver {
                         Element actElement = (Element) epActList.item(l);
                         String actName = actElement.getAttribute("name");
 
-                        int actPos = 0;
-                        for (Map.Entry<Integer, String> entry : lqn.names.entrySet()) {
-                            if (Objects.equals(actName, entry.getValue())) {
-                                actPos = entry.getKey().intValue();
-                            }
-                        }
-                        if (actPos == 0) continue;
+                        int actPos = findLqnElem(lqn, actName, LayeredNetworkElement.ACTIVITY);
+                        if (actPos < 0) continue;
 
                         NodeList actResult = actElement.getElementsByTagName("result-activity");
                         if (actResult.getLength() == 0) continue;
                         Element resultEl = (Element) actResult.item(0);
 
                         String uResStr = resultEl.getAttribute("utilization");
-                        if (!uResStr.isEmpty()) AvgNodesUtilization.set(actPos - 1, Double.parseDouble(uResStr));
+                        if (!uResStr.isEmpty()) AvgNodesUtilization.set(actPos, Double.parseDouble(uResStr));
                         String stResStr = resultEl.getAttribute("service-time");
-                        if (!stResStr.isEmpty()) AvgNodesPhase1ServiceTime.set(actPos - 1, Double.parseDouble(stResStr));
+                        if (!stResStr.isEmpty()) AvgNodesPhase1ServiceTime.set(actPos, Double.parseDouble(stResStr));
                         String tResStr = resultEl.getAttribute("throughput");
                         if (!tResStr.isEmpty()) {
-                            AvgNodesThroughput.set(actPos - 1, Double.parseDouble(tResStr));
+                            AvgNodesThroughput.set(actPos, Double.parseDouble(tResStr));
                         } else if (!Double.isNaN(parentEntryTput)) {
-                            AvgNodesThroughput.set(actPos - 1, parentEntryTput);
+                            AvgNodesThroughput.set(actPos, parentEntryTput);
                         }
                         String pwResStr = resultEl.getAttribute("proc-waiting");
-                        if (pwResStr != null && !pwResStr.isEmpty()) AvgNodesProcWaiting.set(actPos - 1, Double.parseDouble(pwResStr));
+                        if (pwResStr != null && !pwResStr.isEmpty()) AvgNodesProcWaiting.set(actPos, Double.parseDouble(pwResStr));
                         String puResStr = resultEl.getAttribute("proc-utilization");
                         String hdStr = actElement.getAttribute("host-demand-mean");
                         if (!puResStr.isEmpty()) {
-                            AvgNodesProcUtilization.set(actPos - 1, Double.parseDouble(puResStr));
+                            AvgNodesProcUtilization.set(actPos, Double.parseDouble(puResStr));
                         } else if (!Double.isNaN(parentEntryTput) && hdStr != null && !hdStr.isEmpty()) {
                             // see _kb/12-interfaces-and-docs.md (Wrappers: JAR subprocess-bridge notes: LQNS entry-phase utilization fallback)
-                            AvgNodesProcUtilization.set(actPos - 1, parentEntryTput * Double.parseDouble(hdStr));
+                            AvgNodesProcUtilization.set(actPos, parentEntryTput * Double.parseDouble(hdStr));
                         } else if (!Double.isNaN(parentEntryPU) && epActList.getLength() == 1) {
                             // No throughput/demand available: the entry total is safe
                             // only when the entry has a single phase activity.
-                            AvgNodesProcUtilization.set(actPos - 1, parentEntryPU);
+                            AvgNodesProcUtilization.set(actPos, parentEntryPU);
                         }
 
                         /* Parse synch-call waiting times */
@@ -644,11 +653,9 @@ public class SolverLQNS extends Solver {
                         for (int m = 0; m < synchCalls.getLength(); m++) {
                             Element callElement = (Element) synchCalls.item(m);
                             String destName = callElement.getAttribute("dest");
-                            int destPos = 0;
-                            for (Map.Entry<Integer, String> entry : lqn.names.entrySet()) {
-                                if (Objects.equals(destName, entry.getValue())) {
-                                    destPos = entry.getKey().intValue();
-                                }
+                            int destPos = findLqnElem(lqn, destName, LayeredNetworkElement.ENTRY);
+                            if (destPos < 0) {
+                                continue;
                             }
                             String destID = lqn.names.get(destPos);
                             int callPos = 0;
@@ -670,6 +677,77 @@ public class SolverLQNS extends Solver {
             }
         }
         this.result = new LayeredSolverResult();
+
+        // Processor utilization of an entry, aggregated from its activity graph.
+        // lqns credits host work to whichever level carries the host demand: in
+        // the activity-graph form an entry declares none, so lqns reports
+        // result-entry proc-utilization as a literal 0 and the work sits on the
+        // result-activity rows. The entry value is then the sum over the
+        // activities reachable from the entry within its own task, which is what
+        // lqn.actsof holds. In PH1PH2 form the same sum runs over the phase
+        // activities and reproduces the value lqns reports there, so no form test
+        // is needed. An entry with no activities, or any activity lqns left
+        // unreported, keeps the raw attribute rather than a partial sum.
+        for (int eoff = 0; eoff < lqn.nentries; eoff++) {
+            int eidx = lqn.eshift + eoff;
+            List<Integer> acts = lqn.actsof.get(eidx);
+            if (acts == null || acts.isEmpty()) {
+                continue;
+            }
+            double sumPU = 0;
+            boolean complete = true;
+            for (int a = 0; a < acts.size(); a++) {
+                double pu = AvgNodesProcUtilization.get(acts.get(a));
+                if (Double.isNaN(pu)) {
+                    complete = false;
+                    break;
+                }
+                sumPU += pu;
+            }
+            if (complete) {
+                AvgNodesProcUtilization.set(eidx, sumPU);
+            }
+        }
+
+        // Phase-1 service time of an entry lqns never invoked.
+        // lqns omits phase1-service-time from result-entry exactly when the entry's
+        // throughput is zero: nothing was served, so there is no per-invocation mean
+        // to report. LINE then carried a NaN where the table says an entry HAS a
+        // response time and every other solver reports one, breaking the NaN mask --
+        // see _kb/06-solver-catalog.md. The value is taken from the activity rows, and
+        // ONLY where they are unanimous: if every activity reachable from the entry
+        // reports a zero service time then every aggregation law agrees on zero -- the
+        // serial sum, the branch-weighted mean of an OrFork, the order statistic of an
+        // AndFork -- so the derivation does not depend on which one applies.
+        // It is deliberately NOT generalised the way ProcUtilization is above.
+        // Utilizations add over an activity graph; response times do not. Measured over
+        // the example corpus, sum(actsof) reproduces phase1-service-time on serial
+        // chains only and misses it wherever the graph branches (lqn_workflows `Entry`:
+        // 12.5667 reported against 8.5667 summed, lqn_fork_open_arrival `SE`: 0.841667
+        // against 1.0), so a summed fallback would answer with a number lqns
+        // contradicts. An entry whose activities are unreported, absent, or not all
+        // zero keeps NaN.
+        for (int eoff = 0; eoff < lqn.nentries; eoff++) {
+            int eidx = lqn.eshift + eoff;
+            if (!Double.isNaN(AvgNodesPhase1ServiceTime.get(eidx))) {
+                continue;
+            }
+            List<Integer> acts = lqn.actsof.get(eidx);
+            if (acts == null || acts.isEmpty()) {
+                continue;
+            }
+            boolean allZero = true;
+            for (int a = 0; a < acts.size(); a++) {
+                double st = AvgNodesPhase1ServiceTime.get(acts.get(a));
+                if (Double.isNaN(st) || st != 0.0) {
+                    allZero = false;
+                    break;
+                }
+            }
+            if (allZero) {
+                AvgNodesPhase1ServiceTime.set(eidx, 0.0);
+            }
+        }
 
         ((LayeredSolverResult) this.result).PN = new Matrix(AvgNodesProcUtilization);
         ((LayeredSolverResult) this.result).SN = new Matrix(AvgNodesPhase1ServiceTime);
@@ -713,18 +791,33 @@ public class SolverLQNS extends Solver {
             GlobalConstants.Verbose = options.verbose;
         }
         jline.io.InputOutput.line_ack(options.verbose, "LQNS");
+        // Solver console: SolverLQNS extends Solver, not NetworkSolver, so it
+        // never reaches NetworkSolver.getAvg where every other solver's run is
+        // opened. It opens its own here and closes it in the finally below.
+        jline.io.LineConsole.beginRun(this, options);
+        try {
+            runAnalyzerBody(options, t0);
+        } finally {
+            jline.io.LineConsole.closeRun(this);
+        }
+    }
+
+    private void runAnalyzerBody(SolverOptions options, long t0)
+            throws IllegalAccessException, ParserConfigurationException {
         line_debug(options.verbose, String.format("LQNS solver starting: method=%s, multiserver=%s",
             options.method, options.config.multiserver != null ? options.config.multiserver : "default"));
 
         /* --- write .lqnx ------------------------------------------------ */
         String dirPath = null;
         try {
-            dirPath = lineTempName("lqns");
+            dirPath = lineTempName("lqns", false);
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
         String fileName = dirPath + File.separator + "model.lqnx";
+        jline.io.LineConsole.step("writing the LQN model to %s", fileName);
         ((LayeredNetwork) model).writeXML(fileName, false);
+        jline.io.LineConsole.step("running the lqns binary as a subprocess");
 
         resetRandomGeneratorSeed(options.seed);
 
@@ -855,6 +948,7 @@ public class SolverLQNS extends Solver {
         }
 
         /* --- parse results ---------------------------------------------- */
+        jline.io.LineConsole.step("parsing the lqns XML results");
         try {
             parseXMLResults(fileName);
         } catch (IOException e) {
@@ -871,6 +965,8 @@ public class SolverLQNS extends Solver {
         long t1 = System.nanoTime();
         result.runtime = (t1 - t0) / 1000000000.0;
     }
+
+
 
     /**
      * Execute LQNS via remote REST API.
@@ -1151,7 +1247,7 @@ public class SolverLQNS extends Solver {
 
         // Build node types list (aligned with MATLAB)
         for (int o = 0; o < nodeNames.size(); o++) {
-            switch ((int) lqn.type.get(1 + o)) {
+            switch ((int) lqn.type.get(o)) {
                 case LayeredNetworkElement.PROCESSOR:
                     nodeTypes.add("Processor");
                     break;
@@ -1209,10 +1305,10 @@ public class SolverLQNS extends Solver {
             List<String> callTypeStrings = new ArrayList<>();
             List<Double> waitingTimes = layeredResult.rawEdgesWaiting.toList1D();
 
-            // Build call table data (aligned with MATLAB callpair indices are 1-based)
-            for (int i = 1; i <= lqn.ncalls; i++) {
-                int sourceIdx = (int) lqn.callpair.get(i, 1);
-                int targetIdx = (int) lqn.callpair.get(i, 2);
+            // Build call table data (callpair rows are 0-based call indices)
+            for (int i = 0; i < lqn.ncalls; i++) {
+                int sourceIdx = (int) lqn.callpair.get(i, 0);
+                int targetIdx = (int) lqn.callpair.get(i, 1);
                 sourceNodes.add(lqn.names.get(sourceIdx));
                 targetNodes.add(lqn.names.get(targetIdx));
 

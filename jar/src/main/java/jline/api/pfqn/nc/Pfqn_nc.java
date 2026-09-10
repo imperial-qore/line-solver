@@ -24,7 +24,24 @@ public final class Pfqn_nc {
     private Pfqn_nc() {
     }
 
+    /**
+     * Normalizing constant of a closed or mixed product-form network, with the mean
+     * values a few methods produce as a by-product.
+     *
+     * <p>Equivalent to {@code pfqn_nc(lambda, L, N, Z, options, true)}: the caller is
+     * assumed to want X and Q when a method can supply them.</p>
+     */
     public static Ret.pfqnNcXQ pfqn_nc(Matrix lambda, Matrix L, Matrix N, Matrix Z, SolverOptions options) {
+        return pfqn_nc(lambda, L, N, Z, options, true);
+    }
+
+    /**
+     * @param wantXQ false when the caller wants lG ALONE. A method that supplies mean
+     *        values by simulation ('mcmc') must not pay for a run nobody reads; the
+     *        reference passes {@code nargout>=2} here.
+     */
+    public static Ret.pfqnNcXQ pfqn_nc(Matrix lambda, Matrix L, Matrix N, Matrix Z,
+                                       SolverOptions options, boolean wantXQ) {
         String method = "exact";
         N.length();
 
@@ -310,7 +327,7 @@ public final class Pfqn_nc {
         N_new = N_tmp;
         Z_new = Z_tmp;
 
-        Ret.pfqnNcXQ ret = compute_norm_const(L_new, N_new, Z_new, options);
+        Ret.pfqnNcXQ ret = compute_norm_const(L_new, N_new, Z_new, options, wantXQ);
         double lGnzdem = ret.lG;
         Matrix Xnnzdem = ret.X;
         Matrix _q = ret.Q;
@@ -319,6 +336,41 @@ public final class Pfqn_nc {
         if (Xnnzdem.isEmpty()) {
             X = new Matrix(0, 0);
             Q = new Matrix(0, 0);
+        } else {
+            // A method that produces mean values as a by-product (load concealment, and
+            // the default path on many stations) hands them back in the REDUCED,
+            // SCALED and REORDERED problem: only the demand-bearing stations, only
+            // the nonzero-demand classes, in that order, on demands divided by
+            // scalevec. Undo all three, or the caller silently reads a permuted
+            // throughput of the wrong magnitude. Mirrors the MATLAB pfqn_nc.
+            int Rfull = lambda_new.length();
+            int Mfull = L.getNumRows();
+            X = new Matrix(1, Rfull);
+            X.fill(0.0);
+            for (int j = 0; j < nonzeroDemandClasses.size(); j++) {
+                int c = nonzeroDemandClasses.get(j);
+                X.set(0, c, Xnnzdem.get(j) / scalevec.get(c));
+            }
+            for (int c : zeroDemandClasses) {
+                // the whole class sits in the delay, so X = N / Z
+                double zc = Z.getNumCols() > c ? Z.sumCols(c) : 0.0;
+                X.set(0, c, zc > options.tol ? N.get(c) / zc : 0.0);
+            }
+            Q = new Matrix(Mfull, Rfull);
+            Q.fill(0.0);
+            for (int i = 0; i < demStations.size(); i++) {
+                for (int j = 0; j < nonzeroDemandClasses.size(); j++) {
+                    // Q is invariant under the per-class demand scaling, since
+                    // it only ever sees the product L(i,r)*X(r)
+                    Q.set(demStations.get(i), nonzeroDemandClasses.get(j), _q.get(i, j));
+                }
+            }
+            for (int c : ocl) {
+                X.set(0, c, lambda_new.get(c));
+                for (int i = 0; i < Mfull && i < Qopen.getNumRows(); i++) {
+                    Q.set(i, c, Qopen.get(i, c));
+                }
+            }
         }
 
         Matrix tmp = scalevecz.copy();
@@ -331,6 +383,16 @@ public final class Pfqn_nc {
     }
 
     public static Ret.pfqnNcXQ compute_norm_const(Matrix L, Matrix N, Matrix Z, SolverOptions options) {
+        return compute_norm_const(L, N, Z, options, true);
+    }
+
+    /**
+     * Auxiliary routine that computes lG after the initial filtering of L, N and Z.
+     *
+     * @param wantXQ false when the caller requested lG alone.
+     */
+    public static Ret.pfqnNcXQ compute_norm_const(Matrix L, Matrix N, Matrix Z,
+                                                  SolverOptions options, boolean wantXQ) {
         int M = L.getNumRows();
         int R = L.getNumCols();
         Matrix X = new Matrix(0, 0);
@@ -346,16 +408,56 @@ public final class Pfqn_nc {
             // single-server station is a multiplicity-1 queue, delay is the IS term
             Ret.pfqnNc ret = Pfqn_clw.pfqn_clw(L, N, Z.sumCols());
             lG = ret.lG;
+        } else if ("ger".equals(options.method)) {
+            // Residue closed form of the same generating function "clw" inverts
+            // numerically. A class eliminated by residues enters only as a pole ORDER,
+            // so its population is free: this is the cheap route when one population
+            // dwarfs the others, and the expensive one when the classes are many, since
+            // the term count grows as C(S+M-1,M-1) per further elimination. The maxterms
+            // cap REFUSES rather than truncating, so an oversized model errors here
+            // instead of returning a wrong lG. The solver options are deliberately not
+            // forwarded: pfqn_gerasimov's tol is a pole-merging threshold, not the
+            // iterative tolerance options.tol carries.
+            Ret.pfqnNc ret = Pfqn_gerasimov.pfqn_gerasimov(L, N, Z.sumCols());
+            lG = ret.lG;
+        } else if ("divdiff".equals(options.method)) {
+            // Divided-difference closed form, Casale (SIGMETRICS 2017), Eqs. (15) and
+            // (16). Load-independent single-server queues only: a think time needs the
+            // integral form of Corollary 3.4, which is not implemented. Unlike the
+            // default route below this one keeps Pfqn_explicit's warnings, since a
+            // caller that named the method has no fallback.
+            if (Z.sumCols().elementSum() > 0) {
+                throw new IllegalArgumentException(
+                        "pfqn_nc: the 'divdiff' method requires a model without think time, "
+                                + "which needs the integral form of Corollary 3.4. Use 'ca' or "
+                                + "'default'.");
+            }
+            Pfqn_explicit.Result ex = Pfqn_explicit.pfqn_explicit(L, N);
+            lG = ex.lG;
+            method = "divdiff/" + ex.method;
         } else if ("default".equals(options.method) || "adaptive".equals(options.method)) {
             Matrix Z_colSum = Z.sumCols();
 
+            // ONE ESTIMATOR ANSWERS THE WHOLE FAMILY. The divided-difference closed
+            // form of Casale (SIGMETRICS 2017) is exact here and was briefly tried first
+            // on M>1 && R==1 && sum(Z)==0, but the default route does not serve a single
+            // constant: the analyzer differences it at N-e_r for X and at the AUGMENTED
+            // shape for Q, one extra class holding one job at station i. That shape has
+            // R+1 classes, which the closed form refuses at any sizeable population
+            // (the outer sum's cancellation), so it kept the cubature while G(N) turned
+            // exact. Mixing the two costs more than either: on mqn_singleserver_ps the
+            // closed-form G(N) under cubature numerators left sum_i Q_i at 99.500 of
+            // N=100, and the conservation rescale then moved the entire cubature error
+            // into X, 0.5% against the 0.06% the cubature ratio carries on its own.
+            // 'divdiff' stays a NAMED method, where the caller owns the whole family.
             if (M > 1) {
+                int order = -1;
                 if (N.elementSum() < 1e3) {
                     double Cmax = M * R * Math.pow(50.0, 3);
                     int maxOrder = Math.min((int) Math.ceil((N.elementSum() - 1) / 2.0), 16);
 
                     double totCost = 0.0;
-                    int order = 0;
+                    order = 0;
 
                     while (order < maxOrder) {
                         double nextCost = R * Maths.binomialCoeff(M + 2 * (order + 1), M - 1);
@@ -366,14 +468,40 @@ public final class Pfqn_nc {
                             break;
                         }
                     }
+                }
 
+                // Cmax prices neither the Grundmann-Moeller node count nor the
+                // think-time v-integration, so the order is re-priced here and
+                // lowered until it fits. Lowering the order keeps the cubature;
+                // switching to le instead would hand these models to a Laplace
+                // expansion whose mode sits on the simplex boundary when L has
+                // near-zero rows, which is the flat-layer case that trips the budget
+                while (order > 0 && Pfqn_cub.pfqn_cub_evals(M, order, Z_colSum) > Pfqn_cub.CUB_MAX_EVALS) {
+                    order -= 1;
+                }
+                if (order >= 0) {
                     Ret.pfqnNc ret = Pfqn_cub.pfqn_cub(L, N, Z_colSum, order, GlobalConstants.FineTol);
                     lG = ret.lG;
                     method = "cub";
                 } else {
-                    Ret.pfqnNc ret = Pfqn_le.pfqn_le(L, N, Z_colSum);
+                    // BLE on the default path: strictly better on lG and it
+                    // cancels in G(N-e_r)/G(N). "le" stays the published form.
+                    Ret.pfqnNc ret = Pfqn_ble.pfqn_ble(L, N, Z_colSum);
                     lG = ret.lG;
-                    method = "le";
+                    method = "ble";
+                    // Birman-Kogan Algorithm 2 supplies the MEAN VALUES here.
+                    // The caller's fallback differences lG at R+M*R reduced
+                    // populations, which on many stations is both dearer and
+                    // ~300x less accurate than the load concealment fixed point. Gated
+                    // on the station count, since load concealment is mean
+                    // field in M: see _kb/06-solver-catalog.md.
+                    if (M >= 10 && R > 1 && N.elementMin() >= 0 && N.elementSum() > 0) {
+                        Ret.pfqnBkLc thin =
+                                Pfqn_bk.pfqn_bklc(L, N, Z_colSum, "mva", 1e-10, options.iter_max);
+                        X = thin.X;
+                        Q = thin.Q;
+                        method = "ble/lc";
+                    }
                 }
             } else {
                 if (Z_colSum.getNumCols() == 1 && FastMath.abs(Z_colSum.get(0)) < GlobalConstants.FineTol) {
@@ -391,9 +519,9 @@ public final class Pfqn_nc {
                         lG = ret.lG;
                         method = "comom";
                     } else {
-                        Ret.pfqnNc ret = Pfqn_le.pfqn_le(L, N, Z_colSum);
+                        Ret.pfqnNc ret = Pfqn_ble.pfqn_ble(L, N, Z_colSum);
                         lG = ret.lG;
-                        method = "le";
+                        method = "ble";
                     }
                 }
             }
@@ -424,6 +552,47 @@ public final class Pfqn_nc {
             Ret.pfqnNc ret = Pfqn_kt.pfqn_kt(L, N, Z.sumCols());
             lG = ret.lG;
             method = "kt";
+        } else if ("bkt".equals(options.method)) {
+            // KT minus the exact Stirling remainder of each Laplaced class; see _kb/03-api-layer.md
+            Ret.pfqnNc ret = Pfqn_bkt.pfqn_bkt(L, N, Z.sumCols());
+            lG = ret.lG;
+            method = "bkt";
+        } else if ("lekt".equals(options.method)) {
+            // the estimator ble and bkt both compute, on the cheaper side; see _kb/03-api-layer.md
+            Ret.pfqnNc ret = Pfqn_lekt.pfqn_lekt(L, N, Z.sumCols());
+            lG = ret.lG;
+            method = "lekt";
+        } else if ("bk".equals(options.method)) {
+            Ret.pfqnNc ret = Pfqn_bk.pfqn_bk(L, N, Z.sumCols());
+            lG = ret.lG;
+            method = "bk";
+        } else if ("bkue".equals(options.method)) {
+            // The uniform expansion is single chain by construction; the
+            // multichain fallback is the saddle point of the same paper, which is
+            // also how the analyzer reaches this branch, since it conditions on a
+            // station population by augmenting the model with an auxiliary class.
+            if (R > 1) {
+                Ret.pfqnNc ret = Pfqn_bk.pfqn_bk(L, N, Z.sumCols());
+                lG = ret.lG;
+                method = "bkue/bk";
+            } else {
+                Matrix Zs = Z.sumCols();
+                Ret.pfqnNc ret = Pfqn_bk.pfqn_bkue(L, N.get(0, 0), Zs.isEmpty() ? 0.0 : Zs.get(0, 0));
+                lG = ret.lG;
+                method = "bkue";
+            }
+        } else if ("lc".equals(options.method) || "lc.ue".equals(options.method)) {
+            // the fixed point converges linearly and slowly, so a solver-level
+            // reporting tolerance would stop it far from its own limit and at a
+            // different sweep in each codebase: iterate to the method's accuracy
+            Ret.pfqnBkLc thin = Pfqn_bk.pfqn_bklc(L, N, Z.sumCols(),
+                    "lc.ue".equals(options.method) ? "ue" : "mva", 1e-10, options.iter_max);
+            X = thin.X;
+            Q = thin.Q;
+            // Algorithm 2 returns mean values, not a multichain constant; the
+            // saddle point that seeds it supplies lG on the same asymptotics
+            lG = Pfqn_bk.pfqn_bk(L, N, Z.sumCols()).lG;
+            method = options.method;
         } else if ("mmint2".equals(options.method) || "gleint".equals(options.method)) {
             if (L.getNumRows() > 1) {
                 throw new RuntimeException("The " + options.method + " method requires a model with a delay and a single queueing station.");
@@ -434,6 +603,39 @@ public final class Pfqn_nc {
         } else if ("le".equals(options.method)) {
             Ret.pfqnNc ret = Pfqn_le.pfqn_le(L, N, Z.sumCols());
             lG = ret.lG;
+        } else if ("ble".equals(options.method)) {
+            // LE plus the empirical eps->0 correction; see _kb/03-api-layer.md
+            Ret.pfqnNc ret = Pfqn_ble.pfqn_ble(L, N, Z.sumCols());
+            lG = ret.lG;
+        } else if ("aghq".equals(options.method)) {
+            // adaptive Gauss-Hermite over the simplex; q=1 would be "le".
+            // options.config.aghq_nodes overrides the node count.
+            int aghqNodes = 3;
+            if (options.config != null && options.config.aghq_nodes != null) {
+                aghqNodes = Math.max(1, options.config.aghq_nodes.intValue());
+            }
+            Ret.pfqnNc ret = Pfqn_aghq.pfqn_aghq(L, N, Z.sumCols(), aghqNodes);
+            lG = ret.lG;
+        } else if ("mcmc".equals(options.method)) {
+            // Chen-O'Cinneide REGULARIZATION (TOMACS 8(3), 1998). The chain is simulated
+            // on the regularized network, which shares the steady-state distribution of
+            // the original one, so it returns X and Q directly through the pfqn_nc X/Q
+            // channel, like 'lc'. What it does NOT return is the constant itself:
+            // the algorithm estimates the RATIOS G(N-e_r)/G(N), never G, so lG here is
+            // the BLE expansion and is not part of the paper. It cancels out of every
+            // mean value reported by the analyzer; only getProbNormConstAggr reads it.
+            if (wantXQ) {
+                Ret.pfqnMcmc mc = Pfqn_mcmc.pfqn_mcmc(L, N, Z.sumCols(), options);
+                X = mc.X;
+                Q = mc.Q;
+            }
+            if (M > 1) {
+                Ret.pfqnNc ret = Pfqn_ble.pfqn_ble(L, N, Z.sumCols());
+                lG = ret.lG;
+            } else {
+                Ret.pfqnComomrm ret = Pfqn_comomrm.pfqn_comomrm(L, N, Z, 1, options.tol);
+                lG = ret.lG;
+            }
         } else if ("ls".equals(options.method)) {
             Ret.pfqnNc ret = Pfqn_ls.pfqn_ls(L, N, Z.sumCols(), (long) options.samples, (long) options.seed);
             lG = ret.lG;
@@ -487,6 +689,35 @@ public final class Pfqn_nc {
                 Ret.pfqnNc ret = Pfqn_ca.pfqn_ca(L, N, Z.sumCols());
                 lG = ret.lG;
                 method = "ca";
+            }
+        } else if ("rgf".equals(options.method)) {
+            // Recursion by generating functions. Single class: one sequence per
+            // group of identically loaded stations (Coury-Harrison 1997, Property
+            // 1). Multiclass: the residue recursion of Harrison-Coury 2002, Thm 1,
+            // with think times carried by the Bertozzi-McKenna truncation that
+            // neither RGF paper has. That sum is ALTERNATING, so Pfqn_rgfmc refuses
+            // when the cancellation leaves no significant digits rather than
+            // returning a wrong lG; the exact convolution answers those and the
+            // reported method says so.
+            if (R > 1) {
+                Matrix Zs = Z.sumCols();
+                double[] Nv = new double[R];
+                double[] Zv = new double[R];
+                for (int r = 0; r < R; r++) {
+                    Nv[r] = N.get(0, r);
+                    Zv[r] = Zs.isEmpty() ? 0.0 : Zs.get(0, r);
+                }
+                try {
+                    lG = Pfqn_rgfmc.pfqn_rgfmc(L, Nv, Zv).lG;
+                } catch (RuntimeException e) {
+                    Ret.pfqnNc ret = Pfqn_ca.pfqn_ca(L, N, Zs);
+                    lG = ret.lG;
+                    method = "rgf/ca";
+                }
+            } else {
+                Matrix Zsum = Z.sumCols();
+                double Ztot = Zsum.isEmpty() ? 0.0 : Zsum.get(0, 0);
+                lG = Pfqn_rgf.pfqn_rgf(L, N.get(0, 0), Ztot).lG;
             }
         } else {
             InputOutput.line_warning("pfqn_nc", "unrecognized method \"%s\"", options.method);

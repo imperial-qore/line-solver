@@ -1,6 +1,16 @@
 function RD = getCdfSysRespT(self)
 % RD = GETCDFRESPT()
 %global GlobalConstants.FineTol
+
+% lang='cpp' takes the per-chain system law from line-cli, which computes it in
+% the SAME -a cdf payload as the per-station curves (solve_ctmc_cdf calls both
+% solver_ctmc_cdf_respt and solver_ctmc_cdf_sys_respt off one tagged-chain
+% solve). It is the same quantity this function builds below.
+if isfield(self.options,'lang') && strcmp(self.options.lang,'cpp')
+    RD = CPPLINE.cdfSysRespT(self.name, self.model, self.options);
+    return
+end
+
 sn = self.getStruct;
 RD = cell(1, sn.nchains);
 N = sn.njobs;
@@ -9,7 +19,7 @@ for c=1:sn.nchains
     s = inchain(N(inchain)>0); % tag a class that has non-zero jobs.
     jobclass = self.model.getClassByIndex(s);
     chain = self.model.getClassChain(jobclass);
-    [taggedModel, taggedJob] = ModelAdapter.tagChain(chain,jobclass); % diminish jobclass population by 1
+    [taggedModel, taggedJob] = ModelAdapter.tagChain(self.model,chain,jobclass); % diminish jobclass population by 1
     [Q,F,ev] = SolverCTMC(taggedModel,self.options).getGenerator(); % Q: generator, F: filtration, ev: events
     tsn = taggedModel.getStruct;
     tinchain = cell2mat(taggedJob.index);

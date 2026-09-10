@@ -35,7 +35,7 @@ public class CacheRetrievalSystemExamples {
                 new double[] {2.0, 2.0, 2.0},
                 "[1]", SchedStrategy.INF);
         solveCtmc(model);
-        solveSsa(model);
+        solveAll(model);
     }
 
     /**
@@ -52,7 +52,7 @@ public class CacheRetrievalSystemExamples {
                 accessProb,
                 new double[] {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0},             // mu_i = 1
                 "[6]", SchedStrategy.PS, ReplacementStrategy.RR);
-        solveSsa(model);
+        solveAll(model);
     }
 
     /**
@@ -66,7 +66,7 @@ public class CacheRetrievalSystemExamples {
         });
         Network model = CacheRetrievalSystemModel.chain_retrieval_system_model(
                 new double[] {0.6, 0.3, 0.1}, serviceRates, 2, "[1]", SchedStrategy.FCFS);
-        solveSsa(model);
+        solveAll(model);
     }
 
     /**
@@ -81,7 +81,17 @@ public class CacheRetrievalSystemExamples {
         });
         Network model = CacheRetrievalSystemModel.retrieval_system_with_probabilistic_routing(
                 new double[] {0.6, 0.3, 0.1}, serviceRates, "[2]", SchedStrategy.FCFS);
-        solveSsa(model);
+        solveAll(model);
+    }
+
+    /**
+     * Retrieval system inheriting per-item routing and service from the read
+     * class, with item-level overrides. Solved with SSA and, analytically,
+     * with MVA and NC.
+     */
+    public static void retrieval_default() {
+        Network model = CacheRetrievalSystemModel.retrieval_default();
+        solveAll(model);
     }
 
     private static void solveCtmc(Network model) {
@@ -99,25 +109,49 @@ public class CacheRetrievalSystemExamples {
         }
     }
 
-    private static void solveSsa(Network model) {
+    /**
+     * The four solves every retrieval reference runs, on the CACHE table.
+     *
+     * <p>The seed and run length are the reference's own: the goldens for these
+     * examples were recorded from that run, so a row simulated for a different
+     * number of samples is a different measurement of the same model rather than
+     * a disagreement about it.
+     */
+    private static void solveAll(Network model) {
         try {
-            SSA ssa = new SSA(model, "samples", 20000, "method", "serial", "seed", 1);
-            NetworkAvgNodeTable ssaTable = ssa.getAvgNodeTable();
-            ssaTable.print();
-            Cache cache = (Cache) model.getNodeByName("Cache");
-            System.out.println("SSA   hit=" + cache.getHitRatio()
-                    + " miss=" + cache.getMissRatio()
-                    + " expectedLatency=" + cache.getResidT());
+            new SSA(model, "samples", 100000, "method", "serial", "seed", 1)
+                    .getAvgCacheTable().print();
             model.reset();
         } catch (Exception e) {
-            e.printStackTrace();
+            System.out.println("SSA failed: " + e.getMessage());
+        }
+        try {
+            new jline.solvers.ldes.LDES(model, "samples", 1000000, "seed", 1)
+                    .getAvgCacheTable().print();
+            model.reset();
+        } catch (Exception e) {
+            System.out.println("LDES failed: " + e.getMessage());
+        }
+        try {
+            new jline.solvers.mva.MVA(model).getAvgCacheTable().print();
+            model.reset();
+        } catch (Exception e) {
+            System.out.println("MVA failed: " + e.getMessage());
+        }
+        try {
+            new jline.solvers.nc.NC(model).getAvgCacheTable().print();
+            model.reset();
+        } catch (Exception e) {
+            System.out.println("NC failed: " + e.getMessage());
         }
     }
+
 
     public static void main(String[] args) {
         retrieval_simple();
         retrieval_ps();
         retrieval_chain();
         retrieval_routing();
+        retrieval_default();
     }
 }

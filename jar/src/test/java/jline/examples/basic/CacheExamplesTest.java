@@ -4,6 +4,8 @@ import jline.GlobalConstants;
 import jline.VerboseLevel;
 import jline.examples.java.basic.CacheModel;
 import jline.lang.Network;
+import jline.lang.nodes.Cache;
+import jline.lang.nodes.Node;
 import jline.lang.layered.LayeredNetwork;
 import jline.solvers.NetworkAvgNodeTable;
 import jline.solvers.ctmc.SolverCTMC;
@@ -148,8 +150,8 @@ public class CacheExamplesTest {
         
         // Verify the executed method
         assertNotNull(solver.result, "Solver result should not be null");
-        assertEquals("default/rayint", solver.result.method, 
-            "NC solver should use default/rayint method for cache models");
+        assertEquals("default/spm", solver.result.method, 
+            "NC solver should use default/spm method for cache models");
         
         // Expected values based on baseline output (6 non-zero rows)
         double[] expectedQLen = {0, 0, 0, 0, 0, 0, 0, 0, 0};
@@ -551,8 +553,8 @@ public class CacheExamplesTest {
         
         // Verify the executed method
         assertNotNull(solver.result, "Solver result should not be null");
-        assertEquals("default/rayint", solver.result.method, 
-            "NC solver should use default/rayint method for cache models");
+        assertEquals("default/spm", solver.result.method, 
+            "NC solver should use default/spm method for cache models");
         
         // Expected values based on Java NC solver output (3 nodes × 3 classes = 9 entries)
         double[] expectedQLen = {0, 0, 0, 0, 0, 0, 0, 0, 0};
@@ -801,4 +803,42 @@ public class CacheExamplesTest {
         assertTrue(model.getStruct().nhosts >= model.getStruct().ntasks, "Hosts should accommodate tasks");
     }
     
+
+    @Test
+    public void testCacheSizedModelUsesSpmSizeAndRayintIsAnAlias() {
+        // 'rayint', 'spm' and the default are one token set on a cache: they pick
+        // the kernel from the model, not from the name. With item sizes that is
+        // Cache_spm_size, reported as spm.size; see _kb/09-ldes-and-cache.md.
+        String[] tokens = {null, "spm", "rayint"};
+        String reference = null;
+        double referenceHit = Double.NaN;
+        for (int t = 0; t < tokens.length; t++) {
+            Network model = CacheModel.cache_itemsize_costcap();
+            SolverNC solver = tokens[t] == null
+                    ? new SolverNC(model, "verbose", VerboseLevel.SILENT)
+                    : new SolverNC(model, "method", tokens[t], "verbose", VerboseLevel.SILENT);
+            assertNotNull(solver.getAvgNodeTable());
+            assertNotNull(solver.result, "Solver result should not be null");
+            if (t == 0) {
+                reference = solver.result.method;
+                referenceHit = cacheHitRatio(model);
+                assertEquals("default/spm.size", reference,
+                        "a cache with item sizes takes the size-tilted SPM kernel");
+            } else {
+                assertEquals("spm.size", solver.result.method,
+                        "'" + tokens[t] + "' is an alias of the default SPM branch");
+                assertEquals(referenceHit, cacheHitRatio(model), 1e-12,
+                        "'" + tokens[t] + "' must give the default's numbers exactly");
+            }
+        }
+    }
+
+    private static double cacheHitRatio(Network model) {
+        for (Node node : model.getNodes()) {
+            if (node instanceof Cache) {
+                return ((Cache) node).getHitRatio().get(0);
+            }
+        }
+        throw new IllegalStateException("model has no Cache node");
+    }
 }

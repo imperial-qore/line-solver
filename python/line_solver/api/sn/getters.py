@@ -1206,6 +1206,113 @@ def sn_region_members(sn, f, Rmat, memvec) -> np.ndarray:
     return legacy
 
 
+
+def sn_map_modulation(sn):
+    """Collect the (D0,D1) modulation records of every non-renewal process.
+
+    A MAP with matrices (D0,D1) is a Poisson-like point process modulated by the
+    CTMC with generator Q = D0 + D1 (the phase process), whose conditional
+    intensity in phase k is lambda(k) = sum_j D1(k,j). This returns one record
+    per modulating process, so that a solver-agnostic transformation can replace
+    each of them by a random-environment stage set (see api.io.map2renv).
+
+    Only processes declared as MAP, MMPP2 or MMAP are reported: every other
+    distribution is stored in sn.proc in (D0,D1) form as well (Erlang, Coxian,
+    APH, ...), but those are renewal processes that carry no modulation and are
+    supported natively by the phase-type solvers.
+
+    Marked processes (MMAP) at a Source are reported as a single record whose
+    'classes' entry lists every marked class, since all marks share one phase
+    process; the per-class intensity comes from the mark-specific D1 matrices.
+
+    Mirrors matlab/src/api/sn/sn_map_modulation.m.
+
+    Args:
+        sn: NetworkStruct object
+
+    Returns:
+        List of dicts with keys ist, node, arrival, classes, D0, D1 (list, one
+        per entry of classes), order, is_mmpp.
+    """
+    from .network_struct import NodeType
+    from ...constants import ProcessType
+
+    mods = []
+    procid = getattr(sn, 'procid', None)
+    if procid is None or sn.proc is None:
+        return mods
+    mod_types = (ProcessType.MAP, ProcessType.MMPP2, ProcessType.MMAP)
+    markidx = getattr(sn, 'markidx', None)
+
+    def _map_of(ist, r):
+        proc_st = sn.proc[ist] if ist < len(sn.proc) else None
+        if proc_st is None or r >= len(proc_st) or proc_st[r] is None:
+            return None
+        map_ir = proc_st[r]
+        if not isinstance(map_ir, (list, tuple)) or len(map_ir) < 2 or map_ir[0] is None:
+            return None
+        if np.any(np.isnan(np.asarray(map_ir[0], dtype=np.float64))):
+            return None   # disabled
+        return map_ir
+
+    def _mark_index(ist, r):
+        if markidx is None:
+            return -1
+        arr = np.asarray(markidx)
+        if ist >= arr.shape[0] or r >= arr.shape[1]:
+            return -1
+        return int(arr[ist, r])
+
+    def _is_diagonal(D1):
+        D1 = np.asarray(D1, dtype=np.float64)
+        off = D1 - np.diag(np.diag(D1))
+        return np.linalg.norm(off, 'fro') <= 1e-14 * max(1.0, np.linalg.norm(D1, 'fro'))
+
+    for ist in range(sn.nstations):
+        nd = int(sn.stationToNode[ist])
+        arrival = sn.nodetype[nd] == NodeType.SOURCE
+        done = [False] * sn.nclasses
+        for r in range(sn.nclasses):
+            if done[r]:
+                continue
+            pt = procid[ist][r] if not hasattr(procid, 'shape') else procid[ist, r]
+            if pt not in mod_types:
+                continue
+            map_ir = _map_of(ist, r)
+            if map_ir is None:
+                continue
+            if _mark_index(ist, r) > 0:
+                # MMAP: one phase process shared by every marked class of the
+                # station, one D1 block per mark
+                marked = [rr for rr in range(sn.nclasses) if _mark_index(ist, rr) > 0]
+                carrier = min(marked, key=lambda rr: _mark_index(ist, rr))
+                map_c = _map_of(ist, carrier)
+                if map_c is None or len(map_c) < 2 + len(marked):
+                    raise RuntimeError(
+                        "The marked arrival process at station %d carries %d mark matrices for %d marked "
+                        "classes; the (D0,D1,D1^(1),...,D1^(C)) form is required."
+                        % (ist + 1, 0 if map_c is None else max(0, len(map_c) - 2), len(marked)))
+                D1c = [np.asarray(map_c[1 + _mark_index(ist, rr)], dtype=np.float64) for rr in marked]
+                mods.append({
+                    'ist': ist, 'node': nd, 'arrival': bool(arrival), 'classes': marked,
+                    'D0': np.asarray(map_c[0], dtype=np.float64), 'D1': D1c,
+                    'order': np.asarray(map_c[0]).shape[0],
+                    'is_mmpp': all(_is_diagonal(D1k) for D1k in D1c),
+                })
+                for rr in marked:
+                    done[rr] = True
+            else:
+                D1 = np.asarray(map_ir[1], dtype=np.float64)
+                mods.append({
+                    'ist': ist, 'node': nd, 'arrival': bool(arrival), 'classes': [r],
+                    'D0': np.asarray(map_ir[0], dtype=np.float64), 'D1': [D1],
+                    'order': np.asarray(map_ir[0]).shape[0],
+                    'is_mmpp': _is_diagonal(D1),
+                })
+                done[r] = True
+    return mods
+
+
 __all__ = [
     'ChainParams',
     'sn_region_members',
@@ -1216,4 +1323,5 @@ __all__ = [
     'sn_get_node_tput_from_tput',
     'sn_get_product_form_chain_params',
     'sn_set_routing_prob',
+    'sn_map_modulation',
 ]

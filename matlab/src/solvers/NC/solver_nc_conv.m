@@ -16,16 +16,17 @@ method = 'conv';
 iter = 1;
 
 M = sn.nstations;
-K = sn.nclasses;
-NK = sn.njobs';
 nservers = sn.nservers;
 
-V = cellsum(sn.visits);
-ST = 1 ./ sn.rates;
-ST(isnan(ST)) = 0;
-
-% Demands: L(ist,k) = V(ist,k) * ST(ist,k)
-Ldemand = V .* ST;
+% The convolution runs on CHAINS, not classes: a class-switching model splits
+% one circulating population across several classes, so sn.njobs has zeros in
+% the classes that hold no reference jobs and the class-level recursion charges
+% those stations nothing at all. Every other closed NC and MVA path aggregates
+% the same way and deaggregates at the end.
+[Lchain, STchain, Vchain, alpha, Nchain] = sn_get_demands_chain(sn);
+K = sn.nchains;
+NK = round(Nchain(:)');
+Ldemand = Lchain;
 
 % Separate delay and queue stations
 isDelay = isinf(nservers);
@@ -89,7 +90,7 @@ for k = 1:K
 end
 
 %% Compute per-station throughput
-TN = V .* repmat(XN, M, 1);
+TN = Vchain .* repmat(XN, M, 1);
 
 %% Compute queue lengths
 QN = zeros(M, K);
@@ -186,9 +187,11 @@ for qi = 1:nQueues
 end
 
 %% Compute remaining metrics
+% RN is the PER-VISIT response time Qchain./Tchain: the deaggregation below
+% multiplies the visit ratio back in, so dividing by Xchain would count it twice
 RN = QN ./ TN;
 RN(TN == 0) = 0;
-UN = TN .* ST;
+UN = TN .* STchain;
 
 % Utilization at a class-dependent station is normalized by the peak service
 % capacity (sn.cdscalingpeak), not T*ST, so U<=1 by construction; see
@@ -198,33 +201,28 @@ for qi = 1:nQueues
     if isempty(cdscaling_conv{qi})
         continue
     end
-    for r = 1:K
+    for c = 1:K
         % Effective peak = product of the class- and joint-dependence peaks
-        % declared at the station (a missing one contributes 1).
+        % declared at the station (a missing one contributes 1). The peaks are
+        % declared per class, so the chain takes the largest peak among its
+        % classes: utilization is a per-station quantity with one normalizer.
+        inchain = find(sn.chains(c,:));
         bmax = 1;
         haspeak = false;
         if ~isempty(sn.cdscaling) && ist <= length(sn.cdscaling) && ~isempty(sn.cdscaling{ist})
-            bmax = bmax * sn.cdscalingpeak(ist,r); haspeak = true;
+            bmax = bmax * max(sn.cdscalingpeak(ist,inchain)); haspeak = true;
         end
         if ~isempty(sn.jdscaling) && ist <= length(sn.jdscaling) && ~isempty(sn.jdscaling{ist})
-            bmax = bmax * sn.jdscalingpeak(ist,r); haspeak = true;
+            bmax = bmax * max(sn.jdscalingpeak(ist,inchain)); haspeak = true;
         end
         if haspeak && bmax > 0
-            UN(ist,r) = UN(ist,r) / bmax;
+            UN(ist,c) = UN(ist,c) / bmax;
         end
     end
 end
-CN = NK ./ XN;
-CN(XN == 0) = 0;
-CN = CN - sum(Z_conv .* (repmat(1, M, 1) .* isDelay(:)), 1); % subtract delay
 
-% Output
-Q = QN;
-U = UN;
-R = RN;
-T = TN;
-C = CN;
-X = XN;
+%% Deaggregate the chain solution onto the classes
+[Q,U,R,T,C,X] = sn_deaggregate_chain_results(sn, Lchain, [], STchain, Vchain, alpha, [], UN, RN, TN, [], XN);
 runtime = toc(Tstart);
 end
 

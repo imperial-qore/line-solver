@@ -15,7 +15,7 @@ from .distributions import (
     APH, Cox2, Coxian, Det, Disabled, Erlang, Exp, Gamma, HyperExp,
     Immediate, MAP, Pareto, PH, Replayer, Uniform, DiscreteSampler
 )
-from .constants import SchedStrategy, RoutingStrategy
+from .constants import SchedStrategy, RoutingStrategy, JoinStrategy
 from .lang.base import ReplacementStrategy
 from .gen import NetworkGenerator, LayeredNetworkGenerator, cyclic_graph
 
@@ -600,8 +600,8 @@ def gallery_erlerl1_reentrant():
     oclass2 = OpenClass(model, 'Class2')
     source.setArrival(oclass1, Erlang.fit_mean_and_order(1, n))
     source.setArrival(oclass2, Disabled())
-    queue.setService(oclass1, Erlang.fit_mean_and_order(0.5, n))
-    queue.setService(oclass2, Exp(3))
+    queue.setService(oclass1, Erlang.fit_mean_and_order(0.1, n))
+    queue.setService(oclass2, Exp(10))
     P = model.init_routing_matrix()
     P.set(oclass1, oclass1, source, queue, 1)
     P.set(oclass1, oclass2, queue, queue, 0.5)
@@ -648,7 +648,7 @@ def gallery_hyperl1_feedback():
     sink = Sink(model, 'Sink')
     oclass1 = OpenClass(model, 'Class1')
     source.setArrival(oclass1, HyperExp.fit_mean_and_scv(1, 64))
-    queue.setService(oclass1, Erlang.fit_mean_and_order(0.5, 5))
+    queue.setService(oclass1, Erlang.fit_mean_and_order(0.05, 5))
     P = model.init_routing_matrix()
     P.set(oclass1, oclass1, source, queue, 1)
     P.set(oclass1, oclass1, queue, queue, 0.9)
@@ -1344,6 +1344,41 @@ def gallery_fj_closed():
     P.set(oclass, oclass, fork, queue2, 1.0)
     P.set(oclass, oclass, queue1, join, 1.0)
     P.set(oclass, oclass, queue2, join, 1.0)
+    P.set(oclass, oclass, join, delay, 1.0)
+    model.link(P)
+    return model
+
+
+def gallery_fj_quorum():
+    """Closed fork-join network with a 2-of-3 quorum join.
+
+    The join fires on the SECOND of the three sibling tasks; the third is discarded
+    when it arrives. SolverLDES and SolverJMT reproduce it exactly; SolverMVA and
+    SolverNC charge the second order statistic of the branch completion times
+    (fj_ordstat_exp).
+    """
+    model = Network('Fork-Join-Quorum')
+    delay = Delay(model, 'Delay')
+    queue1 = Queue(model, 'Queue1', SchedStrategy.PS)
+    queue2 = Queue(model, 'Queue2', SchedStrategy.PS)
+    queue3 = Queue(model, 'Queue3', SchedStrategy.PS)
+    fork = Fork(model, 'Fork')
+    join = Join(model, 'Join', fork)
+    oclass = ClosedClass(model, 'class1', 5, delay)
+    delay.setService(oclass, Exp(1.0))
+    queue1.setService(oclass, Exp(2.0))
+    queue2.setService(oclass, Exp(2.0))
+    queue3.setService(oclass, Exp(2.0))
+    join.setStrategy(oclass, JoinStrategy.PARTIAL)
+    join.setRequired(oclass, 2)
+    P = model.init_routing_matrix()
+    P.set(oclass, oclass, delay, fork, 1.0)
+    P.set(oclass, oclass, fork, queue1, 1.0)
+    P.set(oclass, oclass, fork, queue2, 1.0)
+    P.set(oclass, oclass, fork, queue3, 1.0)
+    P.set(oclass, oclass, queue1, join, 1.0)
+    P.set(oclass, oclass, queue2, join, 1.0)
+    P.set(oclass, oclass, queue3, join, 1.0)
     P.set(oclass, oclass, join, delay, 1.0)
     model.link(P)
     return model

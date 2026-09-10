@@ -47,6 +47,8 @@ if __name__ == '__main__':
     solver = np.array([], dtype=object)
     solver = np.append(solver, JMT(model, seed=23000))
     solver = np.append(solver, MVA(model))
+    solver = np.append(solver, LDES(model, seed=23000))
+    solver = np.append(solver, MAM(model, method='dec.source.mmap'))
 
     avg_table = np.empty(len(solver), dtype=object)
     for s in range(len(solver)):

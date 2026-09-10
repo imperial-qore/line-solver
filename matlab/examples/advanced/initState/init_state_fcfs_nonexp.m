@@ -30,7 +30,7 @@ options.samples=1e4;
 options.stiff=true;
 options.timespan = [0,5];
 %% This part illustrates the execution of different solvers
-solver{1} = CTMC(model,options);
+solver{1} = CTMC(model, 'exact',options);
 %solver{end+1} = JMT(model,options);
 %solver{end+1} = SSA(model,options);
 solver{end+1} = FLD(model,options);

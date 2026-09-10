@@ -1,6 +1,6 @@
 ## LINE Solver for MATLAB
 
-This repository includes the MATLAB version of the [LINE solver](https://line-solver.sourceforge.net/). A MATLAB version of the [manual](https://line-solver.sourceforge.net/doc/LINE-matlab.pdf) includes getting started information.
+This repository includes the MATLAB version of the [LINE solver](https://line-solver.sourceforge.net/). A MATLAB version of the [manual](https://line-solver.sourceforge.net/doc/LINE-user-matlab.pdf) includes getting started information.
 
 ### Getting started
 

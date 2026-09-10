@@ -1,0 +1,50 @@
+{
+  "class": {
+    "JMT": "stochastic"
+  },
+  "example": "fcr_mm1waitq",
+  "solvers": {
+    "JMT": [
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class1",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.49879,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.49879,
+        "JobClass": "Class1",
+        "QLen": 0.97836,
+        "ResidT": 1.9641,
+        "RespT": 1.9641,
+        "Station": "Queue",
+        "Tput": 0.49923,
+        "Util": 0.49392
+      },
+      {
+        "ArvR": 0.49879,
+        "JobClass": "Class1",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Sink",
+        "Tput": 0.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": "NaN",
+        "JobClass": "Class1",
+        "QLen": 0.9786,
+        "ResidT": 1.9643,
+        "RespT": 1.9643,
+        "Station": "FCR1",
+        "Tput": 0.49879,
+        "Util": "NaN"
+      }
+    ]
+  }
+}

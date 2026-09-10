@@ -26,13 +26,20 @@ public final class Pfqn_le {
 
         if (L.isEmpty() || N.isEmpty() || N.elementSum() == 0.0
                 || L.elementSum() < GlobalConstants.CoarseTol) {
-            Matrix tmp = new Matrix(1, Z.getNumCols());
-            for (int i = 0; i < tmp.length(); i++) {
-                tmp.set(i, FastMath.log(Z.sumCols(i)));
+            // Z can be empty here, and an empty class contributes 0, not 0*log(0).
+            lGn = -Matrix.factln(N).elementSum();
+            for (int r = 0; r < N.length(); r++) {
+                if (N.get(r) > 0) {
+                    lGn += N.get(r) * FastMath.log(Z.isEmpty() ? 0.0 : Z.sumCols(r));
+                }
             }
-            lGn = -Matrix.factln(N).elementSum() + N.elementMult(tmp, null).elementSum();
             Gn = FastMath.exp(lGn);
-        } else if (Z.isEmpty()) {
+        // Branch on an all-zero Z, not merely an absent one: with no think time the
+        // radial integral is exact as gamma(N+M) and only the simplex is Laplaced.
+        // Pfqn_ble counts Laplaced directions off this same predicate, and pfqn_nc
+        // always passes a Z vector, so testing isEmpty alone sent every delay-free
+        // model down the Z>0 branch while Pfqn_ble still corrected it as if Z=0.
+        } else if (Z.isEmpty() || Z.elementSum() < GlobalConstants.Zero) {
             Ret.pfqnLeFpi ret = Pfqn_le_fpi.pfqn_le_fpi(L, N);
             Matrix umax = ret.u;
             Matrix A = Pfqn_le_hessian.pfqn_le_hessian(L, N, umax.transpose());
@@ -51,6 +58,7 @@ public final class Pfqn_le {
                 log_umax.set(i, FastMath.log(log_umax.get(i)));
             }
             lGn = (Maths.multinomialln(tmp) + Maths.factln(M - 1)
+                    // Cas17 eq.(34) as published; Pfqn_ble adds the eps->0 bias correction.
                     + (M - 1) * FastMath.log(Math.sqrt(2 * FastMath.PI))
                     - FastMath.log(Math.sqrt(A.det()))) + log_umax.elementSum() + S;
             Gn = FastMath.exp(lGn);

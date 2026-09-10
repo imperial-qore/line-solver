@@ -11,9 +11,7 @@ This example demonstrates:
 from line_solver import *
 import numpy as np
 
-if __name__ == "__main__":
-    GlobalConstants.set_verbose(VerboseLevel.STD)
-
+def mqn_singleserver_ps():
     model = Network('model')
 
     M = 4
@@ -46,6 +44,18 @@ if __name__ == "__main__":
     P.set(jobclass[1], jobclass[1], Network.serial_routing(source, node[0], node[1], node[2], sink))
 
     model.link(P)
+
+    return model
+
+
+if __name__ == "__main__":
+    GlobalConstants.set_verbose(VerboseLevel.STD)
+
+    # Built by the function above rather than inline: a model that exists only
+    # under __main__ exposes nothing on import, so the JAVA and C++ parity rows
+    # cannot export it and SKIP every solver -- a row that reads as coverage
+    # while asserting nothing (see parity-static/_example_model_vendor.py).
+    model = mqn_singleserver_ps()
 
     # Run multiple solvers
     solver = np.array([], dtype=object)

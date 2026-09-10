@@ -274,7 +274,7 @@ real_T e_sumColumnB(const emxArray_real_T *x, int32_T col)
 
 real_T f_sumColumnB(const real_T x[3])
 {
-  return (x[0] + x[1]) + x[2];
+  return (x[1] + 1.0) + x[2];
 }
 
 real_T sumColumnB(const emlrtStack *sp, const emxArray_real_T *x, int32_T col,

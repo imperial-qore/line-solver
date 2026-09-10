@@ -144,6 +144,14 @@ public final class Solver_nc_margaggr {
         long endTimeMillis = System.nanoTime();
         double runtime = (double) (endTimeMillis - startTimeMillis) / 1000000000.0;
 
-        return new SolverNC.SolverNCMargReturn(Pr, G, lG != null ? lG.doubleValue() : Double.MIN_VALUE, runtime);
+        // lG is an OUTPUT as well as an input, as in solver_nc_margaggr.m, whose
+        // last line is lG = log(G). Returning a sentinel when the caller supplied
+        // none made the constant it just computed unreachable: SolverNC caches this
+        // field and hands it back on the next query, so every state after the first
+        // was evaluated at lG = MIN_VALUE, i.e. UNNORMALIZED. That is what made the
+        // enumeration in getProbMarg sum unnormalized terms and renormalize them
+        // against the wrong total (a delay marginal of [1/6, 5/12, 5/12] where the
+        // product form gives [1/5, 2/5, 2/5]).
+        return new SolverNC.SolverNCMargReturn(Pr, G, lG_val, runtime);
     }
 }

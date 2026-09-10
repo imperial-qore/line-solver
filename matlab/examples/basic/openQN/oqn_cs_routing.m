@@ -55,7 +55,7 @@ options.samples = 1e5;
 %disp('This example shows the execution of the solver on a 1-class 2-node open model.')
 % This part illustrates the execution of different solvers
 solver={};
-solver{end+1} = CTMC(model,options); % CTMC is infinite on this model
+solver{end+1} = CTMC(model, 'exact',options); % CTMC is infinite on this model
 solver{end+1} = FLD(model,options);
 % Solver.defaultOptions carries the GENERIC iter_tol (1e-4), which overrides
 % SolverMVA's own default (1e-6) and stops the AMVA fixed point early: on this

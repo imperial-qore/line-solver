@@ -76,11 +76,30 @@ print("Every time the stage changes, the queueing network will modify the servic
 
 envModel.getStageTable()
 
-# Create environment solver using lambda factory pattern
-envSolver = ENV(envModel, lambda m: FLD(m))
+# Create environment solver using lambda factory pattern.
+# Options mirror renv_fourstages_repairmen.m: without them the fixed point runs
+# to the native defaults and lands 8.7% away from the MATLAB row.
+#
+# THE ITERATION CONTROLS ARE A DICT LITERAL ON PURPOSE. This fixed point is
+# tolerance-dependent -- the JAR run to convergence lands on 0.97136 where the
+# stated iter_tol=0.05 stops it at 0.9716 -- and parity/example_methods.py reads
+# these controls off THIS source to pin the CLI rows, deliberately not following
+# an options object built by attribute assignment. Behind `options.iter_tol =`
+# they were invisible, so the JAVA row ran the engine default and reported
+# Queue1 Tput 0.97136 against the golden 0.97167, a 3.1e-4 miss on a 3.0e-4
+# allowance, while C++ squeaked in at 0.971399. Stated here, the two engines
+# read 0.9716 and 0.971638. The stage horizon stays on `soptions`: it is
+# infinite, which is a steady-state SENTINEL rather than a number a CLI can be
+# given, so the extractor leaves it unpinned either way.
+soptions = SolverOptions(SolverType.FLUID.value)
+soptions.timespan = [0, float('inf')]
+soptions.verbose = False
+
+envSolver = ENV(envModel, lambda m: FLD(m, soptions),
+                {'iter_max': 100, 'iter_tol': 0.05, 'method': 'default'})
 
 # Get results
-QN, UN, TN = envSolver.getAvg()
+QN, UN, _, TN, _, _ = envSolver.getAvg()
 AvgTable = envSolver.getAvgTable()
 print("AvgTable =")
 print(AvgTable)

@@ -32,11 +32,25 @@ public final class Cache_miss {
     }
 
     public static CacheMissResult cache_miss(Matrix gamma, Matrix m, Matrix lambda) {
+        return cache_miss(gamma, m, lambda, null, null);
+    }
+
+    /**
+     * Computes cache miss metrics, optionally under per-list storage cost caps.
+     *
+     * @param gamma Cache access factors (n x h).
+     * @param m Cache capacity vector (1 x h).
+     * @param lambda Arrival rates per user per item (u x n).
+     * @param sigma Item storage costs (sizes); null or empty for none.
+     * @param cap Per-list storage cost caps; null or empty for none.
+     * @return the miss metrics.
+     */
+    public static CacheMissResult cache_miss(Matrix gamma, Matrix m, Matrix lambda, Matrix sigma, Matrix cap) {
         Matrix ma = m.copy();
         ma.set(0, ma.get(0) + 1.0);
 
-        double globalMissRate = Cache_erec.cache_erec(gamma, ma).get(0)
-                / Cache_erec.cache_erec(gamma, m).get(0);
+        double denominatorValue = Cache_erec.cache_erec(gamma, m, sigma, cap).get(0);
+        double globalMissRate = Cache_erec.cache_erec(gamma, ma, sigma, cap).get(0) / denominatorValue;
 
         if (lambda.isEmpty()) {
             return new CacheMissResult(globalMissRate);
@@ -46,21 +60,22 @@ public final class Cache_miss {
         int n = lambda.getNumCols();
 
         Matrix pi0 = Matrix.zeros(1, n);
-        double denominatorValue = Cache_erec.cache_erec(gamma, m).get(0);
 
         for (int k = 0; k < n; k++) {
-            Matrix gammaWithoutK = Matrix.zeros(gamma.getNumRows(), gamma.getNumCols() - 1);
-            int colIndex = 0;
-            for (int j = 0; j < gamma.getNumCols(); j++) {
-                if (j != k) {
-                    for (int i = 0; i < gamma.getNumRows(); i++) {
-                        gammaWithoutK.set(i, colIndex, gamma.get(i, j));
+            // E_k is the constant of the model WITHOUT item k, i.e. gamma row k dropped
+            Matrix gammaWithoutK = Matrix.zeros(gamma.getNumRows() - 1, gamma.getNumCols());
+            int rowIndex = 0;
+            for (int i = 0; i < gamma.getNumRows(); i++) {
+                if (i != k) {
+                    for (int j = 0; j < gamma.getNumCols(); j++) {
+                        gammaWithoutK.set(rowIndex, j, gamma.get(i, j));
                     }
-                    colIndex++;
+                    rowIndex++;
                 }
             }
+            Matrix sigmaWithoutK = (sigma == null || sigma.isEmpty()) ? sigma : Cache_prob_erec.dropEntry(sigma, k);
 
-            double numeratorValue = Cache_erec.cache_erec(gammaWithoutK, m).get(0);
+            double numeratorValue = Cache_erec.cache_erec(gammaWithoutK, m, sigmaWithoutK, cap).get(0);
             pi0.set(0, k, numeratorValue / denominatorValue);
         }
 

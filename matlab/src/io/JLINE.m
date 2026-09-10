@@ -2,7 +2,7 @@ classdef JLINE
     % JLINE Conversion utilities for JLINE format models
     %
     % JLINE provides static methods to convert between LINE MATLAB models 
-    % and JLINE Java/Kotlin models. This class serves as the primary interface
+    % and JLINE Java models. This class serves as the primary interface
     % for interoperability between the MATLAB and Java implementations of LINE.
     %
     % @brief JLINE format conversion and Java interoperability utilities
@@ -31,6 +31,52 @@ classdef JLINE
             if isempty(jar_loc) || ~isfile(jar_loc)
                 jar_loc = lineDownloadJAR(false);  % Silent re-download
             end
+        end
+
+        function set_layered_rate_dependence(jelem, sn, eidx)
+            % SET_LAYERED_RATE_DEPENDENCE(JELEM, SN, EIDX)
+            %
+            % Load dependence is a numeric vector and crosses to the JAR; the
+            % class- and joint-dependent scalings are MATLAB function handles
+            % with no Java counterpart, so they are refused rather than dropped.
+            if isfield(sn,'lldscaling') && numel(sn.lldscaling)>=eidx && ~isempty(sn.lldscaling{eidx})
+                alpha = sn.lldscaling{eidx};
+                jalpha = javaObject('jline.util.matrix.Matrix', 1, numel(alpha));
+                for jj = 1:numel(alpha)
+                    jalpha.set(0, jj-1, alpha(jj));
+                end
+                jelem.setLoadDependence(jalpha);
+            end
+            hascd = isfield(sn,'cdscaling') && numel(sn.cdscaling)>=eidx && ~isempty(sn.cdscaling{eidx});
+            hasjd = isfield(sn,'jdscaling') && numel(sn.jdscaling)>=eidx && ~isempty(sn.jdscaling{eidx});
+            if hascd || hasjd
+                line_error(mfilename,'Class- and joint-dependence on %s are MATLAB function handles and cannot be marshalled to the JAR; solve this model with lang=''matlab''.', sn.names{eidx});
+            end
+        end
+
+        function set_layered_lincon(jelem, sn, eidx)
+            % SET_LAYERED_LINCON(JELEM, SN, EIDX)
+            %
+            % Admission constraint A*n <= b of a Host or a Task. SN.LINCON holds
+            % the resolved positional form, columns in the tasksof/entriesof order
+            % that the JAR uses as well, so the named rows of ADDCONSTRAINT cross
+            % already merged into A.
+            if ~isfield(sn,'lincon') || size(sn.lincon,1) < eidx || isempty(sn.lincon{eidx,1})
+                return
+            end
+            A = sn.lincon{eidx,1};
+            b = sn.lincon{eidx,2};
+            jA = javaObject('jline.util.matrix.Matrix', size(A,1), size(A,2));
+            for ii = 1:size(A,1)
+                for jj = 1:size(A,2)
+                    jA.set(ii-1, jj-1, A(ii,jj));
+                end
+            end
+            jb = javaObject('jline.util.matrix.Matrix', numel(b), 1);
+            for ii = 1:numel(b)
+                jb.set(ii-1, 0, b(ii));
+            end
+            jelem.setConstraint(jA, jb);
         end
 
         function model = from_line_layered_network(line_layered_network)
@@ -98,6 +144,8 @@ classdef JLINE
                 if sn.repl(h)~=1
                     P{h}.setReplication(sn.repl(h));
                 end
+                JLINE.set_layered_rate_dependence(P{h}, sn, h);
+                JLINE.set_layered_lincon(P{h}, sn, h);
             end
 
             %% tasks
@@ -128,10 +176,10 @@ classdef JLINE
                     if isfield(sn,'hasretrieval') && numel(sn.hasretrieval)>=tidx && sn.hasretrieval(tidx)
                         T{t}.setRetrieval(true);
                     end
-                elseif sn.isfunction(tidx)
-                    % FunctionTask (has setupTime/delayOffTime)
+                elseif sn.hassetup(tidx)
+                    % SetupTask (has setupTime/delayOffTime)
                     jSchedStrategy = JLINE.to_jline_sched_strategy(sn.sched(tidx));
-                    T{t} = javaObject('jline.lang.layered.FunctionTask', model, sn.names{tidx}, sn_mult_tidx, jSchedStrategy);
+                    T{t} = javaObject('jline.lang.layered.SetupTask', model, sn.names{tidx}, sn_mult_tidx, jSchedStrategy);
                 else
                     jSchedStrategy = JLINE.to_jline_sched_strategy(sn.sched(tidx));
                     T{t} = javaObject('jline.lang.layered.Task', model, sn.names{tidx}, sn_mult_tidx, jSchedStrategy);
@@ -140,6 +188,8 @@ classdef JLINE
                 if sn.repl(tidx)~=1
                     T{t}.setReplication(sn.repl(tidx));
                 end
+                JLINE.set_layered_rate_dependence(T{t}, sn, tidx);
+                JLINE.set_layered_lincon(T{t}, sn, tidx);
                 if ~isempty(sn.think{tidx}) && sn.think_type(tidx) ~= ProcessType.DISABLED
                     switch sn.think_type(tidx)
                         case ProcessType.IMMEDIATE
@@ -194,13 +244,13 @@ classdef JLINE
                     end
                 end
                 % Setup time rebuilt from (type,mean,scv,params) -- see _kb/12-interfaces-and-docs.md
-                if sn.isfunction(tidx) && ~isnan(sn.setuptime_mean(tidx)) && sn.setuptime_mean(tidx) > 1e-8
+                if sn.hassetup(tidx) && ~isnan(sn.setuptime_mean(tidx)) && sn.setuptime_mean(tidx) > 1e-8
                     T{t}.setSetupTime(JLINE.from_line_lqn_dist(sn.setuptime_type(tidx), ...
                         sn.setuptime_mean(tidx), sn.setuptime_scv(tidx), ...
                         sn.setuptime_params{tidx}, sn.setuptime_proc{tidx}));
                 end
                 % Delay-off time
-                if sn.isfunction(tidx) && ~isnan(sn.delayofftime_mean(tidx)) && sn.delayofftime_mean(tidx) > 1e-8
+                if sn.hassetup(tidx) && ~isnan(sn.delayofftime_mean(tidx)) && sn.delayofftime_mean(tidx) > 1e-8
                     T{t}.setDelayOffTime(JLINE.from_line_lqn_dist(sn.delayofftime_type(tidx), ...
                         sn.delayofftime_mean(tidx), sn.delayofftime_scv(tidx), ...
                         sn.delayofftime_params{tidx}, sn.delayofftime_proc{tidx}));
@@ -698,6 +748,24 @@ classdef JLINE
                 jdist = javaObject('jline.lang.processes.MMPP2', lambda0, lambda1, sigma0, sigma1);
             elseif isa(line_dist, 'NHPP')
                 jdist = javaObject('jline.lang.processes.NHPP', line_dist.getBreakpoints(), line_dist.getRates(), logical(line_dist.isCyclic()));
+            elseif isa(line_dist, 'MAPt') || isa(line_dist, 'PHt')
+                % Both sides hold the schedule as per-segment matrix lists; the
+                % JAR constructors take java.util.List<Matrix>
+                if isa(line_dist, 'MAPt')
+                    segA = line_dist.getD0Segments();
+                    segB = line_dist.getD1Segments();
+                else
+                    segA = line_dist.getAlphaSegments();
+                    segB = line_dist.getSSegments();
+                end
+                jA = javaObject('java.util.ArrayList');
+                jB = javaObject('java.util.ArrayList');
+                for k = 1:numel(segA)
+                    jA.add(JLINE.from_line_matrix(segA{k}));
+                    jB.add(JLINE.from_line_matrix(segB{k}));
+                end
+                jdist = javaObject(['jline.lang.processes.' class(line_dist)], ...
+                    line_dist.getBreakpoints(), jA, jB, logical(line_dist.isCyclic()));
             elseif isa(line_dist, 'BMAP') % before MarkedMAP (BMAP < MarkedMAP)
                 % Both sides use MarkedMAP layout {D0,D1_total,D1..DK} -- see _kb/12-interfaces-and-docs.md
                 nmp = length(line_dist.process);
@@ -882,6 +950,29 @@ classdef JLINE
                     rates(k) = jRates(k);
                 end
                 matlab_dist = NHPP(bp, rates, logical(jdist.isCyclic()));
+            elseif isa(jdist, 'jline.lang.processes.MAPt') || isa(jdist, 'jline.lang.processes.PHt')
+                jBp = jdist.getBreakpoints();
+                bp = zeros(1, length(jBp));
+                for k = 1:length(jBp)
+                    bp(k) = jBp(k);
+                end
+                isMAPt = isa(jdist, 'jline.lang.processes.MAPt');
+                if isMAPt
+                    jA = jdist.getD0Segments(); jB = jdist.getD1Segments();
+                else
+                    jA = jdist.getAlphaSegments(); jB = jdist.getSSegments();
+                end
+                n = jA.size();
+                segA = cell(1, n); segB = cell(1, n);
+                for k = 1:n
+                    segA{k} = JLINE.from_jline_matrix(jA.get(k-1));
+                    segB{k} = JLINE.from_jline_matrix(jB.get(k-1));
+                end
+                if isMAPt
+                    matlab_dist = MAPt(bp, segA, segB, logical(jdist.isCyclic()));
+                else
+                    matlab_dist = PHt(bp, segA, segB, logical(jdist.isCyclic()));
+                end
             elseif isa(jdist, 'jline.lang.processes.Prior')
                 % Convert Prior from JAR to MATLAB
                 jdists = jdist.getDistributions();
@@ -1220,6 +1311,16 @@ classdef JLINE
                 else
                     node_object = javaObject('jline.lang.nodes.Cache', jnetwork, line_node.name, nitems, JLINE.from_line_matrix(line_node.itemLevelCap), repStrategy);
                 end
+                if isprop(line_node,'admissionProb') && ~isempty(line_node.admissionProb)
+                    node_object.setAdmissionProb(line_node.admissionProb);
+                end
+                % per-item storage costs and per-list cost caps (ton21cache Sec. IX)
+                if isprop(line_node,'itemSize') && ~isempty(line_node.itemSize)
+                    node_object.setItemSizes(JLINE.from_line_matrix(line_node.itemSize(:)'));
+                end
+                if isprop(line_node,'costCap') && ~isempty(line_node.costCap)
+                    node_object.setCostCaps(JLINE.from_line_matrix(line_node.costCap(:)'));
+                end
             elseif isa(line_node, 'Place')
                 if line_node.isQueueing()
                     % Reconstructed with its scheduling strategy for setService -- see _kb/12-interfaces-and-docs.md
@@ -1229,6 +1330,15 @@ classdef JLINE
                     node_object = javaObject('jline.lang.nodes.Place', jnetwork, line_node.getName);
                 end
             elseif isa(line_node, 'Transition')
+                % A MATLAB function handle cannot cross into a Java
+                % SerializableFunction, so g(marking) would be dropped and the
+                % solve would return nominal (unscaled) firing rates silently
+                if isprop(line_node, 'firingRateDependence') && ...
+                        any(~cellfun(@isempty, line_node.firingRateDependence))
+                    line_error(mfilename, sprintf(['Transition ''%s'' has a marking-dependent firing rate, ' ...
+                        'which cannot be marshalled to JLINE. Use lang=''matlab'' or lang=''python''.'], ...
+                        line_node.getName));
+                end
                 node_object = javaObject('jline.lang.nodes.Transition', jnetwork, line_node.getName);
                 % Modes are added later in from_line_network after classes are created
             else
@@ -1566,6 +1676,39 @@ classdef JLINE
                                         jmodel.addLink(jnodes.get(jnode_idx), jnodes.get(jdest_idx));
                                     end
                                 end
+                            case RoutingStrategy.SDR
+                                % Krzesinski state-dependent routing: the JAR
+                                % takes the whole subnetwork in one call, so the
+                                % declared branch topology is translated from
+                                % MATLAB node objects to the JAR's own nodes.
+                                % See _kb/16-state-dependent-routing.md
+                                outlinks_i=find(connections(i,:))';
+                                if useLinkMethod
+                                    line_error(mfilename,'State-dependent routing cannot be used together with the link() command.');
+                                end
+                                for j= outlinks_i(:)'
+                                    jdest_idx = matlab2java_node_idx(j);
+                                    if jdest_idx >= 0
+                                        jmodel.addLink(jnodes.get(jnode_idx), jnodes.get(jdest_idx));
+                                    end
+                                end
+                                decl = output_strat{3}{1};
+                                B = numel(decl.branch);
+                                jbranches = java.util.ArrayList();
+                                jbranches.add(java.util.ArrayList());  % index 1 is the complement M-V
+                                for b = 2:B
+                                    jb = java.util.ArrayList();
+                                    for q = 1:numel(decl.branch{b})
+                                        jb.add(jmodel.getNodeByName(decl.branch{b}{q}.getName()));
+                                    end
+                                    jbranches.add(jb);
+                                end
+                                jlevel = int32(decl.level(:)');
+                                jC = decl.C(:)';
+                                jd = decl.d;
+                                jnodes.get(jnode_idx).setStateDepRouting(jclasses.get(k-1), ...
+                                    jmodel.getNodeByName(decl.departure.getName()), ...
+                                    jbranches, jlevel, jC, jd);
                             case RoutingStrategy.WRROBIN
                                 outlinks_i=find(connections(i,:))';
                                 for j= outlinks_i(:)'
@@ -1633,46 +1776,6 @@ classdef JLINE
                                         end
                                     end
                                 end
-                            case RoutingStrategy.RL
-                                jnodes.get(jnode_idx).setRouting(jclasses.get(k-1),jline.lang.constant.RoutingStrategy.RL);
-                                outlinks_i=find(connections(i,:))';
-                                if ~useLinkMethod
-                                    for j= outlinks_i(:)'
-                                        jdest_idx = matlab2java_node_idx(j);
-                                        if jdest_idx >= 0
-                                            jmodel.addLink(jnodes.get(jnode_idx), jnodes.get(jdest_idx));
-                                        end
-                                    end
-                                end
-                                % Forward RL value fn/action nodes/state size from outputStrategy{r}{3..5} -- see _kb/12-interfaces-and-docs.md
-                                if length(output_strat) >= 5
-                                    valFnRaw = output_strat{3};
-                                    nodesNeedAction = output_strat{4};
-                                    stateSize = output_strat{5};
-                                    if ~isempty(valFnRaw)
-                                        if stateSize == 0
-                                            % Tabular: flatten N-D array to a row vector and pass shape.
-                                            shp = size(valFnRaw);
-                                            jvfFlat = jline.util.matrix.Matrix(1, numel(valFnRaw));
-                                            flat = valFnRaw(:);
-                                            for f = 1:numel(flat)
-                                                jvfFlat.set(0, f-1, double(flat(f)));
-                                            end
-                                            jshape = int32(shp(:)');
-                                            jnna = int32(nodesNeedAction(:)' - 1); % MATLAB->Java 0-based
-                                            jnodes.get(jnode_idx).setRLRouting(jclasses.get(k-1), jvfFlat, jshape, jnna, int32(stateSize));
-                                        else
-                                            % Linear approx: coefficient row vector.
-                                            coeff = valFnRaw(:)';
-                                            jvf = jline.util.matrix.Matrix(1, numel(coeff));
-                                            for f = 1:numel(coeff)
-                                                jvf.set(0, f-1, double(coeff(f)));
-                                            end
-                                            jnna = int32(nodesNeedAction(:)' - 1);
-                                            jnodes.get(jnode_idx).setRLRouting(jclasses.get(k-1), jvf, int32([]), jnna, int32(stateSize));
-                                        end
-                                    end
-                                end
                             otherwise
                                 line_warning(mfilename, sprintf('''%s'' routing strategy not supported by JLINE, setting as Disabled.\n',output_strat{2}));
                                 jnodes.get(jnode_idx).setRouting(jclasses.get(k-1),jline.lang.constant.RoutingStrategy.DISABLED);
@@ -1709,9 +1812,9 @@ classdef JLINE
             network_classes = model.getClasses;
 
             % Build name-to-MATLAB-node map (JAR and MATLAB may order nodes differently)
-            node_by_name = containers.Map();
+            node_by_name = configureDictionary('string','cell');
             for nn = 1:length(network_nodes)
-                node_by_name(network_nodes{nn}.name) = network_nodes{nn};
+                node_by_name{network_nodes{nn}.name} = network_nodes{nn};
             end
 
             connections = JLINE.from_jline_matrix(jnetwork.getConnectionMatrix());
@@ -1719,12 +1822,12 @@ classdef JLINE
             for i=1:length(row)
                 from_name = char(jnodes.get(row(i)-1).getName());
                 to_name = char(jnodes.get(col(i)-1).getName());
-                model.addLink(node_by_name(from_name), node_by_name(to_name));
+                model.addLink(node_by_name{from_name}, node_by_name{to_name});
             end
 
             for n = 1 : n_nodes
                 jnode = jnodes.get(n-1);
-                cur_node = node_by_name(char(jnode.getName()));
+                cur_node = node_by_name{char(jnode.getName())};
                 output_strategies = jnode.getOutputStrategies();
                 n_strategies = output_strategies.size();
                 for m = 1 : n_strategies
@@ -1740,9 +1843,9 @@ classdef JLINE
                             dest = output_strat.getDestination();
                             if ~isempty(dest)
                                 dest_name = char(dest.getName());
-                                if node_by_name.isKey(dest_name)
+                                if isKey(node_by_name, dest_name)
                                     weight = output_strat.getProbability();
-                                    cur_node.setRouting(network_classes{routing_strat_classidx}, RoutingStrategy.WRROBIN, node_by_name(dest_name), weight);
+                                    cur_node.setRouting(network_classes{routing_strat_classidx}, RoutingStrategy.WRROBIN, node_by_name{dest_name}, weight);
                                 end
                             end
                         case 'DISABLED'
@@ -1772,41 +1875,68 @@ classdef JLINE
                 end
             end
 
-            hasDestinations = false;
-            for n = 1 : n_nodes
-                jnode = jnodes.get(n-1);
-                output_strategies = jnode.getOutputStrategies();
-                n_strategies = output_strategies.size();
-                for m = 1 : n_strategies
-                    output_strat = output_strategies.get(m-1);
-                    dest = output_strat.getDestination();
-                    if~isempty(dest) % disabled strategy
-                        hasDestinations = true;
-                        in_idx = jar2ml(jnetwork.getNodeIndex(jnode)+1);
-                        out_idx = jar2ml(jnetwork.getNodeIndex(dest)+1);
-                        if n_classes == 1
-                            P{1}(in_idx,out_idx) = output_strat.getProbability();
-                        else
-                            strat_class = output_strat.getJobClass();
-                            class_idx = jnetwork.getJobClassIndex(strat_class)+1;
-                            P{class_idx,class_idx}(in_idx,out_idx) = output_strat.getProbability();
+            % rtorig is the matrix the JAR model was linked with, so it is
+            % complete for EVERY class. The OutputStrategy scan below is not: a
+            % class routed by a non-PROB strategy (RAND, RROBIN, ...) holds a
+            % single entry with a NULL destination, so its whole row is invisible
+            % there. Reading the strategies first therefore silently dropped
+            % every connection used only by such a class -- a Delay self-loop
+            % under RAND (cqn_mmpp2_service) and a Router's outgoing links
+            % (cache_replc_routing), which severed the network. rtorig is
+            % preferred whenever it is available and the scan is the fallback.
+            % Its order is that of the nodes BEFORE link ran, i.e. without the
+            % auto-added CS nodes; a mismatch means that broke -- see _kb/12.
+            usedRtorig = false;
+            sn = jnetwork.getStruct;
+            n_ml_nodes = length(model.getNodes);
+            if ~isempty(sn.rtorig)
+                rtblocks = cell(n_classes, n_classes);
+                sized = true;
+                for r = 1:n_classes
+                    for s = 1:n_classes
+                        rtMat = JLINE.from_jline_matrix(sn.rtorig.get(jclasses.get(r-1)).get(jclasses.get(s-1)));
+                        if ~isempty(rtMat)
+                            if ~isequal(size(rtMat), [n_ml_nodes, n_ml_nodes])
+                                sized = false;
+                            end
+                            rtblocks{r,s} = rtMat;
+                            usedRtorig = usedRtorig || any(rtMat(:) > 0);
                         end
                     end
                 end
-            end
-
-            % If no OutputStrategy entries had destinations (e.g., model
-            % loaded from JSON via LineModelIO.load), fall back to rtorig
-            if ~hasDestinations
-                sn = jnetwork.getStruct;
-                if ~isempty(sn.rtorig)
-                    % rtorig is station-indexed (no permutation needed —
-                    % station ordering matches between JAR and MATLAB)
+                if sized && usedRtorig
                     for r = 1:n_classes
                         for s = 1:n_classes
-                            rtMat = JLINE.from_jline_matrix(sn.rtorig.get(jclasses.get(r-1)).get(jclasses.get(s-1)));
-                            if ~isempty(rtMat)
-                                P{r,s} = rtMat;
+                            if ~isempty(rtblocks{r,s})
+                                P{r,s} = rtblocks{r,s};
+                            end
+                        end
+                    end
+                else
+                    usedRtorig = false;
+                end
+            end
+
+            if ~usedRtorig
+                for n = 1 : n_nodes
+                    jnode = jnodes.get(n-1);
+                    output_strategies = jnode.getOutputStrategies();
+                    n_strategies = output_strategies.size();
+                    for m = 1 : n_strategies
+                        output_strat = output_strategies.get(m-1);
+                        dest = output_strat.getDestination();
+                        if~isempty(dest) % disabled strategy
+                            in_idx = jar2ml(jnetwork.getNodeIndex(jnode)+1);
+                            out_idx = jar2ml(jnetwork.getNodeIndex(dest)+1);
+                            if in_idx == 0 || out_idx == 0
+                                continue; % node absent from the rebuilt model
+                            end
+                            if n_classes == 1
+                                P{1}(in_idx,out_idx) = output_strat.getProbability();
+                            else
+                                strat_class = output_strat.getJobClass();
+                                class_idx = jnetwork.getJobClassIndex(strat_class)+1;
+                                P{class_idx,class_idx}(in_idx,out_idx) = output_strat.getProbability();
                             end
                         end
                     end
@@ -1819,13 +1949,16 @@ classdef JLINE
             % after link(), which sets all routing to PROB
             network_nodes = model.getNodes;
             network_classes = model.getClasses;
-            node_by_name = containers.Map();
+            node_by_name = configureDictionary('string','cell');
             for nn = 1:length(network_nodes)
-                node_by_name(network_nodes{nn}.name) = network_nodes{nn};
+                node_by_name{network_nodes{nn}.name} = network_nodes{nn};
             end
             for n = 1 : n_nodes
                 jnode = jnodes.get(n-1);
-                cur_node = node_by_name(char(jnode.getName()));
+                if ~isKey(node_by_name, char(jnode.getName()))
+                    continue; % a node link() re-created carries link()'s routing
+                end
+                cur_node = node_by_name{char(jnode.getName())};
                 output_strategies = jnode.getOutputStrategies();
                 n_strategies = output_strategies.size();
                 for m = 1 : n_strategies
@@ -1833,13 +1966,22 @@ classdef JLINE
                     routing_strat = output_strat.getRoutingStrategy;
                     routing_strat_classidx = output_strat.getJobClass.getIndex();
                     switch char(routing_strat)
+                        % RAND and DISABLED are DECLARED, not derived: link(P)
+                        % installs the resolved probabilities as PROB, so without
+                        % this the round-tripped model reports a different
+                        % strategy than the one it was built with (numerically
+                        % equal only while the outlinks stay equiprobable).
+                        case 'RAND'
+                            cur_node.setRouting(network_classes{routing_strat_classidx}, RoutingStrategy.RAND);
+                        case 'DISABLED'
+                            cur_node.setRouting(network_classes{routing_strat_classidx}, RoutingStrategy.DISABLED);
                         case 'RROBIN'
                             cur_node.setRouting(network_classes{routing_strat_classidx}, RoutingStrategy.RROBIN);
                         case 'WRROBIN'
                             dest = output_strat.getDestination();
                             if ~isempty(dest)
                                 dest_name = char(dest.getName());
-                                if node_by_name.isKey(dest_name)
+                                if isKey(node_by_name, dest_name)
                                     % Clear stale PROB entries before first WRROBIN weight
                                     classIdx = routing_strat_classidx;
                                     if length(cur_node.output.outputStrategy) >= classIdx && ...
@@ -1850,7 +1992,7 @@ classdef JLINE
                                         end
                                     end
                                     weight = output_strat.getProbability();
-                                    cur_node.setRouting(network_classes{routing_strat_classidx}, RoutingStrategy.WRROBIN, node_by_name(dest_name), weight);
+                                    cur_node.setRouting(network_classes{routing_strat_classidx}, RoutingStrategy.WRROBIN, node_by_name{dest_name}, weight);
                                 end
                             end
                     end
@@ -2229,15 +2371,15 @@ classdef JLINE
                     end
                     % attachRetrievalSystem restores delayed-hit bookkeeping the JAR solvers detect -- see _kb/09-ldes-and-cache.md
                     if ~isempty(line_nodes{n}.retrievalSystemQueueIndices) ...
-                            && line_nodes{n}.retrievalSystemQueueIndices.Count > 0
+                            && numEntries(line_nodes{n}.retrievalSystemQueueIndices) > 0
                         rsqi = line_nodes{n}.retrievalSystemQueueIndices;
                         rclasses = line_nodes{n}.server.retrievalClasses; % [nItems x nclasses], 1-based or -1
                         nItemsRS = size(rclasses, 1);
                         keysRS = keys(rsqi);
                         for kk = 1:numel(keysRS)
-                            jobinIdx0 = double(keysRS{kk});            % 0-based arrival class index
+                            jobinIdx0 = double(keysRS(kk));            % 0-based arrival class index
                             jobinClassObj = jclasses{jobinIdx0 + 1};
-                            queueIdxs = rsqi(keysRS{kk});              % 1-based MATLAB node indices
+                            queueIdxs = rsqi{keysRS(kk)};              % 1-based MATLAB node indices
                             qList = javaObject('java.util.ArrayList');
                             for q = 1:numel(queueIdxs)
                                 qList.add(java.lang.Integer(int32(queueIdxs(q) - 1))); % 0-based node index
@@ -2423,6 +2565,25 @@ classdef JLINE
             jnetwork = LINE2JLINE(model);
         end
 
+        function tf = jline_uses_links(jnetwork)
+            % True when jline_to_line restores the routing with link(rtorig).
+            % State-dependent routing (RROBIN, WRROBIN, JSQ, SQ) cannot go
+            % through link(P), which overwrites every strategy with PROB, and a
+            % model with no rtorig was never linked in the first place.
+            network_nodes = jnetwork.getNodes;
+            for n = 1 : network_nodes.size
+                output_strategies = network_nodes.get(n-1).getOutputStrategies();
+                for m = 1 : output_strategies.size()
+                    rs = char(output_strategies.get(m-1).getRoutingStrategy);
+                    if any(strcmp(rs, {'RROBIN','WRROBIN','JSQ','SQ'}))
+                        tf = false;
+                        return;
+                    end
+                end
+            end
+            tf = ~isempty(jnetwork.getStruct.rtorig);
+        end
+
         function model = jline_to_line(jnetwork)
             if isa(jnetwork,'JNetwork')
                 jnetwork = jnetwork.obj;
@@ -2435,6 +2596,16 @@ classdef JLINE
             line_nodes = cell(network_nodes.size,1);
             line_classes = cell(job_classes.size,1);
 
+            % An auto-added ClassSwitch is a PRODUCT of link(P), which re-creates
+            % it, so creating it here too collides on the name -- see _kb/12.
+            useLinks = JLINE.jline_uses_links(jnetwork);
+            autoCS = false(1, network_nodes.size);
+            if useLinks
+                for n = 1 : network_nodes.size
+                    jn = network_nodes.get(n-1);
+                    autoCS(n) = isa(jn, 'jline.lang.nodes.ClassSwitch') && jn.autoAdded;
+                end
+            end
 
             for n = 1 : network_nodes.size
                 if ~isa(network_nodes.get(n-1), 'jline.lang.nodes.ClassSwitch')
@@ -2465,7 +2636,7 @@ classdef JLINE
             end
 
             for n = 1 : network_nodes.size
-                if isa(network_nodes.get(n-1), 'jline.lang.nodes.ClassSwitch')
+                if isa(network_nodes.get(n-1), 'jline.lang.nodes.ClassSwitch') && ~autoCS(n)
                     line_nodes{n} = JLINE.from_jline_node(network_nodes.get(n-1), model, job_classes);
                 end
             end
@@ -2520,6 +2691,7 @@ classdef JLINE
             end
 
             for n = 1 : network_nodes.size
+                if isempty(line_nodes{n}); continue; end
                 JLINE.set_line_service(network_nodes.get(n-1), line_nodes{n}, job_classes, line_classes);
             end
 
@@ -2617,26 +2789,7 @@ classdef JLINE
                 end
             end
 
-            % Check for state-dependent routing (RROBIN, WRROBIN, JSQ)
-            % These cannot go through link(P) because it overrides routing strategies
-            hasSDRouting = false;
-            for n = 1 : network_nodes.size
-                jnode = network_nodes.get(n-1);
-                output_strategies = jnode.getOutputStrategies();
-                for m = 1 : output_strategies.size()
-                    rs = char(output_strategies.get(m-1).getRoutingStrategy);
-                    if any(strcmp(rs, {'RROBIN','WRROBIN','JSQ','SQ'}))
-                        hasSDRouting = true;
-                        break;
-                    end
-                end
-                if hasSDRouting; break; end
-            end
-
-            if hasSDRouting
-                % State-dependent routing: use addLink + setRouting
-                model = JLINE.from_jline_routing(model, jnetwork);
-            elseif ~isempty(jnetwork.getStruct.rtorig)
+            if useLinks
                 % Use link() method
                 model = JLINE.from_jline_links(model, jnetwork);
             else
@@ -2719,6 +2872,28 @@ classdef JLINE
             end
         end
 
+        function out = from_jline_matrix_list(jlist)
+            % java.util.List<Matrix> -> 1-by-n cell of double matrices
+            out = {};
+            if isempty(jlist), return; end
+            n = double(jlist.size());
+            out = cell(1, n);
+            for k = 1:n
+                out{k} = JLINE.from_jline_matrix(jlist.get(k-1));
+            end
+        end
+
+        function out = from_jline_matrixcell(jcell)
+            % jline.util.matrix.MatrixCell -> 1-by-n cell of double matrices
+            out = {};
+            if isempty(jcell), return; end
+            n = double(jcell.size());
+            out = cell(1, n);
+            for k = 1:n
+                out{k} = JLINE.from_jline_matrix(jcell.get(k-1));
+            end
+        end
+
         function matrix = from_jline_matrix(jline_matrix)
             if isempty(jline_matrix)
                 matrix = [];
@@ -2727,11 +2902,11 @@ classdef JLINE
                 for row = 1:jline_matrix.getNumRows()
                     for col = 1:jline_matrix.getNumCols()
                         val = jline_matrix.get(row-1, col-1);
-                        if (val >= 33333333 && val <= 33333334)
-                            matrix(row, col) = GlobalConstants.Immediate;
-                        elseif (val >= -33333334 && val <= -33333333)
-                            matrix(row, col) = -GlobalConstants.Immediate;
-                        elseif (val >= 2147483647 - 1) % Integer.MAX_VALUE with -1 tolerance
+                        % No band around 1e8/3 here: the JAR carries the same
+                        % Immediate constant (1/FineTol) as MATLAB, and a rate
+                        % of 33333333.33 is a legitimate Exp(3e-8), e.g. three
+                        % chained immediate demands in an LN layer.
+                        if (val >= 2147483647 - 1) % Integer.MAX_VALUE with -1 tolerance
                             matrix(row, col) = Inf;
                         elseif (val <= -2147483648 + 1) % Integer.MIN_VALUE with +1 tolerance
                             matrix(row, col) = -Inf;
@@ -2805,6 +2980,13 @@ classdef JLINE
         end
 
         function lsn = from_jline_struct_layered(jlayerednetwork, jlsn)
+            % JLINE indexes LayeredNetworkStruct elements from 0 and carries no
+            % padding row or column; MATLAB indexes them from 1. This is the only
+            % seam between the two conventions, so every element index crossing it
+            % is shifted by one here: map keys are looked up at key-1, and index
+            % VALUES (parent, callpair, tasksof/entriesof/actsof/callsof) come back
+            % +1. Java's -1 "unset" parent becomes MATLAB's 0.
+            % See _kb/04-networkstruct.md and _kb/07-cross-language-parity.md.
             lsn = LayeredNetworkStruct();
             lsn.nidx= jlsn.nidx;
             lsn.nhosts= jlsn.nhosts;
@@ -2818,41 +3000,43 @@ classdef JLINE
             lsn.ashift= jlsn.ashift;
             lsn.cshift= jlsn.cshift;
             for h=1:jlsn.nhosts
-                lsn.tasksof{h,1} = JLINE.arraylist_to_matrix(jlsn.tasksof.get(uint32(h)))';
+                lsn.tasksof{h,1} = JLINE.shift_idx(JLINE.arraylist_to_matrix(jlsn.tasksof.get(uint32(h-1))))';
             end
             for t=1:jlsn.ntasks
-                lsn.entriesof{lsn.tshift+t,1} = JLINE.arraylist_to_matrix(jlsn.entriesof.get(uint32(jlsn.tshift+t)))';
+                lsn.entriesof{lsn.tshift+t,1} = JLINE.shift_idx(JLINE.arraylist_to_matrix(jlsn.entriesof.get(uint32(jlsn.tshift+t-1))))';
             end
             for t=1:(jlsn.ntasks+jlsn.nentries)
-                lsn.actsof{lsn.tshift+t,1} = JLINE.arraylist_to_matrix(jlsn.actsof.get(uint32(jlsn.tshift+t)))';
+                lsn.actsof{lsn.tshift+t,1} = JLINE.shift_idx(JLINE.arraylist_to_matrix(jlsn.actsof.get(uint32(jlsn.tshift+t-1))))';
             end
             for a=1:jlsn.nacts
-                lsn.callsof{lsn.ashift+a,1} = JLINE.arraylist_to_matrix(jlsn.callsof.get(uint32(jlsn.ashift+a)))';
+                lsn.callsof{lsn.ashift+a,1} = JLINE.shift_idx(JLINE.arraylist_to_matrix(jlsn.callsof.get(uint32(jlsn.ashift+a-1))))';
             end
             for i = 1:jlsn.sched.size
-                lsn.sched(i,1) = SchedStrategy.(char(jlsn.sched.get(uint32(i))));
+                % A class's Constant properties do NOT accept dynamic field
+                % access: SchedStrategy.(name) resolves the identifier
+                % 'SchedStrategy.' as a class and errors whatever name holds.
+                % Go through the same .name.toCharArray' + fromText pair the
+                % flat sn.sched conversion below uses.
+                jsched = jlsn.sched.get(uint32(i-1));
+                lsn.sched(i,1) = SchedStrategy.fromText(jsched.name.toCharArray');
             end
             for i = 1:jlsn.names.size
-                lsn.names{i,1} = jlsn.names.get(uint32(i));
-                lsn.hashnames{i,1} = jlsn.hashnames.get(uint32(i));
+                lsn.names{i,1} = jlsn.names.get(uint32(i-1));
+                lsn.hashnames{i,1} = jlsn.hashnames.get(uint32(i-1));
             end
             lsn.mult = JLINE.from_jline_matrix(jlsn.mult);
-            lsn.mult = lsn.mult(2:(lsn.eshift+1))'; % remove 0-padding
+            lsn.mult = lsn.mult(1:lsn.eshift)';
             lsn.maxmult = JLINE.from_jline_matrix(jlsn.maxmult);
-            lsn.maxmult = lsn.maxmult(2:(lsn.eshift+1))'; % remove 0-padding
+            lsn.maxmult = lsn.maxmult(1:lsn.eshift)';
 
             lsn.repl = JLINE.from_jline_matrix(jlsn.repl)';
-            lsn.repl = lsn.repl(2:end); % remove 0-padding
             lsn.type = JLINE.from_jline_matrix(jlsn.type)';
-            lsn.type = lsn.type(2:end); % remove 0-padding
-            lsn.parent = JLINE.from_jline_matrix(jlsn.parent);
-            lsn.parent = lsn.parent(2:end); % remove 0-padding
+            % parent holds element indices: shift them, and map Java's -1 to 0
+            lsn.parent = JLINE.shift_idx(JLINE.from_jline_matrix(jlsn.parent));
             lsn.nitems = JLINE.from_jline_matrix(jlsn.nitems);
             % Ensure proper column vector format matching MATLAB's (nhosts+ntasks+nentries) x 1
             if isrow(lsn.nitems)
-                lsn.nitems = lsn.nitems(2:end)'; % remove 0-padding and transpose
-            else
-                lsn.nitems = lsn.nitems(2:end); % remove 0-padding (already column)
+                lsn.nitems = lsn.nitems';
             end
             % Ensure correct size
             expectedSize = lsn.nhosts + lsn.ntasks + lsn.nentries;
@@ -2861,40 +3045,51 @@ classdef JLINE
             elseif length(lsn.nitems) > expectedSize
                 lsn.nitems = lsn.nitems(1:expectedSize);
             end
-            lsn.replacestrat = JLINE.from_jline_matrix(jlsn.replacestrat);
-            lsn.replacestrat = lsn.replacestrat(2:end)'; % remove 0-padding
+            lsn.replacestrat = JLINE.from_jline_matrix(jlsn.replacestrat)';
             for i = 1:jlsn.callnames.size
-                lsn.callnames{i,1} = jlsn.callnames.get(uint32(i));
-                lsn.callhashnames{i,1} = jlsn.callhashnames.get(uint32(i));
+                lsn.callnames{i,1} = jlsn.callnames.get(uint32(i-1));
+                lsn.callhashnames{i,1} = jlsn.callhashnames.get(uint32(i-1));
             end
             for i = 1:jlsn.calltype.size % calltype may be made into a matrix in Java
-                ct = char(jlsn.calltype.get(uint32(i)));
-                lsn.calltype(i) = CallType.(ct);
+                % CallType.(ct) is the same unsupported dynamic access as
+                % SchedStrategy.(...) above; switch on the enum's own name
+                ct = jlsn.calltype.get(uint32(i-1)).name.toCharArray';
+                switch ct
+                    case 'SYNC'
+                        lsn.calltype(i) = CallType.SYNC;
+                    case 'ASYNC'
+                        lsn.calltype(i) = CallType.ASYNC;
+                    case 'FWD'
+                        lsn.calltype(i) = CallType.FWD;
+                    otherwise
+                        line_error(mfilename, sprintf('Unknown call type %s in the Java LayeredNetworkStruct.', ct));
+                end
             end
-            lsn.calltype = sparse(lsn.calltype'); % remove 0-padding
-            lsn.callpair = JLINE.from_jline_matrix(jlsn.callpair);
-            lsn.callpair = lsn.callpair(2:end,2:end); % remove 0-paddings
+            lsn.calltype = sparse(lsn.calltype');
+            % callpair rows are calls and its entries are element indices
+            lsn.callpair = JLINE.shift_idx(JLINE.from_jline_matrix(jlsn.callpair));
             if isempty(lsn.callpair)
                 lsn.callpair=[];
             end
             lsn.actpretype = sparse(JLINE.from_jline_matrix(jlsn.actpretype)');
-            lsn.actpretype = lsn.actpretype(2:end); % remove 0-padding
             lsn.actposttype = sparse(JLINE.from_jline_matrix(jlsn.actposttype)');
-            lsn.actposttype = lsn.actposttype(2:end); % remove 0-padding
             lsn.graph = JLINE.from_jline_matrix(jlsn.graph);
-            lsn.graph = lsn.graph(2:end,2:end); % remove 0-paddings
             lsn.dag = JLINE.from_jline_matrix(jlsn.dag);
-            lsn.dag = lsn.dag(2:end,2:end); % remove 0-paddings
-            lsn.taskgraph = JLINE.from_jline_matrix(jlsn.taskgraph);
-            lsn.taskgraph = sparse(lsn.taskgraph(2:end,2:end)); % remove 0-paddings
-            lsn.replygraph = JLINE.from_jline_matrix(jlsn.replygraph);
-            lsn.replygraph = logical(lsn.replygraph(2:end,2:end)); % remove 0-paddings
+            lsn.taskgraph = sparse(JLINE.from_jline_matrix(jlsn.taskgraph));
+            lsn.replygraph = logical(JLINE.from_jline_matrix(jlsn.replygraph));
             lsn.iscache = JLINE.from_jline_matrix(jlsn.iscache);
             % Ensure proper column vector format matching MATLAB's (nhosts+ntasks) x 1
+            % The JAR row is 1 x nidx indexed by the GLOBAL element index, and
+            % since 778978b66 that index is 0-BASED: element 1 of the row is
+            % host 1, not a pad. Dropping it, as the 1-based era required,
+            % shifted every host/task left by one and reported the cache task
+            % one slot early (lsnDebug: LINE [0 0 0 1] vs JLINE [0 0 1 0] on
+            % lcq_singlehost). Hosts and tasks occupy the FIRST nhosts+ntasks
+            % columns, so those are the ones to take.
             expectedCacheSize = lsn.nhosts + lsn.ntasks;
             if isrow(lsn.iscache)
                 if length(lsn.iscache) > expectedCacheSize
-                    lsn.iscache = lsn.iscache(2:(expectedCacheSize+1))'; % remove 0-padding and transpose
+                    lsn.iscache = lsn.iscache(1:expectedCacheSize)'; % drop the trailing element columns
                 else
                     lsn.iscache = lsn.iscache'; % just transpose
                 end
@@ -2905,14 +3100,21 @@ classdef JLINE
             elseif length(lsn.iscache) > expectedCacheSize
                 lsn.iscache = lsn.iscache(1:expectedCacheSize);
             end
-            lsn.iscaller = JLINE.from_jline_matrix(jlsn.iscaller);
-            lsn.iscaller = full(lsn.iscaller(2:end,2:end)); % remove 0-paddings
-            lsn.issynccaller = JLINE.from_jline_matrix(jlsn.issynccaller);
-            lsn.issynccaller = full(lsn.issynccaller(2:end,2:end)); % remove 0-paddings
-            lsn.isasynccaller = JLINE.from_jline_matrix(jlsn.isasynccaller);
-            lsn.isasynccaller = full(lsn.isasynccaller(2:end,2:end)); % remove 0-paddings
-            lsn.isref = JLINE.from_jline_matrix(jlsn.isref);
-            lsn.isref = lsn.isref(2:end)'; % remove 0-paddings
+            lsn.iscaller = full(JLINE.from_jline_matrix(jlsn.iscaller));
+            lsn.issynccaller = full(JLINE.from_jline_matrix(jlsn.issynccaller));
+            lsn.isasynccaller = full(JLINE.from_jline_matrix(jlsn.isasynccaller));
+            lsn.isref = JLINE.from_jline_matrix(jlsn.isref)';
+        end
+
+        function out = shift_idx(idxs)
+            % Convert JLINE 0-based element (or call) indices to MATLAB 1-based
+            % ones. Java marks "unset" with -1, which MATLAB spells as 0, so the
+            % same +1 carries both. An empty input stays empty.
+            out = idxs;
+            if isempty(out)
+                return;
+            end
+            out = out + 1;
         end
 
         function sn = from_jline_struct(jnetwork, jsn)
@@ -2985,14 +3187,14 @@ classdef JLINE
                 % Iterate through the map entries to handle null values properly
                 entrySet = jsn.cdscaling.entrySet();
                 entryIter = entrySet.iterator();
-                stationFunMap = containers.Map();
+                stationFunMap = configureDictionary('string','cell');
                 while entryIter.hasNext()
                     entry = entryIter.next();
                     stationName = char(entry.getKey().getName());
                     try
                         jfun = entry.getValue();
                         if ~isempty(jfun)
-                            stationFunMap(stationName) = jfun;
+                            stationFunMap{stationName} = jfun;
                         end
                     catch
                         % getValue() returns null for default lambda functions
@@ -3004,7 +3206,7 @@ classdef JLINE
                     jstation = jstations.get(i-1);
                     stationName = char(jstation.getName());
                     if isKey(stationFunMap, stationName)
-                        jfun = stationFunMap(stationName);
+                        jfun = stationFunMap{stationName};
                         % Create a MATLAB function handle that calls the Java apply() method
                         sn.cdscaling{i} = @(ni) JLINE.call_java_cdscaling(jfun, ni);
                     else
@@ -3021,14 +3223,14 @@ classdef JLINE
                 sn.jdscaling = cell(sn.nstations, 1);
                 entrySet = jsn.jdscaling.entrySet();
                 entryIter = entrySet.iterator();
-                stationFunMap = containers.Map();
+                stationFunMap = configureDictionary('string','cell');
                 while entryIter.hasNext()
                     entry = entryIter.next();
                     stationName = char(entry.getKey().getName());
                     try
                         jfun = entry.getValue();
                         if ~isempty(jfun)
-                            stationFunMap(stationName) = jfun;
+                            stationFunMap{stationName} = jfun;
                         end
                     catch
                     end
@@ -3037,7 +3239,7 @@ classdef JLINE
                     jstation = jstations.get(i-1);
                     stationName = char(jstation.getName());
                     if isKey(stationFunMap, stationName)
-                        jfun = stationFunMap(stationName);
+                        jfun = stationFunMap{stationName};
                         sn.jdscaling{i} = @(ni) JLINE.call_java_cdscaling(jfun, ni);
                     else
                         sn.jdscaling{i} = @(ni) 1;
@@ -3421,13 +3623,21 @@ classdef JLINE
                     % TransitionNodeParam
                     if isa(jparam, 'jline.lang.nodeparam.TransitionNodeParam')
                         if ~isempty(jparam.firingprocid)
-                            sn.nodeparam{i}.firingprocid = containers.Map('KeyType', 'char', 'ValueType', 'any');
+                            % mode-indexed numeric ProcessType ids, as refreshPetriNetNodes
+                            % builds it; Mode has no toString, so it cannot key a map
+                            modeIdx = [];
+                            procIds = [];
                             keys = jparam.firingprocid.keySet.iterator;
                             while keys.hasNext
                                 key = keys.next;
                                 proc = jparam.firingprocid.get(key);
-                                sn.nodeparam{i}.firingprocid(char(key.toString)) = char(proc.toString);
+                                modeIdx(end+1) = double(key.getIndex()); %#ok<AGROW>
+                                procIds(end+1) = ProcessType.fromText(char( ...
+                                    jline.lang.constant.ProcessType.toText(proc))); %#ok<AGROW>
                             end
+                            fpid = -ones(1, max([modeIdx, 0]));
+                            fpid(modeIdx) = procIds;
+                            sn.nodeparam{i}.firingprocid = fpid;
                         end
                         if ~isempty(jparam.firingphases)
                             sn.nodeparam{i}.firingphases = JLINE.from_jline_matrix(jparam.firingphases);
@@ -3435,6 +3645,71 @@ classdef JLINE
                         if ~isempty(jparam.fireweight)
                             sn.nodeparam{i}.fireweight = JLINE.from_jline_matrix(jparam.fireweight);
                         end
+                        nmodes = double(jparam.nmodes);
+                        if nmodes == 0 && ~isempty(jparam.modenames)
+                            nmodes = double(jparam.modenames.size());
+                        end
+                        sn.nodeparam{i}.nmodes = nmodes;
+                        if ~isempty(jparam.modenames)
+                            mn = cell(1, double(jparam.modenames.size()));
+                            for m = 1:numel(mn)
+                                mn{m} = char(jparam.modenames.get(m-1));
+                            end
+                            sn.nodeparam{i}.modenames = mn;
+                        end
+                        sn.nodeparam{i}.enabling = JLINE.from_jline_matrix_list(jparam.enabling);
+                        sn.nodeparam{i}.inhibiting = JLINE.from_jline_matrix_list(jparam.inhibiting);
+                        sn.nodeparam{i}.firing = JLINE.from_jline_matrix_list(jparam.firing);
+                        if ~isempty(jparam.nmodeservers)
+                            sn.nodeparam{i}.nmodeservers = JLINE.from_jline_matrix(jparam.nmodeservers);
+                        end
+                        if ~isempty(jparam.firingprio)
+                            sn.nodeparam{i}.firingprio = JLINE.from_jline_matrix(jparam.firingprio);
+                        end
+                        if ~isempty(jparam.timing)
+                            tm = zeros(1, double(jparam.timing.size()));
+                            for m = 1:numel(tm)
+                                if strcmp(char(jparam.timing.get(m-1).toString), 'IMMEDIATE')
+                                    tm(m) = TimingStrategy.IMMEDIATE;
+                                else
+                                    tm(m) = TimingStrategy.TIMED;
+                                end
+                            end
+                            sn.nodeparam{i}.timing = tm;
+                        end
+                        % mode-keyed maps: Mode.getIndex is the only stable key
+                        if ~isempty(jparam.firingproc)
+                            fproc = cell(1, nmodes);
+                            it = jparam.firingproc.keySet.iterator;
+                            while it.hasNext
+                                key = it.next;
+                                fproc{double(key.getIndex())} = ...
+                                    JLINE.from_jline_matrixcell(jparam.firingproc.get(key));
+                            end
+                            sn.nodeparam{i}.firingproc = fproc;
+                        end
+                        if ~isempty(jparam.firingpie)
+                            fpie = cell(1, nmodes);
+                            it = jparam.firingpie.keySet.iterator;
+                            while it.hasNext
+                                key = it.next;
+                                fpie{double(key.getIndex())} = ...
+                                    JLINE.from_jline_matrix(jparam.firingpie.get(key));
+                            end
+                            sn.nodeparam{i}.firingpie = fpie;
+                        end
+                        % g_m(marking): the Java lambda cannot become a MATLAB
+                        % handle, so wrap it and marshal the marking per call
+                        fdep = cell(1, nmodes);
+                        if ~isempty(jparam.firingdep)
+                            for m = 1:min(nmodes, double(jparam.firingdep.size()))
+                                jf = jparam.firingdep.get(m-1);
+                                if ~isempty(jf)
+                                    fdep{m} = @(M) double(jf.apply(JLINE.from_line_matrix(M)));
+                                end
+                            end
+                        end
+                        sn.nodeparam{i}.firingdep = fdep;
                     end
 
                     % JoinNodeParam
@@ -3582,72 +3857,57 @@ classdef JLINE
                     jactive = jsync_i.active.get(uint32(0));
                     jpassive = jsync_i.passive.get(uint32(0));
 
-                    % Assumes prob is a value, not a Java lambda function
-                    switch jactive.getEvent.name.toCharArray'
-                        case 'INIT'
-                            sn.sync{i,1}.active{1} = Event(EventType.INIT, jactive.getNode+1, jactive.getJobClass+1, ...
-                                jactive.getProb, JLINE.from_jline_matrix(jactive.getState), ...
-                                jactive.getT, jactive.getJob);
-                        case 'LOCAL'
-                            sn.sync{i,1}.active{1} = Event(EventType.LOCAL, jactive.getNode+1, jactive.getJobClass+1, ...
-                                jactive.getProb, JLINE.from_jline_matrix(jactive.getState), ...
-                                jactive.getT, jactive.getJob);
-                        case 'ARV'
-                            sn.sync{i,1}.active{1} = Event(EventType.ARV, jactive.getNode+1, jactive.getJobClass+1, ...
-                                jactive.getProb, JLINE.from_jline_matrix(jactive.getState), ...
-                                jactive.getT, jactive.getJob);
-                        case 'DEP'
-                            sn.sync{i,1}.active{1} = Event(EventType.DEP, jactive.getNode+1, jactive.getJobClass+1, ...
-                                jactive.getProb, JLINE.from_jline_matrix(jactive.getState), ...
-                                jactive.getT, jactive.getJob);
-                        case 'PHASE'
-                            sn.sync{i,1}.active{1} = Event(EventType.PHASE, jactive.getNode+1, jactive.getJobClass+1, ...
-                                jactive.getProb, JLINE.from_jline_matrix(jactive.getState), ...
-                                jactive.getT, jactive.getJob);
-                        case 'READ'
-                            sn.sync{i,1}.active{1} = Event(EventType.READ, jactive.getNode+1, jactive.getJobClass+1, ...
-                                jactive.getProb, JLINE.from_jline_matrix(jactive.getState), ...
-                                jactive.getT, jactive.getJob);
-                        case 'STAGE'
-                            sn.sync{i,1}.active{1} = Event(EventType.STAGE, jactive.getNode+1, jactive.getJobClass+1, ...
-                                jactive.getProb, JLINE.from_jline_matrix(jactive.getState), ...
-                                jactive.getT, jactive.getJob);
-                    end
-
-                    switch jpassive.getEvent.name.toCharArray'
-                        case 'INIT'
-                            sn.sync{i,1}.passive{1} = Event(EventType.INIT, jpassive.getNode+1, jpassive.getJobClass+1, ...
-                                jpassive.getProb, JLINE.from_jline_matrix(jpassive.getState), ...
-                                jpassive.getT, jpassive.getJob);
-                        case 'LOCAL'
-                            sn.sync{i,1}.passive{1} = Event(EventType.LOCAL, jpassive.getNode+1, jpassive.getJobClass+1, ...
-                                jpassive.getProb, JLINE.from_jline_matrix(jpassive.getState), ...
-                                jpassive.getT, jpassive.getJob);
-                        case 'ARV'
-                            sn.sync{i,1}.passive{1} = Event(EventType.ARV, jpassive.getNode+1, jpassive.getJobClass+1, ...
-                                jpassive.getProb, JLINE.from_jline_matrix(jpassive.getState), ...
-                                jpassive.getT, jpassive.getJob);
-                        case 'DEP'
-                            sn.sync{i,1}.passive{1} = Event(EventType.DEP, jpassive.getNode+1, jpassive.getJobClass+1, ...
-                                jpassive.getProb, JLINE.from_jline_matrix(jpassive.getState), ...
-                                jpassive.getT, jpassive.getJob);
-                        case 'PHASE'
-                            sn.sync{i,1}.passive{1} = Event(EventType.PHASE, jpassive.getNode+1, jpassive.getJobClass+1, ...
-                                jpassive.getProb, JLINE.from_jline_matrix(jpassive.getState), ...
-                                jpassive.getT, jpassive.getJob);
-                        case 'READ'
-                            sn.sync{i,1}.passive{1} = Event(EventType.READ, jpassive.getNode+1, jpassive.getJobClass+1, ...
-                                jpassive.getProb, JLINE.from_jline_matrix(jpassive.getState), ...
-                                jpassive.getT, jpassive.getJob);
-                        case 'STAGE'
-                            sn.sync{i,1}.passive{1} = Event(EventType.STAGE, jpassive.getNode+1, jpassive.getJobClass+1, ...
-                                jpassive.getProb, JLINE.from_jline_matrix(jpassive.getState), ...
-                                jpassive.getT, jpassive.getJob);
-                    end
+                    % Assumes prob is a value, not a Java lambda function.
+                    % The mapping is by NAME, once, for every member of the
+                    % Java enum: the two hand-written switches this replaces
+                    % listed only INIT/LOCAL/ARV/DEP/PHASE/READ/STAGE and left
+                    % sn.sync{i}.active{1} UNASSIGNED for anything else, so a
+                    % reneging, retrial, polling, breakdown or (now) tagged
+                    % model crossed the bridge with a hole in its sync list.
+                    sn.sync{i,1}.active{1} = JLINE.eventFromJava(jactive);
+                    sn.sync{i,1}.passive{1} = JLINE.eventFromJava(jpassive);
                 end
             else
                 sn.sync = {};
             end
+        end
+
+        function ev = eventFromJava(jev)
+            % EV = EVENTFROMJAVA(JEV) build the MATLAB Event of a jline.lang.Event.
+            %
+            % The Java and MATLAB EventType numberings disagree (Java ordinals
+            % start at INIT = 0, MATLAB at INIT = -1), so the two are matched by
+            % NAME, as the rest of the codebase does. Every member of the Java
+            % enum is listed: an unmapped one must raise rather than leave the
+            % synchronization silently unassigned.
+            nm = jev.getEvent.name.toCharArray';
+            switch nm
+                case 'INIT',    et = EventType.INIT;
+                case 'LOCAL',   et = EventType.LOCAL;
+                case 'ARV',     et = EventType.ARV;
+                case 'DEP',     et = EventType.DEP;
+                case 'PHASE',   et = EventType.PHASE;
+                case 'READ',    et = EventType.READ;
+                case 'STAGE',   et = EventType.STAGE;
+                case 'ENABLE',  et = EventType.ENABLE;
+                case 'FIRE',    et = EventType.FIRE;
+                case 'PRE',     et = EventType.PRE;
+                case 'POST',    et = EventType.POST;
+                case 'RENEGE',  et = EventType.RENEGE;
+                case 'RETRY',   et = EventType.RETRY;
+                case 'SWITCH',  et = EventType.SWITCH;
+                case 'FAILURE', et = EventType.FAILURE;
+                case 'REPAIR',  et = EventType.REPAIR;
+                case 'START',   et = EventType.START;
+                case 'PREEMPT', et = EventType.PREEMPT;
+                otherwise
+                    line_error(mfilename, sprintf(['The JAR declares event type ''%s'', which this bridge cannot map ' ...
+                        'to a MATLAB EventType. Add it to JLINE.eventFromJava rather than letting the ' ...
+                        'synchronization cross unassigned.'], nm));
+            end
+            ev = Event(et, jev.getNode+1, jev.getJobClass+1, ...
+                jev.getProb, JLINE.from_jline_matrix(jev.getState), ...
+                jev.getT, jev.getJob);
         end
 
         function [QN,UN,RN,WN,AN,TN] = arrayListToResults(alist)
@@ -3736,6 +3996,55 @@ classdef JLINE
                                     % SSA warmup discard (mean estimates + CI batch means)
                                     solverOptions.config.warmupfrac = java.lang.Double(options.config.warmupfrac);
                                 end
+                                % SolverMAM 'bgchain'. This whitelist is the whole
+                                % bridge: a config field not named here is dropped
+                                % SILENTLY, so lang='java' would answer the default
+                                % while reporting the requested method, which is
+                                % indistinguishable from the option having no effect.
+                                % SolverMAM 'bgchain'. These three have no declared
+                                % field on SolverOptions.Config: they ride its
+                                % additionalParams map, which is what the JAR reads
+                                % with config.get(name), so they must be PUT rather
+                                % than assigned. The map handle needs a TEMPORARY --
+                                % MATLAB parses solverOptions.config.put(...) as
+                                % nested field indexing on a Java object and fails
+                                % with "Dot indexing is not supported", so binding
+                                % the Config to a variable first is what makes the
+                                % call a method call.
+                                % SolverCTMC transient path: a declared field
+                                % each, so they are assigned rather than put.
+                                if isfield(options.config,'transient_method') && ~isempty(options.config.transient_method)
+                                    solverOptions.config.transient_method = options.config.transient_method;
+                                end
+                                if isfield(options.config,'fau_epsilon') && ~isempty(options.config.fau_epsilon)
+                                    solverOptions.config.fau_epsilon = options.config.fau_epsilon;
+                                end
+                                if isfield(options.config,'fau_delta') && ~isempty(options.config.fau_delta)
+                                    solverOptions.config.fau_delta = options.config.fau_delta;
+                                end
+                                if isfield(options.config,'fau_ngrid') && ~isempty(options.config.fau_ngrid)
+                                    solverOptions.config.fau_ngrid = int32(options.config.fau_ngrid);
+                                end
+                                jconfig = solverOptions.config;
+                                if isfield(options.config,'bgaggr') && ~isempty(options.config.bgaggr)
+                                    jconfig.put('bgaggr', java.lang.Integer(int32(options.config.bgaggr)));
+                                end
+                                if isfield(options.config,'bgstates_max') && ~isempty(options.config.bgstates_max)
+                                    jconfig.put('bgstates_max', java.lang.Integer(int32(options.config.bgstates_max)));
+                                end
+                                if isfield(options.config,'qbdphases_max') && ~isempty(options.config.qbdphases_max)
+                                    jconfig.put('qbdphases_max', java.lang.Integer(int32(options.config.qbdphases_max)));
+                                end
+                                % bgenv='full' is a MATLAB-ONLY oracle (see
+                                % mam_bgchain_envfull.m); the JAR has no such key, so
+                                % bridging it would silently run the lump instead.
+                                if isfield(options.config,'bgenv') && ~isempty(options.config.bgenv) ...
+                                        && strcmpi(char(options.config.bgenv),'full')
+                                    line_error(mfilename,['options.config.bgenv=''full'' is implemented in ' ...
+                                        'MATLAB only (mam_bgchain_envfull.m) and has no counterpart in the JAR. ' ...
+                                        'Run it with lang=''matlab'', or drop it: it is an oracle for the lumping ' ...
+                                        'in mam_bgchain_env and returns the same numbers on every model.']);
+                                end
                             case 'verbose'
                                 switch options.(fn{f})
                                     case {VerboseLevel.SILENT}
@@ -3792,6 +4101,18 @@ classdef JLINE
                 solverOptions = JLINE.parseSolverOptions(solverOptions, options);
             end
             mam = jline.solvers.mam.SolverMAM(network_object, solverOptions);
+        end
+
+        function [ag] = SolverAG(network_object, options)
+            % The agent-based (RCAT) solver. Its options carry the truncation
+            % level of an open agent and the execution backend, neither of which
+            % SolverOptions('MAM') has, so it builds AGOptions rather than the
+            % generic container.
+            solverOptions = jline.solvers.ag.AGOptions();
+            if nargin>1
+                solverOptions = JLINE.parseSolverOptions(solverOptions, options);
+            end
+            ag = jline.solvers.ag.SolverAG(network_object, solverOptions);
         end
 
         function [jmt] = SolverJMT(network_object, options)
@@ -4023,6 +4344,14 @@ classdef JLINE
             mva = jline.solvers.mva.SolverMVA(network_object, solverOptions);
         end
 
+        function [ba] = SolverBA(network_object, options)
+            solverOptions = jline.solvers.ba.SolverBA.defaultOptions();
+            if nargin>1
+                solverOptions = JLINE.parseSolverOptions(solverOptions, options);
+            end
+            ba = jline.solvers.ba.SolverBA(network_object, solverOptions);
+        end
+
         function [nc] = SolverNC(network_object, options)
             solverOptions = jline.solvers.SolverOptions(jline.lang.constant.SolverType.NC);
             if nargin>1
@@ -4035,6 +4364,11 @@ classdef JLINE
             solverOptions = jline.solvers.auto.AUTOptions();
             if nargin>1
                 solverOptions = JLINE.parseSolverOptions(solverOptions, options);
+                % AUTO carries its selection token in options.method, while the
+                % JAR keeps it in selectionMethod; without this it stays default.
+                if isfield(options,'method') && ~isempty(options.method)
+                    solverOptions.selectionMethod = options.method;
+                end
             end
             auto = jline.solvers.auto.SolverAUTO(network_object, solverOptions);
         end
@@ -4147,12 +4481,73 @@ classdef JLINE
             result.isaggregate = jresult.isaggregate;
         end
 
-        function [ln] = SolverLN(layered_network_object, options)
+        function [ln] = SolverLN(layered_network_object, options, layerSolverType)
+            % LN = SOLVERLN(LAYERED_NETWORK_OBJECT, OPTIONS, LAYERSOLVERTYPE)
+            %
+            % LAYERSOLVERTYPE is the JAR SolverType of the LAYER solvers the
+            % caller asked for. Without it the JAR falls back to its own
+            % DefaultSolverFactory, which is SolverMVA at every layer, so
+            % LN(model, @(l)NC(l,...)) under lang='java' silently answered with
+            % MVA layers -- the same defect the python bridge carries a fix for
+            % in PYLINE.SolverLN. The layer solver is what the fixed point is a
+            % fixed point OF, so substituting one answers a different question.
             solverOptions = jline.solvers.SolverOptions(jline.lang.constant.SolverType.LN);
             if nargin>1
                 solverOptions = JLINE.parseSolverOptions(solverOptions, options);
             end
-            ln = jline.solvers.ln.SolverLN(layered_network_object, solverOptions);
+            if nargin<3 || isempty(layerSolverType)
+                ln = jline.solvers.ln.SolverLN(layered_network_object, solverOptions);
+            else
+                ln = jline.solvers.ln.SolverLN(layered_network_object, layerSolverType, solverOptions);
+            end
+        end
+
+        function layerSolverType = lnLayerSolverType(solver)
+            % LAYERSOLVERTYPE = LNLAYERSOLVERTYPE(SOLVER)
+            % Resolve the JAR SolverType of the layer solver a MATLAB SolverLN
+            % was built with, refusing anything the JAR has no layer factory
+            % for. Empty means "no factory recorded", i.e. the caller kept the
+            % default and the JAR may keep its own. The factory is probed on a
+            % throwaway network, the same resolution CPPLINE.lnLayerSolver and
+            % PYLINE.lnLayerSolverName perform: under lang='java' no MATLAB
+            % layer is constructed, so there is no self.solvers to read it off.
+            layerSolverType = [];
+            if ~isprop(solver, 'solverFactory') || isempty(solver.solverFactory) || ...
+                    ~isa(solver.solverFactory, 'function_handle')
+                return
+            end
+            name = class(solver.solverFactory(CPPLINE.probeNetwork()));
+            short = upper(name);
+            if strncmp(short, 'SOLVER', 6)
+                short = short(7:end);
+            end
+            switch short
+                case 'MVA'
+                    layerSolverType = jline.lang.constant.SolverType.MVA;
+                case {'NC', 'COMOM'}
+                    layerSolverType = jline.lang.constant.SolverType.NC;
+                case {'FLD', 'FLUID'}
+                    layerSolverType = jline.lang.constant.SolverType.FLUID;
+                case 'CTMC'
+                    layerSolverType = jline.lang.constant.SolverType.CTMC;
+                case 'MAM'
+                    layerSolverType = jline.lang.constant.SolverType.MAM;
+                case 'SSA'
+                    layerSolverType = jline.lang.constant.SolverType.SSA;
+                case 'JMT'
+                    layerSolverType = jline.lang.constant.SolverType.JMT;
+                case 'QNS'
+                    layerSolverType = jline.lang.constant.SolverType.QNS;
+                case 'AUTO'
+                    layerSolverType = jline.lang.constant.SolverType.AUTO;
+                otherwise
+                    line_error(mfilename, sprintf(['lang=''java'' runs the LQN layers under ' ...
+                        'SolverAUTO, SolverCTMC, SolverFluid, SolverJMT, SolverMAM, SolverMVA, ' ...
+                        'SolverNC, SolverQNS or SolverSSA; this SolverLN builds a ''%s'' layer ' ...
+                        'solver, which the JAR has no layer factory for. Solve it with ' ...
+                        'lang=''matlab'', or build the SolverLN with one of those layer ' ...
+                        'factories.'], name));
+            end
         end
 
         function jfun = reward_handle_to_tabulatedfun(rewardFn, sn)
@@ -4204,8 +4599,8 @@ classdef JLINE
             end
 
             % Index maps for RewardState, as in solver_ctmc_reward
-            nodeToStationMap = containers.Map('KeyType', 'int32', 'ValueType', 'int32');
-            classToIndexMap = containers.Map('KeyType', 'int32', 'ValueType', 'int32');
+            nodeToStationMap = configureDictionary('int32', 'int32');
+            classToIndexMap = configureDictionary('int32', 'int32');
             for ind = 1:sn.nnodes
                 if sn.isstation(ind)
                     nodeToStationMap(int32(ind)) = sn.nodeToStation(ind);

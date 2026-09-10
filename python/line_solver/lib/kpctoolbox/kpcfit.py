@@ -92,7 +92,7 @@ def kpcfit_tol() -> float:
 
 def kpcfit_version() -> str:
     """Return KPC-Toolbox version string."""
-    return '0.3.2'
+    return '0.5.0'
 
 
 def logspacei(start: int, end: int, n: int) -> np.ndarray:
@@ -131,7 +131,11 @@ def kpcfit_init(trace: ArrayLike, ac_lags: ArrayLike = None,
     Returns:
         KpcfitTraceData structure with preprocessed data
     """
-    from line_solver.api.trace import trace_acf, trace_joint, trace_bicov
+    # Use the MATLAB-parity estimators from lib.kpctoolbox.trace, NOT the ones
+    # in api.trace: api.trace._autocov normalises lag p by (M-p)/M while
+    # MATLAB's autocov.m normalises by (M-1-p)/(M-1), which shifts every AC
+    # coefficient by ~4e-8 per lag and propagates into the whole fit.
+    from line_solver.lib.kpctoolbox.trace import trace_acf, trace_joint, trace_bicov
 
     S = np.asarray(trace, dtype=np.float64).ravel()
     n = len(S)
@@ -140,7 +144,8 @@ def kpcfit_init(trace: ArrayLike, ac_lags: ArrayLike = None,
 
     # Default AC lags
     if ac_lags is None:
-        ac_lags = logspacei(1, n // n_min_support_ac, 500)
+        # MATLAB: unique(logspacei(1, ceil(n/nMinSupportAC), 500)) - ceil, not floor
+        ac_lags = np.unique(logspacei(1, -(-n // n_min_support_ac), 500))
     ac_lags = np.asarray(ac_lags, dtype=int)
 
     # Default BC grid lags
@@ -156,7 +161,7 @@ def kpcfit_init(trace: ArrayLike, ac_lags: ArrayLike = None,
     # Compute autocorrelations
     print("init: computing moments from the trace")
     AC = trace_acf(S, ac_lags)
-    ACFull = trace_acf(S, np.arange(1, n // n_min_support_ac + 1))
+    ACFull = trace_acf(S, np.arange(1, -(-n // n_min_support_ac) + 1))
 
     # Apply smoothing if requested
     if smooth > 0:
@@ -977,7 +982,8 @@ def kpcfit_manual(NumMAPs: int, E: np.ndarray, AC: np.ndarray,
     D0, D1 = bestMAP
     print(f"Returned {composedMAPs} MAPs:")
     print(f"1) fAC={fac:.6f}, fBC={fbc:.6f}, SCV={map_scv(D0, D1):.6f}, "
-          f"ACF(1)={float(map_acf(D0, D1, 1)):.6f}, SKEW={map_skew(D0, D1):.6f}")
+          f"ACF(1)={float(np.ravel(map_acf(D0, D1, 1))[0]):.6f}, "
+          f"SKEW={map_skew(D0, D1):.6f}")
 
     otherMAPs = []
     otherFACs = []
@@ -992,7 +998,7 @@ def kpcfit_manual(NumMAPs: int, E: np.ndarray, AC: np.ndarray,
         D0o, D1o = MAPs[i]
         print(f"{i+1}) fAC={FACs[i]:.6f}, fBC={FBCs[i]:.6f}, "
               f"SCV={map_scv(D0o, D1o):.6f}, "
-              f"ACF(1)={float(map_acf(D0o, D1o, 1)):.6f}, "
+              f"ACF(1)={float(np.ravel(map_acf(D0o, D1o, 1))[0]):.6f}, "
               f"SKEW={map_skew(D0o, D1o):.6f}")
 
     print()
@@ -1105,7 +1111,7 @@ def kpcfit_auto(trace_data: KpcfitTraceData,
         print("          Lag                     Original Trace          Fitted MAP")
         n_show = min(10, len(trace_data.ACLags))
         for k in range(n_show):
-            acf_k = float(map_acf(D0, D1, int(trace_data.ACLags[k])))
+            acf_k = float(np.ravel(map_acf(D0, D1, int(trace_data.ACLags[k])))[0])
             print(f"   {trace_data.ACLags[k]:10d}   {trace_data.AC[k]:.10e}   {acf_k:.10e}")
 
     return bestMAP, fac, fbc, kpcMAPs, otherMAPs, otherFACs, otherFBCs, otherSubMAPs
@@ -1166,7 +1172,9 @@ def kpcfit_ph_prony(E: np.ndarray, n: int) -> Tuple[np.ndarray, np.ndarray]:
     f = np.array([factorial(i) for i in range(2 * n)])
 
     m = kpcfit_hyper_charpoly(E, n)
-    theta = np.roots(m[::-1])  # Roots of characteristic polynomial
+    # np.roots and MATLAB roots() share the highest-degree-first convention, so
+    # the coefficient vector must be passed as-is (matching MATLAB roots(m)).
+    theta = np.roots(m)  # Roots of characteristic polynomial
 
     # Filter real positive roots
     theta = np.real(theta[np.abs(np.imag(theta)) < 1e-10])
@@ -1251,10 +1259,20 @@ def kpcfit_ph_options(E: np.ndarray, **kwargs) -> KpcfitPhOptions:
         options.min_num_states, options.max_num_states = (
             options.max_num_states, options.min_num_states)
 
-    # Check moment requirements
+    # Check moment requirements. When too few moments are supplied, reduce
+    # MaxNumStates to the largest power-of-2 order that is fittable (matching
+    # MATLAB kpcfit_ph_options) instead of raising.
     if 2 * options.max_num_states - 1 > len(E):
-        raise ValueError(f"MaxNumStates of {options.max_num_states} requires "
-                        f"at least {2 * options.max_num_states - 1} moments.")
+        max_feasible = 2 ** int(math.floor(math.log2(max(1, (len(E) + 1) // 2))))
+        warnings.warn(
+            f"MaxNumStates of {options.max_num_states} requires "
+            f"{2 * options.max_num_states - 1} moments but only {len(E)} "
+            f"supplied; reduced to {max_feasible}.",
+            stacklevel=2,
+        )
+        options.max_num_states = max_feasible
+        if options.min_num_states > max_feasible:
+            options.min_num_states = max_feasible
 
     return options
 

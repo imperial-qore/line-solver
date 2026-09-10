@@ -10,7 +10,7 @@ house of moments, so an agreement is a genuine check of the chain
     G ratios -> survival array -> binomial -> factorial -> raw -> central
 
 rather than a round trip. The identities behind the two routes are proved
-symbolically in sage/proofs/qlen_tail_moments.py.
+symbolically in io/sage/proofs/qlen_tail_moments.py.
 """
 
 from itertools import product

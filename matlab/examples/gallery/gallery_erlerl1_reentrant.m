@@ -10,8 +10,8 @@ oclass1 = OpenClass(model, 'Class1');
 oclass2 = OpenClass(model, 'Class2');
 source.setArrival(oclass1, Erlang.fitMeanAndOrder(1,n));
 source.setArrival(oclass2, Disabled());
-queue.setService(oclass1, Erlang.fitMeanAndOrder(0.5,n));
-queue.setService(oclass2, Exp(3));
+queue.setService(oclass1, Erlang.fitMeanAndOrder(0.1,n));
+queue.setService(oclass2, Exp(10));
 %% Block 3: topology
 P = model.initRoutingMatrix;
 P{oclass1,oclass1}(source,queue)=1;

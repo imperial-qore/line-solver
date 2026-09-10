@@ -14,9 +14,14 @@ self.convertSignalPlaceholders();
 K = getNumberOfClasses(self);
 for ist=1:self.getNumberOfNodes
     if isa(self.nodes{ist}, 'Cache')
+        % popularity is keyed (itemSetIndex, class): fill this cache's own row.
+        % Linear indexing scatters across rows as soon as a second cache gives the
+        % cell more than one row.
+        ir = self.nodes{ist}.items.index;
         for k=1:K
-            if k > length(self.nodes{ist}.popularity) || isempty(self.nodes{ist}.popularity{k})
-                self.nodes{ist}.popularity{k} = Disabled.getInstance();
+            if size(self.nodes{ist}.popularity,1) < ir || size(self.nodes{ist}.popularity,2) < k ...
+                    || isempty(self.nodes{ist}.popularity{ir,k})
+                self.nodes{ist}.popularity{ir,k} = Disabled.getInstance();
             end
         end
         if isempty(self.nodes{ist}.accessProb)
@@ -75,7 +80,7 @@ if isempty(self.sn)
                 end
                 % Also check for heterogeneous services
                 if ~hasEnabledService && isprop(self.nodes{ist}, 'heteroServiceDistributions') && ~isempty(self.nodes{ist}.heteroServiceDistributions)
-                    if self.nodes{ist}.heteroServiceDistributions.Count > 0
+                    if numEntries(self.nodes{ist}.heteroServiceDistributions) > 0
                         hasEnabledService = true;
                     end
                 end

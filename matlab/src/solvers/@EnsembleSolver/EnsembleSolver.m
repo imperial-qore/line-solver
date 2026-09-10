@@ -135,24 +135,24 @@ classdef EnsembleSolver < Solver
             end
         end
         
-        % Kotlin-style aliases for get* methods
+        % Aliases for get* methods
         function solver = solver(self, e)
-            % SOLVER Kotlin-style alias for getSolver
+            % SOLVER Alias for getSolver
             solver = self.getSolver(e);
         end
         
         function it = iteration(self)
-            % ITERATION Kotlin-style alias for getIteration
+            % ITERATION Alias for getIteration
             it = self.getIteration();
         end
         
         function e = numberOfModels(self)
-            % NUMBEROFMODELS Kotlin-style alias for getNumberOfModels
+            % NUMBEROFMODELS Alias for getNumberOfModels
             e = self.getNumberOfModels();
         end
         
         function avg_tables = ensembleAvgTables(self)
-            % ENSEMBLEAVGTABLES Kotlin-style alias for getEnsembleAvgTables
+            % ENSEMBLEAVGTABLES Alias for getEnsembleAvgTables
             avg_tables = self.getEnsembleAvgTables();
         end
 
@@ -168,7 +168,7 @@ classdef EnsembleSolver < Solver
         end
 
         function varargout = ensembleAvg(self)
-            % ENSEMBLEAVG Kotlin-style alias for getEnsembleAvg
+            % ENSEMBLEAVG Alias for getEnsembleAvg
             [varargout{1:nargout}] = self.getEnsembleAvg();
         end
 

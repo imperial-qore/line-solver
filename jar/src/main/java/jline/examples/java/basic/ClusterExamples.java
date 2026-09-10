@@ -13,6 +13,7 @@ import jline.solvers.NetworkAvgTable;
 import jline.solvers.ldes.SolverLDES;
 import jline.solvers.mva.MVA;
 import jline.solvers.mva.SolverMVA;
+import jline.solvers.ssa.SolverSSA;
 
 import java.util.Map;
 import java.util.Scanner;
@@ -85,6 +86,13 @@ public class ClusterExamples {
         new MVA(model).getAvgTable().print();
     }
 
+    /** Mixed variant: an open class and a closed class share the same two servers. */
+    public static void ex7_mixed() {
+        System.out.println("\n--- ex7_mixed: open + closed classes on shared servers ---");
+        Network model = ClusterModel.cl_mixed();
+        new MVA(model).getAvgTable().print();
+    }
+
     /** Sweeps the arrival rate to see how response time grows toward saturation. */
     public static void ex6_sweep() {
         System.out.println("\n--- ex6_sweep: arrival-rate sweep ---");
@@ -95,6 +103,51 @@ public class ClusterExamples {
                 new double[]{0.2, 0.5, 0.9, 1.5}, SolverMVA.class);
         for (Map.Entry<Double, NetworkAvgTable> e : sweep.entrySet()) {
             System.out.println("\nlambda = " + e.getKey());
+            e.getValue().print();
+        }
+    }
+
+    /**
+     * Sweeps the number of parallel servers, the reference's {@code cl_stations}.
+     *
+     * The cluster is declared at one station and 1.6 arrivals against a service
+     * rate of 1.0 -- unstable as declared, which is the point: the sweep is over
+     * the server count that makes it stable, and utilization falls as 1/m while
+     * the response time collapses once m passes the offered load.
+     */
+    public static void cl_stations() {
+        System.out.println("\n--- cl_stations: sweep the number of servers ---");
+        Cluster cluster = new Cluster().setNumStations(1).setArrivalRate(1.6).setServiceRate(1.0)
+                .setScheduling(SchedStrategy.PS)
+                .setDispatching(RoutingStrategy.RAND);
+        Map<Integer, NetworkAvgTable> sweep = cluster.sweepNumStations(
+                new int[]{2, 3, 4, 6}, SolverMVA.class);
+        for (Map.Entry<Integer, NetworkAvgTable> e : sweep.entrySet()) {
+            System.out.println("\nstations = " + e.getKey());
+            e.getValue().print();
+        }
+    }
+
+    /**
+     * Compares scheduling disciplines on one cluster, the reference's
+     * {@code cl_scheduling}.
+     *
+     * Service is hyperexponential (SCV 4), which is where the disciplines part
+     * company: PS is insensitive to the service distribution beyond its mean,
+     * FCFS is not, so the queue lengths differ even though the load does not.
+     * The simulator is used rather than MVA because FCFS with non-exponential
+     * service is outside the product-form assumptions.
+     */
+    public static void cl_scheduling() {
+        System.out.println("\n--- cl_scheduling: FCFS against PS at SCV 4 ---");
+        Cluster cluster = new Cluster().setNumStations(3).setArrivalRate(0.9).setServiceRate(0.5)
+                .setDispatching(RoutingStrategy.RAND);
+        cluster.setServiceSCV(4.0);
+        Map<SchedStrategy, NetworkAvgTable> results = cluster.compareScheduling(
+                model -> new SolverSSA(model, "seed", 23000, "samples", 20000).getAvgTable(),
+                SchedStrategy.FCFS, SchedStrategy.PS);
+        for (Map.Entry<SchedStrategy, NetworkAvgTable> e : results.entrySet()) {
+            System.out.println("\nScheduling = " + e.getKey());
             e.getValue().print();
         }
     }
@@ -110,6 +163,12 @@ public class ClusterExamples {
         pauseForUser();
         ex5_multiclass();
         pauseForUser();
+        ex7_mixed();
+        pauseForUser();
         ex6_sweep();
+        pauseForUser();
+        cl_stations();
+        pauseForUser();
+        cl_scheduling();
     }
 }

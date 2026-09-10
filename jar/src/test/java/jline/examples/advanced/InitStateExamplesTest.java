@@ -17,7 +17,7 @@ import jline.solvers.Solver;
 import jline.solvers.SolverOptions;
 import jline.solvers.SolverTranHandles;
 import jline.solvers.ctmc.SolverCTMC;
-import jline.solvers.fluid.SolverFluid;
+import jline.solvers.fluid.SolverFLD;
 import jline.solvers.wrappers.jmt.SolverJMT;
 import jline.solvers.mva.SolverMVA;
 import jline.solvers.nc.SolverNC;
@@ -121,11 +121,11 @@ public class InitStateExamplesTest {
             
             // Run Fluid solver tests
             model.initDefault();
-            SolverFluid fluidSolver1 = new SolverFluid(model, options);
+            SolverFLD fluidSolver1 = new SolverFLD(model, options);
             assertNotNull(fluidSolver1, "Fluid solver should initialize successfully");
             
             model.initFromMarginal(marginalState);
-            SolverFluid fluidSolver2 = new SolverFluid(model, options);
+            SolverFLD fluidSolver2 = new SolverFLD(model, options);
             assertNotNull(fluidSolver2, "Fluid solver should initialize successfully with marginal state");
             
             // The key verification is that different initial states are properly set
@@ -195,12 +195,12 @@ public class InitStateExamplesTest {
             
             // Test Fluid solver as well
             model1.initDefault();
-            SolverFluid fluidSolver1 = new SolverFluid(model1, options);
+            SolverFLD fluidSolver1 = new SolverFLD(model1, options);
             assertNotNull(fluidSolver1, "Fluid solver should initialize successfully");
             
             Network model2Fluid = createInitStateFcfsNonexpModel();
             model2Fluid.initFromMarginal(new Matrix("[0,0;4,1]"));
-            SolverFluid fluidSolver2 = new SolverFluid(model2Fluid, options);
+            SolverFLD fluidSolver2 = new SolverFLD(model2Fluid, options);
             assertNotNull(fluidSolver2, "Fluid solver should initialize successfully for marginal init");
             
             // The key aspect verified: different initialization methods produce different transient behaviors
@@ -334,17 +334,21 @@ public class InitStateExamplesTest {
             options.verbose = VerboseLevel.SILENT;
             options.seed = 23000;
             
-            SolverFluid fluidSolver = new SolverFluid(model, options);
+            SolverFLD fluidSolver = new SolverFLD(model, options);
             NetworkAvgTable fluidTable = fluidSolver.getAvgTable();
             assertNotNull(fluidTable);
             
-            // Expected values from ground truth (Fluid)
-            double[] expectedQLen = {0.395256930189445, 1.61264827517294, 1.18577079056834, 0.806324137586468};
-            double[] expectedUtil = {0.395256930189445, 1.61264827517294, 0.592885395284168, 0.403162068793234};
-            double[] expectedRespT = {0.333333333333333, 2.0, 10.0, 1.0};
-            double[] expectedResidT = {0.198412698412698, 0.80952380952381, 0.595238095238095, 0.404761904761905};
-            double[] expectedArvR = {1.18577079056834, 0.806324137586468, 0.118577079056834, 0.806324137586468};
-            double[] expectedTput = {1.18577079056834, 0.806324137586468, 0.118577079056834, 0.806324137586468};
+            // Re-recorded 2026-09-01. d81681dff tightened the min-normal closure
+            // from CoarseTol (1e-3) to mom_tol = 1e-6, which MOVES the converged
+            // answer, so the row it replaces was stale rather than wrong -- see
+            // _kb/11-conventions-and-gotchas.md. Confirmed by two other
+            // codebases: native python to 1.7e-10 and MATLAB R2026a to 2.7e-7.
+            double[] expectedQLen = {0.33558921751777687, 1.3692040074724852, 1.3661945089318894, 0.9290122660749605};
+            double[] expectedUtil = {0.33558921751777687, 1.3692040074724852, 0.5033838262759667, 0.3423010018681347};
+            double[] expectedRespT = {0.33333333333333337, 2.0, 13.570107317898904, 1.3570107317898614};
+            double[] expectedResidT = {0.19841269841269846, 0.8095238095238094, 0.8077444832082681, 0.5492662485816107};
+            double[] expectedArvR = {1.0067676525533074, 0.6846020037361529, 0.10067676525533305, 0.6846020037362426};
+            double[] expectedTput = {1.0067676525533304, 0.6846020037362426, 0.10067676525519335, 0.6846020037362694};
             
             assertTableMetrics(fluidTable, expectedQLen, expectedUtil, expectedRespT, 
                               expectedResidT, expectedArvR, expectedTput);

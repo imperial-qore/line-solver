@@ -1,4 +1,5 @@
-% Layered Queueing Network (LQN) - Production 4-Tier J2EE Architecture with Cache
+function model = gallery_multitier_storage()
+% GALLERY_MULTITIER_STORAGE Layered Queueing Network (LQN) - Production 4-Tier J2EE with Cache
 %
 % This example extends the 4-tier J2EE model (example_layered_production_4tier.m)
 % with a dedicated CACHE LAYER (Layer 4), demonstrating:
@@ -38,7 +39,6 @@
 %
 % Compare with: example_layered_production_4tier.m (non-cached variant - WORKS)
 
-clear all;
 
 %% Create the model
 model = LayeredNetwork('testLQN3_Cache');
@@ -148,31 +148,9 @@ T2.addPrecedence(ActivityPrecedence.Serial(C3, C4, C5));
 % Cache access precedence: arrival determines hit/miss
 T3.addPrecedence(ActivityPrecedence.CacheAccess(D0, {D1a, D1b}));
 
-%% SOLVE WITH SOLVERMVA (Layer solver) inside LN
-fprintf('\n=== Solving 4-Tier LQN with Cache using LN + MVA ===\n');
-lnoptions = LN.defaultOptions;
-lnoptions.verbose = VerboseLevel.STD;
-mvaopt = MVA.defaultOptions;
-mvaopt.verbose = VerboseLevel.SILENT;
-
-solver = LN(model, @(layer) MVA(layer, mvaopt), lnoptions);
-AvgTable = solver.getAvgTable;
-
-fprintf('\n=== Results ===\n');
-disp(AvgTable);
-
-%% Display cache statistics if available
-fprintf('\n=== Cache Performance (if available) ===\n');
-if isprop(solver, 'cache_stats')
-    disp(solver.cache_stats);
-else
-    fprintf('Cache statistics not available from this solver.\n');
+% A gallery entry is a model factory and nothing else: it returns the model and
+% leaves the choice of solver to the caller, so this file ends here. To solve it,
+%
+%   model = gallery_multitier_storage();
+%   AvgTable = LN(model, @(layer) MVA(layer)).getAvgTable
 end
-
-%% Comparison notes
-fprintf('\n=== Comparison with Non-Cached Variant ===\n');
-fprintf('Expected impacts of cache layer:\n');
-fprintf('- Lower product info query response times (cache hits)\n');
-fprintf('- Higher overall throughput (cached lookups are fast)\n');
-fprintf('- Cache replacement activity (LRU eviction)\n');
-fprintf('See: example_layered_production_4tier.m for non-cached baseline\n');

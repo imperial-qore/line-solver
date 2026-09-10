@@ -22,7 +22,11 @@ function [p,Qperm,Qdec,eps,epsMAX,P,B,C,q]=ctmc_courtois(Q,MS,q)
 % max|q_ii| strictly, which also keeps P aperiodic. An explicit q (nargin==3)
 % overrides the derived value.
 v=[];
-nMacroStates = size(MS,1); % Number of macro-states
+% NUMEL, NOT SIZE(MS,1). MS is a cell array of index sets and its ORIENTATION
+% carries no meaning, but size(MS,1) is 1 for the row form {a,b}, so a row
+% partition was silently analysed as its FIRST macro-state alone: p came back
+% shorter than the state space and eps described a partition nobody asked for.
+nMacroStates = numel(MS); % Number of macro-states
 %% REARRANGE INFINITESIMAL GENERATOR ACCORDING TO THE MACROSTATES
 
 for n=1:nMacroStates
@@ -32,7 +36,7 @@ end
 Qperm=Q(v,v); % reorder according to the new macro-states
 Qdec=Qperm;
 procRows=0; %processed rows
-for i = 1:size(MS,1)  % for each macro-state
+for i = 1:nMacroStates  % for each macro-state
     if procRows >0
         Qdec((procRows + 1):(procRows + length(MS{i})),1:procRows)=0;
     end
@@ -70,16 +74,16 @@ eps=max(sum(B,2));
 % see _kb/03-api-layer.md (mc/ additions) -- eps/epsMAX always computed, not nargout-gated
 if true
 procRows=0; %processed rows
-for i = 1:size(MS,1)  % for each macro-state
+for i = 1:nMacroStates  % for each macro-state
     for j=1:length(MS{i})
         pos=j;
         A(procRows+j,procRows+pos)=1-(sum(A(procRows+j,setdiff((procRows+1):(procRows+length(MS{i})),(procRows+pos)))));
     end
     procRows = procRows + length(MS{i});
 end
-eigMS = zeros(1,size(MS,1));
+eigMS = zeros(1,nMacroStates);
 procRows=0; %processed rows
-for i=1:size(MS,1) % for each macro-state
+for i=1:nMacroStates % for each macro-state
     e=sort(abs(eig(A((procRows + 1):(procRows + length(MS{i})),(procRows + 1):(procRows + length(MS{i}))))));
     if length(e)>1
         eigMS(i)=e(end-1); % take the second largest eigvalues of the block

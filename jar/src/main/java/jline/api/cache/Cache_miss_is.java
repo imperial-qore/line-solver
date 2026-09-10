@@ -25,14 +25,30 @@ public final class Cache_miss_is {
      * @return Ret.cacheMissSpm containing miss rate metrics (M, MU, MI, pi0, lE).
      */
     public static Ret.cacheMissSpm cache_miss_is(Matrix gamma, Matrix m, MatrixCell lambda, int samples) {
+        return cache_miss_is(gamma, m, lambda, samples, null, null);
+    }
+
+    /**
+     * Computes cache miss rates by importance sampling, optionally under
+     * per-list storage cost caps.
+     *
+     * @param gamma Cache access factors (n x h).
+     * @param m Cache capacity vector (1 x h).
+     * @param lambda Request rates per user per item.
+     * @param samples Number of Monte Carlo samples.
+     * @param sigma Item storage costs (sizes); null or empty for none.
+     * @param cap Per-list storage cost caps; null or empty for none.
+     * @return miss rate metrics (M, MU, MI, pi0, lE).
+     */
+    public static Ret.cacheMissSpm cache_miss_is(Matrix gamma, Matrix m, MatrixCell lambda, int samples, Matrix sigma, Matrix cap) {
         int n = gamma.getNumRows();
 
         // Compute normalizing constant via importance sampling
-        Ret.cacheIs isResult = Cache_is.cache_is(gamma, m, samples);
+        Ret.cacheIs isResult = Cache_is.cache_is(gamma, m, samples, sigma, cap);
         double lE = isResult.lE;
 
         // Compute hit probabilities via importance sampling
-        Matrix pij = Cache_prob_is.cache_prob_is(gamma, m, samples);
+        Matrix pij = Cache_prob_is.cache_prob_is(gamma, m, samples, sigma, cap);
 
         // Extract miss probabilities (first column)
         double[] pi0 = new double[n];

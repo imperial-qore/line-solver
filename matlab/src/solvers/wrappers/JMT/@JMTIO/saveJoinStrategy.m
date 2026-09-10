@@ -41,7 +41,10 @@ for r=1:numOfClasses
             reqNode.setAttribute('classPath', 'java.lang.Integer');
             reqNode.setAttribute('name', 'numRequired');
             valueNode = simDoc.createElement('value');
-            valueNode.appendChild(simDoc.createTextNode(int2str(sn.nodeparam{ind}.joinRequired{r})));
+            % The field is fanIn, which is what refreshLocalVars writes;
+            % `joinRequired` is the Joiner SECTION's property name and has never
+            % existed on nodeparam, so every partial Join errored on export.
+            valueNode.appendChild(simDoc.createTextNode(int2str(sn.nodeparam{ind}.fanIn{r})));
             reqNode.appendChild(valueNode);
             joinStrategyNode.appendChild(reqNode);
             strategyNode.appendChild(joinStrategyNode);

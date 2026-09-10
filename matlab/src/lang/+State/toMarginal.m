@@ -191,11 +191,13 @@ switch sn.sched(ist)
             nir(:,r) = sir(:,r) + sum(space_buf==r,2); % class-r jobs in station
         end
     case {SchedStrategy.FCFSPI, SchedStrategy.FCFSPIPRIO, SchedStrategy.FCFSPR, SchedStrategy.FCFSPRPRIO, SchedStrategy.LCFSPI, SchedStrategy.LCFSPIPRIO, SchedStrategy.LCFSPR, SchedStrategy.LCFSPRPRIO}
-        if length(space_buf)>1
-            space_buf = space_buf(1:2:end);
-            %space_bufphase = space_buf(2:2:end);
+        % buffer holds (class,phase) pairs: slice the class columns per row.
+        % length()+linear indexing would flatten a multi-row state matrix.
+        if size(space_buf,2)>1
+            space_bufcls = space_buf(:,1:2:end);
+            %space_bufphase = space_buf(:,2:2:end);
             for r=1:R
-                nir(:,r) = sir(:,r) + sum(space_buf==r,2); % class-r jobs in station
+                nir(:,r) = sir(:,r) + sum(space_bufcls==r,2); % class-r jobs in station
             end
         else
             nir = sir;

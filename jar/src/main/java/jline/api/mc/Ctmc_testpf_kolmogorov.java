@@ -15,13 +15,15 @@ public final class Ctmc_testpf_kolmogorov {
 
     /**
      * Test if a CTMC has product form using Kolmogorov's criteria.
+     *
+     * Both the forward and the reverse product are taken on the same generator.
+     * Taking the reverse product on the time-reversed generator instead, as this
+     * method did before 2026-08-01, makes the test a tautology: the stationary
+     * ratios of Qrev telescope to 1 around any cycle, so the two products were
+     * identically equal and every chain passed.
      */
     public static boolean ctmc_testpf_kolmogorov(Matrix Q) {
         Matrix Q_norm = ctmc_makeStochastic(Q);
-
-        Matrix pi = Ctmc_solve.ctmc_solve(Q_norm);
-
-        Matrix Qr = Ctmc_timereverse.ctmc_timereverse(Q_norm);
 
         int n = Q.length();
 
@@ -45,20 +47,18 @@ public final class Ctmc_testpf_kolmogorov {
                     for (List<Integer> cycle : cycles) {
                         List<Integer> completeCycle = new ArrayList<Integer>(cycle);
                         completeCycle.add(start);
-                        List<Integer> reverseCycle = new ArrayList<Integer>(completeCycle);
-                        java.util.Collections.reverse(reverseCycle);
 
                         double q = 1.0;
+                        double qr = 1.0;
                         for (int i = 0; i < completeCycle.size() - 1; i++) {
                             q *= Q_norm.get(completeCycle.get(i), completeCycle.get(i + 1));
+                            qr *= Q_norm.get(completeCycle.get(i + 1), completeCycle.get(i));
                         }
 
-                        double qr = 1.0;
-                        for (int i = 0; i < reverseCycle.size() - 1; i++) {
-                            qr *= Qr.get(reverseCycle.get(i), reverseCycle.get(i + 1));
+                        if (q == 0.0) {
+                            continue;
                         }
-
-                        if (Math.abs(q - qr) / q > 1e-6) {
+                        if (Math.abs(q - qr) / Math.abs(q) > 1e-6) {
                             return false;
                         }
                     }

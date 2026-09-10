@@ -3,14 +3,13 @@ package jline.examples.java.advanced;
 import jline.lang.Network;
 import jline.solvers.NetworkSolver;
 import jline.solvers.wrappers.jmt.JMT;
-import jline.solvers.SolverOptions;
 import java.util.Scanner;
 
 /**
  * Examples demonstrating switchover times in queueing systems.
  * 
- * This class provides Java implementations corresponding to the Kotlin notebooks
- * in jline.examples.kotlin.advanced.switchoverTimes package.
+ * This class provides Java implementations corresponding to the example notebooks
+ * in jline.examples.java.advanced.switchoverTimes package.
  */
 public class SwitchoverTimesExamples {
 
@@ -49,13 +48,12 @@ public class SwitchoverTimesExamples {
     public static void switchover_basic() throws Exception {
         Network model = SwitchoverTimesModel.switchover_basic();
         
-        NetworkSolver solver = new JMT(model, "seed", 12345);
+        // The reference's own seed and its own run length, which is the engine
+        // default: setOptions(defaultOptions()) would REPLACE the seed set here
+        // with 0, and a zero seed is drawn at random, so the row would not repeat.
+        NetworkSolver solver = new JMT(model, "seed", 23000, "keep", true);
         
         try {
-            SolverOptions options = JMT.defaultOptions();
-            options.samples = 100000;
-            ((JMT)solver).setOptions(options);
-            
             solver.getAvgTable().print();
         } catch (Exception e) {
         }

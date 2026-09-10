@@ -70,8 +70,8 @@ rk = keys(ch.retrievalSystemQueueIndices);
 if numel(rk) ~= 1
     line_error(mfilename, 'Retrieval analysis supports a single read class.');
 end
-jobinClass = double(rk{1}) + 1;               % stored 0-indexed
-queueNodes = ch.retrievalSystemQueueIndices(rk{1});
+jobinClass = double(rk(1)) + 1;               % stored 0-indexed
+queueNodes = ch.retrievalSystemQueueIndices{rk(1)};
 queueNodes = double(queueNodes(:).');
 S = numel(queueNodes);
 if S == 0

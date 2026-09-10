@@ -103,7 +103,7 @@ def pfqn_mvacld(L: np.ndarray, N: np.ndarray,
     single-customer (SCSL) chains pinned at center j. P^k_j(n,v) is the
     probability of n customers at center j -- EXCLUDING the v_j SCSL customers
     there -- in the network with normalizing constant G_k(v). Writing tau_k(v,i)
-    for the throughput of an SCSL chain that replaces chain k at center i:
+    for the throughput of an SCSL chain that replaces chain k at center i::
 
         tau_k(v,i)  = T_ik^-1 sum_{n=0}^{k-1} P^{k-1}_i(n,v+1_i)
                                  * mu_i(n+v_i+1)/(n+v_i+1)                   (21)
@@ -120,7 +120,7 @@ def pfqn_mvacld(L: np.ndarray, N: np.ndarray,
     be assumed PS with no loss of generality, since product-form measures do not
     depend on it.
 
-    This implementation writes (23)-(24) in the reference-station-free form
+    This implementation writes (23)-(24) in the reference-station-free form::
 
         c_i(k,v)      = sum_{n=0}^{k-1} P^{k-1}_i(n,v+1_i)
                             * mu_i(n+v_i+1)/(n+v_i+1)
@@ -152,17 +152,20 @@ def pfqn_mvacld(L: np.ndarray, N: np.ndarray,
             i.e. all centers SSFR, in which case results agree with pfqn_mvac)
 
     Returns:
-        Tuple of (XN, QN, UN, CN, pij):
+        Tuple of (XN, QN, UN, CN, pij)::
+
             XN: Per-class throughput at the reference station (R,)
             QN: Per-class mean queue-length at the QLD centers (M x R)
             UN: Utilization of each center (M,), 1 - P_j(0). PER-STATION, not
                 per-class, as in pfqn_mvald and pfqn_dac: for a load-dependent
                 center the per-class product XN[r]*L[j,r] of pfqn_mvac is NOT
                 the utilization
+
             CN: Per-class cycle time exclusive of think time (R,),
                 N[r]/XN[r]-Z[r], as in pfqn_mvald and pfqn_dac. NOT the (M x R)
                 per-station residence time of pfqn_mvac: the whole LD family
                 reports a cycle time here
+
             pij: Marginal queue-length probabilities (M x (sum(N)+1)),
                  pij[j,n] = P(n jobs at center j)
 

@@ -17,10 +17,11 @@ from ...constants import default_verbose
 from ...api.sn.transforms import sn_get_residt_from_respt
 from ...api.sn.getters import sn_get_arvr_from_tput
 from ...api.sn.network_struct import NodeType
+from ..fjtag_transform import FJTagTransformMixin
 from ...api.io.logging import line_warning
 from ...api.io.logging import line_debug
 from ...constants import GlobalConstants
-from ..base import NetworkSolver, method_label
+from ..base import NetworkSolver, method_label, method_type
 from ...indexed_table import IndexedTable
 
 
@@ -76,10 +77,15 @@ class SolverSSAOptions:
     keep: bool = False  # Keep intermediate data (for compatibility)
     record_events: bool = False  # Record per-event log for sample paths
     timeout: float = float('inf')  # Wall-clock time budget in seconds (inf = no budget)
-    lang: str = field(default_factory=lambda: os.environ.get('LINE_SOLVER_LANG', 'python'))  # env LINE_SOLVER_LANG overrides; 'python' (native) or 'java' (delegate to jline.jar via JSON)
+    lang: str = field(default_factory=lambda: os.environ.get('LINE_SOLVER_LANG', 'python'))  # env LINE_SOLVER_LANG overrides; 'python' (native), 'java' (jline.jar via JSON) or 'cpp' (line-cli via JSON)
+    # Arithmetic backend, lang='cpp' ONLY: 'double' (default), 'exact' or
+    # 'real:<digits>'. Meaningless for the other langs, which are IEEE double
+    # throughout, so line-cli is invoked without --arith unless the caller sets it.
+    # A C++ sample path is drawn from exponential clocks, so only double is served.
+    arith: Optional[str] = None
 
 
-class SolverSSA(NetworkSolver):
+class SolverSSA(FJTagTransformMixin, NetworkSolver):
     """
     Native Python SSA (Stochastic Simulation Algorithm) solver.
 
@@ -204,6 +210,16 @@ class SolverSSA(NetworkSolver):
             from ..jar_dispatch import populate_java_result
             populate_java_result(self)
             return self
+        # see _kb/06-solver-catalog.md ("Python lang='cpp' opt-in C++ delegation");
+        # an absent binary is the only automatic fallback, a C++ refusal propagates.
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            from ..cpp_dispatch import LineCliNotAvailable, populate_cpp_result
+            try:
+                populate_cpp_result(self)
+                return self
+            except LineCliNotAvailable as e:
+                line_warning("SolverSSA", "lang='cpp' requested but the C++ solver is "
+                             "unavailable (%s); falling back to lang='python'." % e)
 
         line_debug("SSA: using lang=python", options=self.options)
 
@@ -214,15 +230,8 @@ class SolverSSA(NetworkSolver):
             _ntv = np.asarray(self._sn.nodetype).ravel()
             _has_fj = bool(np.any(_ntv == NodeType.FORK) or np.any(_ntv == NodeType.JOIN))
             if _has_fj:
-                if not hasattr(self.model, 'copy') or not hasattr(self.model, 'get_linked_routing_matrix'):
-                    raise RuntimeError(
-                        "Native fork-join SSA requires a Network model (not a bare NetworkStruct).")
-                from ...io.model_adapter import ModelAdapter
-                Korig = int(self._sn.nclasses)
-                _orig_sn = self._sn
-                _fjmodel, fjsn, fjclassmap = ModelAdapter.fjtag(self.model)
-                self._sn = fjsn
-                self._fj_foldback = (fjclassmap, Korig, _orig_sn)
+                self._fjtag_require_network('SSA')
+                self._sn = self._fjtag_expand(self._sn)
 
         # see _kb/06-solver-catalog.md (SSA main section) for FCR/SPN/trace-driven support
         from ...constants import ProcessType as _PT_early
@@ -364,25 +373,12 @@ class SolverSSA(NetworkSolver):
         # Fold FJ auxiliary sibling-class columns back; recompute RN=QN/AN;
         # restore the original struct for tables.
         if getattr(self, '_fj_foldback', None) is not None:
-            from ...api.fjnative import sn_fj_foldback
-            from ...api.sn.getters import sn_get_arvr_from_tput, sn_pn_avg_rates
-            fjclassmap, Korig, _orig_sn = self._fj_foldback
             r = self._result
-            r.Q, r.U, r.R, r.T, r.C, r.X = sn_fj_foldback(
-                r.Q, r.U, r.R, r.T, r.C, r.X, fjclassmap, Korig)
-            # A Place counts tokens, not firings: rescale before deriving arrival rates.
-            r.T, _, r.R = sn_pn_avg_rates(_orig_sn, r.Q, r.T, None, r.R)
-            AN = np.atleast_2d(np.asarray(sn_get_arvr_from_tput(_orig_sn, r.T, None), dtype=float))
-            RN = np.array(r.R, dtype=float, copy=True)
-            for ist in range(RN.shape[0]):
-                for rr in range(min(Korig, RN.shape[1])):
-                    if ist < AN.shape[0] and rr < AN.shape[1] and AN[ist, rr] > 0:
-                        RN[ist, rr] = r.Q[ist, rr] / AN[ist, rr]
-            r.R = RN
+            _korig = self._fj_foldback[1]
+            AN = self._fjtag_lift(r)
             # FJ siblings land in auxiliary classes; report the routing-derived
             # arrival rate on the original (folded) struct instead.
-            r.A = AN[:, :Korig]
-            self._sn = _orig_sn
+            r.A = AN[:, :_korig]
         else:
             from ...api.sn.getters import sn_pn_avg_rates
             r = self._result
@@ -403,7 +399,8 @@ class SolverSSA(NetworkSolver):
             py_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
             runtime = self._result.runtime if hasattr(self._result, 'runtime') else 0.0
             method = self._result.method if hasattr(self._result, 'method') else 'serial'
-            print(f"SSA analysis [method: {method_label(self.options.method, method)}, lang: python, env: {py_version}] completed in {runtime:.6f}s.")
+            from line_solver.solvers.base import print_solver_banner
+            print_solver_banner(f"SSA analysis [method: {method_label(self.options.method, method)}; type: {method_type('SSA', method_label(self.options.method, method))}; lang: python; env: {py_version}] completed in {runtime:.6f}s.")
 
         return self
 
@@ -581,7 +578,7 @@ class SolverSSA(NetworkSolver):
     def getAvgTable(self) -> pd.DataFrame:
         """Get performance metrics table."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         nstations = self._result.Q.shape[0]
         nclasses = self._result.Q.shape[1]
@@ -812,19 +809,19 @@ class SolverSSA(NetworkSolver):
     def getAvgQLen(self) -> np.ndarray:
         """Get average queue lengths."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         return self._result.Q.copy()
 
     def getAvgUtil(self) -> np.ndarray:
         """Get average utilizations."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         return self._result.U.copy()
 
     def getAvgRespT(self) -> np.ndarray:
         """Get average response times."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         return self._result.R.copy()
 
     def getAvgResidT(self) -> np.ndarray:
@@ -834,7 +831,7 @@ class SolverSSA(NetworkSolver):
         WN[ist,k] = RN[ist,k] * V[ist,k] / V[refstat,refclass]
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         # Compute ResidT using proper visit ratios from network structure
         if self._sn is not None and self._sn.visits:
@@ -846,7 +843,7 @@ class SolverSSA(NetworkSolver):
     def getAvgWaitT(self) -> np.ndarray:
         """Get average waiting times."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         R = self._result.R.copy()
         if hasattr(self._sn, 'rates') and self._sn.rates is not None:
@@ -862,13 +859,42 @@ class SolverSSA(NetworkSolver):
     def getAvgTput(self) -> np.ndarray:
         """Get average throughputs."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         return self._result.T.copy()
+
+    def getStartRate(self) -> np.ndarray:
+        """(nstations x nclasses) rate at which a class-r job BEGINS or RESUMES
+        holding a server at station i, estimated over the simulated path.
+
+        At a lossless station with no in-service abandonment
+
+            getStartRate == getAvgTput + getPreemptRate
+
+        up to simulation error; SolverCTMC.getStartRate reports the exact value,
+        so the two are compared with a two-sample t-test rather than an equality.
+        """
+        if self._result is None or getattr(self._result, 'startRate', None) is None:
+            self._ensureAvgResults()
+        rate = getattr(self._result, 'startRate', None)
+        if rate is None:
+            raise RuntimeError("This solver run produced no START rates.")
+        return np.asarray(rate).copy()
+
+    def getPreemptRate(self) -> np.ndarray:
+        """(nstations x nclasses) rate at which a class-r job HOLDING A SERVER
+        at station i is pushed back into the buffer. Zero at a non-preemptive
+        station."""
+        if self._result is None or getattr(self._result, 'preemptRate', None) is None:
+            self._ensureAvgResults()
+        rate = getattr(self._result, 'preemptRate', None)
+        if rate is None:
+            raise RuntimeError("This solver run produced no PREEMPT rates.")
+        return np.asarray(rate).copy()
 
     def getAvgArvR(self) -> np.ndarray:
         """Get average arrival rates."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         if self._result.A is not None:
             return self._result.A.copy()
         # Fallback: compute from throughputs if A not available
@@ -882,7 +908,7 @@ class SolverSSA(NetworkSolver):
             For open networks: sum of response times across all stations
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         X = self._result.X.flatten()
         njobs = self._sn.njobs.flatten() if self._sn is not None and hasattr(self._sn, 'njobs') else None
@@ -906,7 +932,7 @@ class SolverSSA(NetworkSolver):
     def getAvgSysTput(self) -> np.ndarray:
         """Get system throughputs."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         return self._result.X.flatten()
 
     # =========================================================================
@@ -921,7 +947,7 @@ class SolverSSA(NetworkSolver):
             Dict with keys 'Q_ci', 'U_ci', 'R_ci', 'T_ci'
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         return {
             'Q_ci': self._result.Q_ci if self._result.Q_ci is not None else np.array([]),
@@ -933,13 +959,13 @@ class SolverSSA(NetworkSolver):
     def getTotalSimulatedTime(self) -> float:
         """Get total simulated time."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         return self._result.total_time
 
     def getSampleCount(self) -> int:
         """Get number of samples collected."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         return self._result.samples
 
     # =========================================================================
@@ -963,6 +989,8 @@ class SolverSSA(NetworkSolver):
         if getattr(self.options, 'lang', 'python') == 'java':
             from ..jar_dispatch import sample_via_jar
             return sample_via_jar(self, node, numEvents)
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            return self._sample_via_cpp(node, numEvents)
         # Enable event logging
         self.options.record_events = True
         if numEvents is not None:
@@ -997,6 +1025,22 @@ class SolverSSA(NetworkSolver):
                     events.append(SampleEvent(t=t, node=node_idx, class_idx=dst_k + 1, event='ARV'))
                     times.append(t)
 
+            # Derived tags of the sampled path, emitted at the same instant as
+            # the transition that carries them, PREEMPT before START (the victim
+            # leaves the server before the job that displaced it takes it).
+            tag_log = getattr(self._result, 'tag_log', None)
+            if tag_log:
+                for (t, st, cls_idx, kind) in tag_log:
+                    if st < 0:
+                        continue
+                    node_idx = int(station_to_node[st]) + 1 if station_to_node is not None else st + 1
+                    events.append(SampleEvent(t=t, node=node_idx, class_idx=cls_idx + 1,
+                                              event='PREEMPT' if kind == 1 else 'START'))
+                    times.append(t)
+                order = np.argsort(np.asarray(times, dtype=float), kind='stable')
+                events = [events[i] for i in order]
+                times = [times[i] for i in order]
+
             sample_path.event = events
             sample_path.t = np.array(times) if times else np.array([])
 
@@ -1008,6 +1052,49 @@ class SolverSSA(NetworkSolver):
 
         return sample_path
 
+    def _sample_via_cpp(self, node, numEvents) -> 'SamplePath':
+        """
+        `sample` under lang='cpp': the trajectory from `-s ssa -a sample`.
+
+        THE EVENT COLUMN IS A SYNCHRONIZATION INDEX, not a (node, class, kind)
+        triple, so it is expanded here against the model's own sync list -- the
+        same list the native path walks. What the engine decided is WHICH
+        synchronization fired and WHEN; the descriptor behind the index is
+        model structure and carries no simulated quantity.
+        """
+        from ..cpp_dispatch import sample_path_via_cpp
+        from ...lang.sync import refresh_sync
+
+        sn = self._sn if self._sn is not None else self.model.get_struct()
+        ind = int(getattr(node, 'index', node))
+        nevents = int(numEvents) if numEvents is not None else int(self.options.samples)
+        seed = getattr(self.options, 'seed', None)
+        p = sample_path_via_cpp(self, nevents, node=ind - 1,
+                                seed=int(seed) if seed else None)
+
+        path = SamplePath()
+        path.handle = node
+        path.t = p['t']
+        path.state = p.get('nodeState')
+        sync = refresh_sync(sn)
+        t = np.asarray(p['t'], dtype=float)
+        events = []
+        for i, e in enumerate(p['event']):
+            # None is the absorbing step: no synchronization fired there, and an
+            # index would name one that did not.
+            if e is None or e < 0 or e >= len(sync):
+                continue
+            when = float(t[i]) if i < t.size else float('nan')
+            for arm in (sync[e].active, sync[e].passive):
+                if arm is None:
+                    continue
+                events.append(SampleEvent(t=when, node=int(arm.node) + 1,
+                                          class_idx=int(arm.job_class) + 1,
+                                          event=arm.event.name))
+        path.event = events
+        path.isaggregate = False
+        return path
+
     def sampleAggr(self, node: int, numEvents: int) -> np.ndarray:
         """Sample aggregated response times."""
         return self.sample(node, numEvents)
@@ -1015,7 +1102,7 @@ class SolverSSA(NetworkSolver):
     def sampleSys(self, numEvents: int) -> np.ndarray:
         """Sample system-level response times."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         mean_cycle_time = np.mean(self._result.C)
         if mean_cycle_time <= 0:
@@ -1028,91 +1115,56 @@ class SolverSSA(NetworkSolver):
     # =========================================================================
 
     def getCdfRespT(self, R: Optional[np.ndarray] = None) -> List[Dict]:
-        """Get response time CDF."""
-        if getattr(self.options, 'lang', 'python') == 'java':
-            from ..jar_dispatch import cdf_respt_via_jar
-            return cdf_respt_via_jar(self)
-        if self._result is None:
-            self.runAnalyzer()
+        """Not available: SolverSSA does not record per-job response times.
 
-        if R is None:
-            R = self._result.R
-
-        nstations, nclasses = R.shape
-        RD = []
-
-        for i in range(nstations):
-            for r in range(nclasses):
-                mean_resp_t = R[i, r]
-                if mean_resp_t <= 0:
-                    continue
-
-                lambda_rate = 1.0 / mean_resp_t
-                quantiles = np.linspace(0.001, 0.999, 100)
-                times = -np.log(1 - quantiles) / lambda_rate
-                cdf_vals = 1 - np.exp(-lambda_rate * times)
-
-                RD.append({
-                    'station': i + 1,
-                    'class': r + 1,
-                    't': times,
-                    'p': cdf_vals,
-                })
-
-        return RD
+        A simulator must report what it measured. The base exponential fit
+        carries no information about the tail and would be indistinguishable,
+        to the caller, from a measured distribution. SSA samples state
+        trajectories, not per-job sojourn times, so there is nothing to build
+        an empirical CDF from -- the reference @SolverSSA/getCdfRespT.m refuses
+        by name, line-cli refuses -s ssa -a cdf, and so does this port.
+        """
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            # lang='cpp' cannot serve this getter; the reason is named, not
+            # blanket, as in the reference's CPPLINE.cppUnsupported arm
+            from ..cpp_dispatch import cpp_unsupported
+            cpp_unsupported(
+                self, 'getCdfRespT',
+                "SolverSSA records no per-job response times on either side, so line-cli "
+                "refuses -s ssa -a cdf by name, and so does the reference: "
+                "@SolverSSA/getCdfRespT.m raises. Use SolverJMT for a measured CDF, "
+                "SolverFLD or SolverMAM for an analytical one")
+        raise RuntimeError(
+            "SolverSSA does not record per-job response times, so it cannot return an "
+            "empirical response time CDF. Use SolverJMT for a measured CDF, or "
+            "getPerctRespT(..., 'forktail') for the analytical fork-join tail.")
 
     def getPerctRespT(
         self,
         percentiles: Optional[List[float]] = None,
-        jobclass: Optional[int] = None
+        jobclass: Optional[int] = None,
+        method: Optional[str] = None
     ) -> Tuple[List[Dict], pd.DataFrame]:
-        """Extract percentiles from response time distribution."""
-        if percentiles is None:
-            percentiles = [10, 25, 50, 75, 90, 95, 99]
+        """Extract percentiles from response time distribution.
 
-        percentiles = np.asarray(percentiles)
-        percentiles = np.clip(percentiles, 0.01, 99.99)
-        percentiles_normalized = percentiles / 100.0
-
-        if self._result is None:
-            self.runAnalyzer()
-
-        R = self._result.R
-        nstations, nclasses = R.shape
-
-        PercRT = []
-        rows = []
-        perc_col_names = [f'P{int(p)}' for p in percentiles]
-
-        for i in range(nstations):
-            for r in range(nclasses):
-                if jobclass is not None and (r + 1) != jobclass:
-                    continue
-
-                mean_resp_t = R[i, r]
-                if mean_resp_t <= 0:
-                    continue
-
-                lambda_rate = 1.0 / mean_resp_t
-                perc_values = -np.log(1 - percentiles_normalized) / lambda_rate
-
-                PercRT.append({
-                    'station': i + 1,
-                    'class': r + 1,
-                    'percentiles': percentiles.tolist(),
-                    'values': perc_values.tolist(),
-                })
-
-                row_data = {
-                    'Station': self.station_names[i] if i < len(self.station_names) else f'Station{i}',
-                    'Class': self.class_names[r] if r < len(self.class_names) else f'Class{r}',
-                }
-                for perc_col, perc_val in zip(perc_col_names, perc_values):
-                    row_data[perc_col] = perc_val
-                rows.append(row_data)
-
-        PercTable = pd.DataFrame(rows) if rows else pd.DataFrame()
-        return PercRT, PercTable
+        SSA records no per-job response times, so the default route -- reading
+        getCdfRespT, as the reference's @NetworkSolver/getPerctRespT.m does --
+        errors like the reference; only the ForkTail approximation is served.
+        This used to fabricate exponential percentiles from the mean, which is
+        indistinguishable, to the caller, from a measured tail.
+        """
+        if method is not None and method.lower() == 'forktail':
+            # Fork-join request tail latency; mirrors the MATLAB entry point
+            # @NetworkSolver/getPerctRespT.m with method='forktail'
+            from ...api.fjnative import forktail_percentiles
+            if percentiles is None:
+                percentiles = [10, 25, 50, 75, 90, 95, 99]
+            return forktail_percentiles(self, percentiles, jobclass)
+        raise RuntimeError(
+            "Unable to compute percentiles. getCdfRespT not available for this solver: "
+            "SolverSSA records no per-job response times. Use SolverJMT for measured "
+            "percentiles, or getPerctRespT(..., method='forktail') for the analytical "
+            "fork-join tail.")
 
     # =========================================================================
     # Probability Methods
@@ -1170,7 +1222,7 @@ class SolverSSA(NetworkSolver):
         Uses product of Poisson/geometric marginals as approximation.
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         Q = self._result.Q
         nclasses = Q.shape[1]
@@ -1210,7 +1262,7 @@ class SolverSSA(NetworkSolver):
             Probability (scalar float) for the specified state.
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         if station is None:
             # Return list of probabilities for each station's set state
@@ -1247,6 +1299,17 @@ class SolverSSA(NetworkSolver):
         if getattr(self.options, 'lang', 'python') == 'java':
             from ..jar_dispatch import prob_via_jar
             return prob_via_jar(self, 'prob-aggr', ist=station, kind='scalar')
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            from ..cpp_dispatch import _assert_default_state, prob_aggr_via_cpp
+            # `-s ssa -a prob` reports every station's simulated occupancy of the
+            # state the model carries, which the wire now carries too; the claim
+            # that only `-a avg` exists under `-s ssa` predates that arm.
+            _assert_default_state(self, 'getProbAggr')
+            p = prob_aggr_via_cpp(self)['probAggr']
+            ist0 = station if isinstance(station, (int, np.integer)) else station.get_station_index0()
+            if not (0 <= int(ist0) < len(p)):
+                raise ValueError("station index %r is outside 0..%d" % (ist0, len(p) - 1))
+            return float(p[int(ist0)])
         return self.getProb(station)
 
     def getProbSys(self) -> float:
@@ -1262,8 +1325,12 @@ class SolverSSA(NetworkSolver):
         if getattr(self.options, 'lang', 'python') == 'java':
             from ..jar_dispatch import prob_via_jar
             return prob_via_jar(self, 'prob-sys', kind='scalar')
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            from ..cpp_dispatch import _assert_default_state, prob_sys_via_cpp
+            _assert_default_state(self, 'getProbSys')
+            return prob_sys_via_cpp(self)
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         if self._sn is None:
             return 0.0
@@ -1291,85 +1358,19 @@ class SolverSSA(NetworkSolver):
         if getattr(self.options, 'lang', 'python') == 'java':
             from ..jar_dispatch import prob_via_jar
             return prob_via_jar(self, 'prob-sys-aggr', kind='scalar')
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            from ..cpp_dispatch import _assert_default_state, prob_aggr_via_cpp
+            _assert_default_state(self, 'getProbSysAggr')
+            return float(prob_aggr_via_cpp(self)['probSysAggr'])
         return self.getProbSys()
 
     def getTranCdfRespT(self, t_max: float = 10.0, n_points: int = 100) -> List[Dict]:
-        """Get transient response time CDF.
+        """Not supported, as in the reference, whose base class raises."""
+        raise NotImplementedError("getTranCdfRespT is not supported by SolverSSA")
 
-        For SSA, uses simulation-based estimation.
-
-        Args:
-            t_max: Maximum time horizon
-            n_points: Number of time points
-
-        Returns:
-            List of dicts with 'station', 'class', 't', 'p' keys
-        """
-        if self._result is None:
-            self.runAnalyzer()
-
-        R = self._result.R
-        nstations, nclasses = R.shape
-        RD = []
-
-        for i in range(nstations):
-            for r in range(nclasses):
-                mean_resp_t = R[i, r]
-                if mean_resp_t <= 0:
-                    continue
-
-                # Generate transient CDF (approximation)
-                times = np.linspace(0, t_max, n_points)
-                lambda_rate = 1.0 / mean_resp_t
-                cdf_vals = 1 - np.exp(-lambda_rate * times)
-
-                RD.append({
-                    'station': i + 1,
-                    'class': r + 1,
-                    't': times,
-                    'p': cdf_vals,
-                })
-
-        return RD
-
-    def getTranCdfPassT(self, source: int, dest: int, t_max: float = 10.0, n_points: int = 100) -> Dict:
-        """Get transient passage time CDF.
-
-        Args:
-            source: Source station index (1-based)
-            dest: Destination station index (1-based)
-            t_max: Maximum time horizon
-            n_points: Number of time points
-
-        Returns:
-            Dict with 't', 'p' keys
-        """
-        if self._result is None:
-            self.runAnalyzer()
-
-        # Approximate passage time as sum of response times
-        source_idx = source - 1
-        dest_idx = dest - 1
-
-        if source_idx < 0 or source_idx >= self._result.R.shape[0]:
-            raise ValueError(f"Invalid source index {source}")
-        if dest_idx < 0 or dest_idx >= self._result.R.shape[0]:
-            raise ValueError(f"Invalid dest index {dest}")
-
-        mean_pass_t = np.mean(self._result.R[source_idx, :]) + np.mean(self._result.R[dest_idx, :])
-        if mean_pass_t <= 0:
-            mean_pass_t = 1.0
-
-        times = np.linspace(0, t_max, n_points)
-        lambda_rate = 1.0 / mean_pass_t
-        cdf_vals = 1 - np.exp(-lambda_rate * times)
-
-        return {
-            'source': source,
-            'dest': dest,
-            't': times,
-            'p': cdf_vals,
-        }
+    def getTranCdfPassT(self, *args, **kwargs) -> Dict:
+        """Not supported, as in the reference, whose base class raises."""
+        raise NotImplementedError("getTranCdfPassT is not supported by SolverSSA")
 
     # Aliases for new methods
     GetProb = getProb
@@ -1383,35 +1384,6 @@ class SolverSSA(NetworkSolver):
     # UNIFIED METRICS METHOD
     # =========================================================================
 
-    def getAvg(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """Get all average metrics at once.
-
-        Returns:
-            Tuple of (Q, U, R, T, A, W) where:
-            - Q: Queue lengths (M x K)
-            - U: Utilizations (M x K)
-            - R: Response times (M x K)
-            - T: Throughputs (M x K)
-            - A: Arrival rates (M x K)
-            - W: Residence times (M x K)
-        """
-        if self._result is None:
-            self.runAnalyzer()
-
-        Q = self._result.Q
-        U = self._result.U
-        R = self._result.R
-        T = self._result.T if self._result.T.ndim > 1 else np.tile(self._result.T, (Q.shape[0], 1))
-        A = T.copy()  # Arrival rate = throughput for open networks
-
-        # Residence time, not response time: MATLAB @NetworkSolver/getAvg
-        # returns sn_get_residt_from_respt as its sixth output.
-        if self._sn is not None and self._sn.visits:
-            W = sn_get_residt_from_respt(self._sn, R, None)
-        else:
-            W = R.copy()
-
-        return Q, U, R, T, A, W
 
     # =========================================================================
     # CHAIN-LEVEL METHODS
@@ -1449,7 +1421,7 @@ class SolverSSA(NetworkSolver):
     def getAvgQLenChain(self) -> np.ndarray:
         """Get average queue lengths aggregated by chain."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         Q = self._result.Q
         chains = self._get_chains()
@@ -1466,7 +1438,7 @@ class SolverSSA(NetworkSolver):
     def getAvgUtilChain(self) -> np.ndarray:
         """Get average utilizations aggregated by chain."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         U = self._result.U
         chains = self._get_chains()
@@ -1486,7 +1458,7 @@ class SolverSSA(NetworkSolver):
         Uses alpha-weighted sum matching MATLAB: RN(:,c) = sum(RNclass(:,inchain).*alpha(:,inchain),2)
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         R = self._result.R
         chains = self._get_chains()
@@ -1528,7 +1500,7 @@ class SolverSSA(NetworkSolver):
     def getAvgTputChain(self) -> np.ndarray:
         """Get average throughputs aggregated by chain."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         T = self._result.T
         if T.ndim == 1:
@@ -1588,7 +1560,9 @@ class SolverSSA(NetworkSolver):
                     'Tput': TN[i, c],
                 })
 
-        return pd.DataFrame(rows)
+        # five SIGNIFICANT digits like MATLAB's table, not pandas' five decimals
+        from line_solver.indexed_table import IndexedTable
+        return IndexedTable(pd.DataFrame(rows))
 
     # =========================================================================
     # NODE-LEVEL METHODS
@@ -1609,7 +1583,7 @@ class SolverSSA(NetworkSolver):
         from ...api.sn.getters import sn_get_node_arvr_from_tput, sn_get_node_tput_from_tput
 
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         sn = self._sn
         I = sn.nnodes
@@ -1843,6 +1817,9 @@ class SolverSSA(NetworkSolver):
         if getattr(self.options, 'lang', 'python') == 'java':
             from ..jar_dispatch import cache_table_via_jar
             return cache_table_via_jar(self)
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            from ..cpp_dispatch import cache_table_via_cpp
+            return cache_table_via_cpp(self)
         from ..cache_table import build_cache_avg_table
         return build_cache_avg_table(self)
 
@@ -1854,6 +1831,9 @@ class SolverSSA(NetworkSolver):
         if getattr(self.options, 'lang', 'python') == 'java':
             from ..jar_dispatch import item_table_via_jar
             return item_table_via_jar(self)
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            from ..cpp_dispatch import item_table_via_cpp
+            return item_table_via_cpp(self)
         from ..cache_table import build_item_avg_table
         return build_item_avg_table(self)
 
@@ -1901,7 +1881,7 @@ class SolverSSA(NetworkSolver):
             Tuple of (Q, U, T) transient queue lengths, utilizations, and throughputs
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         Q = self._result.Q
         U = self._result.U
@@ -1950,6 +1930,43 @@ class SolverSSA(NetworkSolver):
 
     is_stochastic_method = isStochasticMethod
 
+    def supportsModelMethod(self, method):
+        """The fork-join model class, which EVERY SSA method has to clear.
+
+        runAnalyzer tag-augments a fork-join model through
+        ``ModelAdapter.fjtag``, whose first act is ``sn_fj_validate``, so a model
+        that validator refuses is refused whichever method was asked for. The
+        featset cannot state it -- Fork and Join are declared, and the rules are
+        about how they are WIRED (the pairing, the join strategy, the tasks per
+        link, whether an open class is routed through the fork) -- so it is
+        structural, and it is the validator's own body of rules rather than a
+        copy of them.
+
+        Without it the report offered every ssa.* row on a fork-join model whose
+        Join names no fork, and each one then raised; SolverCTMC gates on the
+        same predicate for the same reason. Mirrors MATLAB
+        @SolverSSA/supportsModelMethod.
+        """
+        ok, reason = super().supportsModelMethod(method)
+        model = getattr(self, 'model', None)
+        if ok and model is not None and hasattr(model, 'getStruct'):
+            from ...api.fjnative import sn_fj_supports
+            ok, reason = sn_fj_supports(model.getStruct())
+        # 'nrm' TAKES NO GATE IN THIS PORT, and that is a statement about this
+        # engine rather than an omission. MATLAB refuses an explicit 'nrm' only
+        # on a scheduling policy the reaction network has no form for
+        # (solver_ssa_analyzer_nrm.m:24), the JAR on that plus phase-type service
+        # at a preemptive station, and C++ on all six of its checks because its
+        # NRM has no fallback arm at all. This port's handler falls back to the
+        # serial engine for EVERY one of the six (api/solvers/ssa/handler.py,
+        # method == 'nrm'), so an explicit request always returns an answer and
+        # withdrawing the row here would refuse a run that succeeds.
+        # ``nrm_supports`` states the same six conditions for a caller that wants
+        # to know which engine will actually run.
+        return ok, reason
+
+    supports_model_method = supportsModelMethod
+
     @staticmethod
     def getFeatureSet() -> set:
         """Get supported features.
@@ -1960,7 +1977,7 @@ class SolverSSA(NetworkSolver):
         return {
             'Source', 'Sink',
             'ClassSwitch', 'Delay', 'DelayStation', 'Queue', 'Router',
-            'MAP', 'APH', 'MMPP2', 'MMAP', 'PH', 'Coxian', 'Erlang', 'Exp', 'HyperExp',
+            'MAP', 'APH', 'MMPP2', 'MMAP', 'PH', 'Coxian', 'Cox2', 'Erlang', 'Exp', 'HyperExp',
             'Det', 'Gamma', 'Weibull', 'Lognormal', 'Pareto', 'Uniform',
             'StatelessClassSwitcher', 'InfiniteServer', 'SharedServer', 'Buffer', 'Dispatcher',
             # see _kb/06-solver-catalog.md (SSA: "the NRM engine now supports
@@ -1978,7 +1995,7 @@ class SolverSSA(NetworkSolver):
             'SchedStrategy_PAS', 'SchedStrategy_OI', 'SchedStrategy_LPS', 'SchedStrategy_EXT',
             'SchedStrategy_POLLING',
             'RoutingStrategy_RROBIN', 'RoutingStrategy_WRROBIN',
-            'RoutingStrategy_JSQ', 'RoutingStrategy_SQ', 'RoutingStrategy_RL',
+            'RoutingStrategy_JSQ', 'RoutingStrategy_SQ', 'RoutingStrategy_SDR',
             'RoutingStrategy_PROB', 'RoutingStrategy_RAND',
             'ReplacementStrategy_RR', 'ReplacementStrategy_FIFO', 'ReplacementStrategy_SFIFO', 'ReplacementStrategy_LRU',
             'ReplacementStrategy_HLRU', 'ReplacementStrategy_CLIMB', 'ReplacementStrategy_QLRU',
@@ -1987,10 +2004,24 @@ class SolverSSA(NetworkSolver):
             'SignalType_NEGATIVE', 'SignalType_CATASTROPHE',
             'SignalBatchRemoval', 'SignalRemovalPolicy',
             'Place', 'Transition', 'Linkage', 'Enabling', 'Inhibiting', 'Timing', 'Firing', 'Storage',
+            # Fork-join, on the TAG-AUGMENTED copy runAnalyzer builds through
+            # ModelAdapter.fjtag, exactly as SolverCTMC does. MATLAB, the JAR and
+            # C++ have always declared these four; this port alone omitted them,
+            # so the ssa family never appeared on a fork-join model it solves --
+            # measured against the exact chain on a symmetric closed fork-join.
+            # The wiring rules the names cannot state (the pairing, the join
+            # strategy, an open class through the fork) are gated structurally in
+            # supportsModelMethod, against sn_fj_validate's own body of rules.
+            'Fork', 'Join', 'Forker', 'Joiner',
             'Balking', 'Reneging', 'Retrial',
             'LoadDependence',
             'ClassDependence',
-        'JointDependence',
+            'JointDependence',
+            'GlobalDependence',
+            # c-server stations and binding buffers are both State constructs
+            # the sampler carries directly: a job that finds no room blocks in a
+            # closed model and is dropped in an open one.
+            'MultiServer', 'FiniteCapacity',
         }
 
     @staticmethod
@@ -2043,7 +2074,7 @@ class SolverSSA(NetworkSolver):
             'verbose': default_verbose(),
         })
 
-    GetAvg = getAvg
+    GetAvg = NetworkSolver.getAvg
     GetAvgTable = getAvgTable
     GetAvgQLen = getAvgQLen
     GetAvgUtil = getAvgUtil

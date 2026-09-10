@@ -1,0 +1,15 @@
+{
+  "class": {
+    "OPT": "deterministic"
+  },
+  "example": "tut09_opt_load_balancing",
+  "solvers": {
+    "OPT": [
+      {
+        "JobClass": "Value",
+        "QLen": 0.6105015,
+        "Station": "OptResult"
+      }
+    ]
+  }
+}

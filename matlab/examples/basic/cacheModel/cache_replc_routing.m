@@ -50,7 +50,7 @@ end
 % delay2.setProbRouting(hitClass, sink, 1.0);
 % delay2.setProbRouting(missClass, sink, 1.0);
 % 
-% solver{1} = CTMC(model,'keep',false,'cutoff',1);
+% solver{1} = CTMC(model, 'exact','keep',false,'cutoff',1);
 % AvgTable{1} = solver{1}.getAvgNodeTable; AvgTable{1}
 % 
 % model.reset;
@@ -122,7 +122,7 @@ delay1.setProbRouting(missClass, sink, 1.0);
 delay2.setProbRouting(hitClass, sink, 1.0);
 delay2.setProbRouting(missClass, sink, 1.0);
 
-solver{1} = CTMC(model,'keep',false,'cutoff',1);
+solver{1} = CTMC(model, 'exact','keep',false,'cutoff',1);
 AvgTable{1} = solver{1}.getAvgNodeTable; AvgTable{1}
 %%
 model.reset;

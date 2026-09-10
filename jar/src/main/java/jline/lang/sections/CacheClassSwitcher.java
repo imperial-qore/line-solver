@@ -31,7 +31,12 @@ public class CacheClassSwitcher extends StatefulClassSwitcher implements Seriali
     public Matrix actualDelayedHitProb;   // delayed-hit fraction per arrival class (retrieval system; filled after solve)
     public Matrix actualHitProbList;      // [classes x lists] per-list (per-level) hit fraction (filled after solve, where available)
     public Matrix actualItemProb;         // [items x (lists+1)] per-item occupancy: col 0 = miss, cols 1.. = per-list (filled after solve, where available)
+    public Matrix actualListCost;         // [1 x lists] mean storage cost held by each list (filled after solve when item sizes are set)
     public Matrix actualResidT;
+    /** [1 x items] mean secondary requests waiting on the in-flight fetch of each item */
+    public Matrix actualDelayedHitQLen;
+    /** [1 x items] as above, including the request that triggered the fetch */
+    public Matrix actualDelayedHitQLenFull;
     public Map<Integer, InputJobClassesObj> inputJobClasses;
 
     public CacheClassSwitcher(List<JobClass> jobClasses, int items, Matrix capacity) {
@@ -56,7 +61,10 @@ public class CacheClassSwitcher extends StatefulClassSwitcher implements Seriali
         this.actualDelayedHitProb = new Matrix(0, 0);
         this.actualHitProbList = new Matrix(0, 0);
         this.actualItemProb = new Matrix(0, 0);
+        this.actualListCost = new Matrix(0, 0);
         this.actualResidT = new Matrix(0, 0);
+        this.actualDelayedHitQLen = new Matrix(0, 0);
+        this.actualDelayedHitQLenFull = new Matrix(0, 0);
         this.inputJobClasses = new HashMap<>();
     }
 

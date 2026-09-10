@@ -14,11 +14,41 @@ on the system PATH.
 """
 
 import os
+import shutil
 import subprocess
 import platform
 from typing import Optional
 
 from .logging import line_warning, line_error, get_logger, VerboseLevel
+
+_JAVA_MISSING_MSG = (
+    'No Java runtime was found, so JMT cannot be started. Install a JRE or JDK '
+    '(https://adoptium.net) and put "java" on the PATH, or set JAVA_HOME to its '
+    'installation directory, or LINE_JAVA to the full path of the java executable.'
+)
+
+
+def get_java_exe() -> Optional[str]:
+    """
+    Locate the Java launcher used to spawn a JMT viewer.
+
+    Resolution order: ``$LINE_JAVA``, ``$JAVA_HOME/bin/java``, then ``java`` on
+    the PATH. Returns None when none of them is usable, so the caller can name
+    the missing runtime instead of surfacing a bare FileNotFoundError.
+    """
+    exe_name = 'java.exe' if platform.system() == 'Windows' else 'java'
+
+    cand = os.environ.get('LINE_JAVA')
+    if cand and os.path.isfile(cand):
+        return cand
+
+    java_home = os.environ.get('JAVA_HOME')
+    if java_home:
+        cand = os.path.join(java_home, 'bin', exe_name)
+        if os.path.isfile(cand):
+            return cand
+
+    return shutil.which('java')
 
 
 def get_jmt_path() -> Optional[str]:
@@ -194,7 +224,10 @@ def _launch_jmt_viewer(filename: str, viewer_type: str,
         return False
 
     # Build command
-    java_cmd = 'java'
+    java_cmd = get_java_exe()
+    if java_cmd is None:
+        line_error('jmt_viewer', _JAVA_MISSING_MSG)
+        return False
     classpath = jmt_jar
     main_class = 'jmt.commandline.Jmt'
 
@@ -250,7 +283,7 @@ def _launch_jmt_viewer(filename: str, viewer_type: str,
         return True
 
     except FileNotFoundError:
-        line_error('jmt_viewer', 'Java not found. Please ensure Java is installed and on the PATH.')
+        line_error('jmt_viewer', _JAVA_MISSING_MSG)
         return False
     except Exception as e:
         line_error('jmt_viewer', f'Failed to launch JMT: {e}')
@@ -328,7 +361,11 @@ def line_viewer_view(filename: str, viewer_path: Optional[str] = None,
         suppress_output = logger.level != VerboseLevel.DEBUG
 
     # Build command
-    cmd = ['java', '-jar', viewer_path, filename]
+    java_cmd = get_java_exe()
+    if java_cmd is None:
+        line_error('line_viewer', _JAVA_MISSING_MSG)
+        return False
+    cmd = [java_cmd, '-jar', viewer_path, filename]
 
     # Determine output redirection
     if suppress_output:
@@ -347,7 +384,7 @@ def line_viewer_view(filename: str, viewer_path: Optional[str] = None,
         )
         return True
     except FileNotFoundError:
-        line_error('line_viewer', 'Java not found. Please ensure Java is installed and on the PATH.')
+        line_error('line_viewer', _JAVA_MISSING_MSG)
         return False
     except Exception as e:
         line_error('line_viewer', f'Failed to launch line-viewer: {e}')
@@ -355,6 +392,7 @@ def line_viewer_view(filename: str, viewer_path: Optional[str] = None,
 
 
 __all__ = [
+    'get_java_exe',
     'get_jmt_path',
     'jsimg_view',
     'jsimw_view',

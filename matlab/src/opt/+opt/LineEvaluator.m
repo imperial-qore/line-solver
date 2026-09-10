@@ -47,13 +47,13 @@ classdef LineEvaluator < handle
         end
 
         function values = decodeVariables(obj, x)
-            values = containers.Map('KeyType', 'char', 'ValueType', 'any');
+            values = configureDictionary('string', 'cell');
             for i = 1:numel(obj.variables)
                 var = obj.variables{i};
                 offset = obj.varOffsets(i);
                 dim = var.getDimension();
                 slice = x(offset+1 : offset+dim);
-                values(var.getName()) = var.decode(slice);
+                values{var.getName()} = var.decode(slice);
             end
         end
 
@@ -61,7 +61,7 @@ classdef LineEvaluator < handle
             for i = 1:numel(obj.variables)
                 var = obj.variables{i};
                 if isKey(values, var.getName())
-                    var.apply(model, values(var.getName()));
+                    var.apply(model, values{var.getName()});
                 end
             end
         end
@@ -159,13 +159,13 @@ classdef LineEvaluator < handle
                 if isempty(members), continue; end
                 tput = 0.0; if ci <= numel(SysTput), tput = SysTput(ci); end
                 respt = NaN; if ci <= numel(SysRespT), respt = SysRespT(ci); end
-                if isOpen && tput > 0 && result.queueLengths.Count > 0
+                if isOpen && tput > 0 && numEntries(result.queueLengths) > 0
                     jobsInSystem = 0.0;
                     ks = keys(result.queueLengths);
                     for kk = 1:numel(ks)
-                        parts = strsplit(ks{kk}, '||');
+                        parts = strsplit(char(ks(kk)), '||');
                         if any(strcmp(parts{2}, members))
-                            jobsInSystem = jobsInSystem + result.queueLengths(ks{kk});
+                            jobsInSystem = jobsInSystem + result.queueLengths(ks(kk));
                         end
                     end
                     respt = jobsInSystem / tput;
@@ -241,7 +241,7 @@ classdef LineEvaluator < handle
             % Compute LQN per-layer service-rate partial sensitivities on
             % demand: rebuild the configured model copy, solve it with
             % SolverLN, and reshape SolverLN.getSensitivityTable into a
-            % containers.Map 'Station||JobClass' -> struct(Tput,RespT,QLen,
+            % dictionary 'Station||JobClass' -> struct(Tput,RespT,QLen,
             % Util). Called only by the partial-sensitivity gradient path.
             % Returns [] on any failure (the caller then finite-differences).
             sens = [];
@@ -263,13 +263,15 @@ classdef LineEvaluator < handle
             end
         end
 
-        function result = evaluateValuesWithCache(obj, values, cache)
+        function [result, cache] = evaluateValuesWithCache(obj, values, cache)
+            % cache is a dictionary (value type), so the caller must take the
+            % second output back for the memoization to persist
             key = opt.LineEvaluator.valuesKey(values);
             if isKey(cache, key)
-                result = cache(key);
+                result = cache{key};
             else
                 result = obj.evaluateValues(values);
-                cache(key) = result; %#ok<NASGU>
+                cache{key} = result;
             end
         end
     end
@@ -279,11 +281,11 @@ classdef LineEvaluator < handle
             ks = sort(keys(values));
             parts = cell(1, numel(ks));
             for i = 1:numel(ks)
-                v = values(ks{i});
+                v = values{ks(i)};
                 if isnumeric(v)
-                    parts{i} = [ks{i} '=' mat2str(round(v(:).' * 1e9) / 1e9)];
+                    parts{i} = [char(ks(i)) '=' mat2str(round(v(:).' * 1e9) / 1e9)];
                 else
-                    parts{i} = [ks{i} '=' num2str(v)];
+                    parts{i} = [char(ks(i)) '=' num2str(v)];
                 end
             end
             key = strjoin(parts, ';');

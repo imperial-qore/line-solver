@@ -15,6 +15,13 @@ function [infGen, eventFilt, syncInfo, stateSpace, nodeStateSpace] = getSymbolic
 % Copyright (c) 2012-2026, Imperial College London
 % All rights reserved.
 
+
+% lang='cpp' cannot serve this getter; the reason is named, not blanket.
+if isfield(self.options,'lang') && strcmp(self.options.lang,'cpp')
+    CPPLINE.cppUnsupported(self.name, 'getSymbolicGenerator', ...
+        ['the C++ port has no symbolic arithmetic backend; --arith exact is rational and not symbolic']);
+end
+
 if nargin<2
     invertSymbol = false;
 end

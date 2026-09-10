@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 from typing import Optional, Any, List, Tuple
 
-from .ldes_options import LDESOptions, LDESResult
+from .ldes_options import LDESOptions, LDESResult, LNLDESResult
 from ...base import NetworkSolver
 from ....api.sn.transforms import sn_get_residt_from_respt
 from ....api.sn.network_struct import NodeType
@@ -530,7 +530,7 @@ def _jsim_set_wrrobin_routing(node, cls, wrr_param: ET.Element,
 
 class SolverLDES(NetworkSolver):
     """
-    Native Python LINE Discrete Event Simulator (LDES) solver.
+    Native Python LDES solver.
 
     Runs simulation by calling ldes.jar via subprocess and parsing
     the JSON result. This ensures Python native uses the same
@@ -824,7 +824,11 @@ class SolverLDES(NetworkSolver):
             return None
         java_home = os.environ.get('JAVA_HOME')
         if java_home:
-            cand = os.path.join(java_home, 'bin', 'java')
+            # The launcher is java.exe on Windows, where a bare "java" is also
+            # not executable by os.access and the JAVA_HOME branch would be
+            # skipped even with a perfectly good JDK installed.
+            exe_name = 'java.exe' if platform.system() == 'Windows' else 'java'
+            cand = os.path.join(java_home, 'bin', exe_name)
             if os.path.isfile(cand) and os.access(cand, os.X_OK):
                 return cand
         return shutil.which('java')
@@ -893,22 +897,25 @@ class SolverLDES(NetworkSolver):
 
     def _build_cli_args(self, model_path: str, result_path: str,
                          trajectory: bool = False,
-                         export_histogram: bool = False) -> list:
+                         export_histogram: bool = False,
+                         respt_samples: bool = False) -> list:
         """Build CLI command arguments for LDES solver.
 
         Prefers native binary (common/ldes) for faster startup;
         falls back to java -jar ldes.jar if native binary not found.
         """
         return self._build_cli_runners(model_path, result_path,
+                                       respt_samples=respt_samples,
                                        trajectory=trajectory,
                                        export_histogram=export_histogram)[0]
 
     def _build_cli_runners(self, model_path: str, result_path: str,
                            trajectory: bool = False,
-                           export_histogram: bool = False) -> list:
+                           export_histogram: bool = False,
+                           respt_samples: bool = False) -> list:
         """Ordered CLI command candidates: native binary first, then ldes.jar.
 
-        The native GraalVM binary may lack reflective features the JVM jar
+        The native C++ binary may lack features the JVM jar
         has (e.g. the fork-join MMT transformation deep-copies the model via
         Java serialization, unsupported in the AOT image), so the caller runs
         each candidate in order and falls through on failure, mirroring the
@@ -917,12 +924,32 @@ class SolverLDES(NetworkSolver):
         opts = self.options
 
         native_path = self._get_ldes_native_path()
-        # The --initsol flag was added after the prebuilt GraalVM binary was
-        # cut, so a warm-start placement forces the ldes.jar path until the
-        # native binary is rebuilt.
-        if getattr(opts, 'init_sol', None) is not None:
+        # --respt-samples rides on a result block the C++ engine does not fill
+        # and which it refuses by name, so a warm-start of THAT kind still goes
+        # to the jar; a runner list that tried the native binary first would
+        # fall through only after paying for a failed process. Mirrors
+        # solveCli.m and ldes_flags in the C++ client.
+        #
+        # --initsol and --busyperiod were on this list too, because the retired
+        # GraalVM image predated them. The C++ engine honours both (warm-start
+        # placement 2026-08-02, busy periods once the CLI stopped dropping the
+        # block), verified against ldes.jar to the last digit, so they no longer
+        # force the jar.
+        if respt_samples:
             native_path = None
-        flags = self._build_flag_args(trajectory=trajectory,
+        # A LayeredNetwork is served by the JVM engine only: the C++ LDES CLI
+        # reads the Network document alone, so offering the native binary first
+        # would buy a failed process before the fall-through.
+        if self._is_layered():
+            native_path = None
+        # Storage cost caps postdate the prebuilt binary too; running them on
+        # it would silently simulate the UNCAPPED cache.
+        for nd in getattr(self.model, '_nodes', []) or []:
+            if getattr(nd, '_cost_cap', None) is not None:
+                native_path = None
+                break
+        flags = self._build_flag_args(respt_samples=respt_samples,
+                                      trajectory=trajectory,
                                       export_histogram=export_histogram)
         runners = []
         if native_path is not None:
@@ -940,7 +967,8 @@ class SolverLDES(NetworkSolver):
         return runners
 
     def _build_flag_args(self, trajectory: bool = False,
-                         export_histogram: bool = False) -> list:
+                         export_histogram: bool = False,
+                         respt_samples: bool = False) -> list:
         """Build the LDES option flags that follow "solve <model> -o <result>".
 
         Shared by the subprocess runner and the REST client: the server accepts
@@ -993,8 +1021,17 @@ class SolverLDES(NetworkSolver):
             slot_len = float(getattr(opts, 'slot_length', 1.0))
             if slot_len != 1.0:
                 cmd.extend(['--slotlength', repr(slot_len)])
-        if hasattr(opts, 'replications') and opts.replications is not None:
-            cmd.extend(['--replications', str(opts.replications)])
+        # METHOD='PARALLEL' IS A REPLICATION COUNT, not a second engine. The
+        # engine's parallel analyzer is selected by --replications > 1 and by
+        # nothing else, so the method name has to resolve to one: it takes the
+        # count the caller supplied, and 8 when there is none -- the default the
+        # SSA parallel analyzer uses for its replica count.
+        _reps = getattr(opts, 'replications', None)
+        if str(getattr(opts, 'method', '') or '').lower() == 'parallel' \
+                and not (isinstance(_reps, (int, float)) and _reps > 1):
+            _reps = 8
+        if _reps is not None:
+            cmd.extend(['--replications', str(int(_reps))])
         if hasattr(opts, 'numthreads') and opts.numthreads is not None:
             cmd.extend(['--numthreads', str(opts.numthreads)])
         if opts.timespan is not None:
@@ -1008,16 +1045,25 @@ class SolverLDES(NetworkSolver):
         if getattr(opts, 'init_sol', None) is not None:
             init_vals = np.asarray(opts.init_sol).flatten()
             cmd.extend(['--initsol', ','.join(repr(float(v)) for v in init_vals)])
+        if respt_samples:
+            cmd.append('--respt-samples')
         if trajectory:
             cmd.append('--trajectory')
         if export_histogram:
             cmd.append('--export-histogram')
+        if getattr(opts, 'busy_period_orders', 0) > 0:
+            cmd.extend(['--busyperiod', str(int(opts.busy_period_orders))])
+            for subnet in getattr(opts, 'busy_period_subnets', []) or []:
+                # station indexes cross the wire zero-based
+                cmd.extend(['--busyperiod-subnet',
+                            ','.join(str(int(v)) for v in subnet)])
 
         return cmd
 
     def _fetch_rest_result(self, rest_url: str, model_path: str, result_path: str,
                            trajectory: bool = False,
-                           export_histogram: bool = False) -> None:
+                           export_histogram: bool = False,
+                           respt_samples: bool = False) -> None:
         """Solve through an LDES REST server and write its result to result_path.
 
         The wire format is the model.json the CLI reads and the ldes-result
@@ -1034,7 +1080,8 @@ class SolverLDES(NetworkSolver):
             model_text = f.read()
         payload = {
             'model': {'content': model_text, 'base64': False},
-            'flags': self._build_flag_args(trajectory=trajectory,
+            'flags': self._build_flag_args(respt_samples=respt_samples,
+                                           trajectory=trajectory,
                                            export_histogram=export_histogram),
         }
         body = json.dumps(payload).encode('utf-8')
@@ -1066,6 +1113,51 @@ class SolverLDES(NetworkSolver):
         with open(result_path, 'w') as f:
             json.dump(payload_out['result'], f)
 
+    def _is_layered(self) -> bool:
+        """True when this solver holds a LayeredNetwork rather than a Network."""
+        from ....layered import LayeredNetwork
+        return isinstance(self.model, LayeredNetwork)
+
+    def _parse_ln_result_json(self, data: dict) -> 'LNLDESResult':
+        """Parse the LAYERED `ldes-result` document.
+
+        Its metrics are vectors over the LQN element index space (hosts, tasks,
+        entries, activities, with the shifts carried in `dimensions`), not the
+        (station, class) matrices of the Network document, so it has its own
+        container and its own getters. Written by
+        `jline.io.LDESResultIO.saveLN`.
+        """
+        result = LNLDESResult()
+        dims = data.get('dimensions', {})
+        for key in ('nidx', 'nhosts', 'ntasks', 'nentries', 'nacts', 'ncalls',
+                    'tshift', 'eshift', 'ashift'):
+            setattr(result, key, int(dims.get(key, 0)))
+        result.names = list(dims.get('names', []))
+
+        metrics = data.get('metrics', {})
+        for key in ('QLN', 'ULN', 'RLN', 'WLN', 'TLN', 'ALN', 'ZLN',
+                    'UCallLN', 'TCallLN', 'UEntryClassLN'):
+            val = metrics.get(key)
+            if val is not None:
+                setattr(result, key, np.asarray(
+                    self._json_array_to_numpy(val), dtype=float).reshape(-1))
+
+        ci = data.get('confidenceIntervals', {})
+        for key in ('QLNCI', 'ULNCI', 'RLNCI', 'TLNCI'):
+            val = ci.get(key)
+            if val is not None:
+                setattr(result, key, np.asarray(
+                    self._json_array_to_numpy(val), dtype=float).reshape(-1))
+
+        result.cache_metrics = data.get('cacheMetrics', [])
+
+        samples = data.get('entryRespTimeSamples')
+        if samples is not None:
+            result.entryRespTimeSamples = [
+                np.asarray(row, dtype=float) if row else np.empty(0)
+                for row in samples]
+        return result
+
     def _parse_result_json(self, path: str) -> LDESResult:
         """Parse LDES result JSON into LDESResult dataclass."""
         with open(path, 'r') as f:
@@ -1074,6 +1166,11 @@ class SolverLDES(NetworkSolver):
         # Check for error
         if 'error' in data:
             raise RuntimeError(f"LDES solver error: {data['error']}")
+
+        # A layered run emits a DIFFERENT document, keyed by LQN element rather
+        # than by (station, class); it is declared by modelType.
+        if data.get('modelType') == 'LayeredNetwork':
+            return self._parse_ln_result_json(data)
 
         result = LDESResult()
 
@@ -1114,13 +1211,28 @@ class SolverLDES(NetworkSolver):
             if ttm is not None:
                 result.state_trajectory_time = self._json_array_to_numpy(ttm)
 
+        # Parse the busy period measurement (present when the simulation was run
+        # with --busyperiod). One entry per target: a station, a station-class
+        # pair, or a declared subnetwork.
+        bp = data.get('busyPeriods')
+        if bp is not None:
+            result.busy_periods = []
+            for tgt in bp.get('targets', []):
+                result.busy_periods.append({
+                    'name': tgt.get('name'),
+                    'stations': [int(v) for v in tgt.get('stations', [])],
+                    'class': int(tgt.get('class', -1)),
+                    'mean': np.asarray(tgt.get('mean', []), dtype=float),
+                    'count': np.asarray(tgt.get('count', []), dtype=float),
+                })
+
         # Parse per-cache hit/miss/latency metrics (keyed by cache node name)
         cm = data.get('cacheMetrics', {})
         if cm:
             result.cache_metrics = {}
             for cname, cdata in cm.items():
                 entry = {}
-                for k in ('hit', 'delayed', 'miss', 'latency', 'hitList', 'itemProb'):
+                for k in ('hit', 'delayed', 'miss', 'latency', 'hitList', 'itemProb', 'listCost'):
                     v = cdata.get(k)
                     if v is not None:
                         entry[k] = self._json_array_to_numpy(v)
@@ -1142,6 +1254,37 @@ class SolverLDES(NetworkSolver):
             if val is not None:
                 arr = self._json_array_to_numpy(val)
                 setattr(result, key, arr)
+
+        # HOW LONG THE RUN SHOULD HAVE BEEN, when the caller asked for it. The
+        # engine's half-width at the configured confidence over the events it
+        # ran pins the ASYMPTOTIC variance, which is the quantity a run length
+        # is planned from -- not the stationary variance, which on M/M/1 differs
+        # from it by a factor blowing up like (1-rho)^-2.
+        plan_spec = None
+        cfg = getattr(self.options, 'config', None)
+        if cfg is not None:
+            plan_spec = cfg.get('runLengthPlan') if isinstance(cfg, dict) \
+                else getattr(cfg, 'runLengthPlan', None)
+        if plan_spec is not None and getattr(result, 'QNCI', None) is not None:
+            from ....api.sim import sim_runlength_plan
+            rel = 0.05
+            conf = 0.95
+            if isinstance(plan_spec, dict):
+                rel = float(plan_spec.get('relprecision', rel))
+                conf = float(plan_spec.get('confidence', conf))
+            elif isinstance(plan_spec, (int, float)) and plan_spec > 0:
+                rel = float(plan_spec)
+            # The ACTUAL number of events simulated where the engine reports
+            # it, not the budget: LDES stops early on convergence, and planning
+            # from a budget it never spent would overstate N and so overstate
+            # the asymptotic variance.
+            used = int(data.get('totalSimulatedEvents', 0) or data.get('events', 0) or 0)
+            if used <= 0:
+                used = int(getattr(self.options, 'samples', 0) or 0)
+            if used > 0:
+                result.runLengthPlan = sim_runlength_plan(
+                    np.asarray(result.QN, dtype=float), np.asarray(result.QNCI, dtype=float),
+                    used, relPrecision=rel, confidence=conf)
 
         # Parse relative precision
         rp = data.get('relativePrecision', {})
@@ -1179,18 +1322,27 @@ class SolverLDES(NetworkSolver):
                         parsed.append(station_list)
                     setattr(result, key, parsed)
 
-            rts = tran.get('respTimeSamples')
-            if rts is not None:
-                parsed_rts = []
-                for station_arr in rts:
-                    station_list = []
-                    for class_samples in station_arr:
-                        if class_samples is None:
-                            station_list.append(None)
-                        else:
-                            station_list.append([float(v) for v in class_samples])
-                    parsed_rts.append(station_list)
-                result.respTimeSamples = parsed_rts
+
+        # `respTimeSamples` appears at TOP LEVEL under --respt-samples and
+        # inside `transient` under --trajectory; the two are the same
+        # measurement and whichever is present is read. Looking only in the
+        # transient block, as this reader did, makes every --respt-samples run
+        # report no samples at all -- the document has them and the parser
+        # never sees them.
+        rts = tran.get('respTimeSamples') if tran else None
+        if rts is None:
+            rts = data.get('respTimeSamples')
+        if rts is not None:
+            parsed_rts = []
+            for station_arr in rts:
+                station_list = []
+                for class_samples in station_arr:
+                    if class_samples is None:
+                        station_list.append(None)
+                    else:
+                        station_list.append([float(v) for v in class_samples])
+                parsed_rts.append(station_list)
+            result.respTimeSamples = parsed_rts
 
         return result
 
@@ -1209,12 +1361,21 @@ class SolverLDES(NetworkSolver):
         else:
             return np.array([[float('nan') if val is None else float(val)]])
 
-    def runAnalyzer(self, trajectory: bool = False, export_histogram: bool = False) -> LDESResult:
+    def supportsTransientAnalysis(self):
+        """Transient averages are available (simulation restricted to options.timespan)."""
+        return True
+
+    supports_transient_analysis = supportsTransientAnalysis
+
+    def runAnalyzer(self, trajectory: bool = False, export_histogram: bool = False,
+                    respt_samples: bool = False) -> LDESResult:
         """
         Run the LDES simulation via subprocess.
 
         Args:
             trajectory: If True, request trajectory data (QNt, UNt, TNt, t) from ldes.jar.
+            respt_samples: If True, request the per-job response time samples the
+                empirical response-time CDF is built from.
             export_histogram: If True, request the exact joint-state residence-time
                 histogram (used by get_avg_reward to evaluate arbitrary rewards).
 
@@ -1222,23 +1383,6 @@ class SolverLDES(NetworkSolver):
             LDESResult containing performance metrics
         """
         start_time = time.time()
-
-        # Server breakdown (set_breakdown): the joint (queue, server status)
-        # chain is expanded only by SolverCTMC, and the LDES JSON wire has no
-        # field for a failure or repair process, so the engine would simply
-        # simulate an always-up server and return a result indistinguishable
-        # from a correct one. 'Breakdown' is absent from getFeatureSet(), but
-        # supports() is not consulted here, so reject by name.
-        _sn_bd = self.model.getStruct() if hasattr(self.model, 'getStruct') else None
-        _hasbd = getattr(_sn_bd, 'hasbreakdown', None) if _sn_bd is not None else None
-        if _hasbd is not None and np.any(np.asarray(_hasbd).ravel() == 1):
-            _bd_nodes = [str(_sn_bd.nodenames[_i])
-                         for _i in np.nonzero(np.asarray(_hasbd).ravel() == 1)[0]]
-            raise RuntimeError(
-                "Station(s) %s declare server breakdowns, which SolverLDES does not "
-                "simulate: the LDES engine has no failure or repair process on its JSON "
-                "interface. Use SolverCTMC for models with set_breakdown."
-                % ', '.join(_bd_nodes))
 
         with tempfile.TemporaryDirectory(prefix='line_ldes_') as temp_dir:
             model_path = os.path.join(temp_dir, 'model.json')
@@ -1254,11 +1398,13 @@ class SolverLDES(NetworkSolver):
             rest_url = getattr(self.options, 'rest_url', None)
             if rest_url:
                 self._fetch_rest_result(rest_url, model_path, result_path,
+                                        respt_samples=respt_samples,
                                         trajectory=trajectory,
                                         export_histogram=export_histogram)
             else:
                 # Build the ordered CLI runner candidates (native, then jar)
                 runners = self._build_cli_runners(model_path, result_path,
+                                                  respt_samples=respt_samples,
                                                   trajectory=trajectory,
                                                   export_histogram=export_histogram)
                 cmd = runners[0]
@@ -1269,15 +1415,17 @@ class SolverLDES(NetworkSolver):
                 # Wall-clock time budget (options.timeout, seconds). The CLI also gets
                 # a cooperative --maxtime flag (see _build_cli_args); this subprocess
                 # timeout is the hard outer bound. On expiry the process is killed and
-                # an empty result flagged as timed out is returned. Infinite budget
-                # falls back to the 600s safety cap.
+                # an empty result flagged as timed out is returned. An infinite
+                # budget, the default, imposes no wall-clock bound at all.
                 import math as _math
                 _tmo = float(getattr(self.options, 'timeout', float('inf')))
                 # The cooperative --maxtime flag does the real early stop; give the
                 # process grace to finish writing results and shut down the JVM before
                 # the hard subprocess bound kills it (otherwise no result file is
-                # produced). Infinite budget falls back to the 600s safety cap.
-                _sub_timeout = (_tmo + 30.0) if _math.isfinite(_tmo) and _tmo > 0 else 600
+                # produced). An INFINITE budget is no budget: the old 600 s fallback
+                # killed a merely SLOW simulation and handed back an empty result, so
+                # a loaded host read as a solver that produced nothing.
+                _sub_timeout = (_tmo + 30.0) if _math.isfinite(_tmo) and _tmo > 0 else None
                 # Try each runner in order; the native binary may lack some
                 # reflective features (e.g. fork-join MMT serialization), so
                 # fall through to the JVM jar on failure.
@@ -1299,6 +1447,11 @@ class SolverLDES(NetworkSolver):
                         empty = LDESResult()
                         empty.timedOut = True
                         empty.stopping_reason = 'max_time'
+                        empty.runtime = time.time() - start_time
+                        # Cache it like the success path: _computeAvgMetrics reads
+                        # self._result after calling runAnalyzer, so returning without
+                        # assigning left it None and raised AttributeError on .QN.
+                        self._result = empty
                         return empty
 
                     if proc.returncode == 0 and os.path.isfile(result_path):
@@ -1357,6 +1510,7 @@ class SolverLDES(NetworkSolver):
                     sn.nodeparam[ind].actualmissprob = miss
             hit_list = cm.get('hitList')     # [classes x lists], keep 2D
             item_prob = cm.get('itemProb')   # [items x (lists+1)], keep 2D
+            list_cost = _flat(cm.get('listCost'))  # [lists] mean storage cost
             if hasattr(self.model, '_nodes') and ind < len(self.model._nodes):
                 cnode = self.model._nodes[ind]
                 if hit is not None and hasattr(cnode, 'set_result_hit_prob'):
@@ -1371,6 +1525,93 @@ class SolverLDES(NetworkSolver):
                     cnode.set_result_hit_prob_list(np.atleast_2d(hit_list))
                 if item_prob is not None and hasattr(cnode, 'set_result_item_prob'):
                     cnode.set_result_item_prob(np.atleast_2d(item_prob))
+                if list_cost is not None and hasattr(cnode, 'set_result_list_cost'):
+                    cnode.set_result_list_cost(np.atleast_1d(list_cost))
+
+    def getAvgBusyPeriod(self, stations=None, jobclass=-1, n=1):
+        """Mean busy period of order n for a set of stations, measured by LDES.
+
+        A busy period of order n runs from the instant an arrival raises the jobs
+        held by the set to n up to the instant the set falls back below n
+        (H. Daduna, "Busy Periods for Subnetworks in Stochastic Networks: Mean
+        Value Analysis", J. ACM 35(3), 1988). Periods in progress when the warmup
+        ends are discarded, since their start is not observable.
+
+        Args:
+            stations: stations forming the subnetwork, as objects, names or station
+                indexes; None returns the whole measured table.
+            jobclass: job class object, name or index; -1 counts every class.
+            n: busy period order or sequence of orders.
+
+        Returns:
+            (b, count) with the mean duration(s) and the number of completed
+            periods behind each mean, or (table, targets) when stations is None.
+            A mean with no completed period is NaN.
+        """
+        orders = np.atleast_1d(np.asarray(n, dtype=int))
+        subnet = self._busy_period_stations(stations)
+        cls = self._busy_period_class(jobclass)
+
+        opts = self.options
+        if getattr(opts, 'busy_period_orders', 0) < int(orders.max()):
+            opts.busy_period_orders = int(orders.max())
+            self._result = None
+        if len(subnet) > 1:
+            wanted = sorted(subnet)
+            if not any(sorted(sub) == wanted for sub in opts.busy_period_subnets):
+                opts.busy_period_subnets.append(wanted)
+                self._result = None
+        if self._result is None or getattr(self._result, 'busy_periods', None) is None:
+            self.runAnalyzer()
+        targets = getattr(self._result, 'busy_periods', None)
+        if not targets:
+            raise RuntimeError('The LDES engine returned no busy period measurement.')
+
+        if stations is None:
+            table = np.full((len(targets), int(orders.max())), np.nan)
+            for t, tgt in enumerate(targets):
+                mean = np.asarray(tgt['mean'], dtype=float)
+                count = np.asarray(tgt['count'], dtype=float)
+                row = mean[:table.shape[1]].copy()
+                row[count[:table.shape[1]] == 0] = np.nan
+                table[t, :] = row
+            return table, [tgt['name'] for tgt in targets]
+
+        wanted = sorted(subnet)
+        for tgt in targets:
+            if sorted(tgt['stations']) == wanted and tgt['class'] == cls:
+                mean = np.asarray(tgt['mean'], dtype=float)[orders - 1]
+                count = np.asarray(tgt['count'], dtype=float)[orders - 1]
+                mean = np.where(count > 0, mean, np.nan)
+                if mean.size == 1:
+                    return float(mean[0]), float(count[0])
+                return mean, count
+        raise ValueError('No busy period target matches the requested stations and class.')
+
+    def _busy_period_stations(self, stations):
+        """Station indexes of a busy period target, as declared by the caller."""
+        if stations is None:
+            return []
+        if not isinstance(stations, (list, tuple, np.ndarray)):
+            stations = [stations]
+        out = []
+        for st in stations:
+            if isinstance(st, (int, np.integer)):
+                out.append(int(st))
+            else:
+                # get_node_index and get_station_index are 1-based, the wire is not
+                out.append(int(self.model.get_station_index(st)) - 1)
+        return out
+
+    def _busy_period_class(self, jobclass):
+        """Zero-based class index of a busy period target, -1 for the aggregate."""
+        if jobclass is None:
+            return -1
+        if isinstance(jobclass, (int, np.integer)):
+            return int(jobclass)
+        if isinstance(jobclass, str):
+            return list(self._class_names).index(jobclass)
+        return int(jobclass.get_index0())
 
     def run_analyzer(self) -> LDESResult:
         """Alias for runAnalyzer (Python convention)."""
@@ -1532,10 +1773,36 @@ class SolverLDES(NetworkSolver):
         """Average queue lengths [stations x classes], running the simulation
         if needed (JAR/MATLAB SolverLDES API parity)."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         M = len(self._station_names)
         K = len(self._class_names)
         return self._result.QN.copy() if self._result.QN is not None else np.zeros((M, K))
+
+    def getAvgUtil(self) -> np.ndarray:
+        """Average utilizations [stations x classes]."""
+        return self._computeAvgMetrics()[1]
+
+    def getAvgRespT(self) -> np.ndarray:
+        """Average response times [stations x classes]."""
+        return self._computeAvgMetrics()[2]
+
+    def getAvgTput(self) -> np.ndarray:
+        """Average throughputs [stations x classes]."""
+        return self._computeAvgMetrics()[3]
+
+    def getAvgArvR(self) -> np.ndarray:
+        """Average arrival rates [stations x classes]."""
+        return self._computeAvgMetrics()[4]
+
+    def getAvgWaitT(self) -> np.ndarray:
+        """Average waiting times [stations x classes]."""
+        return self._computeAvgMetrics()[5]
+
+    get_avg_util = getAvgUtil
+    get_avg_respt = getAvgRespT
+    get_avg_tput = getAvgTput
+    get_avg_arvr = getAvgArvR
+    get_avg_waitt = getAvgWaitT
 
     def getAvg(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Average station metrics (QN, UN, RN, TN, AN, WN) as station x class
@@ -1548,8 +1815,19 @@ class SolverLDES(NetworkSolver):
     def _computeAvgMetrics(self):
         """Assemble the station x class average matrices from the last
         simulation result (running it if needed)."""
+        # A LayeredNetwork is measured over the LQN ELEMENT index space -- hosts,
+        # tasks, entries, activities -- and the run parks an LNLDESResult here,
+        # which carries QLN..ZLN and no QN..WN at all. Reading it as a (station,
+        # class) grid used to die on the missing attribute; refuse by name and
+        # send the caller to the layered table instead.
+        if self._is_layered():
+            raise RuntimeError(
+                "the average metrics of a LayeredNetwork are indexed by LQN element, "
+                "not by (station, class); use getLNAvgTable() for the table, "
+                "getEnsembleAvg() for the raw vectors, and getCdfRespTLN() for the "
+                "per-entry response time distribution.")
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         result = self._result
         M = len(self._station_names)
@@ -1568,13 +1846,16 @@ class SolverLDES(NetworkSolver):
         hasSPN = False
         hasCache = False
         if hasattr(sn, 'nodetype') and sn.nodetype is not None:
-            hasForkJoin = np.any(sn.nodetype == NodeType.FORK) and np.any(sn.nodetype == NodeType.JOIN)
-            hasSPN = np.any(sn.nodetype == NodeType.PLACE) or np.any(sn.nodetype == NodeType.TRANSITION)
+            # sn.nodetype is a list, and `list == member` is a scalar False, so the
+            # three flags below stay off unless the comparison is vectorised first
+            nodetype = np.asarray(sn.nodetype)
+            hasForkJoin = np.any(nodetype == NodeType.FORK) and np.any(nodetype == NodeType.JOIN)
+            hasSPN = np.any(nodetype == NodeType.PLACE) or np.any(nodetype == NodeType.TRANSITION)
             # A Cache node switches classes by item state, which the
             # routing-based visit equations cannot represent: visits
             # downstream of the cache solve to garbage, so trust the
             # simulation there, like fork-join.
-            hasCache = np.any(sn.nodetype == NodeType.CACHE)
+            hasCache = np.any(nodetype == NodeType.CACHE)
 
         if sn is not None and hasattr(sn, 'nchains') and sn.nchains > 0 and not hasSPN:
             if hasattr(sn, 'chains') and sn.chains is not None and hasattr(sn, 'visits') and sn.visits:
@@ -1711,7 +1992,7 @@ class SolverLDES(NetworkSolver):
                                        sn_get_node_tput_from_tput)
 
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         sn = self._sn
         I = sn.nnodes
@@ -1856,7 +2137,7 @@ class SolverLDES(NetworkSolver):
             DataFrame with columns: Chain, QLen, Util, RespT, Tput
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         result = self._result
         nchains = self._sn.nchains if hasattr(self._sn, 'nchains') else self._sn.nclasses
@@ -1893,7 +2174,9 @@ class SolverLDES(NetworkSolver):
                 'Tput': total_tput,
             })
 
-        return pd.DataFrame(rows)
+        # five SIGNIFICANT digits like MATLAB's table, not pandas' five decimals
+        from line_solver.indexed_table import IndexedTable
+        return IndexedTable(pd.DataFrame(rows))
 
     def getAvgSysTable(self) -> pd.DataFrame:
         """
@@ -1903,7 +2186,7 @@ class SolverLDES(NetworkSolver):
             DataFrame with columns: Chain, SysRespT, SysTput
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         chain_table = self.getAvgChainTable()
         CN = []
@@ -1982,17 +2265,31 @@ class SolverLDES(NetworkSolver):
             return None
 
         sn = self._sn
-        node_idx = node if isinstance(node, int) else getattr(node, '_node_idx', 0)
+        # `_node_idx` is NOT an attribute a node has -- the 0-based index is
+        # `get_index0()` / `_node_index` -- so the getattr default silently made
+        # EVERY call sample node 0 whatever node was asked for.
+        node_idx = node if isinstance(node, int) else node.get_index0()
 
-        isf = int(np.asarray(sn.nodeToStateful).flatten()[node_idx])
+        # The engine writes QNt as [STATION][class] (`Solver_ssj`:
+        # `result.QNt = new Matrix[numStations][numClasses]`, indexed by
+        # `serviceStation`), so the row is found by station index. Reading it
+        # with the STATEFUL index returned another station's trajectory, or all
+        # zeros past the end, on any model holding a stateful node that is not a
+        # station -- a Router, a Cache, a stateful Fork, a Place -- because
+        # sn.isstateful admits those and sn.isstation does not.
+        ist = int(np.asarray(sn.nodeToStation).flatten()[node_idx])
         num_time_points = result.t.shape[0]
         num_classes = int(sn.nclasses)
         state = np.zeros((num_time_points, num_classes))
 
-        if isf < len(result.QNt):
-            for k in range(min(num_classes, len(result.QNt[isf]))):
-                class_data = result.QNt[isf][k]
-                if class_data is not None:
+        if 0 <= ist < len(result.QNt):
+            for k in range(min(num_classes, len(result.QNt[ist]))):
+                class_data = result.QNt[ist][k]
+                # An EMPTY series parses to a 1-D array of size zero (the class
+                # does not visit the station), and indexing column 0 of it raises
+                # rather than yielding nothing, so the shape is checked and not
+                # only the None.
+                if class_data is not None and class_data.ndim == 2 and class_data.shape[0] > 0:
                     n = min(num_time_points, class_data.shape[0])
                     state[:n, k] = class_data[:n, 0]
 
@@ -2030,13 +2327,28 @@ class SolverLDES(NetworkSolver):
         num_time_points = result.t.shape[0]
         num_classes = int(sn.nclasses)
 
+        # One entry per STATEFUL node, as the contract says, but each filled from
+        # that node's STATION row: the two index spaces coincide only when every
+        # stateful node is a station (see sample() above). A stateful node that is
+        # not a station -- a Router, a Cache -- holds no queue-length series in
+        # the engine's output and keeps its zero block.
+        node_to_stateful = np.asarray(sn.nodeToStateful).flatten()
+        node_to_station = np.asarray(sn.nodeToStation).flatten()
+        stateful_to_station = {}
+        for nd in range(len(node_to_stateful)):
+            isf_nd = int(node_to_stateful[nd])
+            if isf_nd >= 0:
+                stateful_to_station[isf_nd] = int(node_to_station[nd])
+
         states = []
         for isf in range(int(sn.nstateful)):
             node_state = np.zeros((num_time_points, num_classes))
-            if isf < len(result.QNt):
-                for k in range(min(num_classes, len(result.QNt[isf]))):
-                    class_data = result.QNt[isf][k]
-                    if class_data is not None:
+            ist = stateful_to_station.get(isf, -1)
+            if 0 <= ist < len(result.QNt):
+                for k in range(min(num_classes, len(result.QNt[ist]))):
+                    class_data = result.QNt[ist][k]
+                    if class_data is not None and class_data.ndim == 2 \
+                            and class_data.shape[0] > 0:
                         n = min(num_time_points, class_data.shape[0])
                         node_state[:n, k] = class_data[:n, 0]
             states.append(node_state)
@@ -2059,112 +2371,199 @@ class SolverLDES(NetworkSolver):
     # Probability estimation methods
     # =========================================================================
 
+    def _state_histogram(self):
+        """
+        Exact joint-state residence-time histogram of one LDES run.
+
+        Returns ``(space, time)``: ``space`` is (nstates x nstations*nclasses)
+        in the station-major, class-minor layout ``ctmc_state_space_aggr``
+        builds, and ``time`` the residence time of each row, so
+        ``P(state) = t(state)/sum(t)`` is exact on the sampled path.
+
+        WHY THIS AND NOT THE TRAJECTORY. The engine's transient ``QNt`` series
+        holds INTERVAL TIME-AVERAGES of the queue length, not the integer states
+        the path visits, so comparing it against a state matches only where a
+        bucket mean happens to land on an integer. Every probability this
+        wrapper reports goes through the histogram, as ``get_avg_reward``
+        already does.
+        """
+        self._result = None
+        result = self.runAnalyzer(export_histogram=True)
+        space = getattr(result, 'state_histogram_space', None)
+        time_arr = getattr(result, 'state_histogram_time', None)
+        if space is None or time_arr is None:
+            raise RuntimeError(
+                'SolverLDES: the engine returned no state histogram, so no state '
+                'probability can be read from this run.')
+        space = np.atleast_2d(np.asarray(space, dtype=float))
+        time_arr = np.asarray(time_arr, dtype=float).flatten()
+        return space, time_arr
+
+    def _hist_prob(self, space, time_arr, stations, targets) -> float:
+        """
+        Residence-time probability of an aggregate joint state.
+
+        ``stations`` is a sequence of 0-based station indices to constrain and
+        ``targets`` the matching per-class job-count vectors; a target shorter
+        than nclasses constrains only the classes it names.
+        """
+        total = float(np.sum(time_arr))
+        if total <= 0:
+            return 0.0
+        R = int(self._sn.nclasses)
+        match = np.ones(space.shape[0], dtype=bool)
+        for ist, tgt in zip(stations, targets):
+            tgt = np.asarray(tgt, dtype=float).flatten()
+            L = min(len(tgt), R)
+            lo = ist * R
+            if lo + L > space.shape[1]:
+                raise ValueError(
+                    'SolverLDES: station %d is past the end of the state histogram, '
+                    'which holds %d columns for %d classes.'
+                    % (ist + 1, space.shape[1], R))
+            match &= np.all(np.abs(space[:, lo:lo + L] - tgt[:L]) < 1e-9, axis=1)
+        return float(np.sum(time_arr[match]) / total)
+
+    def _station_of(self, node) -> int:
+        """0-based station index of a node, or a refusal naming it."""
+        sn = self._sn
+        node_idx = node if isinstance(node, int) else node.get_index0()
+        ist = int(np.asarray(sn.nodeToStation).flatten()[node_idx])
+        if ist < 0:
+            raise ValueError(
+                'SolverLDES: node %d is not a station; the LDES state histogram '
+                'records station queue lengths only.' % (node_idx + 1))
+        return ist
+
     def getProb(self, node, state: Optional[np.ndarray] = None) -> float:
         """
-        Estimate steady-state probability of a specific state at a node.
+        Steady-state probability of a state at a node.
 
-        Uses time-weighted fraction from simulation trajectory.
+        The residence-time fraction the exact joint-state histogram of the run
+        assigns to the state. ``state`` is a DETAILED node state and is
+        aggregated here to per-class job counts, which is the resolution the
+        engine's histogram carries (integer queue lengths, no service phases).
+        If None, the model's current state for the node is used.
 
-        Args:
-            node: The stateful node (or node index).
-            state: Target state vector (per-class job counts). If None, uses
-                   current model state.
+        This is NOT computed from sample(): the transient QNt series holds
+        interval time-averages of the queue length, so comparing it against an
+        integer state matched almost nowhere and reported a near-zero
+        probability for a state the chain mostly occupies.
 
         Returns:
-            Estimated probability (0.0 if state not observed).
+            Estimated probability (0.0 if the state is never visited).
         """
-        sample_result = self.sample(node, 0)
-        if sample_result is None:
-            return 0.0
+        from ....lang.state import State
 
-        t = sample_result['t']
-        state_matrix = sample_result['state']
-        num_time_points = len(t)
-
-        if num_time_points < 2:
-            return 0.0
+        sn = self._sn
+        node_idx = node if isinstance(node, int) else node.get_index0()
+        ist = self._station_of(node)
 
         if state is None:
-            sn = self._sn
-            node_idx = node if isinstance(node, int) else getattr(node, '_node_idx', 0)
+            # sn.state IS stateful-indexed, unlike the engine's QNt.
             isf = int(np.asarray(sn.nodeToStateful).flatten()[node_idx])
-            state = np.asarray(sn.state[isf]).flatten() if hasattr(sn, 'state') and sn.state else np.zeros(state_matrix.shape[1])
+            sn_state = getattr(sn, 'state', None)
+            if sn_state is None or isf >= len(sn_state) or sn_state[isf] is None:
+                raise ValueError(
+                    'SolverLDES.getProb: no state was given and the model carries '
+                    'none for this node.')
+            state = sn_state[isf]
 
-        target = np.asarray(state).flatten()
-        total_time = t[-1] - t[0]
-        if total_time <= 0:
-            return 0.0
+        _, nir, _, _ = State.toMarginal(sn, node_idx, np.atleast_2d(np.asarray(state)))
+        nir = np.atleast_2d(np.asarray(nir, dtype=float))
 
-        time_in_state = 0.0
-        for ti in range(num_time_points - 1):
-            dt = t[ti + 1] - t[ti]
-            if np.allclose(state_matrix[ti, :len(target)], target, atol=1e-10):
-                time_in_state += dt
-
-        return time_in_state / total_time
+        # A multi-row state names a SET of states and its probability is the sum
+        # over the set. The run is made ONCE and every row weighed against the
+        # same histogram; re-solving per row would draw a fresh sample path for
+        # each and the sum would not be a probability of anything.
+        space, time_arr = self._state_histogram()
+        return float(sum(self._hist_prob(space, time_arr, [ist], [nir[r, :]])
+                         for r in range(nir.shape[0])))
 
     def getProbAggr(self, node, state_aggr: Optional[np.ndarray] = None) -> float:
         """
-        Estimate aggregated state probability at a node.
+        Aggregated state probability at a node.
 
-        For LDES, same as getProb since sample paths are already per-class.
+        ``state_aggr`` is a per-class job-count vector, already aggregated over
+        service phases, which is exactly the resolution the engine's histogram
+        carries, so unlike getProb no conversion is applied. It is therefore NOT
+        a synonym for getProb: delegating to it would put the counts through
+        toMarginal a second time.
 
         Returns:
             Estimated probability.
         """
-        return self.getProb(node, state_aggr)
+        from ....lang.state import State
+
+        sn = self._sn
+        node_idx = node if isinstance(node, int) else node.get_index0()
+        ist = self._station_of(node)
+
+        if state_aggr is None:
+            isf = int(np.asarray(sn.nodeToStateful).flatten()[node_idx])
+            sn_state = getattr(sn, 'state', None)
+            if sn_state is None or isf >= len(sn_state) or sn_state[isf] is None:
+                raise ValueError(
+                    'SolverLDES.getProbAggr: no state was given and the model '
+                    'carries none for this node.')
+            _, state_aggr, _, _ = State.toMarginal(
+                sn, node_idx, np.atleast_2d(np.asarray(sn_state[isf])))
+
+        state_aggr = np.atleast_2d(np.asarray(state_aggr, dtype=float))
+        space, time_arr = self._state_histogram()
+        return float(sum(self._hist_prob(space, time_arr, [ist], [state_aggr[r, :]])
+                         for r in range(state_aggr.shape[0])))
 
     def getProbSys(self) -> float:
         """
-        Estimate joint steady-state probability of the current system state.
+        Joint steady-state probability of the current system state.
 
-        Uses system-wide trajectory to compute time-weighted fraction.
+        Every STATION is constrained to the per-class job counts its current
+        state aggregates to. A stateful node that is not a station -- a Router,
+        a Cache, a Place -- holds no queue length in the engine's histogram and
+        cannot be constrained, so it is excluded and the answer is the joint law
+        of the station queue lengths alone.
 
         Returns:
             Estimated joint probability.
         """
-        sys_result = self.sampleSys(0)
-        if sys_result is None:
-            return 0.0
-
-        t = sys_result['t']
-        states = sys_result['states']
-        num_time_points = len(t)
-
-        if num_time_points < 2 or not states:
-            return 0.0
+        from ....lang.state import State
 
         sn = self._sn
-        target_states = []
-        for isf in range(len(states)):
-            if hasattr(sn, 'state') and sn.state and isf in sn.state:
-                target_states.append(np.asarray(sn.state[isf]).flatten())
-            else:
-                target_states.append(np.zeros(states[isf].shape[1]))
+        node_to_station = np.asarray(sn.nodeToStation).flatten()
+        node_to_stateful = np.asarray(sn.nodeToStateful).flatten()
+        sn_state = getattr(sn, 'state', None)
 
-        total_time = t[-1] - t[0]
-        if total_time <= 0:
+        stations = []
+        targets = []
+        for nd in range(len(node_to_station)):
+            ist = int(node_to_station[nd])
+            if ist < 0:
+                continue
+            isf = int(node_to_stateful[nd])
+            if sn_state is None or isf < 0 or isf >= len(sn_state) or sn_state[isf] is None:
+                raise ValueError(
+                    'SolverLDES.getProbSys: the model carries no current state for '
+                    'station %d.' % (ist + 1))
+            _, nir, _, _ = State.toMarginal(sn, nd, np.atleast_2d(np.asarray(sn_state[isf])))
+            stations.append(ist)
+            targets.append(np.atleast_2d(np.asarray(nir, dtype=float))[0, :])
+
+        if not stations:
             return 0.0
 
-        time_in_state = 0.0
-        for ti in range(num_time_points - 1):
-            dt = t[ti + 1] - t[ti]
-            all_match = True
-            for isf in range(len(states)):
-                if not np.allclose(states[isf][ti, :len(target_states[isf])],
-                                   target_states[isf], atol=1e-10):
-                    all_match = False
-                    break
-            if all_match:
-                time_in_state += dt
-
-        return time_in_state / total_time
+        space, time_arr = self._state_histogram()
+        return self._hist_prob(space, time_arr, stations, targets)
 
     def getProbSysAggr(self) -> float:
         """
-        Estimate aggregated joint system probability.
+        Aggregated joint system probability.
 
-        For LDES, same as getProbSys since trajectories are already per-class.
+        This equals getProbSys() because the engine's state histogram is
+        aggregated already: it records integer queue lengths per station and
+        class, with no phase resolution, so the detailed and the aggregate joint
+        question have the same answer here. getProbSys aggregates the model's
+        current state before matching, so no second aggregation is needed.
 
         Returns:
             Estimated joint probability.
@@ -2175,44 +2574,252 @@ class SolverLDES(NetworkSolver):
     # Transient CDF methods
     # =========================================================================
 
-    def getTranCdfRespT(self) -> Optional[dict]:
+    def getTranCdfRespT(self):
         """
         Get empirical CDF of response times from simulation samples.
 
+        The engine keeps one set of per-job response time samples, so this is
+        the same measured ecdf getCdfRespT reports, under the transient
+        getter's name -- the LDES arms serve one curve under every CDF name.
+        A LayeredNetwork is refused: the layered engine reports steady state
+        only and its response times belong to entries.
+
         Returns:
-            Dict with keys 'station_names', 'class_names', 'cdfs'
-            where cdfs[i][k] is a numpy array (n x 2) with [time, CDF_value]
-            columns, or None if no response time samples available.
+            RD[station][class], an (n x 2) array of [F(t), t], or None for a
+            (station, class) pair the run observed nothing at.
         """
-        if self._result is None or self._result.respTimeSamples is None:
-            result = self._run_transient(0)
-        else:
-            result = self._result
+        if self._is_layered():
+            raise RuntimeError(
+                "getTranCdfRespT is indexed by (station, class) and this solver holds a "
+                "LayeredNetwork, whose response times belong to entries and whose engine "
+                "reports steady state only. Use getCdfRespTLN().")
+        return self.getCdfRespT()
 
-        if result.respTimeSamples is None:
-            return None
+    def getCdfRespTLN(self):
+        """Empirical response time distribution of every ENTRY of a LayeredNetwork.
 
-        cdfs = []
-        for i, station_samples in enumerate(result.respTimeSamples):
-            station_cdfs = []
+        The simulated counterpart of ``SolverLN.getCdfRespT``: where the moment3
+        pass fits an APH to three moments and convolves, this is the ecdf of the
+        response times the run observed, so its tail is measured rather than
+        extrapolated. The engine times each request from the instant the entry
+        acquires a thread to the instant it replies -- the interval ``RLN``
+        averages -- so the mean of this law reproduces that row.
+
+        Returns:
+            A list of ``nentries`` items, one per entry in the entry-local index
+            space (``lsn.eshift + i``). Each is an ``(n, 2)`` array whose columns
+            are ``[F(t), t]``, or None for an entry the run observed nothing at.
+
+        Raises:
+            RuntimeError: if the model is not a LayeredNetwork, or the run kept
+                no samples.
+        """
+        if not self._is_layered():
+            raise RuntimeError(
+                "getCdfRespTLN requires a LayeredNetwork; this solver holds a Network, "
+                "whose response times are indexed by (station, class). Use getCdfRespT().")
+
+        result = self.runAnalyzer(respt_samples=True)
+        samples_all = getattr(result, 'entryRespTimeSamples', None)
+        if not samples_all:
+            raise RuntimeError(
+                "The LDES run returned no entry response time samples, so an empirical "
+                "CDF cannot be built. Increase options.samples, or shorten the warmup.")
+
+        RD = []
+        for samples in samples_all:
+            if samples is None or len(samples) == 0:
+                RD.append(None)
+                continue
+            x = np.sort(np.asarray(samples, dtype=float).ravel())
+            F = np.arange(1, x.size + 1, dtype=float) / x.size
+            # Collapse repeated observations, keeping the LARGEST CDF value at
+            # each distinct time: a tie left expanded makes the ecdf multivalued.
+            xu, last_idx = np.unique(x[::-1], return_index=True)
+            last_idx = x.size - 1 - last_idx
+            RD.append(np.column_stack([F[last_idx], xu]))
+        return RD
+
+    get_cdf_resp_t_ln = getCdfRespTLN
+
+    def _lnResultOrRun(self, caller: str) -> 'LNLDESResult':
+        """The LNLDESResult of this model, running the simulation if needed."""
+        if not self._is_layered():
+            raise RuntimeError(
+                "%s requires a LayeredNetwork; this solver holds a Network." % caller)
+        if not isinstance(self._result, LNLDESResult):
+            self.runAnalyzer()
+        if not isinstance(self._result, LNLDESResult):
+            raise RuntimeError(
+                "%s expected a layered ldes-result and the run returned %s; the engine "
+                "was given a Network document." % (caller, type(self._result).__name__))
+        return self._result
+
+    def getEnsembleAvg(self):
+        """Mean metrics over the LQN element index space.
+
+        Returns:
+            (QLN, ULN, RLN, WLN, TLN), each an ``nidx`` vector in the absolute
+            LQN index space -- hosts, then tasks, then entries, then activities.
+            This is the raw measurement; :meth:`getLNAvgTable` is the same data
+            masked and named the way SolverLN and LQNS report it.
+        """
+        r = self._lnResultOrRun('getEnsembleAvg')
+        z = lambda v: np.zeros(r.nidx) if v is None else np.asarray(v, dtype=float).ravel()
+        return z(r.QLN), z(r.ULN), z(r.RLN), z(r.WLN), z(r.TLN)
+
+    get_ensemble_avg = getEnsembleAvg
+
+    @staticmethod
+    def _hostProcessorMult(lsn, idx: int) -> float:
+        """Multiplicity of the processor `idx` ultimately runs on.
+
+        Twin of SolverLDES.hostProcessorMult in the JAR. An infinite server
+        reports 1.0 so that its utilization keeps the mean-busy-servers value,
+        which is the LINE convention and may exceed 1.
+        """
+        from ....layered import LayeredNetworkElement
+        nidx = int(lsn.nidx)
+        cur = int(idx)
+        types = np.asarray(lsn.type).ravel()
+        parents = np.asarray(lsn.parent).ravel()
+        mult = np.asarray(lsn.mult, dtype=float).ravel()
+        for _ in range(nidx + 1):
+            if cur < 0 or cur >= nidx:
+                return 1.0
+            if int(types[cur]) == int(LayeredNetworkElement.PROCESSOR):
+                m = float(mult[cur])
+                return m if (m > 0 and not np.isinf(m)) else 1.0
+            p = int(parents[cur])
+            if p < 0 or p == cur:
+                return 1.0
+            cur = p
+        return 1.0
+
+    def getLNAvgTable(self) -> pd.DataFrame:
+        """Mean metrics of a LayeredNetwork, one row per LQN element.
+
+        The simulated twin of ``SolverLN.get_avg_table``, carrying the same
+        columns and the same NaN mask so the two can be compared cell for cell:
+        a processor has no queue length, response time or throughput of its own,
+        and a task has no response time. ArvR is not measured here.
+
+        Returns:
+            A DataFrame with columns Node, NodeType, QLen, Util, RespT, ResidT,
+            ArvR, Tput, indexed by the absolute LQN element index.
+        """
+        from ....layered import LayeredNetworkElement
+        r = self._lnResultOrRun('getLNAvgTable')
+        lsn = self.model.getStruct()
+        types = np.asarray(lsn.type).ravel()
+        names = list(np.asarray(lsn.names).ravel())
+        isref = np.asarray(lsn.isref).ravel() if lsn.isref is not None else None
+        vec = lambda v: (np.full(r.nidx, np.nan) if v is None
+                         else np.asarray(v, dtype=float).ravel())
+        QLN, ULN, RLN, WLN, TLN = vec(r.QLN), vec(r.ULN), vec(r.RLN), vec(r.WLN), vec(r.TLN)
+
+        def type_name(i):
+            t = int(types[i])
+            if t == int(LayeredNetworkElement.PROCESSOR):
+                return 'Processor'
+            if t == int(LayeredNetworkElement.TASK):
+                return 'RefTask' if (isref is not None and bool(isref[i])) else 'Task'
+            if t == int(LayeredNetworkElement.ENTRY):
+                return 'Entry'
+            if t == int(LayeredNetworkElement.ACTIVITY):
+                return 'Activity'
+            return 'Unknown'
+
+        rows = []
+        for i in range(int(lsn.nidx)):
+            t = int(types[i])
+            is_proc = t == int(LayeredNetworkElement.PROCESSOR)
+            is_task = t == int(LayeredNetworkElement.TASK)
+            # Per-server fraction, as everywhere else in LINE: the engine
+            # accumulates mean busy servers over the multiplicity.
+            m = self._hostProcessorMult(lsn, i)
+            util = ULN[i] / m if m > 1.0 else ULN[i]
+            rows.append({
+                'Node': names[i] if i < len(names) else str(i),
+                'NodeType': type_name(i),
+                'QLen': np.nan if is_proc else QLN[i],
+                'Util': util,
+                'RespT': np.nan if (is_proc or is_task) else RLN[i],
+                'ResidT': WLN[i],
+                'ArvR': np.nan,
+                'Tput': np.nan if is_proc else TLN[i],
+            })
+        return pd.DataFrame(rows)
+
+    get_ln_avg_table = getLNAvgTable
+
+    def getCdfRespT(self, R=None):
+        """
+        Empirical response time CDF, measured on the simulated sample path.
+
+        A simulator must report what it OBSERVED. The analytical solvers fall
+        back to an exponential law carrying the right mean, which says nothing
+        about the tail; the LDES engine records every per-job response time
+        (Solver_ssj.responseTimeSamples -> LDESResult.respTimeSamples -> the
+        JSON respTimeSamples block, exported under --respt-samples), so the CDF
+        here is the ecdf of those samples.
+
+        Ported from MATLAB @SolverLDES/getCdfRespT.m. The return shape is
+        SolverJMT's, the other empirical simulator on this side: RD[i][k] is an
+        (n x 2) array whose columns are [F(t), t], the convention every
+        getCdfRespT follows; swapping the columns yields a CDF that looks like
+        a time axis.
+
+        A LayeredNetwork has no (station, class) grid: its response times
+        belong to ENTRIES, so it is dispatched to getCdfRespTLN and the
+        per-entry laws are returned, exactly as the reference does.
+
+        Args:
+            R: optional response time handles, accepted for signature
+               compatibility with the analytical solvers and not read.
+
+        Returns:
+            RD[station][class], an (n x 2) array of [cdf, time], or None for a
+            (station, class) pair the run observed nothing at. A pair with no
+            observation is left empty rather than filled with a guess. For a
+            LayeredNetwork, the per-entry list of getCdfRespTLN.
+        """
+        if self._is_layered():
+            return self.getCdfRespTLN()
+        sn = self._get_network_struct()
+        M, K = sn.nstations, sn.nclasses
+        RD = [[None for _ in range(K)] for _ in range(M)]
+
+        # The samples are a distributional output, not a trajectory, so they
+        # have their own flag; requesting it also forces the jar runner, since
+        # the prebuilt AOT binary predates it.
+        result = self.runAnalyzer(respt_samples=True)
+        samples_all = getattr(result, 'respTimeSamples', None)
+        if not samples_all:
+            raise ValueError(
+                "The LDES run returned no response time samples, so an empirical "
+                "CDF cannot be built. Increase options.samples, or use "
+                "getPerctRespT(..., 'forktail') for the analytical fork-join tail.")
+
+        for i, station_samples in enumerate(samples_all):
+            if i >= M:
+                break
             for k, samples in enumerate(station_samples):
-                if samples and len(samples) > 0:
-                    sorted_samples = np.sort(samples)
-                    n = len(sorted_samples)
-                    cdf_values = np.arange(1, n + 1) / n
-                    cdf_matrix = np.column_stack([sorted_samples, cdf_values])
-                    station_cdfs.append(cdf_matrix)
-                else:
-                    station_cdfs.append(None)
-            cdfs.append(station_cdfs)
+                if k >= K or samples is None or len(samples) == 0:
+                    continue
+                x = np.sort(np.asarray(samples, dtype=float).ravel())
+                F = np.arange(1, x.size + 1, dtype=float) / x.size
+                # Collapse repeated observations, keeping the LARGEST CDF value
+                # at each distinct time: a tie left expanded makes the ecdf
+                # multivalued, and an interpolating consumer then reads a
+                # quantile off whichever duplicate it happened to hit.
+                xu, last_idx = np.unique(x[::-1], return_index=True)
+                last_idx = x.size - 1 - last_idx
+                RD[i][k] = np.column_stack([F[last_idx], xu])
 
-        return {
-            'station_names': self._station_names,
-            'class_names': self._class_names,
-            'cdfs': cdfs,
-        }
+        return RD
 
-    def getTranCdfPassT(self) -> Optional[dict]:
+    def getTranCdfPassT(self):
         """
         Get empirical CDF of passage times from simulation samples.
 
@@ -2343,6 +2950,16 @@ class SolverLDES(NetworkSolver):
         """Get the LDES result (after runAnalyzer is called)."""
         return self._result
 
+    @result.setter
+    def result(self, value: Optional[LDESResult]) -> None:
+        # NetworkSolver._clearResultStores() (base.py) sets both `_result`
+        # and `result` directly, expecting `result` to be assignable (a
+        # plain attribute on most backends); without this setter, reset()
+        # raises before a fresh solve, which breaks SolverLDES used as a
+        # SolverLN per-layer factory (SolverLN.post() calls reset() every
+        # outer iteration).
+        self._result = value
+
     def getName(self) -> str:
         """Get solver name."""
         return "LDES"
@@ -2350,6 +2967,19 @@ class SolverLDES(NetworkSolver):
     def get_name(self) -> str:
         """Get solver name (Python convention)."""
         return self.getName()
+
+    def listValidMethods(self):
+        """Valid methods for this solver, SolverLDES.m verbatim.
+
+        'parallel' asks the engine for INDEPENDENT REPLICATIONS and the mean
+        over them, which is what its parallel analyzer is; it is not a second
+        engine. The CLI argument builder turns the name into --replications,
+        taking options.replications when set and 8 otherwise -- the same default
+        the SSA parallel analyzer uses for its replica count.
+        """
+        return ['default', 'parallel']
+
+    list_valid_methods = listValidMethods
 
     def isStochasticMethod(self, method):
         """LDES is a discrete-event simulator; all methods are stochastic."""
@@ -2379,10 +3009,11 @@ class SolverLDES(NetworkSolver):
             'Sink', 'Source',
             'Queue', 'Delay',
             'Fork', 'Join', 'Forker', 'Joiner',
+            'JoinPartial',  # quorum join: fires at the k-th sibling, stragglers discarded on arrival
             'Place', 'Transition',
             'Linkage', 'Enabling', 'Inhibiting', 'Timing', 'Firing', 'Storage',
             'Logger', 'LogTunnel',
-            'Cache', 'CacheClassSwitcher', 'CacheRetrieval',
+            'Cache', 'CacheClassSwitcher', 'CacheRetrieval', 'CacheItemSize',
             'ReplacementStrategy_LRU', 'ReplacementStrategy_FIFO', 'ReplacementStrategy_RR', 'ReplacementStrategy_SFIFO',
             'ReplacementStrategy_HLRU', 'ReplacementStrategy_CLIMB', 'ReplacementStrategy_QLRU',
             'Buffer', 'Region',
@@ -2391,6 +3022,12 @@ class SolverLDES(NetworkSolver):
             'Geometric',  # Lattice-valued interarrival/service time on {1,2,...} (Geo/Geo/1 and slotted models)
             'Bernoulli', 'Binomial', 'Poisson',  # Counting distributions; zero atom becomes an immediate interval (continuous mode only)
             'NHPP',
+            # Time-inhomogeneous MAP: the piecewise-constant (D0,D1) schedule is
+            # simulated exactly by carrying the phase across a breakpoint. PHt service
+            # is walked from the SERVICE START epoch, so processor sharing, preemption,
+            # load dependence and heterogeneous servers are rejected at runtime.
+            'MAPt',
+            'PHt',
             'Server', 'JobSink', 'RandomSource',
             'InfiniteServer', 'SharedServer', 'ServiceTunnel', 'DelayStation',  # internal station-section markers
             'SchedStrategy_FCFS', 'SchedStrategy_INF',
@@ -2416,6 +3053,7 @@ class SolverLDES(NetworkSolver):
             'RoutingStrategy_PROB', 'RoutingStrategy_RAND',
             'RoutingStrategy_RROBIN', 'RoutingStrategy_WRROBIN',
             'RoutingStrategy_JSQ', 'RoutingStrategy_SQ',
+            'RoutingStrategy_SDR',  # Krzesinski (1987) product-form state-dependent routing
             'OpenClass', 'ClosedClass', 'SelfLoopingClass',
             'OpenSignal', 'ClosedSignal',
             'SignalType_NEGATIVE', 'SignalType_REPLY', 'SignalType_CATASTROPHE',
@@ -2423,6 +3061,28 @@ class SolverLDES(NetworkSolver):
             'LoadDependence', 'ClassDependence', 'JointDependence', 'Balking', 'Reneging', 'Retrial',
             # Engine simulates the SETUP/DELAYOFF server states.
             'SetupDelayOff',
+            # set_breakdown: the server alternates up/down on the breakdownMu/repairMu
+            # clocks, a job in service holds its residual work across the outage
+            # (preemptive resume), and downServiceRates runs the server at a degraded
+            # speed instead of stopping it. Rejected at runtime in slotted mode and with
+            # time-inhomogeneous service (MAPt/PHt/NHPP).
+            'Breakdown',
+            # Queue.add_server_type: the engine keeps one pool per server type,
+            # assigns each job a type from the pools compatible with its class and
+            # serves it at that pool's own rate, so the pools are an exact
+            # sample-path feature rather than a flattened nservers. Only the JVM
+            # engine (common/ldes.jar) implements them -- the native C++ binary
+            # refuses the model by name (ldes_engine_reject), which is what makes
+            # the runner list fall through to the jar.
+            'HeteroServers',
+            # Source.set_arrival_batch: save_model writes arrivalBatch and the
+            # engine reads sn.arrivalbatch, so a batch releases several jobs at
+            # one arrival epoch on the sample path.
+            'BatchArrival',
+            # c-server stations (sn.nservers) and finite buffers with their drop
+            # rule (sn.cap/classcap, the 'Buffer' marker above) are simulated
+            # directly by both engines.
+            'MultiServer', 'FiniteCapacity',
         }
 
     @staticmethod

@@ -268,6 +268,11 @@ public class Task extends LayeredNetworkElement {
         return this;
     }
 
+    /** Think-time distribution, or null when none was set. */
+    public Distribution getThinkTime() {
+        return thinkTime;
+    }
+
     // Getters for setup time
     public Distribution getSetupTime() {
         return setupTime;

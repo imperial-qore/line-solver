@@ -206,7 +206,7 @@ public final class Q_CT_MAP_D_C {
     private static List<Double> computeRefinedWaitingTime(
             Matrix pi, Matrix D0, Matrix P0, Matrix P1, double lambda, double s, int c, int m,
             Matrix thetaA, List<Double> baseW, int numSteps, double epsilon) {
-        // Simplified: returns base waiting time list (matches Kotlin behavior fallback).
+        // Simplified: returns base waiting time list (matches the JAR fallback behavior).
         return baseW;
     }
 }

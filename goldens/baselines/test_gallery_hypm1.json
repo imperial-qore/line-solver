@@ -1,0 +1,30 @@
+{
+  "class": {
+    "MVA": "deterministic"
+  },
+  "example": "test_gallery_hypm1",
+  "solvers": {
+    "MVA": [
+      {
+        "ArvR": 0.0,
+        "JobClass": "myClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "mySource",
+        "Tput": 1.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 1.0,
+        "JobClass": "myClass",
+        "QLen": 10.16,
+        "ResidT": 10.16,
+        "RespT": 10.16,
+        "Station": "myQueue",
+        "Tput": 1.0,
+        "Util": 0.5
+      }
+    ]
+  }
+}

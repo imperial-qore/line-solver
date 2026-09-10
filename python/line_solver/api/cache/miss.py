@@ -22,7 +22,9 @@ from .spm import cache_spm, cache_prob_spm
 
 
 def cache_miss(gamma: np.ndarray, m: np.ndarray,
-               lambd: Optional[np.ndarray] = None
+               lambd: Optional[np.ndarray] = None,
+               sigma: Optional[np.ndarray] = None,
+               cap: Optional[np.ndarray] = None
                ) -> Tuple[float, Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray]]:
     """
     Compute miss rates for a cache system using exact recursive method.
@@ -31,6 +33,8 @@ def cache_miss(gamma: np.ndarray, m: np.ndarray,
         gamma: Item popularity probabilities (n x h matrix)
         m: Cache capacity vector (h,)
         lambd: Optional arrival rates per user per item (u x n x h+1)
+        sigma: Optional item storage costs (sizes) (n,)
+        cap: Optional per-list storage cost caps (h,)
 
     Returns:
         Tuple of (M, MU, MI, pi0) where:
@@ -44,14 +48,20 @@ def cache_miss(gamma: np.ndarray, m: np.ndarray,
     """
     gamma = np.asarray(gamma, dtype=np.float64)
     m = np.asarray(m, dtype=np.float64).ravel()
+    capped = not (sigma is None or cap is None
+                  or len(np.asarray(sigma).ravel()) == 0
+                  or len(np.asarray(cap).ravel()) == 0)
+    if capped:
+        sigma = np.asarray(sigma, dtype=np.float64).ravel()
+        cap = np.asarray(cap, dtype=np.float64).ravel()
 
     n = gamma.shape[0]
 
     # Compute global miss rate
     ma = m.copy()
     ma[0] = ma[0] + 1
-    E = cache_erec(gamma, m)
-    Ea = cache_erec(gamma, ma)
+    E = cache_erec(gamma, m, sigma if capped else None, cap if capped else None)
+    Ea = cache_erec(gamma, ma, sigma if capped else None, cap if capped else None)
     M = Ea / E if E != 0 else 1.0
 
     if lambd is None:
@@ -65,7 +75,10 @@ def cache_miss(gamma: np.ndarray, m: np.ndarray,
     for k in range(n):
         # Remove item k from gamma
         gamma_sub = np.delete(gamma, k, axis=0)
-        E_sub = cache_erec_aux(gamma_sub, m, n - 1)
+        if capped:
+            E_sub = cache_erec(gamma_sub, m, np.delete(sigma, k), cap)
+        else:
+            E_sub = cache_erec_aux(gamma_sub, m, n - 1)
         pi0[k] = E_sub / E if E != 0 else 1.0
 
     # Compute per-user miss rate
@@ -173,6 +186,8 @@ def cache_miss_fpi(gamma: np.ndarray, m: np.ndarray,
         gamma: Item popularity probabilities (n x h)
         m: Cache capacity vector (h,)
         lambd: Optional arrival rates per user per item (u x n x h+1)
+        sigma: Optional item storage costs (sizes) (n,)
+        cap: Optional per-list storage cost caps (h,)
 
     Returns:
         Tuple of (M, MU, MI, pi0) where:
@@ -362,10 +377,88 @@ def cache_mva_miss(p: np.ndarray, m: np.ndarray,
     return M, Mk
 
 
+def cache_miss_asy(gamma: np.ndarray, m: np.ndarray,
+                   maxiter: int = 1000, tol: float = 1e-8) -> float:
+    """Asymptotic (large-cache) miss ratio by a rank-threshold fixed point.
+
+    The deterministic limit of a multi-list cache: as the item count grows,
+    list l holds exactly the m[l] items of largest effective popularity, so an
+    item's membership becomes a THRESHOLD test rather than a probability. With
+    pi[k] the miss probability of item k, the effective popularity of item j in
+    list l is gamma[l,j]*(1-pi[j]) and the fixed point is
+
+        pi[k] = sum_l gamma[l,k] 1{item k outside the top m[l]} / sum_l gamma[l,k],
+
+    iterated to a sup-norm tolerance from the uniform start pi = 1/n. The
+    returned scalar is the request-weighted miss ratio.
+
+    INDEX CONVENTION, AND IT IS THE REVERSE OF EVERY OTHER CACHE FUNCTION HERE.
+    gamma is (h, n), LIST-major, whereas cache_spm, cache_erec and cache_miss
+    all take gamma as (n, h), ITEM-major. Callers holding an item-major gamma
+    must transpose. The threshold is strict, so an item exactly at the cutoff
+    is admitted. A degenerate capacity (zero total, or any negative entry)
+    returns 1.
+
+    Args:
+        gamma: (h, n) list-major access factors.
+        m: (h,) list capacities.
+        maxiter: cap on fixed-point sweeps.
+        tol: sup-norm stopping tolerance on pi.
+
+    Returns:
+        The request-weighted asymptotic miss ratio.
+
+    References:
+        N. Gast, B. Van Houdt, "Transient and steady-state regime of a family
+        of list-based cache replacement algorithms", Queueing Syst. 83, 2016.
+        jar/src/main/java/jline/api/cache/Cache_miss_asy.java
+    """
+    gamma = np.asarray(gamma, dtype=np.float64)
+    m = np.asarray(m, dtype=np.float64).ravel()
+    h, n = gamma.shape
+
+    if np.sum(m) == 0.0 or np.min(m) < 0.0:
+        return 1.0
+
+    tiny = 1e-14
+    pi = np.ones(n) / n
+    for _ in range(maxiter):
+        prev = pi.copy()
+        newpi = np.zeros(n)
+        for k in range(n):
+            numer = 0.0
+            denom = 0.0
+            for l in range(h):
+                cap = int(m[l])
+                if cap <= 0:
+                    continue
+                other = np.concatenate((np.arange(k), np.arange(k + 1, n)))
+                pop = np.sort(gamma[l, other] * (1.0 - prev[other]))[::-1]
+                take = min(cap, pop.size)
+                if take < cap:
+                    # fewer competitors than slots: item k is always cached
+                    notin = 0.0
+                elif gamma[l, k] * (1.0 - prev[k]) > pop[take - 1]:
+                    notin = 0.0
+                else:
+                    notin = 1.0
+                numer += gamma[l, k] * notin
+                denom += gamma[l, k]
+            newpi[k] = numer / denom if denom > tiny else 1.0
+        pi = newpi
+        if np.max(np.abs(pi - prev)) < tol:
+            break
+
+    missrate = float(np.sum(gamma * pi[np.newaxis, :]))
+    totrate = float(np.sum(gamma))
+    return missrate / totrate if totrate > tiny else 1.0
+
+
 __all__ = [
     'cache_miss',
     'cache_xi_fp',
     'cache_miss_fpi',
     'cache_miss_spm',
     'cache_mva_miss',
+    'cache_miss_asy',
 ]

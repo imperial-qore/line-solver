@@ -93,10 +93,10 @@ public class SolverFluidExportODEsTest {
         SolverFluid solver = new SolverFluid(buildDpsModel());
         solver.options.method = "closing";
         String tex = solver.exportODEs("", "scalar");
-        // DPS: weights normalized to (2/3, 1/3), S*w folded into coefficients,
-        // denominator constant mean(w) = 1/K as in ode_rates_closing
+        // DPS: weights normalized to (2/3, 1/3) and folded into the coefficients;
+        // the shares divide the capacity min(n_2, S_2), with no additive seed
         assertTrue(tex.contains("\\tilde{n}_{2}(\\mathbf{x}) &= 0.66666667\\,(x_{3} + x_{4}) + 0.33333333\\,(x_{5})"));
-        assertTrue(tex.contains("g_{2}(\\mathbf{x}) &= \\frac{1}{0.5 + \\tilde{n}_{2}(\\mathbf{x})}"));
+        assertTrue(tex.contains("g_{2}(\\mathbf{x}) &= \\frac{\\min(n_{2}(\\mathbf{x}),\\, 1)}{\\tilde{n}_{2}(\\mathbf{x})}"));
         assertTrue(tex.contains("\\frac{\\mathrm{d}x_{1}}{\\mathrm{d}t} &= -x_{1} + 1.3333333\\,x_{4}\\,g_{2}(\\mathbf{x})\\\\"));
         assertTrue(tex.contains("\\frac{\\mathrm{d}x_{5}}{\\mathrm{d}t} &= 0.5\\,x_{2} - 0.33333333\\,x_{5}\\,g_{2}(\\mathbf{x})"));
         assertTrue(tex.contains("\\mathbf{x}(0) = \\begin{pmatrix} 2 & 3 & 0 & 0 & 0 \\end{pmatrix}^{\\top}"));

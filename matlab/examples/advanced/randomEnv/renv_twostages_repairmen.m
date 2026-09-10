@@ -45,7 +45,7 @@ AvgTable = envSolver.getAvgTable()
 %scoptions = CTMC.defaultOptions;
 %scoptions.timespan = [0,1e3];
 %scoptions.verbose = false;
-%envSolver = ENV(envModel,@(model) CTMC(model, scoptions),options);
+%envSolver = ENV(envModel,@(model) CTMC(model, 'exact', scoptions),options);
 %[QNc,UNc,TNc] = envSolver.getAvg();
 %AvgTableC = envSolver.getAvgTable()
 

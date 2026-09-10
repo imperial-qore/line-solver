@@ -12,6 +12,10 @@ from .network_struct import NetworkStruct, SchedStrategy, RoutingStrategy
 
 # FineTol constant matching MATLAB GlobalConstants.FineTol
 _FINE_TOL = 1e-8
+# CoarseTol constant matching MATLAB GlobalConstants.CoarseTol
+_COARSE_TOL = 1e-3
+# Zero constant matching MATLAB GlobalConstants.Zero
+_ZERO_TOL = 1e-14
 
 
 # ============================================================================
@@ -753,6 +757,42 @@ def sn_has_priorities(sn: NetworkStruct) -> bool:
     return np.any(sn.classprio.flatten() > 0)
 
 
+def sn_has_quorum_join(sn: NetworkStruct) -> bool:
+    """
+    Check if the network has a quorum (k-of-n) join.
+
+    True if some Join node declares a non-standard strategy with a positive required
+    count in some class, i.e. it fires before every sibling has arrived. The sibling
+    count is not re-derived here, so a declaration with k >= n reads as a quorum; use
+    sn_join_quorum where the branch count is known and the distinction matters, as the
+    fork-join fixed point does.
+
+    Args:
+        sn: NetworkStruct object
+
+    Returns:
+        True if some join declares a positive quorum
+    """
+    from ...lang.base import JoinStrategy
+    nodeparam = getattr(sn, 'nodeparam', None)
+    if nodeparam is None:
+        return False
+    values = nodeparam.values() if isinstance(nodeparam, dict) else nodeparam
+    for param in values:
+        if not isinstance(param, dict):
+            continue
+        strategies = param.get('joinStrategy')
+        required = param.get('joinRequired')
+        if strategies is None or required is None:
+            continue
+        for r, strategy in enumerate(strategies):
+            if strategy == JoinStrategy.STD:
+                continue
+            if r < len(required) and required[r] is not None and float(required[r]) > 0:
+                return True
+    return False
+
+
 def sn_has_class_switching(sn: NetworkStruct) -> bool:
     """
     Check if the network has class switching.
@@ -815,7 +855,7 @@ def sn_has_sd_routing(sn: NetworkStruct) -> bool:
         RoutingStrategy.WRROBIN,
         RoutingStrategy.JSQ,
         RoutingStrategy.SQ,
-        RoutingStrategy.RL,
+        RoutingStrategy.SDR,
     }
 
     for val in sn.routing.flatten():
@@ -834,6 +874,7 @@ def sn_has_product_form(sn: NetworkStruct) -> bool:
     - No multiclass heterogeneous FCFS
     - No priorities
     - No fork-join
+    - At FCFS stations, all active class SCVs are approximately 1 (BCMP type 1)
 
     Args:
         sn: NetworkStruct object
@@ -864,6 +905,30 @@ def sn_has_product_form(sn: NetworkStruct) -> bool:
         return False
     if sn_has_sd_routing(sn):
         return False
+    # BCMP asks for infinite buffers. Nothing here read sn.cap/sn.classcap/
+    # sn.droprule, so a BAS-blocked station or any binding finite buffer passed the
+    # gate and the network read as product form while its truncation couples the
+    # station occupancies.
+    if sn_has_blocking(sn):
+        return False
+
+    # BCMP type 1 asks the FCFS service to be exponential. sn_has_multi_class_heter_fcfs
+    # compares the class MEANS only, so a class-homogeneous Erlang, hyper-exponential or
+    # deterministic FCFS station passed this gate and was dispatched to exact MVA, which
+    # reads the means alone and returns the exponential answer with no warning.
+    if sn.sched is not None and sn.scv is not None and sn.scv.size > 0:
+        for station_id, strategy in sn.sched.items():
+            strategy_val = int(strategy) if hasattr(strategy, '__int__') else strategy
+            if strategy_val != int(SchedStrategy.FCFS):
+                continue
+            if station_id >= sn.scv.shape[0]:
+                continue
+            scvs = sn.scv[station_id, :]
+            active = np.isfinite(scvs) & (scvs > 0)
+            if np.any(active):
+                active_scvs = scvs[active]
+                if not (np.all(active_scvs > 1 - _FINE_TOL) and np.all(active_scvs < 1 + _FINE_TOL)):
+                    return False
 
     return True
 
@@ -921,7 +986,114 @@ def sn_has_bursty_arrival(sn: NetworkStruct) -> bool:
     return False
 
 
-def sn_has_product_form_not_het_fcfs(sn: NetworkStruct) -> bool:
+def sn_is_mm1k_loss(sn: NetworkStruct) -> bool:
+    """
+    Check if the model is a single-station M/M/1/K queue with tail drop.
+
+    True for a single-class open Source-Queue-Sink system whose queue is a
+    single-server exponential M/M/1/K with tail drop (DropStrategy.Drop). This
+    is the exact regime of the closed-form loss scripts qsys_mm1k_loss
+    (probability-based, SolverNC) and qsys_mg1k_loss_mgs (moment-based,
+    SolverMVA), and the one truncated shape that keeps a product form over its
+    single station, hence the exemption in sn_has_blocking.
+
+    Args:
+        sn: NetworkStruct object
+
+    Returns:
+        True if the model is a single-station M/M/1/K with tail drop
+    """
+    from .network_struct import NodeType
+    from ...constants import DropStrategy
+
+    if sn.nclasses != 1 or sn.nclosedjobs != 0:
+        return False
+    if sn.nodetype is None or len(sn.nodetype) != 3:
+        return False
+    qnode = snode = -1
+    nsink = 0
+    for nd, ntype in enumerate(sn.nodetype):
+        if ntype == NodeType.QUEUE:
+            if qnode >= 0:
+                return False
+            qnode = nd
+        elif ntype == NodeType.SOURCE:
+            if snode >= 0:
+                return False
+            snode = nd
+        elif ntype == NodeType.SINK:
+            nsink += 1
+        else:
+            return False
+    if qnode < 0 or snode < 0 or nsink != 1:
+        return False
+    qist = int(sn.nodeToStation[qnode])
+    sist = int(sn.nodeToStation[snode])
+    if qist < 0 or sist < 0:
+        return False
+    if sn.nservers is None or float(np.asarray(sn.nservers).ravel()[qist]) != 1.0:
+        return False
+    droprule = getattr(sn, 'droprule', None)
+    if droprule is None:
+        return False
+    droprule = np.asarray(droprule)
+    if droprule.ndim < 2 or qist >= droprule.shape[0]:
+        return False
+    if int(droprule[qist, 0]) != int(DropStrategy.Drop.value):
+        return False
+    cap = np.asarray(sn.cap, dtype=float).ravel() if sn.cap is not None else None
+    if cap is None or qist >= cap.size or not np.isfinite(cap[qist]) or cap[qist] <= 0:
+        return False
+    if sn.scv is None or sn.scv.shape[0] <= max(qist, sist):
+        return False
+    return abs(sn.scv[sist, 0] - 1) <= 1e-6 and abs(sn.scv[qist, 0] - 1) <= 1e-6
+
+
+def sn_has_blocking(sn: NetworkStruct) -> bool:
+    """
+    Check if the network holds jobs back at a finite buffer or region.
+
+    True when some station can refuse a job, either because its own buffer
+    BINDS (Kendall's K below the population that can reach it, whatever the
+    drop rule: WAITQ, DROP, BAS, BBS, RSRD) or because a finite capacity region
+    caps a set of stations jointly. Such a network is not product form: the
+    truncation couples the station occupancies, so no BCMP factorization of the
+    equilibrium distribution exists.
+
+    Only a buffer that can actually BIND counts, which is what
+    sn_get_buffer_size decides: refreshCapacity derives a finite classcap (the
+    chain population) at every station of every closed model, so a plain
+    finiteness test would call every closed model blocking.
+
+    Two shapes are exempt. A Cache builds its own capped retrieval queues
+    (classCap = 1), which the cache analyzers solve rather than treat as a
+    buffer constraint. And the single-station M/M/1/K loss system keeps the
+    truncated geometric distribution, a product form over its one station.
+
+    Args:
+        sn: NetworkStruct object
+
+    Returns:
+        True if the network has binding finite buffers or capacity regions
+    """
+    from .network_struct import NodeType
+    from ..me.solver_nc_mem import sn_get_buffer_size
+
+    # a finite capacity region caps a SET of stations, which no per-station
+    # capacity can express and no product form survives
+    if getattr(sn, 'nregions', 0):
+        return True
+    if sn.nodetype is not None and any(int(t) == int(NodeType.CACHE) for t in sn.nodetype):
+        return False
+    if sn_is_mm1k_loss(sn):
+        return False
+    for ist in range(int(sn.nstations)):
+        if np.isfinite(sn_get_buffer_size(sn, ist)):
+            return True
+    return False
+
+
+def sn_has_product_form_not_het_fcfs(sn: NetworkStruct, check_means: bool = True) -> bool:
     """
     Check if network has product form except for heterogeneous FCFS.
 
@@ -929,9 +1101,14 @@ def sn_has_product_form_not_het_fcfs(sn: NetworkStruct) -> bool:
     - All stations use INF, PS, FCFS, LCFSPR, or EXT scheduling
     - No priorities, no fork-join, no state-dependent routing
     - At FCFS stations, all active class SCVs are approximately 1 (exponential)
+      and all active class service means agree (BCMP type 1 asks the FCFS
+      service to be class-independent, not merely exponential)
 
     Args:
         sn: NetworkStruct object
+        check_means: also demand class-independent FCFS service means. Pass False only for
+            an algorithm that models class-dependent FCFS itself (ab, schmidt, schmidt-ext),
+            for which the exclusion is the whole point.
 
     Returns:
         True if network would have product form without heterogeneous FCFS
@@ -973,6 +1150,52 @@ def sn_has_product_form_not_het_fcfs(sn: NetworkStruct) -> bool:
                 if not (np.all(active_scvs > 1 - _FINE_TOL) and np.all(active_scvs < 1 + _FINE_TOL)):
                     return False
 
+    # At FCFS stations the service means must agree too: with unequal means the
+    # product-form solve returns a wait proportional to each class's own demand
+    # where FCFS makes every class wait behind the same queue. The comparison is
+    # between CHAIN service times (visit-weighted over the classes that actually
+    # visit the station): a class that never visits cannot break product form,
+    # and within-chain heterogeneity is invisible to both the product-form and
+    # the qd branch, which deaggregate a chain result proportionally to each
+    # class's own demand, so only between-chain heterogeneity warrants the
+    # divert. LN layers carry seeded rates for classes with zero visits, which
+    # a raw per-class comparison mistakes for heterogeneity.
+    if check_means and sn.sched is not None and sn.rates is not None and sn.rates.size > 0:
+        for station_id, strategy in sn.sched.items():
+            strategy_val = int(strategy) if hasattr(strategy, '__int__') else strategy
+            if strategy_val != int(SchedStrategy.FCFS):
+                continue
+            if station_id >= sn.rates.shape[0]:
+                continue
+            rates = sn.rates[station_id, :]
+            stateful_idx = station_id
+            if sn.stationToStateful is not None and station_id < len(sn.stationToStateful):
+                stateful_idx = int(sn.stationToStateful[station_id])
+            st_chain = []
+            nchains = int(sn.nchains) if sn.nchains is not None else 0
+            for c in range(nchains):
+                if not sn.visits or c not in sn.visits:
+                    continue
+                visits = sn.visits[c]
+                if stateful_idx >= visits.shape[0]:
+                    continue
+                num = 0.0
+                den = 0.0
+                for r in range(min(rates.shape[0], visits.shape[1])):
+                    inchain = (sn.chains[c, r] > 0) if (sn.chains is not None and sn.chains.ndim == 2) else True
+                    if not inchain:
+                        continue
+                    w = visits[stateful_idx, r]
+                    if w > _ZERO_TOL and np.isfinite(rates[r]) and rates[r] > 0:
+                        num += w / rates[r]
+                        den += w
+                if den > 0:
+                    st_chain.append(num / den)
+            if st_chain:
+                st_chain = np.asarray(st_chain)
+                if np.max(st_chain) - np.min(st_chain) > _COARSE_TOL * np.max(st_chain):
+                    return False
+
     return True
 
 
@@ -1012,3 +1235,113 @@ def sn_is_state_valid(sn: NetworkStruct) -> bool:
         # State should match expected dimensions
         # This is a basic check; more detailed validation could be added
     return True
+
+
+def sn_is_discrete_time(sn: NetworkStruct, options=None):
+    """Decide whether a model lives on a discrete (slotted) time scale.
+
+    A model is discrete-time when every enabled interarrival and service law is
+    lattice-valued on a common slot length and at least one of them is
+    intrinsically discrete. The lattice families are Geometric (support
+    {1,2,...} slots), DMAP, DiscreteUniform with integral bounds, and Det whose
+    value is a positive integral number of slots. Immediate is deliberately not
+    one: a zero interval is not a point of {d,2d,...}, the same refusal the LDES
+    slotted engine makes.
+
+    The test reads procid, rates and scv rather than proc, because the struct
+    refresh may already have replaced a lattice law by a continuous surrogate.
+    procid keeps the requested family and (mean, SCV) identify the member of it
+    exactly for every family above.
+
+    MATLAB twin: sn_is_discrete_time.m
+
+    Returns:
+        (is_discrete_time, slot_length, info) with info a dict carrying
+        has_lattice, has_continuous, has_dmap and reason
+    """
+    from ...constants import ProcessType
+
+    tol = 1e-8
+    timescale = 'auto'
+    slot_length = 1.0
+    config = getattr(options, 'config', None) if options is not None else None
+    if isinstance(config, dict):
+        timescale = str(config.get('timescale', 'auto')).lower()
+        slot_length = float(config.get('slotlength', 1.0))
+    elif options is not None:
+        timescale = str(getattr(options, 'timescale', 'auto')).lower()
+        slot_length = float(getattr(options, 'slotlength', 1.0))
+
+    if timescale not in ('auto', 'discrete', 'continuous'):
+        raise ValueError("config.timescale must be 'auto', 'discrete' or 'continuous'.")
+    if not np.isfinite(slot_length) or slot_length <= 0:
+        raise ValueError("config.slotlength must be a positive finite scalar.")
+
+    info = {'has_lattice': False, 'has_continuous': False, 'has_dmap': False, 'reason': ''}
+    if timescale == 'continuous':
+        return False, slot_length, info
+
+    procid = np.asarray(sn.procid) if sn.procid is not None else None
+    rates = np.asarray(sn.rates) if sn.rates is not None else None
+    scv = np.asarray(sn.scv) if sn.scv is not None else None
+    if procid is None or rates is None:
+        return False, slot_length, info
+
+    for ist in range(sn.nstations):
+        for r in range(sn.nclasses):
+            proc_type = procid[ist, r]
+            if proc_type is None or proc_type == ProcessType.DISABLED:
+                continue
+            rate = float(rates[ist, r])
+            if np.isnan(rate) or rate <= 0:
+                continue
+            mean_slots = 1.0 / (rate * slot_length)
+
+            if proc_type == ProcessType.GEOMETRIC:
+                info['has_lattice'] = True
+                if mean_slots < 1 - tol:
+                    info['has_continuous'] = True
+                    info['reason'] = (f"Geometric at station {ist} class {r} has mean "
+                                      f"{mean_slots} slots, below the one-slot minimum.")
+            elif proc_type == ProcessType.DMAP:
+                info['has_lattice'] = True
+                info['has_dmap'] = True
+            elif proc_type == ProcessType.DUNIFORM:
+                info['has_lattice'] = True
+                var_slots = float(scv[ist, r]) * mean_slots ** 2 if scv is not None else 0.0
+                width = np.sqrt(max(0.0, 12 * var_slots + 1)) - 1
+                lo = int(round(mean_slots - width / 2))
+                if lo < 1:
+                    info['has_continuous'] = True
+                    info['reason'] = (f"DiscreteUniform at station {ist} class {r} "
+                                      "is not contained in {1,2,...}.")
+            elif proc_type == ProcessType.DET:
+                if abs(mean_slots - round(mean_slots)) <= tol * max(1.0, mean_slots) \
+                        and round(mean_slots) >= 1:
+                    info['has_lattice'] = True
+                else:
+                    # a Det off the lattice is what makes the model continuous
+                    info['has_continuous'] = True
+            else:
+                info['has_continuous'] = True
+
+    if timescale == 'discrete':
+        if info['has_lattice'] and info['has_continuous']:
+            raise RuntimeError("config.timescale='discrete' was requested but the model mixes "
+                               f"lattice and non-lattice laws. {info['reason']}")
+        if not info['has_lattice']:
+            raise RuntimeError("config.timescale='discrete' was requested but no interarrival "
+                               f"or service law is lattice-valued on a slot of {slot_length}.")
+        return True, slot_length, info
+
+    is_dt = info['has_lattice'] and not info['has_continuous']
+
+    if not is_dt and info['has_dmap']:
+        # A DMAP has no continuous-time reading: its (D0,D1) are probability
+        # matrices, so the CTMC machinery would compute inv(-D0) where the law
+        # needs inv(I-D0) and return a wrong number in silence.
+        raise RuntimeError("The model mixes a DMAP with continuous-time laws. A DMAP is only "
+                           "defined on a slotted time scale, so no solver can interpret this "
+                           f"model. {info['reason']}")
+
+    return is_dt, slot_length, info

@@ -3,7 +3,8 @@ Cluster builder.
 
 Mirrors the Java :class:`jline.gen.Cluster` builder: chainable setters that
 configure a Source -> Dispatcher -> Servers -> Sink (or Think -> Dispatcher ->
-Servers -> Think) topology, plus comparison and parametric-sweep helpers.
+Servers -> Think, or both at once for mixed models) topology, plus comparison
+and parametric-sweep helpers.
 """
 
 from collections import OrderedDict
@@ -43,6 +44,7 @@ class Cluster:
         self._scheduling: SchedStrategy = SchedStrategy.PS
         self._dispatching: RoutingStrategy = RoutingStrategy.RAND
         self._closed: bool = False
+        self._mixed: bool = False       # open classes first, then closed ones
         self._population: Optional[List[int]] = None
         self._think_times: Optional[List[float]] = None
         self._dispatch_probs: Optional[np.ndarray] = None  # PROB: rows=classes (1 broadcasts), cols=servers
@@ -50,6 +52,21 @@ class Cluster:
         self._sq_k: Optional[int] = None
         self._arrival_scvs: Optional[np.ndarray] = None    # per-class arrival SCVs
         self._service_scvs: Optional[np.ndarray] = None    # (M, R) service SCVs
+
+    # ------------------------------------------------------------------ class counts
+    def _num_open(self) -> int:
+        """Number of open classes in the current configuration."""
+        return 0 if self._closed else len(self._arrival_rates)
+
+    def _num_closed(self) -> int:
+        """Number of closed classes in the current configuration."""
+        if not (self._closed or self._mixed) or self._population is None:
+            return 0
+        return len(self._population)
+
+    def _num_classes(self) -> int:
+        """Total number of classes in the current configuration."""
+        return self._num_open() + self._num_closed()
 
     # ------------------------------------------------------------------ rates
     def set_num_stations(self, M: int) -> 'Cluster':
@@ -153,7 +170,9 @@ class Cluster:
         R = len(self._arrival_rates)
         arr = np.atleast_1d(np.asarray(scv, dtype=float))
         if arr.size == 1:
-            arr = np.full(R, float(arr))
+            # .item(), not float(): numpy 2.x refuses to coerce a size-1 array
+            # that is not 0-d, and atleast_1d has just made this one (1,).
+            arr = np.full(R, arr.item())
         elif arr.shape != (R,):
             raise ValueError("arrival_scv length must equal number of classes")
         if np.any(arr <= 0):
@@ -167,11 +186,13 @@ class Cluster:
         Either a scalar (broadcast), a length-M vector (per-server, broadcast
         over classes), or a (M, R) matrix.
         """
-        R = len(self._population) if self._closed else len(self._arrival_rates)
+        R = self._num_classes()
         M = self._num_stations
         arr = np.atleast_2d(np.asarray(scv, dtype=float))
         if arr.size == 1:
-            arr = np.full((M, R), float(arr))
+            # .item(), not float(): numpy 2.x refuses to coerce a size-1 array
+            # that is not 0-d, and atleast_2d has just made this one (1, 1).
+            arr = np.full((M, R), arr.item())
         elif arr.ndim == 1 or arr.shape == (1, M):
             arr = np.tile(np.asarray(scv, dtype=float).reshape(M, 1), (1, R))
         elif arr.shape != (M, R):
@@ -200,6 +221,34 @@ class Cluster:
             if len(self._population) != len(self._think_times):
                 raise ValueError("population and think_time must have equal length")
         self._closed = True
+        self._mixed = False
+        return self
+
+    def set_mixed(self, arrival_rates: Union[float, Sequence[float]],
+                  population: Union[int, Sequence[int]],
+                  think_time: Union[float, Sequence[float]]) -> 'Cluster':
+        """Mixed cluster: open classes coexist with closed ones.
+
+        ``arrival_rates`` holds the per-class arrival rates of the open classes,
+        ``population`` and ``think_time`` the per-class population and think time
+        of the closed classes. Classes are ordered open first, so service-rate
+        and service-SCV matrices have ``len(arrival_rates) + len(population)``
+        columns.
+        """
+        lam = [float(x) for x in np.atleast_1d(np.asarray(arrival_rates, dtype=float))]
+        pop = [int(p) for p in np.atleast_1d(np.asarray(population))]
+        think = [float(z) for z in np.atleast_1d(np.asarray(think_time, dtype=float))]
+        if not lam or not pop:
+            raise ValueError("a mixed cluster needs at least one open and one closed class")
+        if any(x <= 0 for x in lam):
+            raise ValueError("arrival rates must be positive")
+        if len(pop) != len(think):
+            raise ValueError("population and think_time must have equal length")
+        self._arrival_rates = lam
+        self._population = pop
+        self._think_times = think
+        self._closed = False
+        self._mixed = True
         return self
 
     # camelCase aliases (mirror Java)
@@ -207,6 +256,7 @@ class Cluster:
     setScheduling = set_scheduling
     setStationServers = set_station_servers
     setClosed = set_closed
+    setMixed = set_mixed
     setProbabilities = set_probabilities
     setWeights = set_weights
     setSQ = set_sq
@@ -223,10 +273,7 @@ class Cluster:
     def build(self) -> Network:
         """Build the configured cluster Network."""
         M = self._num_stations
-        if self._closed:
-            R = len(self._population)
-        else:
-            R = len(self._arrival_rates)
+        R = self._num_classes()
 
         strategies = [self._scheduling] * M
         S = np.array(self._station_counts, dtype=int)
@@ -249,7 +296,12 @@ class Cluster:
         )
         factory_dispatch = RoutingStrategy.RAND if needs_post else self._dispatching
 
-        if self._closed:
+        if self._mixed:
+            lam = np.array(self._arrival_rates, dtype=float).reshape(1, -1)
+            N = np.array(self._population, dtype=int).reshape(1, -1)
+            Z = np.array(self._think_times, dtype=float).reshape(1, -1)
+            model = Network.cluster_mixed(lam, N, Z, D, strategies, S, factory_dispatch)
+        elif self._closed:
             N = np.array(self._population, dtype=int).reshape(1, -1)
             Z = np.array(self._think_times, dtype=float).reshape(1, -1)
             model = Network.cluster_closed(N, Z, D, strategies, S, factory_dispatch)
@@ -267,9 +319,10 @@ class Cluster:
         from ..distributions.markovian import APH
 
         classes = model.classes
+        # Arrival SCVs apply to the open classes, which come first in the order.
         if not self._closed and self._arrival_scvs is not None:
             src = model.getNodeByName('Source')
-            for r in range(R):
+            for r in range(self._num_open()):
                 scv = float(self._arrival_scvs[r])
                 if scv != 1.0:
                     src.setArrival(classes[r],
@@ -295,19 +348,23 @@ class Cluster:
 
         if self._dispatching == RoutingStrategy.PROB and self._dispatch_probs is not None:
             # see _kb/11-conventions-and-gotchas.md (Python long-tail low-hit gotchas) for rationale
+            from ..lang.classes import ClosedClass
             rm = model.init_routing_matrix()
-            source_or_think = model.getNodeByName('Source') if not self._closed \
-                else model.getNodeByName('Think')
-            sink_or_think = model.getNodeByName('Sink') if not self._closed \
-                else model.getNodeByName('Think')
+            source = None if self._closed else model.getNodeByName('Source')
+            sink = None if self._closed else model.getNodeByName('Sink')
+            think = model.getNodeByName('Think') if (self._closed or self._mixed) else None
             for r in range(R):
                 cls = classes[r]
-                rm.set(cls, cls, source_or_think, dispatcher, 1.0)
+                # Closed classes enter and leave at the delay, open ones at the source/sink.
+                is_closed = isinstance(cls, ClosedClass)
+                entry = think if is_closed else source
+                exit_node = think if is_closed else sink
+                rm.set(cls, cls, entry, dispatcher, 1.0)
                 row = self._dispatch_probs[0] if self._dispatch_probs.shape[0] == 1 \
                     else self._dispatch_probs[r]
                 for i, server in enumerate(servers):
                     rm.set(cls, cls, dispatcher, server, float(row[i]))
-                    rm.set(cls, cls, server, sink_or_think, 1.0)
+                    rm.set(cls, cls, server, exit_node, 1.0)
             model.link(rm)
             for cls in classes:
                 dispatcher.set_routing(cls, RoutingStrategy.PROB)
@@ -387,9 +444,9 @@ class Cluster:
 
     def sweep_arrival_rate(self, rates: Sequence[float], solver_class) -> 'OrderedDict':
         if self._closed:
-            raise RuntimeError("sweep_arrival_rate is only defined for open farms")
+            raise RuntimeError("sweep_arrival_rate is only defined for clusters with open classes")
         if len(self._arrival_rates) != 1:
-            raise RuntimeError("sweep_arrival_rate requires a single class")
+            raise RuntimeError("sweep_arrival_rate requires a single open class")
         factory = self._solver_factory(solver_class)
         out = OrderedDict()
         saved = self._arrival_rates[0]

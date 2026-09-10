@@ -374,6 +374,11 @@ class SparseMatrix:
             x, flag, _, _ = ctmc_gmres(A, b)
             if flag == 0:
                 return x
+            # Short-recurrence retry before the direct factorization, as in ctmc_solve.
+            from ..api.mc.bicgstab import ctmc_bicgstab
+            x, flag, _, _ = ctmc_bicgstab(A, b)
+            if flag == 0:
+                return x
         return spsolve(A, b)
 
     def lu(self) -> 'SparseLU':

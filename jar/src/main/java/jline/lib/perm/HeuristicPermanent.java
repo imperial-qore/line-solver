@@ -82,16 +82,12 @@ public class HeuristicPermanent extends PermSolver {
      * @return The approximate permanent value
      */
     private double computeHeuristicPermanent() {
-        // Create a working copy with small epsilon added to zeros to ensure positivity
-        double epsilon = 1e-15;
-        Matrix workingMatrix = matrix.copy();
-        for (int i = 0; i < n; i++) {
-            for (int j = 0; j < n; j++) {
-                if (workingMatrix.get(i, j) == 0.0) {
-                    workingMatrix.set(i, j, epsilon);
-                }
-            }
+        // A zero used to be replaced by 1e-15 here. That is not invertible: it
+        // changes the permanent by n!*eps, which is O(1) by n=18. Refuse instead.
+        if (n > 0) {
+            PermSupport.requireFullSupport(matrix, "heur");
         }
+        Matrix workingMatrix = matrix.copy();
 
         // Sinkhorn scaling to make matrix approximately doubly stochastic
         SinkhornResult sinkhorn = sinkhornScaling(workingMatrix);
@@ -143,7 +139,7 @@ public class HeuristicPermanent extends PermSolver {
     }
 
     /**
-     * Helper container for sinkhornScaling result (analogue of Kotlin Triple).
+     * Helper container for sinkhornScaling result (a 3-tuple).
      */
     private static final class SinkhornResult {
         final Matrix B;
@@ -166,6 +162,8 @@ public class HeuristicPermanent extends PermSolver {
         double[] c = new double[n];
         for (int i = 0; i < n; i++) { r[i] = 1.0; c[i] = 1.0; }
 
+        boolean converged = false;
+        double lastError = Double.POSITIVE_INFINITY;
         for (int iter = 0; iter < maxIterations; iter++) {
             // Update row scaling: r = 1 / (B * c)
             for (int i = 0; i < n; i++) {
@@ -199,8 +197,19 @@ public class HeuristicPermanent extends PermSolver {
             }
 
             if (maxDiff < tolerance) {
+                converged = true;
+                lastError = maxDiff;
                 break;
             }
+            lastError = maxDiff;
+        }
+        if (!converged) {
+            throw new IllegalArgumentException(
+                    "The Sinkhorn scaling did not converge to a doubly stochastic matrix in "
+                    + maxIterations + " sweeps (margin error " + lastError
+                    + " against a tolerance of " + tolerance + "). The estimate below assumes"
+                    + " convergence, so no value is returned. The usual cause is a matrix"
+                    + " without total support.");
         }
 
         // Apply scaling to matrix: B = diag(r) * B * diag(c)
@@ -216,12 +225,14 @@ public class HeuristicPermanent extends PermSolver {
 
     /**
      * Computes n! (factorial of n).
-     * For large n, this uses Stirling's approximation to avoid overflow.
+     * Exact up to n = 170, the largest factorial representable as a double, which
+     * keeps the estimate identical to the MATLAB twin perm_heur.m; beyond that
+     * Stirling's approximation avoids the overflow.
      */
     private double factorial(int n) {
         if (n <= 1) return 1.0;
-        if (n <= 20) {
-            // For small n, compute exactly
+        if (n <= 170) {
+            // For representable n, compute exactly
             double result = 1.0;
             for (int i = 2; i <= n; i++) {
                 result *= i;

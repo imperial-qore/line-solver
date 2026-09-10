@@ -8,8 +8,10 @@ package jline.io;
 import com.google.gson.*;
 
 import jline.lang.NetworkStruct;
+import jline.lang.layered.LayeredNetworkStruct;
 import jline.solvers.SolverResult;
 import jline.solvers.ldes.LDESResult;
+import jline.solvers.ldes.LNLDESResult;
 import jline.util.matrix.Matrix;
 
 import java.io.*;
@@ -154,6 +156,35 @@ public class LDESResultIO {
             doc.add("stateHistogram", hist);
         }
 
+        // Busy periods of orders 1..K per target (a station, a station-class pair,
+        // or a declared subnetwork), measured when --busyperiod is given.
+        if (result.busyPeriodMean != null && result.busyPeriodMean.getNumRows() > 0) {
+            JsonObject bp = new JsonObject();
+            bp.addProperty("orders", result.busyPeriodMean.getNumCols());
+            JsonArray targets = new JsonArray();
+            for (int ti = 0; ti < result.busyPeriodMean.getNumRows(); ti++) {
+                JsonObject tgt = new JsonObject();
+                tgt.addProperty("name", result.busyPeriodNames.get(ti));
+                JsonArray stations = new JsonArray();
+                for (int st : result.busyPeriodStations.get(ti)) {
+                    stations.add(st);
+                }
+                tgt.add("stations", stations);
+                tgt.addProperty("class", result.busyPeriodClass[ti]);
+                JsonArray mean = new JsonArray();
+                JsonArray count = new JsonArray();
+                for (int n = 0; n < result.busyPeriodMean.getNumCols(); n++) {
+                    mean.add(result.busyPeriodMean.get(ti, n));
+                    count.add(result.busyPeriodCount.get(ti, n));
+                }
+                tgt.add("mean", mean);
+                tgt.add("count", count);
+                targets.add(tgt);
+            }
+            bp.add("targets", targets);
+            doc.add("busyPeriods", bp);
+        }
+
         // Per-cache hit/miss ratios and expected latency (set on the Cache nodes
         // by the simulator). Indexed by job class. Lets the native bridge restore
         // cache.get_hit_ratio()/get_miss_ratio() and node-level hit/miss tables.
@@ -169,6 +200,7 @@ public class LDESResultIO {
                     addMatrix(cm, "latency", cache.getResidT());
                     addMatrix(cm, "hitList", cache.getHitRatioByList());
                     addMatrix(cm, "itemProb", cache.getItemProb());
+                    addMatrix(cm, "listCost", cache.getListCost());
                     cacheMetrics.add(node.getName(), cm);
                 }
             }
@@ -519,6 +551,112 @@ public class LDESResultIO {
      * Adds a Matrix to a JsonObject as a JSON array of arrays.
      * NaN values become JSON null, Infinity becomes 1e308.
      */
+    /**
+     * Writes an {@link LNLDESResult} as the `ldes-result` document, the layered
+     * counterpart of {@link #save(LDESResult, NetworkStruct, String, boolean, boolean)}.
+     *
+     * <p>The metric vectors are indexed in the 0-based index space of
+     * {@link LayeredNetworkStruct}: hosts, then tasks, then entries, then
+     * activities, with the shifts reported under `dimensions` so a client can cut
+     * the vectors without re-deriving them. Per-call vectors are separate, since
+     * calls have no room in that space.</p>
+     *
+     * @param result       the layered simulation result
+     * @param lsn          the structure it was produced from, for names and shifts
+     * @param filename     destination path
+     * @param resptSamples when true, emit the per-entry response time observations
+     *                     under `entryRespTimeSamples`, which is what an empirical
+     *                     CDF is built from
+     */
+    public static void saveLN(LNLDESResult result, LayeredNetworkStruct lsn, String filename,
+                              boolean resptSamples) throws IOException {
+        JsonObject doc = new JsonObject();
+        doc.addProperty("format", FORMAT_NAME);
+        doc.addProperty("version", FORMAT_VERSION);
+        doc.addProperty("modelType", "LayeredNetwork");
+
+        doc.addProperty("solver", result.solver != null ? result.solver : "LDES");
+        doc.addProperty("method", result.method != null ? result.method : "default");
+        doc.addProperty("runtime", result.runtime);
+
+        JsonObject dimensions = new JsonObject();
+        dimensions.addProperty("nidx", lsn.nidx);
+        dimensions.addProperty("nhosts", lsn.nhosts);
+        dimensions.addProperty("ntasks", lsn.ntasks);
+        dimensions.addProperty("nentries", lsn.nentries);
+        dimensions.addProperty("nacts", lsn.nacts);
+        dimensions.addProperty("ncalls", lsn.ncalls);
+        dimensions.addProperty("tshift", lsn.tshift);
+        dimensions.addProperty("eshift", lsn.eshift);
+        dimensions.addProperty("ashift", lsn.ashift);
+        JsonArray names = new JsonArray();
+        for (int i = 0; i < lsn.nidx; i++) {
+            String nm = lsn.names.get(i);
+            names.add(nm != null ? nm : ("Element" + i));
+        }
+        dimensions.add("names", names);
+        doc.add("dimensions", dimensions);
+
+        JsonObject metrics = new JsonObject();
+        addMatrix(metrics, "QLN", result.QLN);
+        addMatrix(metrics, "ULN", result.ULN);
+        addMatrix(metrics, "RLN", result.RLN);
+        addMatrix(metrics, "WLN", result.WLN);
+        addMatrix(metrics, "TLN", result.TLN);
+        addMatrix(metrics, "ALN", result.ALN);
+        addMatrix(metrics, "ZLN", result.ZLN);
+        addMatrix(metrics, "UCallLN", result.UCallLN);
+        addMatrix(metrics, "TCallLN", result.TCallLN);
+        addMatrix(metrics, "UEntryClassLN", result.UEntryClassLN);
+        doc.add("metrics", metrics);
+
+        JsonObject ci = new JsonObject();
+        addMatrix(ci, "QLNCI", result.QLNCI);
+        addMatrix(ci, "ULNCI", result.ULNCI);
+        addMatrix(ci, "RLNCI", result.RLNCI);
+        addMatrix(ci, "TLNCI", result.TLNCI);
+        doc.add("confidenceIntervals", ci);
+
+        if (!result.cacheTaskIdx.isEmpty()) {
+            JsonArray cacheArr = new JsonArray();
+            for (int i = 0; i < result.cacheTaskIdx.size(); i++) {
+                JsonObject row = new JsonObject();
+                row.addProperty("cacheTaskIdx", result.cacheTaskIdx.get(i));
+                row.addProperty("itemEntryIdx", result.cacheItemEntryIdx.get(i));
+                row.addProperty("hitProb", result.cacheHitProb.get(i));
+                row.addProperty("missProb", result.cacheMissProb.get(i));
+                row.addProperty("delayedProb", result.cacheDelayedProb.get(i));
+                row.addProperty("readRate", result.cacheReadRate.get(i));
+                cacheArr.add(row);
+            }
+            doc.add("cacheMetrics", cacheArr);
+        }
+
+        // The observations themselves, one list per ENTRY in local index space.
+        // Their own flag, as on the Network path: a run of any size carries a lot
+        // of them and only a distributional question needs them.
+        if (resptSamples && result.entryRespTimeSamples != null) {
+            JsonArray outer = new JsonArray();
+            for (int e = 0; e < result.entryRespTimeSamples.length; e++) {
+                JsonArray inner = new JsonArray();
+                if (result.entryRespTimeSamples[e] != null) {
+                    for (Double v : result.entryRespTimeSamples[e]) {
+                        inner.add(v);
+                    }
+                }
+                outer.add(inner);
+            }
+            doc.add("entryRespTimeSamples", outer);
+        }
+
+        Writer writer = new BufferedWriter(new FileWriter(filename));
+        try {
+            new GsonBuilder().serializeNulls().create().toJson(doc, writer);
+        } finally {
+            writer.close();
+        }
+    }
+
     private static void addMatrix(JsonObject parent, String key, Matrix matrix) {
         if (matrix == null) {
             parent.add(key, JsonNull.INSTANCE);

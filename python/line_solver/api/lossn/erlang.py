@@ -53,8 +53,10 @@ def lossn_erlangfp(nu: np.ndarray, A: np.ndarray, c: np.ndarray,
     Calls (jobs) on route (class) r arrive according to Poisson rate nu_r.
     Call service times on route r have unit mean.
 
-    The link capacity requirements are:
+    The link capacity requirements are::
+
         sum_r A[j,r] * n[j,r] < c[j]
+
     for all links j, where n[j,r] counts calls on route r on link j.
 
     Args:

@@ -13,6 +13,7 @@ import jline.api.mam.Map_count_idc;
 import jline.api.mam.Map_idc;
 import jline.api.mam.Map_lambda;
 import jline.api.mam.Map_pie;
+import jline.api.npfqn.Npfqn_feedback_elim;
 import jline.api.npfqn.IdcFunction;
 import jline.api.npfqn.Npfqn_traffic_idc;
 import jline.api.qsys.Qsys_gig1_rq;
@@ -23,6 +24,7 @@ import jline.lang.constant.NodeType;
 import jline.lang.constant.SchedStrategy;
 import jline.solvers.SolverOptions;
 import jline.solvers.mva.MVAResult;
+import jline.solvers.mva.SolverMVA;
 import jline.util.matrix.Matrix;
 import jline.util.matrix.MatrixCell;
 
@@ -44,9 +46,12 @@ public final class Solver_rqna {
     private Solver_rqna() {}
 
     public static MVAResult solver_rqna(NetworkStruct sn, SolverOptions options) {
-        if (sn.nclasses > 1) {
-            throw new RuntimeException("RQNA supports single-class open networks only. Use the "
-                    + "'qna' method for multiclass models.");
+        // One predicate for the gate and the run: SolverMVA.supportsModelMethod asks
+        // the same question before the report offers "rqna", so the sentence a
+        // caller reads here is the sentence that kept the row off the report.
+        String rqnaReason = SolverMVA.singleClassOpenReason(sn, "rqna");
+        if (!rqnaReason.isEmpty()) {
+            throw new RuntimeException(rqnaReason);
         }
         for (int r = 0; r < sn.njobs.length(); r++) {
             if (Double.isFinite(sn.njobs.get(r))) {
@@ -232,32 +237,24 @@ public final class Solver_rqna {
     // Near-immediate feedback probability at station a (Whitt-You flows paper
     // eq. 3.8/3.9, H={a}): probability of returning to a before visiting any
     // station with strictly higher traffic intensity.
+    /**
+     * Near-immediate feedback probability at station a (Whitt-You eq. 3.8/3.9,
+     * H={a}).
+     *
+     * <p>Delegated to {@link Npfqn_feedback_elim} so that the solver and the API
+     * function cannot drift apart: they answer the same question, and a private
+     * copy of the rule here is how the two came to differ on ties in the first
+     * place.
+     *
+     * @param P   the routing matrix over queueing stations
+     * @param rho the traffic intensity of each station
+     * @param a   the station
+     * @return the near-immediate feedback probability
+     */
     private static double phatFeedback(Matrix P, double[] rho, int a) {
-        int nq = P.getNumRows();
-        List<Integer> Hc = new ArrayList<Integer>();
-        for (int i = 0; i < nq; i++) {
-            if (i != a && rho[i] <= rho[a] + 1e-9) {
-                Hc.add(i);
-            }
-        }
-        if (Hc.isEmpty()) {
-            return P.get(a, a);
-        }
-        int h = Hc.size();
-        Matrix Phh = new Matrix(h, h);
-        for (int x = 0; x < h; x++) {
-            for (int y = 0; y < h; y++) {
-                Phh.set(x, y, P.get(Hc.get(x), Hc.get(y)));
-            }
-        }
-        Matrix F = Matrix.eye(h).sub(Phh).inv();
-        Matrix Pah = new Matrix(1, h);
-        Matrix Pha = new Matrix(h, 1);
-        for (int x = 0; x < h; x++) {
-            Pah.set(0, x, P.get(a, Hc.get(x)));
-            Pha.set(x, 0, P.get(Hc.get(x), a));
-        }
-        return P.get(a, a) + Pah.mult(F).mult(Pha).get(0, 0);
+        double[] phat = (double[]) Npfqn_feedback_elim
+                .npfqn_feedback_elim(P, rho, null, null, false).get("feedbackProb");
+        return phat[a];
     }
 
     // Near-immediate feedback elimination at station a (Whitt-You Algorithm 2 /

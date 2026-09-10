@@ -179,7 +179,13 @@
                             </execution>
                         </executions>
                     </plugin>
-                    <!-- Copy JAR to common folder -->
+                    <!-- Install the JAR into common/ ATOMICALLY: stage next to the
+                         target, then rename onto it. A plain copy rewrites the SAME
+                         inode over ~1s for a 45MB archive, and MATLAB or a parity row
+                         that opens common/jline.jar inside that window reads a
+                         truncated zip, so a build poisons any sweep running beside
+                         it. A rename on one filesystem is atomic, so a reader sees
+                         either the old jar or the new one. -->
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-antrun-plugin</artifactId>
@@ -190,6 +196,8 @@
                                 <configuration>
                                     <target>
                                         <copy file="${buildDir}/jline-bundle.jar"
+                                              tofile="${project.basedir}/../common/.jline.jar.new"/>
+                                        <move file="${project.basedir}/../common/.jline.jar.new"
                                               tofile="${project.basedir}/../common/jline.jar"/>
                                     </target>
                                 </configuration>
@@ -316,11 +324,6 @@
                                             <!-- Optimization -->
                                             <exclude>de.xypron.jcobyla:jcobyla</exclude>
                                             <exclude>com.quantego:josqp</exclude>
-                                            <!-- XML -->
-                                            <exclude>xerces:xercesImpl</exclude>
-                                            <exclude>xalan:xalan</exclude>
-                                            <exclude>xalan:serializer</exclude>
-                                            <exclude>xml-apis:xml-apis</exclude>
                                             <!-- WebSocket / CLI -->
                                             <exclude>org.java-websocket:Java-WebSocket</exclude>
                                             <exclude>commons-cli:commons-cli</exclude>
@@ -406,7 +409,10 @@
                                 <phase>package</phase>
                                 <configuration>
                                     <target>
+                                        <!-- Staged rename, as for jline.jar above. -->
                                         <copy file="${buildDir}/ldes-bundle.jar"
+                                              tofile="${project.basedir}/../common/.ldes.jar.new"/>
+                                        <move file="${project.basedir}/../common/.ldes.jar.new"
                                               tofile="${project.basedir}/../common/ldes.jar"/>
                                     </target>
                                 </configuration>
@@ -863,21 +869,40 @@
             <artifactId>jcobyla</artifactId>
             <version>1.3</version>
         </dependency>
+        <!-- RINGS, the exact polynomial/rational-function arithmetic behind the
+             SYMBOLIC arm of the pfqn_gld family (Pfqn_gld_sym,
+             Pfqn_gldsingle_sym). Apache 2.0, and Java 8 bytecode, so it is
+             admissible under this project's BSD licence and under the Java 8
+             floor the MATLAB integration imposes.
+
+             WHY A LIBRARY AND NOT A HAND-ROLLED TYPE: the gld recursion is
+             +, * and / only, so its result is a polynomial over a MONOMIAL
+             denominator and a bespoke sparse type would do. The library is here
+             because symbolic INPUT PARAMETERS are meant to widen past this
+             family, and a ring with gcd, factorization and exact rational
+             reconstruction already built is the thing to widen into.
+
+             It carries commons-math3, which this pom already declares above at
+             a NEWER version (3.6.1 against the 3.2 Rings asks for); Maven's
+             nearest-wins resolution keeps 3.6.1 and Rings runs on it. -->
         <dependency>
-            <groupId>xerces</groupId>
-            <artifactId>xercesImpl</artifactId>
-            <version>2.12.2</version>
+            <groupId>cc.redberry</groupId>
+            <artifactId>rings</artifactId>
+            <version>2.5.2</version>
         </dependency>
-        <dependency>
-            <groupId>xalan</groupId>
-            <artifactId>xalan</artifactId>
-            <version>2.7.3</version>
-        </dependency>
-        <dependency>
-            <groupId>xalan</groupId>
-            <artifactId>serializer</artifactId>
-            <version>2.7.3</version>
-        </dependency>
+        <!-- NO XML PARSER OR XSLT ENGINE IS DECLARED HERE, deliberately. Every
+             XML path in this tree (the .lqnx reader/writer in LayeredNetwork,
+             the .jsimg/.jmva readers in M2M and the JMT wrapper, the
+             InputOutput serializer) goes through javax.xml.parsers and
+             javax.xml.transform only, which the JDK implements. xercesImpl,
+             xalan and xalan:serializer were declared for years without a
+             single import and were dropped on 2026-08-19: they added ~10.6 MB
+             uncompressed to the shaded jar (xalan pulls bcel, xpath and
+             org.apache.xml with it) and, worse, they ship JAXP
+             META-INF/services entries, so bundling them OVERRODE the host
+             JVM's parser, MATLAB's included: its own Xerces lost to ours by
+             classpath order. Do not re-add one to fix a parser bug:
+             fix the caller, or set the factory explicitly at the call site. -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-api</artifactId>

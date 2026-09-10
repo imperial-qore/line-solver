@@ -20,14 +20,10 @@ Library Modules
 **Distribution Fitting & Analysis:**
 - butools      - Comprehensive BUTools library (PH, ME, DPH, moments, Markov chains)
 - kpctoolbox   - KPC toolkit (trace, MMPP, KPC fitting, MVPH, CTMC/DTMC)
-- phasetype    - Phase-type specific operations (legacy, overlaps with butools)
-- markov       - Markov chain utilities (legacy, overlaps with butools)
-- empht        - EM-based phase-type fitting (moved to line-apps.git)
 
 **Process Analysis:**
-- trace        - Single and multi-trace analysis (legacy, overlaps with kpctoolbox)
-- mvph         - Multivariate phase-type analysis (legacy, overlaps with kpctoolbox)
 - smc          - Stationary Markov chain solvers (QBD, GI/M/1, M/G/1-type)
+- mapdist      - Distance measures between MAPs and D-MAPs
 
 **Approximation & Fitting:**
 - m3a          - 3rd moment approximation compression
@@ -40,13 +36,12 @@ Library Modules
 **Mean Field Approximation:**
 - rmftool      - Refined Mean Field approximation (vendored from ngast/rmf_tool, MIT License)
 
-**Primary Modules**
--------------------
-
-The main packages (butools, kpctoolbox, smc, lti, etc.) provide the most
-comprehensive coverage. Legacy modules (phasetype, markov, trace, mvph)
-are maintained for backward compatibility but their functions are also
-available in the primary modules with consistent naming.
+Five thin wrappers over the retired JPype backend -- phasetype, markov, trace,
+mvph and a shadowed second `smc` -- were listed here until 2026-08-17. Every one
+of their bodies had lost the line that called the JAR, so none of the five had
+parsed since `4becd99c4`; they are removed rather than reimplemented, because
+butools and kpctoolbox already cover what they claimed. `empht` went to
+line-apps.git earlier and is likewise gone.
 
 Usage
 -----
@@ -57,8 +52,8 @@ Import specific functions:
     trace_mean = kpctoolbox.lib_kpc_trace_mean([0.5, 0.6, 0.4, 0.7])
 
 Or import entire modules:
-    import line_solver.lib.empht as empht
-    result = empht.lib_empht_fit_aph(data, n_phases=2)
+    import line_solver.lib.lti as lti
+    f = lti.lib_lti_talbot(laplace_func, t=1.0)
 
 Available Modules
 -----------------
@@ -71,11 +66,8 @@ All modules are submodules of line_solver.lib:
 - line_solver.lib.smc         (20+ functions)
 - line_solver.lib.m3a         (17+ functions)
 - line_solver.lib.lti         (35+ functions)
-- line_solver.lib.mom         (8 functions)
-- line_solver.lib.trace       (20+ functions)
-- line_solver.lib.phasetype   (13 functions)
-- line_solver.lib.markov      (8+ functions)
-- line_solver.lib.mvph        (10+ functions)
+- line_solver.lib.mapdist     (MAP/D-MAP distance measures)
+- line_solver.lib.rmftool     (refined mean field, vendored)
 
 Function Naming Convention
 --------------------------
@@ -86,7 +78,7 @@ All wrapped functions follow the pattern:
 Examples:
 - lib_butools_ph_moments(alpha, A)
 - lib_kpc_trace_mean(trace)
-- lib_empht_fit_aph(data, n_phases)
+- lib_lti_talbot(laplace_func, t)
 - lib_qmam_ct_map_map_1_steady_state(D0, D1)
 
 Package Structure
@@ -108,12 +100,7 @@ __all__ = [
     'kpctoolbox',  # KPC toolkit (from matlab/lib/kpctoolbox/)
     'm3a',         # M3A compression (from matlab/lib/m3a/)
     'lti',         # Laplace transform inversion
-    'mom',         # Moment-based solver
-    'trace',       # Trace analysis (legacy wrapper)
-    'phasetype',   # Phase-type utilities (legacy wrapper)
-    'markov',      # Markov chain utilities (legacy wrapper)
     'mapdist',     # MAP distribution utilities
-    'mvph',        # Multivariate phase-type (legacy wrapper)
     'rmftool',     # Refined Mean Field (vendored, MIT License)
     'thirdparty',  # Third-party library ports
 ]
@@ -129,7 +116,6 @@ _thirdparty_aliases = {
     'mapmsg': 'thirdparty.mapmsg',
     'qmam': 'thirdparty.qmam',
     'smc': 'thirdparty.smc',
-    'uniqueperms': 'thirdparty.uniqueperms',
 }
 
 def __getattr__(name):

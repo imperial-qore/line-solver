@@ -261,12 +261,12 @@ def pfqn_sens_mvaldmx(lam: np.ndarray, D: np.ndarray, N: np.ndarray,
     equation (11), states that multiplying a queue-length moment by one further
     factor ``Q_jT`` costs one derivative with respect to a parameter ``y_j``
     that scales the service demands ``s_ir`` of the classes ``r`` in ``T`` at
-    station ``j``:
+    station ``j``::
 
         E[Q_jT^k ...] = d/dy_j E[Q_jT^(k-1) ...]|_{y_j=1}
                         + nbar_jT E[Q_jT^(k-1) ...]
 
-    Taking ``k=2`` and ``T={s}`` gives the second moment, hence
+    Taking ``k=2`` and ``T={s}`` gives the second moment, hence::
 
         Cov[n(i,r), n(j,s)] = d nbar(i,r) / dy_(j,s) |_{y=1}
 

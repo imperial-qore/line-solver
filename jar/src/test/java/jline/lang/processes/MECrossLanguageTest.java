@@ -14,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * Cross-language consistency tests for ME and RAP distributions.
  *
- * Verifies that Java/Kotlin and MATLAB implementations produce identical results
+ * Verifies that Java and MATLAB implementations produce identical results
  * for ME and RAP distributions, including:
  * - Moment computation (mean, variance, SCV)
  * - CDF evaluation

@@ -294,7 +294,7 @@ for n = 1:I_fes
 end
 
 % Build node index mapping for complement stations
-complementNodeMap = containers.Map('KeyType', 'double', 'ValueType', 'double');
+complementNodeMap = configureDictionary('double', 'double');
 for i = complementIndices
     nodeIdx = sn.stationToNode(i);
     if ~isempty(nodeMap{nodeIdx})

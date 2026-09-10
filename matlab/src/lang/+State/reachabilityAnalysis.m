@@ -28,7 +28,7 @@ if self.enableChecks && ~SolverSSA.supports(self.model)
     line_error(mfilename,'This model contains features not supported by the solver.');
 end
 
-self.runAnalyzerChecks(options);
+verboseGuard = self.runAnalyzerChecks(options); %#ok<NASGU> restores the caller verbosity on return
 
 switch options.lang
     case 'java'

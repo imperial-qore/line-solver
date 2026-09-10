@@ -1,7 +1,7 @@
 """Regression tests for get_moment_table and get_moment_station_table, the
 solver-level views over the pfqn_sens_* moment family.
 
-Mirrors line-test.git/test_moment_table.m one for one.
+Mirrors line-test.git/test/testsAPI/test_moment_table.m one for one.
 
 The underlying algorithms are validated against brute-force enumeration, the
 published tables of Strelen (1990) and simulation by the api-level harnesses

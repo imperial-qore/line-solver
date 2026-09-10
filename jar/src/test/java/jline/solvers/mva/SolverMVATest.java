@@ -823,12 +823,19 @@ public class SolverMVATest {
 
     // Ground truth from MATLAB for MVA qd method
     // Order: Delay Class1, Delay Class2, Queue1 Class1, Queue1 Class2
-    double[] expectedQ = {0.889832452366994, 0.528026284870464, 15.1101679998155, 7.47197393873407};
-    double[] expectedU = {0.889832427219039, 0.528026270111812, 0.667374339275207, 0.330016428044026};
-    double[] expectedR = {1.00000002826145, 2.0000000559012, 16.9809140885534, 28.3015234721252};
-    double[] expectedW = {1.00000002826145, 2.0000000559012, 16.9809140885534, 28.3015234721252}; // ResidT same as RespT
-    double[] expectedT = {0.889832427219039, 0.264013135055906, 0.889832427219039, 0.264013135055906};
-    double[] expectedA = {0.889832427219039, 0.264013135055906, 0.889832427219039, 0.264013135055906};
+    // Re-recorded 2026-08-14 after LoadDependentModel.ld_class_dependence was
+    // corrected: it built the JOINT-dependent model of ld_joint_dependence.m
+    // (a scalar eta = min(n_1,c) shared by both classes) where the MATLAB
+    // example of this name declares the product-form per-class
+    // beta = [min(n_1,c), 1]. The rows this replaces are that other model's,
+    // which let class 2 ride the class-1 speedup and read Tput 0.2640 against
+    // the 0.1351 of the model under test. Java now matches MATLAB to 15 digits.
+    double[] expectedQ = {0.8801625011545136, 0.2702316536077379, 15.11983803896046, 7.729768622276244};
+    double[] expectedU = {0.8801624714426621, 0.2702316442886424, 0.6601218535819966, 0.337789555360803};
+    double[] expectedR = {1.000000033757235, 2.000000068971164, 17.17846253337494, 57.20846381721195};
+    double[] expectedW = {1.000000033757235, 2.000000068971164, 17.17846253337494, 57.20846381721195}; // ResidT same as RespT
+    double[] expectedT = {0.8801624714426621, 0.1351158221443212, 0.8801624714426621, 0.1351158221443212};
+    double[] expectedA = {0.8801624714426621, 0.1351158221443212, 0.8801624714426621, 0.1351158221443212};
 
     assertTableMetrics(avgTable, expectedQ, expectedU, expectedR, expectedW, expectedA, expectedT);
   }

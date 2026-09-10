@@ -75,6 +75,12 @@ public class SolverFluidTest {
         SolverOptions options = new SolverOptions(SolverType.FLUID);
         options.verbose = VerboseLevel.SILENT;
         options.iter_max = 200;
+        // every expectation below is the MATRIX-method answer, which this test
+        // used to reach through "default". The default now resolves to the
+        // second-order closure "minnormal" where it applies, so the method is
+        // pinned here rather than re-baselining the assertions; the resolution
+        // itself is covered by MinNormalTest.testDefaultResolvesToMinnormal.
+        options.method = "matrix";
         SolverFluid solver = new SolverFluid(model, options);
 
         solver.options.stiff = true;
@@ -83,7 +89,7 @@ public class SolverFluidTest {
         SolverResult result = solver.result;
 
         // method
-        assertEquals("default/matrix", result.method);
+        assertEquals("matrix", result.method);
 
         // QN
         assertEquals(5, result.QN.getNumRows());
@@ -215,6 +221,9 @@ public class SolverFluidTest {
         SolverOptions options = new SolverOptions(SolverType.FLUID);
         options.verbose = VerboseLevel.SILENT;
         options.iter_max = 200;
+        // as in test_ex1: pinned to the matrix method so the expectations below
+        // stay the matrix-method answer they were written against
+        options.method = "matrix";
         SolverFluid solver = new SolverFluid(model, options);
 
         solver.options.stiff = true;
@@ -223,7 +232,7 @@ public class SolverFluidTest {
         SolverResult result = solver.result;
 
         // method
-        assertEquals("default/matrix", result.method);
+        assertEquals("matrix", result.method);
 
         // QN
         assertEquals(4, result.QN.getNumRows());

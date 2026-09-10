@@ -53,6 +53,13 @@ public final class Pfqn_propfair {
         double[] Xasy = new double[R];
         Cobyla.findMinimum(objFun, R, M + R, Xasy, 1.0, 1.0e-8, 0, 10000); // iprint=0: silent (no COBYLA iteration trace)
 
+        // Z.get(0,r) IS CORRECT HERE and a `Z.get(0,` sweep should not flag it:
+        // the reference indexes Z as a VECTOR too (pfqn_propfair.m:44-48 write
+        // Z(r)), so it is no more tolerant of a per-delay-node Z than this is.
+        // Summing the rows would MANUFACTURE a divergence rather than remove
+        // one. The defect this pattern signals is taking Z straight from
+        // snGetProductFormParams with no sumCols() in between; propfair has no
+        // such caller.
         double lG = 0.0;
         for (int r = 0; r < R; r++) {
             double x = Xasy[r];

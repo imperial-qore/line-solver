@@ -52,6 +52,12 @@ function S = sample(self, node, numEvents)
 % title('Sample Path at Queue1');
 % @endcode
 
+
+if isfield(self.options,'lang') && strcmp(self.options.lang,'cpp')
+    S = CPPLINE.nodeSamplePath(self.name, self.model, self.options, node, numEvents, false);
+    return
+end
+
 self.assertPhaseTypeStates('sample');
 
 options = self.getOptions;

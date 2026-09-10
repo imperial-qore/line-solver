@@ -4,39 +4,44 @@ classdef SensitivityData < handle
     % ('RespT'|'QLen'|'Tput'|'Util') -> metric key -> parameter key ->
     % d(metric)/d(parameter). Keys are canonical strings: a metric key is
     % 'station' (Util) or 'station||class'; a parameter key is
-    % 'rate||station||class'. Backed by nested containers.Map.
+    % 'rate||station||class'. Backed by nested dictionaries.
 
     properties
-        data     % Map kind -> (Map metricKey -> (Map paramKey -> value))
+        data     % dict kind -> (dict metricKey -> (dict paramKey -> value))
     end
 
     methods
         function obj = SensitivityData()
-            obj.data = containers.Map('KeyType', 'char', 'ValueType', 'any');
+            obj.data = configureDictionary('string', 'cell');
         end
 
         function add(obj, kind, metricKey, paramKey, value)
-            if ~isKey(obj.data, kind)
-                obj.data(kind) = containers.Map('KeyType', 'char', 'ValueType', 'any');
+            % dictionary is a value type, so each nested level is written back
+            if isKey(obj.data, kind)
+                byMetric = obj.data{kind};
+            else
+                byMetric = configureDictionary('string', 'cell');
             end
-            byMetric = obj.data(kind);
-            if ~isKey(byMetric, metricKey)
-                byMetric(metricKey) = containers.Map('KeyType', 'char', 'ValueType', 'double'); %#ok<NASGU>
+            if isKey(byMetric, metricKey)
+                byParam = byMetric{metricKey};
+            else
+                byParam = configureDictionary('string', 'double');
             end
-            byParam = byMetric(metricKey);
             if isKey(byParam, paramKey)
                 byParam(paramKey) = byParam(paramKey) + value;
             else
                 byParam(paramKey) = value;
             end
+            byMetric{metricKey} = byParam;
+            obj.data{kind} = byMetric;
         end
 
         function m = forKind(obj, kind)
-            if isKey(obj.data, kind), m = obj.data(kind); else, m = []; end
+            if isKey(obj.data, kind), m = obj.data{kind}; else, m = []; end
         end
 
         function tf = isempty(obj)
-            tf = (obj.data.Count == 0);
+            tf = (numEntries(obj.data) == 0);
         end
     end
 

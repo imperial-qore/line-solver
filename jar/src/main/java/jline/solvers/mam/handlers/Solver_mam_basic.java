@@ -4,6 +4,7 @@ import jline.api.mam.Mam_is_renewal_map;
 import jline.api.mam.Map_acf;
 import jline.api.mam.Map_exponential;
 import jline.api.mam.Qbd_setupdelayoff;
+import jline.api.mam.Qbd_setupdelayoff_closed;
 import jline.lang.NodeParam;
 import jline.lang.nodeparam.QueueNodeParam;
 import jline.lang.processes.Distribution;
@@ -23,9 +24,16 @@ import jline.api.mam.QbdRapRap1Result;
 import jline.api.mam.Qbd_setupdelayoff;
 import jline.api.qsys.Qsys_dmc;
 import jline.api.qsys.Qsys_mapdc;
+import jline.api.qsys.Qsys_mapmc;
+import jline.api.qsys.Qsys_mapphc;
+import jline.api.qsys.Qsys_mmapgk1;
 import jline.api.qsys.Qsys_mdc_crommelin;
 import jline.api.qsys.Qsys_phmc;
 import jline.api.qsys.Qsys_phm1;
+import jline.api.qsys.Qsys_mmapg1k;
+import jline.api.qsys.Qsys_mmck;
+import jline.api.qsys.QsysMmapG1kResult;
+import jline.api.sn.SnGetBufferSize;
 import jline.api.sn.SnGetDemandsChain;
 import jline.lang.JobClass;
 import jline.lang.NetworkStruct;
@@ -49,6 +57,8 @@ import jline.util.matrix.Matrix;
 import jline.util.matrix.MatrixCell;
 import org.apache.commons.math3.util.FastMath;
 
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -98,6 +108,83 @@ public final class Solver_mam_basic {
      * not be established is the failure this guard exists to prevent. Mirrors
      * MATLAB {@code mam_srcproc_is_renewal.m}.
      */
+    /**
+     * True when the station carries a finite buffer, which takes precedence over
+     * every infinite-buffer closed form. An unbounded queue reaches the JAR as
+     * MaxInt rather than as infinity, so the MaxInt comparison is part of the
+     * test, exactly as in Solver_mam_basic_mmap_inner.
+     */
+    private static boolean isFiniteCapStation(NetworkStruct sn, int ist) {
+        if (sn.cap == null || ist >= sn.cap.length()) return false;
+        double capVal = sn.cap.get(ist);
+        return Double.isFinite(capVal) && capVal < (double) GlobalConstants.MaxInt;
+    }
+
+    /**
+     * True when station {@code ist} is an open single-class multiserver FCFS
+     * queue whose service law is a RENEWAL phase-type process, i.e. exactly the
+     * case the exponential multiserver fast paths above refuse and the generic
+     * single-fast-server surrogate answers only approximately. DET goes to
+     * MAP/D/c and ME/RAP have no phase-type configuration space, so both are
+     * excluded here.
+     */
+    private static boolean isMapPhc(NetworkStruct sn, int ist, int K, boolean closed,
+                                    boolean finiteCap, Map<Station, Map<JobClass, MatrixCell>> PH) {
+        if (closed || finiteCap || K != 1) return false;
+        if (Utils.isInf(sn.nservers.get(ist)) || sn.nservers.get(ist) <= 1.0) return false;
+        Map<JobClass, ProcessType> classMap = sn.procid.get(sn.stations.get(ist));
+        ProcessType procType = classMap == null ? null : classMap.get(sn.jobclasses.get(0));
+        if (procType == ProcessType.DET || procType == ProcessType.ME || procType == ProcessType.RAP) {
+            return false;
+        }
+        if (procType == ProcessType.EXP) return false;  // owned by PH/M/c or MAP/M/c
+        Map<JobClass, MatrixCell> stMap = PH.get(sn.stations.get(ist));
+        MatrixCell svc = stMap == null ? null : stMap.get(sn.jobclasses.get(0));
+        if (svc == null || svc.size() < 2) return false;
+        if (svc.get(0).hasNaN() || svc.get(1).hasNaN()) return false;
+        return Mam_is_renewal_map.mam_is_renewal_map(svc.get(0), svc.get(1));
+    }
+
+    /**
+     * True when station {@code ist} should be answered by MMAP[K]/G[K]/1.
+     *
+     * The generic MMAPPH1FCFS path reads the service law out of {@code sn.proc},
+     * which holds its PHASE-TYPE FIT: for a Uniform, Gamma, Pareto, Weibull,
+     * Lognormal or Det that fit matches the mean and, once the SCV exceeds one,
+     * nothing else. He (2001) needs only the TRANSFORM of the original law, and
+     * a matrix-exponential service qualifies too, its transform being rational.
+     * A RAP does NOT, He's analysis assuming INDEPENDENT service times, so
+     * reading a correlated service through its marginal transform would discard
+     * exactly the autocorrelation the RAP was declared to carry. The result is a
+     * /1, so a multiserver station is out.
+     * Mirrors MATLAB {@code mam_gk1_applicable}.
+     */
+    private static boolean isMmapGk1(NetworkStruct sn, int ist, int K) {
+        if (sn.nservers.get(ist) != 1.0) return false;
+        boolean anyNonPh = false;
+        try {
+            for (int k = 0; k < K; k++) {
+                // The DECLARED law, not sn.procid: SnNonmarkovToPh has already
+                // replaced the service by its phase-type surrogate and retagged
+                // procid APH/ME/MAP, so procid no longer names the law whose
+                // transform this path exists to use. Only DET survives that
+                // retagging, which left the branch unreachable for the other five.
+                Distribution d = sn.stations.get(ist).getServer()
+                        .getServiceDistribution(sn.jobclasses.get(k));
+                if (d == null) return false;
+                ProcessType pt = ProcessType.fromText(d.getName());
+                if (pt == ProcessType.DET || pt == ProcessType.UNIFORM || pt == ProcessType.GAMMA
+                        || pt == ProcessType.PARETO || pt == ProcessType.WEIBULL
+                        || pt == ProcessType.LOGNORMAL || pt == ProcessType.ME) {
+                    anyNonPh = true;
+                }
+            }
+        } catch (Exception e) {
+            return false;
+        }
+        return anyNonPh;
+    }
+
     private static boolean srcProcIsRenewal(NetworkStruct sn, int jst) {
         if (jst < 0 || jst >= sn.nstations) return false;
         Map<JobClass, MatrixCell> procMap = sn.proc.get(sn.stations.get(jst));
@@ -139,6 +226,53 @@ public final class Solver_mam_basic {
         return true;
     }
 
+    /**
+     * Permute the marks of an aggregate arrival MMAP from CHAIN order into CLASS
+     * order.
+     *
+     * <p>The aggregate is assembled chain by chain, so its marks come out in the
+     * order {@code [inchain(1) ... inchain(C)]}. Every reader below indexes them
+     * by class -- {@code mmap_lambda(aggr)} is divided by {@code sn.rates(ist,
+     * 1:K)} and {@code Qret{k}} is a class slot -- and that concatenation equals
+     * {@code 1:K} only when the chains happen to partition the classes into
+     * ascending contiguous blocks. Mirrors the same block in MATLAB
+     * {@code solver_mam_basic.m}.
+     */
+    private static MatrixCell marksIntoClassOrder(NetworkStruct sn, int C, MatrixCell aggr) {
+        List<Integer> markorder = new ArrayList<Integer>();
+        for (int c = 0; c < C; c++) {
+            Matrix inchain = sn.inchain.get(c);
+            if (inchain == null) continue;
+            for (int i = 0; i < inchain.length(); i++) {
+                markorder.add(Integer.valueOf((int) inchain.get(i)));
+            }
+        }
+        if (markorder.size() != aggr.size() - 2) return aggr;
+        boolean sorted = true;
+        for (int i = 1; i < markorder.size(); i++) {
+            if (markorder.get(i).intValue() < markorder.get(i - 1).intValue()) {
+                sorted = false;
+                break;
+            }
+        }
+        if (sorted) return aggr;
+        Integer[] perm = new Integer[markorder.size()];
+        for (int i = 0; i < perm.length; i++) perm[i] = Integer.valueOf(i);
+        final List<Integer> keys = markorder;
+        Arrays.sort(perm, new Comparator<Integer>() {
+            public int compare(Integer x, Integer y) {
+                return keys.get(x.intValue()).compareTo(keys.get(y.intValue()));
+            }
+        });
+        MatrixCell out = new MatrixCell();
+        out.set(0, aggr.get(0));
+        out.set(1, aggr.get(1));
+        for (int i = 0; i < perm.length; i++) {
+            out.set(2 + i, aggr.get(2 + perm[i].intValue()));
+        }
+        return out;
+    }
+
     private static boolean isMEorRAPService(NetworkStruct sn, int stationIdx) {
         Station station = sn.stations.get(stationIdx);
         Map<JobClass, ProcessType> classMap = sn.procid.get(station);
@@ -146,6 +280,30 @@ public final class Solver_mam_basic {
         for (JobClass jobClass : sn.jobclasses) {
             ProcessType procType = classMap.get(jobClass);
             if (procType == ProcessType.RAP || procType == ProcessType.ME) return true;
+        }
+        return false;
+    }
+
+    /**
+     * True when the user DECLARED a matrix-exponential or rational service here.
+     *
+     * SnNonmarkovToPh tags a non-phase-type SURROGATE ME as well, so the live
+     * procid cannot tell a declared ME from a Uniform whose fit happened to come
+     * out signed. RAP/RAP/1 owns the former; the latter is a station whose
+     * declared law MMAP[K]/G[K]/1 reads directly, which is the more accurate of
+     * the two.
+     */
+    private static boolean isDeclaredMEorRAPService(NetworkStruct sn, int stationIdx) {
+        try {
+            for (JobClass jobClass : sn.jobclasses) {
+                Distribution d = sn.stations.get(stationIdx).getServer()
+                        .getServiceDistribution(jobClass);
+                if (d == null) continue;
+                ProcessType pt = ProcessType.fromText(d.getName());
+                if (pt == ProcessType.RAP || pt == ProcessType.ME) return true;
+            }
+        } catch (Exception e) {
+            return isMEorRAPService(sn, stationIdx);
         }
         return false;
     }
@@ -226,6 +384,45 @@ public final class Solver_mam_basic {
     }
 
     @SuppressWarnings({"unchecked", "rawtypes"})
+    /**
+     * Floors the per-station response time at one full service time and restates the queue
+     * length as Q = R*T, for the classes in {@code inchain} (all classes when {@code null}).
+     * Stations answered by an exact solver (MAP/D/c, D/M/c, PH/M/c) keep their own values.
+     *
+     * <p>This is the form in which the dec.source decomposition reports QN and RN, so the
+     * closed-chain fixed point has to be calibrated against it rather than against the
+     * pre-floor queue lengths; see {@code _kb/06-solver-catalog.md}.</p>
+     */
+    private static void applyRespTimeFloor(Matrix QN, Matrix RN, Matrix TN, Matrix S, Matrix V,
+                                           NetworkStruct sn, boolean[] mapdcStations, Matrix inchain) {
+        int M = QN.getNumRows();
+        int K = QN.getNumCols();
+        for (int ist = 0; ist < M; ist++) {
+            if (mapdcStations[ist]) continue;
+            int nk = (inchain == null) ? K : inchain.length();
+            for (int j = 0; j < nk; j++) {
+                int k = (inchain == null) ? j : (int) inchain.get(j);
+                if (V.get(ist, k) > GlobalConstants.Zero) {
+                    if (Utils.isInf(sn.nservers.get(ist))) {
+                        RN.set(ist, k, S.get(ist, k));
+                    } else {
+                        double s_val = S.get(ist, k);
+                        double tn_val = TN.get(ist, k);
+                        double qn_tn = (tn_val > GlobalConstants.Zero) ? QN.get(ist, k) / tn_val : Double.NaN;
+                        double rn_val;
+                        if (Double.isNaN(qn_tn)) rn_val = s_val;
+                        else if (Double.isNaN(s_val)) rn_val = qn_tn;
+                        else rn_val = Math.max(s_val, qn_tn);
+                        RN.set(ist, k, rn_val);
+                    }
+                } else {
+                    RN.set(ist, k, 0);
+                }
+                QN.set(ist, k, RN.get(ist, k) * TN.get(ist, k));
+            }
+        }
+    }
+
     public static MAMResult solver_mam_basic(NetworkStruct sn, SolverOptions options) {
         Object config = options.config;
         double tol = options.tol;
@@ -294,6 +491,11 @@ public final class Solver_mam_basic {
         }
 
         boolean[] mapdcStations = new boolean[M];
+        // Finite-buffer FCFS state, one slot per station; see the isFiniteCap branch
+        boolean[] finiteCapUsed = new boolean[M];
+        double[] finiteCapMeanQ = new double[M];
+        double[] finiteCapLossProb = new double[M];
+        Matrix[] finiteCapLossPerClass = new Matrix[M];
 
         int it = 0;
 
@@ -673,27 +875,10 @@ public final class Solver_mam_basic {
                                     chainArrivalAtNode.put(c, Mmap_scale.mmap_scale(chainArrivalAtNode.get(c), b));
                                 }
                                 if (c == 0) {
-                                    if (chainIsMarkovian) {
-                                        Map<Integer, MatrixCell> MMAPS = new HashMap<Integer, MatrixCell>();
-                                        MMAPS.put(0, chainArrivalAtNode.get(c));
-                                        MMAPS.put(1, Mmap_exponential.mmap_exponential(Matrix.singleton(0.0), 1));
-                                        MatrixCell aggrArrivalAtNode_temp =
-                                                Mmap_super_safe.mmap_super_safe(MMAPS, getSpaceMax(config), "default");
-                                        aggrArrivalAtNode.set(0, aggrArrivalAtNode_temp.get(0));
-                                        aggrArrivalAtNode.set(1, aggrArrivalAtNode_temp.get(1));
-                                        aggrArrivalAtNode.set(2, aggrArrivalAtNode_temp.get(1));
-                                    } else {
-                                        // see _kb/06-solver-catalog.md for rationale
-                                        aggrArrivalAtNode.set(0, chainArrivalAtNode.get(c).get(0));
-                                        aggrArrivalAtNode.set(1, chainArrivalAtNode.get(c).get(1));
-                                        aggrArrivalAtNode.set(2, chainArrivalAtNode.get(c).get(1));
-                                    }
-                                    double lc = Map_lambda.map_lambda(chainArrivalAtNode.get(c).get(0),
-                                            chainArrivalAtNode.get(c).get(1));
-                                    if (lc > 0) {
-                                        aggrArrivalAtNode = Mmap_scale.mmap_scale(aggrArrivalAtNode,
-                                                Matrix.singleton(1.0 / lc));
-                                    }
+                                    // chain 1 keeps its own per-class marks; lumping
+                                    // them into one gave the aggregate the wrong mark
+                                    // count. See _kb/06-solver-catalog.md.
+                                    aggrArrivalAtNode = chainArrivalAtNode.get(c);
                                 } else {
                                     if (!chainIsMarkovian) {
                                         // see _kb/06-solver-catalog.md for rationale
@@ -711,6 +896,9 @@ public final class Solver_mam_basic {
                                             Mmap_super_safe.mmap_super_safe(MMAPS, getSpaceMax(config), "default");
                                 }
                             }
+                            // the marks come out chain by chain and every reader below
+                            // indexes them by CLASS, so permute them into class order
+                            aggrArrivalAtNode = marksIntoClassOrder(sn, C, aggrArrivalAtNode);
                             Map<Integer, Matrix> Qret = new HashMap<Integer, Matrix>();
                             PriorityAnalysis priorityAnalysis = Solver_mam_passage_time.analyzePriorities(sn, "basic");
 
@@ -821,16 +1009,17 @@ public final class Solver_mam_basic {
                                     }
 
                                     // see _kb/06-solver-catalog.md for rationale
-                                    boolean isFunctionOpen = !closed && sn.isfunction != null
-                                            && ist < sn.isfunction.getNumRows()
-                                            && sn.isfunction.get(ist, 0) == 1.0;
+                                    boolean isSetupOpen = !closed && sn.hassetup != null
+                                            && ist < sn.hassetup.getNumRows()
+                                            && sn.hassetup.get(ist, 0) == 1.0;
 
                                     boolean isMapDc = false;
                                     boolean isDMc = false;
                                     int dmcSourceIdx = -1;
                                     boolean isPhM1 = false;
+                                    boolean isMapMc = false;
                                     int phM1SourceIdx = -1;
-                                    if (!closed && K == 1 && !isFunctionOpen) {
+                                    if (!closed && K == 1 && !isSetupOpen) {
                                         Station station = sn.stations.get(ist);
                                         JobClass jobClass = sn.jobclasses.get(0);
                                         Map<JobClass, ProcessType> classMap = sn.procid.get(station);
@@ -869,6 +1058,28 @@ public final class Solver_mam_basic {
                                                 }
                                             }
                                         }
+                                        // MAP/M/c: the PH/M/c gate above refused this station because
+                                        // its aggregate arrival stream is NOT renewal. The generic path
+                                        // would answer with the single-fast-server surrogate, which
+                                        // ignores the arrival correlation; the Q-MAM level-dependent
+                                        // QBD is exact. c=1 already goes to the exact MAP/MAP/1 path.
+                                        isMapMc = !isMapDc && !isDMc && !isPhM1
+                                                && procType == ProcessType.EXP
+                                                && !Utils.isInf(sn.nservers.get(ist))
+                                                && sn.nservers.get(ist) > 1.0;
+                                    }
+
+                                    // Finite buffer takes precedence over infinite-buffer
+                                    // closed forms; see _kb/06-solver-catalog.md for rationale
+                                    // The gate is a buffer that can BIND, not a finite sn.cap:
+                                    // refreshCapacity derives one from the chain population for
+                                    // every closed model
+                                    boolean isFiniteCap = Double.isFinite(
+                                            SnGetBufferSize.snGetBufferSize(sn, ist));
+                                    if (isFiniteCap) {
+                                        isPhM1 = false;
+                                        isDMc = false;
+                                        isMapDc = false;
                                     }
 
                                     if (isPhM1) {
@@ -891,7 +1102,64 @@ public final class Solver_mam_basic {
                                             isPhM1 = false;
                                         }
                                     }
-                                    if (isFunctionOpen) {
+                                    if (isFiniteCap) {
+                                        // Finite-buffer FCFS. Exact M/M/c/K when arrivals are
+                                        // Poisson and service is a shared exponential; else exact
+                                        // MMAP[K]/G/1/K at a single server; else the
+                                        // truncate-and-renormalize approximation.
+                                        int capK = (int) sn.cap.get(ist);
+                                        Mam_detect_mmck.Result det =
+                                                Mam_detect_mmck.mam_detect_mmck(sn, ist, K, aggrArrivalAtNode);
+                                        Map<Integer, Matrix> pieMap = new HashMap<Integer, Matrix>();
+                                        Map<Integer, Matrix> d0Map = new HashMap<Integer, Matrix>();
+                                        MatrixCell pieCell = pie.get(ist);
+                                        MatrixCell d0Cell = D0.get(ist);
+                                        for (int kk = 0; kk < pieCell.size(); kk++) pieMap.put(kk, pieCell.get(kk));
+                                        for (int kk = 0; kk < d0Cell.size(); kk++) d0Map.put(kk, d0Cell.get(kk));
+                                        MatrixCell marks = new MatrixCell(K + 1);
+                                        marks.set(0, aggrArrivalAtNode.get(0));
+                                        for (int kk = 0; kk < K; kk++) {
+                                            marks.set(kk + 1, aggrArrivalAtNode.get(2 + kk));
+                                        }
+                                        if (det.isMmck) {
+                                            Matrix lamAll = Mmap_lambda.mmap_lambda(aggrArrivalAtNode);
+                                            double aggrLambdaTotal = 0.0;
+                                            for (int kk = 0; kk < lamAll.length(); kk++) {
+                                                double v = lamAll.get(kk);
+                                                if (!Double.isNaN(v)) aggrLambdaTotal += v;
+                                            }
+                                            Qsys_mmck.Result ex = Qsys_mmck.qsys_mmck(aggrLambdaTotal,
+                                                    det.muRate, (int) sn.nservers.get(ist), capK);
+                                            finiteCapMeanQ[ist] = ex.meanQueueLength;
+                                            finiteCapLossProb[ist] = ex.lossProbability;
+                                            finiteCapLossPerClass[ist] = null;
+                                        } else if (sn.nservers.get(ist) == 1.0) {
+                                            // Exact MMAP[K]/G/1/K with per-class loss ratio;
+                                            // see _kb/06-solver-catalog.md for rationale
+                                            Mam_svc_mixture.Result mix =
+                                                    Mam_svc_mixture.mam_svc_mixture(marks, pieMap, d0Map);
+                                            List<Matrix> D1c = new ArrayList<Matrix>();
+                                            for (int kk = 0; kk < K; kk++) {
+                                                D1c.add(marks.get(kk + 1));
+                                            }
+                                            QsysMmapG1kResult ex = Qsys_mmapg1k.qsys_mmapg1k(
+                                                    marks.get(0), D1c, mix.toServiceLaw(), capK);
+                                            finiteCapMeanQ[ist] = ex.meanQueueLength;
+                                            finiteCapLossProb[ist] = ex.lossAggregate;
+                                            finiteCapLossPerClass[ist] = ex.lossRatio;
+                                        } else {
+                                            Mam_truncate_renorm.Result tr =
+                                                    Mam_truncate_renorm.mam_truncate_renorm(marks, pieMap, d0Map, capK);
+                                            finiteCapMeanQ[ist] = tr.meanQ;
+                                            finiteCapLossProb[ist] = tr.lossProb;
+                                            finiteCapLossPerClass[ist] = null;
+                                        }
+                                        finiteCapUsed[ist] = true;
+                                        mapdcStations[ist] = true;
+                                        for (int kk = 0; kk < K; kk++) {
+                                            Qret.put(kk, Matrix.singleton(0.0));
+                                        }
+                                    } else if (isSetupOpen) {
                                         // see _kb/06-solver-catalog.md for rationale
                                         Distribution setupDist = null;
                                         Distribution delayOffDist = null;
@@ -1001,17 +1269,76 @@ public final class Solver_mam_basic {
                                             Qret = new HashMap<Integer, Matrix>();
                                             if (r.get("ncMoms") != null) Qret.putAll(r.get("ncMoms"));
                                         }
+                                    } else if (isMapMc) {
+                                        MatrixCell arrivalMAP = Mmap_shorten.mmap_shorten(aggrArrivalAtNode);
+                                        double muQ = S.get(ist, 0) > 0.0
+                                                ? 1.0 / S.get(ist, 0) : Double.POSITIVE_INFINITY;
+                                        int numServers = (int) sn.nservers.get(ist);
+                                        try {
+                                            jline.api.qsys.QsysMapPhResult mapmcResult = Qsys_mapmc.qsys_mapmc(
+                                                    arrivalMAP.get(0), arrivalMAP.get(1), muQ, numServers);
+                                            Qret.put(0, Matrix.singleton(mapmcResult.getMeanQueueLength()));
+                                            mapdcStations[ist] = true;
+                                        } catch (Exception e) {
+                                            Map<Integer, Matrix> pieMap = new HashMap<Integer, Matrix>();
+                                            Map<Integer, Matrix> d0Map = new HashMap<Integer, Matrix>();
+                                            MatrixCell pieCell = pie.get(ist);
+                                            MatrixCell d0Cell = D0.get(ist);
+                                            for (int kk = 0; kk < pieCell.size(); kk++) pieMap.put(kk, pieCell.get(kk));
+                                            for (int kk = 0; kk < d0Cell.size(); kk++) d0Map.put(kk, d0Cell.get(kk));
+                                            Map<String, Map<Integer, Matrix>> r = MMAPPH1FCFS.MMAPPH1FCFS(
+                                                    Mmap_shorten.mmap_shorten(aggrArrivalAtNode),
+                                                    pieMap, d0Map, 1, null, null, null, false, false, null, null);
+                                            Qret = new HashMap<Integer, Matrix>();
+                                            if (r.get("ncMoms") != null) Qret.putAll(r.get("ncMoms"));
+                                        }
+                                    } else if (isMapPhc(sn, ist, K, closed, isFiniteCapStation(sn, ist), PH)) {
+                                        // Exact MAP/PH/c. The branches above cover c > 1 only for
+                                        // EXPONENTIAL service; with a phase-type service law the
+                                        // generic path scales the service by nservers and adds a
+                                        // surrogate delay, which is an approximation. PH carries the
+                                        // service ALREADY divided by nservers, so it is restored to
+                                        // its true mean before the multiset QBD is built.
+                                        MatrixCell arrivalMAP = Mmap_shorten.mmap_shorten(aggrArrivalAtNode);
+                                        MatrixCell svcTrue = Map_scale.map_scale(
+                                                PH.get(sn.stations.get(ist)).get(sn.jobclasses.get(0)),
+                                                S.get(ist, 0));
+                                        int numServers = (int) sn.nservers.get(ist);
+                                        try {
+                                            jline.api.qsys.QsysMapPhcResult res = Qsys_mapphc.qsys_mapphc(
+                                                    arrivalMAP.get(0), arrivalMAP.get(1),
+                                                    Map_pie.map_pie(svcTrue), svcTrue.get(0),
+                                                    numServers, 500, 1, null);
+                                            Qret.put(0, Matrix.singleton(res.getMeanQueueLength()));
+                                            mapdcStations[ist] = true;
+                                        } catch (Exception e) {
+                                            Map<Integer, Matrix> pieMap = new HashMap<Integer, Matrix>();
+                                            Map<Integer, Matrix> d0Map = new HashMap<Integer, Matrix>();
+                                            MatrixCell pieCell = pie.get(ist);
+                                            MatrixCell d0Cell = D0.get(ist);
+                                            for (int kk = 0; kk < pieCell.size(); kk++) pieMap.put(kk, pieCell.get(kk));
+                                            for (int kk = 0; kk < d0Cell.size(); kk++) d0Map.put(kk, d0Cell.get(kk));
+                                            Map<String, Map<Integer, Matrix>> r = MMAPPH1FCFS.MMAPPH1FCFS(
+                                                    Mmap_shorten.mmap_shorten(aggrArrivalAtNode),
+                                                    pieMap, d0Map, 1, null, null, null, false, false, null, null);
+                                            Qret = new HashMap<Integer, Matrix>();
+                                            if (r.get("ncMoms") != null) Qret.putAll(r.get("ncMoms"));
+                                        }
                                     } else if (!closed) {
                                         // see _kb/06-solver-catalog.md for rationale
                                         MatrixCell svcMap = PH.get(sn.stations.get(ist)).get(sn.jobclasses.get(0));
                                         // see _kb/06-solver-catalog.md for rationale
                                         boolean useRapRap1 = false;
                                         if (isMEorRAPService(sn, ist) && svcMap != null && svcMap.size() >= 2) {
-                                            if (K == 1 && sn.nservers.get(ist) == 1.0) {
+                                            if (isDeclaredMEorRAPService(sn, ist)
+                                                    && K == 1 && sn.nservers.get(ist) == 1.0) {
                                                 useRapRap1 = true;
                                             } else {
-                                                // see _kb/06-solver-catalog.md for rationale
-                                                if (meWarned.add(ist)) {
+                                                // see _kb/06-solver-catalog.md for rationale. The warning
+                                                // reports a fallback to MMAPPH1FCFS, so it is false once
+                                                // MMAP[K]/G[K]/1 answers the station exactly; MATLAB guards
+                                                // it the same way (~useMmapGk1).
+                                                if (!isMmapGk1(sn, ist, K) && meWarned.add(ist)) {
                                                     line_warning_always(mfilename(new Object() {}),
                                                             "Station %s has a matrix-exponential or rational service process, "
                                                                     + "which the RAP/RAP/1 analysis supports only with a single class "
@@ -1051,17 +1378,51 @@ public final class Solver_mam_basic {
                                             Qret = new HashMap<Integer, Matrix>();
                                             Qret.put(0, Matrix.singleton(en));
                                         } else {
-                                            Map<Integer, Matrix> pieMap = new HashMap<Integer, Matrix>();
-                                            Map<Integer, Matrix> d0Map = new HashMap<Integer, Matrix>();
-                                            MatrixCell pieCell = pie.get(ist);
-                                            MatrixCell d0Cell = D0.get(ist);
-                                            for (int kk = 0; kk < pieCell.size(); kk++) pieMap.put(kk, pieCell.get(kk));
-                                            for (int kk = 0; kk < d0Cell.size(); kk++) d0Map.put(kk, d0Cell.get(kk));
-                                            Map<String, Map<Integer, Matrix>> r = MMAPPH1FCFS.MMAPPH1FCFS(
-                                                    Mmap_shorten.mmap_shorten(aggrArrivalAtNode),
-                                                    pieMap, d0Map, 1, null, null, null, false, false, null, null);
-                                            Qret = new HashMap<Integer, Matrix>();
-                                            if (r.get("ncMoms") != null) Qret.putAll(r.get("ncMoms"));
+                                            // MMAP[K]/G[K]/1 whenever a class carries a service law
+                                            // that is NOT phase type. MMAPPH1FCFS below would read
+                                            // its PH FIT out of sn.proc, which matches the mean and,
+                                            // above SCV 1, nothing else; He's transform analysis
+                                            // takes the ORIGINAL law, which the station still holds.
+                                            boolean gkDone = false;
+                                            if (isMmapGk1(sn, ist, K)) {
+                                                try {
+                                                    List<Distribution> svcLaws = new ArrayList<Distribution>();
+                                                    for (int kk = 0; kk < K; kk++) {
+                                                        svcLaws.add(sn.stations.get(ist).getServer()
+                                                                .getServiceDistribution(sn.jobclasses.get(kk)));
+                                                    }
+                                                    // aggrArrivalAtNode is already the LINE
+                                                    // convention {D0, D1, D^(1)..D^(K)}; mmap_shorten
+                                                    // DROPS the aggregate D1, which is what
+                                                    // MMAPPH1FCFS wants and this function does not.
+                                                    jline.api.qsys.QsysMmapGk1Result gk =
+                                                            Qsys_mmapgk1.qsys_mmapgk1(aggrArrivalAtNode, svcLaws,
+                                                                    null, 1, 1e-12, 10000);
+                                                    Qret = new HashMap<Integer, Matrix>();
+                                                    for (int kk = 0; kk < K; kk++) {
+                                                        Qret.put(kk, Matrix.singleton(
+                                                                gk.getLambdas().get(0, kk)
+                                                                        * gk.getMeanSojournTime().get(0, kk)));
+                                                    }
+                                                    mapdcStations[ist] = true;
+                                                    gkDone = true;
+                                                } catch (Exception e) {
+                                                    gkDone = false;
+                                                }
+                                            }
+                                            if (!gkDone) {
+                                                Map<Integer, Matrix> pieMap = new HashMap<Integer, Matrix>();
+                                                Map<Integer, Matrix> d0Map = new HashMap<Integer, Matrix>();
+                                                MatrixCell pieCell = pie.get(ist);
+                                                MatrixCell d0Cell = D0.get(ist);
+                                                for (int kk = 0; kk < pieCell.size(); kk++) pieMap.put(kk, pieCell.get(kk));
+                                                for (int kk = 0; kk < d0Cell.size(); kk++) d0Map.put(kk, d0Cell.get(kk));
+                                                Map<String, Map<Integer, Matrix>> r = MMAPPH1FCFS.MMAPPH1FCFS(
+                                                        Mmap_shorten.mmap_shorten(aggrArrivalAtNode),
+                                                        pieMap, d0Map, 1, null, null, null, false, false, null, null);
+                                                Qret = new HashMap<Integer, Matrix>();
+                                                if (r.get("ncMoms") != null) Qret.putAll(r.get("ncMoms"));
+                                            }
                                         }
                                     } else {
                                         Matrix finite_N = N.copy();
@@ -1069,13 +1430,22 @@ public final class Solver_mam_basic {
                                         double maxLevel = finite_N.elementMax() + 1;
                                         MatrixCell D = Mmap_shorten.mmap_shorten(aggrArrivalAtNode);
                                         Map<Integer, Matrix> pdistr = new HashMap<Integer, Matrix>();
-                                        if (Map_lambda.map_lambda(D.get(0), D.get(1)) < GlobalConstants.FineTol) {
+                                        // "no arrivals" is a property of the AGGREGATE stream. D is the
+                                        // shortened {D0, Dc1..DcK}, so D.get(1) is CLASS 1 alone and a
+                                        // station whose class 1 is disabled fell here however busy the
+                                        // rest was; sn.rates(ist,0) is that same rate, so it divided by
+                                        // zero too.
+                                        double aggrRate = Map_lambda.map_lambda(aggrArrivalAtNode.get(0),
+                                                aggrArrivalAtNode.get(1));
+                                        if (aggrRate < GlobalConstants.FineTol) {
+                                            double rate0 = sn.rates.get(ist, 0);
                                             for (int k = 0; k < K; k++) {
                                                 Matrix pdistrK = new Matrix(1, 2, 2);
                                                 pdistrK.set(0, 1 - GlobalConstants.FineTol);
                                                 pdistrK.set(1, GlobalConstants.FineTol);
                                                 pdistr.put(k, pdistrK);
-                                                Qret.put(k, Matrix.singleton(GlobalConstants.FineTol / sn.rates.get(ist)));
+                                                Qret.put(k, Matrix.singleton(
+                                                        rate0 > 0 ? GlobalConstants.FineTol / rate0 : 0.0));
                                             }
                                         } else {
                                             Station station = sn.stations.get(ist);
@@ -1101,10 +1471,51 @@ public final class Solver_mam_basic {
                                                     }
                                                 }
 
-                                                // see _kb/06-solver-catalog.md for rationale
-                                                double setupMean = 1.0 / alpharate;
+                                                // THE CLOSED VACATION QUEUE, SOLVED. What stood here was
+                                                // the per-instance cold-start race
+                                                // R = p_cold*E[setup] + S: it raced the delay-off against
+                                                // the per-instance idle time and carried NO queueing term,
+                                                // so it described a serverless instance pool rather than a
+                                                // single-server vacation queue and reported the SAME
+                                                // response time across a tenfold change in the setup mean
+                                                // (BUG-78). Qbd_setupdelayoff_closed solves the finite
+                                                // level-dependent chain the simulator walks.
+                                                double alphascvClosed = 1.0;
+                                                for (int k = 0; k < K; k++) {
+                                                    Object setupClosed = ((Queue) station).getSetupTime(sn.jobclasses.get(k));
+                                                    if (setupClosed != null) {
+                                                        try {
+                                                            java.lang.reflect.Method gs =
+                                                                    setupClosed.getClass().getMethod("getSCV");
+                                                            alphascvClosed = ((Number) gs.invoke(setupClosed)).doubleValue();
+                                                        } catch (Exception ex) {
+                                                            // ignore: SCV 1 is the exponential default
+                                                        }
+                                                        break;
+                                                    }
+                                                }
+                                                for (int k = 0; k < K; k++) {
+                                                    // NaN guard: an inactive or zero-load class holds no jobs
+                                                    Qret.put(k, Matrix.singleton(0.0));
+                                                }
                                                 for (int c = 0; c < C; c++) {
                                                     Matrix inchain = sn.inchain.get(c);
+                                                    if (inchain.length() == 0) {
+                                                        continue;
+                                                    }
+                                                    double Nc = 0.0;
+                                                    boolean finiteNc = true;
+                                                    for (int i = 0; i < inchain.length(); i++) {
+                                                        double nk = N.get((int) inchain.get(i));
+                                                        if (!Double.isFinite(nk)) {
+                                                            finiteNc = false;
+                                                            break;
+                                                        }
+                                                        Nc += nk;
+                                                    }
+                                                    if (!finiteNc || Nc <= 0) {
+                                                        continue;
+                                                    }
                                                     // see _kb/06-solver-catalog.md for rationale
                                                     double Vtot = 0.0;
                                                     for (int i = 0; i < inchain.length(); i++) {
@@ -1120,44 +1531,80 @@ public final class Solver_mam_basic {
                                                         }
                                                     }
                                                     ZT = ZT / FastMath.max(Vtot, GlobalConstants.FineTol);
-                                                    double nu = 1.0 / FastMath.max(ZT, GlobalConstants.FineTol);
-                                                    double pcold;
-                                                    if (betascv == 1.0) {
-                                                        pcold = betarate / (betarate + nu);
-                                                    } else {
-                                                        // general delay-off: LST of the fitted APH
-                                                        // at nu, pcold = alpha*(nu I - T)^-1*(-T 1)
-                                                        APH betaAPH = APH.fitMeanAndSCV(1.0 / betarate, betascv);
-                                                        Matrix Tb = (Matrix) betaAPH.getParam(3).getValue();
-                                                        Matrix alphaB = (Matrix) betaAPH.getParam(2).getValue();
-                                                        int nbb = Tb.getNumRows();
-                                                        Matrix A = Matrix.zeros(nbb, nbb);
-                                                        Matrix tvec = new Matrix(nbb, 1, nbb);
-                                                        for (int i = 0; i < nbb; i++) {
-                                                            double rowSum = 0.0;
-                                                            for (int j = 0; j < nbb; j++) {
-                                                                A.set(i, j, (i == j ? nu : 0.0) - Tb.get(i, j));
-                                                                rowSum -= Tb.get(i, j);
-                                                            }
-                                                            tvec.set(i, 0, rowSum);
+                                                    // THE COMPLEMENTARY DELAY, not the think demand alone.
+                                                    // lambda(n) = (Nc-n)/Z is exact only when everything
+                                                    // away from this station is a pure delay; with other
+                                                    // queues in the network the think demand OVERSTATES the
+                                                    // arrival rate and saturates the station. Z is the mean
+                                                    // time a customer currently spends away,
+                                                    // (Nc - QN_here)/lambda_here at this iterate, floored at
+                                                    // ZT so it can never be shorter than the think time it
+                                                    // contains. On a Delay+Queue the two coincide.
+                                                    double lamHere = 0.0;
+                                                    double qnHere = 0.0;
+                                                    double tnS = 0.0;
+                                                    double tnTot = 0.0;
+                                                    double svcAny = 0.0;
+                                                    int svcAnyCount = 0;
+                                                    for (int i = 0; i < inchain.length(); i++) {
+                                                        int k = (int) inchain.get(i);
+                                                        double lamK = rates.get(ist).get(c).get(k);
+                                                        if (!Double.isFinite(lamK)) {
+                                                            lamK = 0.0;
                                                         }
-                                                        Matrix x = A.inv().mult(tvec);
-                                                        pcold = 0.0;
-                                                        for (int i = 0; i < nbb; i++) {
-                                                            pcold += alphaB.get(i) * x.get(i);
+                                                        double sk = S.get(ist, k);
+                                                        if (!Double.isFinite(sk)) {
+                                                            sk = 0.0;
+                                                        }
+                                                        lamHere += lamK;
+                                                        double qk = QN.get(ist, k);
+                                                        if (Double.isFinite(qk)) {
+                                                            qnHere += qk;
+                                                        }
+                                                        tnTot += lamK;
+                                                        tnS += lamK * sk;
+                                                        if (sk > 0) {
+                                                            svcAny += sk;
+                                                            svcAnyCount++;
                                                         }
                                                     }
+                                                    double Zc = ZT;
+                                                    if (lamHere > GlobalConstants.FineTol && Nc - qnHere > 0) {
+                                                        Zc = FastMath.max(ZT, (Nc - qnHere) / lamHere);
+                                                    }
+                                                    // One server serves the whole chain, so the vacation
+                                                    // cycle is a property of the STATION: the chain is
+                                                    // solved on the aggregate and split back by
+                                                    // R_k = W + S_k, the decomposition the finite-capacity
+                                                    // branch already uses.
+                                                    double Sbar = tnTot > GlobalConstants.FineTol
+                                                            ? tnS / tnTot
+                                                            : (svcAnyCount > 0 ? svcAny / svcAnyCount : 0.0);
+                                                    if (!(Sbar > GlobalConstants.FineTol)) {
+                                                        continue;
+                                                    }
+                                                    Qbd_setupdelayoff_closed.Result cr =
+                                                            Qbd_setupdelayoff_closed.qbd_setupdelayoff_closed(
+                                                                    Nc, Zc, 1.0 / Sbar, alpharate, alphascvClosed,
+                                                                    betarate, betascv);
+                                                    if (!Double.isFinite(cr.QN) || cr.XN <= 0) {
+                                                        continue;
+                                                    }
+                                                    double Wq = FastMath.max(0.0, cr.QN / cr.XN - Sbar);
                                                     for (int i = 0; i < inchain.length(); i++) {
                                                         int k = (int) inchain.get(i);
                                                         double lamK = rates.get(ist).get(c).get(k);
                                                         if (Double.isFinite(S.get(ist, k)) && lamK > 0) {
-                                                            // see _kb/06-solver-catalog.md for rationale
+                                                            // S/c, NOT S: the loop below adds the
+                                                            // surrogate-delay jobs TN*S*(c-1)/c back, so
+                                                            // a full S here counts the service term
+                                                            // (2c-1)/c times. The two together make S.
+                                                            // At c=1 the division is the identity. Wq
+                                                            // still comes from a SINGLE-SERVER chain, so
+                                                            // a closed multiserver setup station is
+                                                            // approximated, not solved.
                                                             Qret.put(k, Matrix.singleton(
-                                                                    lamK * (pcold * setupMean
-                                                                            + S.get(ist, k) / sn.nservers.get(ist))));
-                                                        } else {
-                                                            // see _kb/06-solver-catalog.md for rationale
-                                                            Qret.put(k, Matrix.singleton(0.0));
+                                                                    lamK * (Wq + S.get(ist, k) / sn.nservers.get(ist))));
                                                         }
                                                     }
                                                 }
@@ -1175,7 +1622,9 @@ public final class Solver_mam_basic {
                                                 for (int k = 0; k < K; k++) {
                                                     Matrix pdistrK = pdistr.get(k);
                                                     if (pdistrK == null) {
-                                                        Qret.put(k, Matrix.singleton(GlobalConstants.FineTol / sn.rates.get(ist)));
+                                                        double r0 = sn.rates.get(ist, 0);
+                                                        Qret.put(k, Matrix.singleton(
+                                                                r0 > 0 ? GlobalConstants.FineTol / r0 : 0.0));
                                                         continue;
                                                     }
                                                     pdistr.put(k, Matrix.extractRows(pdistrK.transpose(), 0, (int) N.get(k) + 1, null));
@@ -1209,7 +1658,45 @@ public final class Solver_mam_basic {
                             for (int i = 0; i < Qret.size(); i++) {
                                 QN.set(ist, i, Qret.get(i).get(0));
                             }
-                            boolean isFunctionStation = sn.stations.get(ist) instanceof Queue
+                            if (finiteCapUsed[ist]) {
+                                // Finite-cap per-class decomposition R_k = W_q + S_k;
+                                // see _kb/06-solver-catalog.md for rationale
+                                double[] TN_eff = new double[K];
+                                double sumTN = 0.0;
+                                for (int k = 0; k < K; k++) {
+                                    int c = 0;
+                                    for (int i = 0; i < sn.chains.getNumRows(); i++) {
+                                        if (sn.chains.get(i, k) != 0.0) { c = i; break; }
+                                    }
+                                    double lamK = rates.get(ist).get(c).get(k);
+                                    if (Double.isNaN(lamK)) lamK = 0.0;
+                                    double lossK = (finiteCapLossPerClass[ist] != null)
+                                            ? finiteCapLossPerClass[ist].get(0, k) : finiteCapLossProb[ist];
+                                    TN_eff[k] = lamK * (1.0 - lossK);
+                                    sumTN += TN_eff[k];
+                                }
+                                double Wq = 0.0;
+                                if (sumTN > 0) {
+                                    double acc = 0.0;
+                                    for (int k = 0; k < K; k++) {
+                                        double t = TN_eff[k] * S.get(ist, k);
+                                        if (!Double.isNaN(t)) acc += t;
+                                    }
+                                    Wq = Math.max(0.0, finiteCapMeanQ[ist] / sumTN - acc / sumTN);
+                                }
+                                for (int k = 0; k < K; k++) {
+                                    TN.set(ist, k, TN_eff[k]);
+                                    UN.set(ist, k, TN_eff[k] * S.get(ist, k) / sn.nservers.get(ist));
+                                    if (TN_eff[k] > 0) {
+                                        RN.set(ist, k, Wq + S.get(ist, k));
+                                        QN.set(ist, k, TN_eff[k] * RN.get(ist, k));
+                                    } else {
+                                        RN.set(ist, k, 0.0);
+                                        QN.set(ist, k, 0.0);
+                                    }
+                                }
+                            } else {
+                            boolean isSetupStation = sn.stations.get(ist) instanceof Queue
                                     && ((Queue) sn.stations.get(ist)).isDelayOffEnabled();
                             for (int k = 0; k < K; k++) {
                                 int c = 0;
@@ -1218,7 +1705,7 @@ public final class Solver_mam_basic {
                                 }
                                 TN.set(ist, k, rates.get(ist).get(c).get(k));
                                 UN.set(ist, k, TN.get(ist, k) * S.get(ist, k) / sn.nservers.get(ist));
-                                if (isFunctionStation && !Double.isFinite(UN.get(ist, k))) {
+                                if (isSetupStation && !Double.isFinite(UN.get(ist, k))) {
                                     // see _kb/06-solver-catalog.md for rationale
                                     UN.set(ist, k, 0.0);
                                 }
@@ -1237,12 +1724,15 @@ public final class Solver_mam_basic {
                                     RN.set(ist, k, QN.get(ist, k) / TN.get(ist, k));
                                 }
                             }
+                            }
                         }
                     }
                 } else {
                     // other node types handled by default traffic flow
                 }
             }
+            // Calibrate the fixed point on the REPORTED QN; see _kb/06-solver-catalog.md (MAM closed-chain population)
+            applyRespTimeFloor(QN, RN, TN, S, V, sn, mapdcStations, null);
             dif_matrix = TN.add(-1.0, TN_1);
             dif = dif_matrix.elementMaxAbs();
         }
@@ -1293,45 +1783,39 @@ public final class Solver_mam_basic {
                     }
                 }
 
-                for (int ind = 0; ind < I; ind++) {
-                    for (int k = 0; k < inchain.length(); k++) {
-                        if (sn.isstation.get(ind) == 1.0) {
-                            int ist = (int) sn.nodeToStation.get(ind);
-                            if (mapdcStations[ist]) continue;
-                            if (V.get(ist, (int) inchain.get(k)) > GlobalConstants.Zero) {
-                                if (Utils.isInf(sn.nservers.get(ist))) {
-                                    RN.set(ist, (int) inchain.get(k), S.get(ist, (int) inchain.get(k)));
-                                } else {
-                                    double s_val = S.get(ist, (int) inchain.get(k));
-                                    double tn_val = TN.get(ist, (int) inchain.get(k));
-                                    double qn_tn;
-                                    if (tn_val > GlobalConstants.Zero) {
-                                        qn_tn = QN.get(ist, (int) inchain.get(k)) / tn_val;
-                                    } else {
-                                        qn_tn = Double.NaN;
-                                    }
-                                    double rn_val;
-                                    if (Double.isNaN(qn_tn)) rn_val = s_val;
-                                    else if (Double.isNaN(s_val)) rn_val = qn_tn;
-                                    else rn_val = Math.max(s_val, qn_tn);
-                                    RN.set(ist, (int) inchain.get(k), rn_val);
-                                }
-                            } else {
-                                RN.set(ist, (int) inchain.get(k), 0);
-                            }
-                            QN.set(ist, (int) inchain.get(k),
-                                    RN.get(ist, (int) inchain.get(k)) * TN.get(ist, (int) inchain.get(k)));
-                        }
+                applyRespTimeFloor(QN, RN, TN, S, V, sn, mapdcStations, inchain);
+                if (Nc == 0.0) {
+                    // Index by the chain's CLASSES, not by the chain number.
+                    // QN/UN/RN/TN are (nstations x nclasses) and CN/XN are
+                    // (1 x nclasses), so column c is whichever class happens to
+                    // share the chain's index -- the same class only when there
+                    // is no class switching. Note the loop just above already
+                    // writes through inchain; this block used to switch
+                    // convention ten lines later. On a chain-1={C1,C2},
+                    // chain-2={C3} model with N(C3)=0 it wiped class 2, which
+                    // belongs to the OTHER chain, and the chain renormalization
+                    // then piled that class's jobs onto class 1, so the chain
+                    // population was no longer conserved. Mirrors
+                    // solver_mam_basic.m and the python handler.
+                    for (int j = 0; j < inchain.length(); j++) {
+                        int cls = (int) inchain.get(j);
+                        for (int k = 0; k < QN.getNumRows(); k++) QN.set(k, cls, 0);
+                        for (int k = 0; k < UN.getNumRows(); k++) UN.set(k, cls, 0);
+                        for (int k = 0; k < RN.getNumRows(); k++) RN.set(k, cls, 0);
+                        for (int k = 0; k < TN.getNumRows(); k++) TN.set(k, cls, 0);
+                        CN.set(0, cls, 0);
+                        XN.set(0, cls, 0);
                     }
                 }
-                if (Nc == 0.0) {
-                    for (int k = 0; k < QN.getNumRows(); k++) QN.set(k, c, 0);
-                    for (int k = 0; k < UN.getNumRows(); k++) UN.set(k, c, 0);
-                    for (int k = 0; k < RN.getNumRows(); k++) RN.set(k, c, 0);
-                    for (int k = 0; k < TN.getNumRows(); k++) TN.set(k, c, 0);
-                    CN.set(0, c, 0);
-                    XN.set(0, c, 0);
-                }
+            }
+        }
+
+        // System throughput per class: the chain arrival rate; see _kb/06-solver-catalog.md
+        for (int c = 0; c < C; c++) {
+            Matrix inchainC = sn.inchain.get(c);
+            if (inchainC == null) continue;
+            for (int j = 0; j < inchainC.length(); j++) {
+                XN.set(0, (int) inchainC.get(j), lambda.get(0, c));
             }
         }
 

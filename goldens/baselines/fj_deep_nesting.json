@@ -1,0 +1,80 @@
+{
+  "class": {
+    "JMT": "stochastic"
+  },
+  "example": "fj_deep_nesting",
+  "solvers": {
+    "JMT": [
+      {
+        "ArvR": 0.25052,
+        "JobClass": "class1",
+        "QLen": 0.50383,
+        "ResidT": 1.9924,
+        "RespT": 1.9924,
+        "Station": "Delay1",
+        "Tput": 0.24957,
+        "Util": 0.50383
+      },
+      {
+        "ArvR": 0.24957,
+        "JobClass": "class1",
+        "QLen": 0.24311,
+        "ResidT": 0.99905,
+        "RespT": 0.99905,
+        "Station": "Queue1",
+        "Tput": 0.24958,
+        "Util": 0.24311
+      },
+      {
+        "ArvR": 0.24957,
+        "JobClass": "class1",
+        "QLen": 0.25179,
+        "ResidT": 0.99063,
+        "RespT": 0.99063,
+        "Station": "Queue2",
+        "Tput": 0.24959,
+        "Util": 0.25179
+      },
+      {
+        "ArvR": 0.50514,
+        "JobClass": "class1",
+        "QLen": 0.30671,
+        "ResidT": 0.61638,
+        "RespT": 0.61638,
+        "Station": "Join",
+        "Tput": 0.24959,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.24958,
+        "JobClass": "class1",
+        "QLen": 0.1247,
+        "ResidT": 0.48966,
+        "RespT": 0.48966,
+        "Station": "Queue3",
+        "Tput": 0.24958,
+        "Util": 0.1247
+      },
+      {
+        "ArvR": 0.24958,
+        "JobClass": "class1",
+        "QLen": 0.12256,
+        "ResidT": 0.49264,
+        "RespT": 0.49264,
+        "Station": "Queue4",
+        "Tput": 0.2496,
+        "Util": 0.12256
+      },
+      {
+        "ArvR": 0.50007,
+        "JobClass": "class1",
+        "QLen": 0.12575,
+        "ResidT": 0.24532,
+        "RespT": 0.24532,
+        "Station": "Join2",
+        "Tput": 0.24958,
+        "Util": 0.0
+      }
+    ]
+  }
+}

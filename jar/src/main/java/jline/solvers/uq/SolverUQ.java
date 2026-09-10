@@ -5,7 +5,9 @@
 
 package jline.solvers.uq;
 
+import jline.api.pfqn.mva.Pfqn_mva_interval;
 import jline.lang.*;
+import jline.lang.constant.SchedStrategy;
 import jline.lang.constant.SolverType;
 import jline.lang.nodes.*;
 import jline.lang.processes.Distribution;
@@ -64,6 +66,19 @@ public class SolverUQ extends EnsembleSolver {
     protected Network originalModel;
     protected SolverFactory solverFactory;
     protected PriorInfo priorInfo;
+
+    /**
+     * The DESIGN: which alternatives are solved and with what weight.
+     *
+     * The reference reduces the detected Priors to weighted design points before
+     * anything is solved (UQ.buildDesign), and options.method chooses HOW:
+     * 'default'/'discrete'/'quadrature' expand a discrete Prior exactly, while
+     * 'montecarlo' draws options.samples of them against the prior probabilities
+     * and weights each 1/n. This class used to read prior.getAlternative(i) and
+     * prior.getProbabilities() directly, so it had one design and options.method
+     * selected nothing.
+     */
+    protected Prior.Design design;
     protected SolverResult aggregatedResult;
 
     /**
@@ -164,7 +179,72 @@ public class SolverUQ extends EnsembleSolver {
      * Returns the number of alternatives in the Prior.
      */
     public int getNumAlternatives() {
+        if (design != null) {
+            return design.dists.size();
+        }
         return priorInfo != null ? priorInfo.prior.getNumAlternatives() : 0;
+    }
+
+    /**
+     * Valid methods for this solver, UQ.listValidMethods in MATLAB verbatim.
+     *
+     * They name the DESIGN, i.e. how the Prior is reduced to weighted design
+     * points, and not the inner solver, which is chosen by the SolverFactory
+     * this class is constructed with.
+     *
+     * @return the design methods SolverUQ accepts
+     */
+    public String[] listValidMethods() {
+        return new String[]{"default", "discrete", "quadrature", "montecarlo"};
+    }
+
+    /**
+     * Resolve the discretization method from the solver options.
+     *
+     * 'default' keeps the historical behaviour: a discrete Prior is expanded as
+     * given. Mirrors UQ.getUQMethod.
+     *
+     * @return "quadrature" or "montecarlo"
+     */
+    public String getUQMethod() {
+        String m = (options == null || options.method == null) ? "default" : options.method;
+        if ("default".equals(m) || "discrete".equals(m) || "quadrature".equals(m)) {
+            return "quadrature";
+        }
+        if ("montecarlo".equals(m)) {
+            return "montecarlo";
+        }
+        line_error(mfilename(new Object() {
+        }), "Unknown UQ method: " + m);
+        return "quadrature";
+    }
+
+    /**
+     * Number of nodes per Prior, from options.samples (UQ.getUQNodes).
+     *
+     * @return the design size for the Monte Carlo method
+     */
+    public int getUQNodes() {
+        if (options == null || options.samples <= 0) {
+            return 11;
+        }
+        return (int) Math.round(options.samples);
+    }
+
+    /**
+     * Reduce the detected Prior to weighted design points.
+     *
+     * Each design point assigns one concrete Distribution to the Prior and
+     * carries the weight of that assignment. Mirrors UQ.buildDesign; this solver
+     * detects a single Prior, so there is no tensor product to take.
+     */
+    protected void buildDesign() {
+        if (priorInfo == null) {
+            return;
+        }
+        String method = getUQMethod();
+        Random rng = new Random(options == null ? 23000 : options.seed);
+        this.design = priorInfo.prior.discretize(getUQNodes(), method, rng);
     }
 
     @Override
@@ -199,12 +279,19 @@ public class SolverUQ extends EnsembleSolver {
 
     @Override
     protected void init() {
-        Prior prior = priorInfo.prior;
-        int n = prior.getNumAlternatives();
+        if (design == null) {
+            buildDesign();
+        }
+        int n = design.dists.size();
 
         for (int i = 0; i < n; i++) {
             // Deep copy the original model
             Network modelCopy = deepCopyNetwork(originalModel);
+            // setService does NOT invalidate a cached struct (ServiceStation:
+            // deliberate, for SolverLN's iteration cost) and serialization copies
+            // the cache, so without this every design point would be solved with
+            // the Prior's MIXTURE moments
+            modelCopy.resetStruct();
 
             // Get the node and class from the copy
             List<Node> nodes = modelCopy.getNodes();
@@ -212,8 +299,8 @@ public class SolverUQ extends EnsembleSolver {
             Node node = nodes.get(priorInfo.nodeIdx);
             JobClass jobClass = classes.get(priorInfo.classIdx);
 
-            // Replace Prior with the concrete distribution
-            Distribution concreteDist = prior.getAlternative(i);
+            // Replace Prior with the concrete distribution of this design point
+            Distribution concreteDist = design.dists.get(i);
 
             if ("service".equals(priorInfo.type)) {
                 ((ServiceStation) node).setService(jobClass, concreteDist);
@@ -263,9 +350,8 @@ public class SolverUQ extends EnsembleSolver {
      * Aggregates results from all alternatives using prior weights.
      */
     protected void aggregateResults() {
-        Prior prior = priorInfo.prior;
-        int n = prior.getNumAlternatives();
-        double[] probs = prior.getProbabilities();
+        int n = design.dists.size();
+        double[] probs = design.weights;
 
         // Get dimensions from first solver's result
         SolverResult firstResult = solvers[0].result;
@@ -394,7 +480,278 @@ public class SolverUQ extends EnsembleSolver {
      * Returns the prior-weighted average results.
      */
     public AvgTable getAvgTable() {
+        return jline.io.LineResultRecorder.around(this, "avg", () -> getAvgTableImpl());
+    }
+
+    /**
+     * Body of {@link #getAvgTable()}, split out so {@link jline.io.LineResultRecorder}
+     * sees what the getter RETURNED. The JAVA cross-codebase parity row is
+     * measured from that rather than from what an example printed.
+     */
+    protected AvgTable getAvgTableImpl() {
         return getEnsembleAvg();
+    }
+
+    /**
+     * Range of every metric over the support of the Prior, weights discarded.
+     * <p>
+     * This is the epistemic case in which the modeller can bound a parameter but not
+     * distribute it. Two regimes, distinguished by {@link Interval#exact}:
+     * <ul>
+     * <li>exact: the model is a single-class closed product-form network with
+     * load-independent single-server queues and delays, so
+     * {@link Pfqn_mva_interval} returns the exact hull of MVA over the whole demand box
+     * by the monotonicity of Luthi and Haring (1998). No ensemble run is needed and the
+     * interval is attained, not sampled.</li>
+     * <li>not exact: fallback to the range across the alternatives that were solved. The
+     * JAR Prior is discrete, so that range is again the whole support; it is reported as
+     * inexact only because the monotonicity theorems do not apply to the model.</li>
+     * </ul>
+     * The interval is conditional on the true parameters lying inside the Prior support.
+     * It is not a bound on the exact solution of the network and must not be composed
+     * with SolverBA brackets.
+     *
+     * @return the interval-valued metrics
+     */
+    public Interval getInterval() {
+        String why = qualifiesForIntervalMVA();
+        if (why == null) {
+            return intervalByMVA();
+        }
+        return intervalBySampling(why);
+    }
+
+    /**
+     * Whether the monotonicity theorems behind {@link Pfqn_mva_interval} hold for this
+     * model.
+     *
+     * @return null when they do, otherwise the first violated condition
+     */
+    public String qualifiesForIntervalMVA() {
+        if (priorInfo != null && !"service".equals(priorInfo.type)) {
+            return "a Prior sits on an arrival process, so the model is open";
+        }
+        NetworkStruct sn = originalModel.getStruct(false);
+        if (sn.nclasses != 1) {
+            return "the theorems are proved for a single class only";
+        }
+        if (sn.nclosedjobs <= 0) {
+            return "the class is not closed";
+        }
+        if (sn.nnodes != sn.nstations) {
+            return "the model has nodes that are not stations";
+        }
+        for (int i = 0; i < sn.nstations; i++) {
+            SchedStrategy s = sn.sched.get(sn.stations.get(i));
+            if (s == SchedStrategy.INF) {
+                continue;
+            }
+            if (sn.nservers.get(i, 0) > 1) {
+                return "a queueing station has more than one server";
+            }
+            if (s != SchedStrategy.PS && s != SchedStrategy.FCFS) {
+                return "a station is neither delay, PS nor FCFS";
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Exact hull through {@link Pfqn_mva_interval}. The demand box is the nominal demand
+     * vector with the prior-carrying station widened to the range of mean service times
+     * over the Prior support.
+     */
+    public Interval intervalByMVA() {
+        NetworkStruct sn = originalModel.getStruct(false);
+        int M = sn.nstations;
+        Matrix visits = sn.visits.get(0);
+
+        double[] V = new double[M];
+        double[] STlo = new double[M];
+        double[] STup = new double[M];
+        boolean[] isDelay = new boolean[M];
+        for (int i = 0; i < M; i++) {
+            V[i] = visits.get(i, 0);
+            double rate = sn.rates.get(i, 0);
+            double st = rate > 0 ? 1.0 / rate : 0.0;
+            STlo[i] = st;
+            STup[i] = st;
+            isDelay[i] = sn.sched.get(sn.stations.get(i)) == SchedStrategy.INF;
+        }
+
+        if (priorInfo != null) {
+            // linear index: nodeToStation is stored as a row vector here, not nnodes x 1
+            int ist = (int) Math.round(sn.nodeToStation.get(priorInfo.nodeIdx));
+            double lo = Double.POSITIVE_INFINITY;
+            double up = Double.NEGATIVE_INFINITY;
+            for (int a = 0; a < priorInfo.prior.getNumAlternatives(); a++) {
+                double m = priorInfo.prior.getAlternative(a).getMean();
+                lo = Math.min(lo, m);
+                up = Math.max(up, m);
+            }
+            STlo[ist] = lo;
+            STup[ist] = up;
+        }
+
+        double zlo = 0.0;
+        double zup = 0.0;
+        int nq = 0;
+        for (int i = 0; i < M; i++) {
+            if (isDelay[i]) {
+                zlo += V[i] * STlo[i];
+                zup += V[i] * STup[i];
+            } else {
+                nq++;
+            }
+        }
+        Matrix Lint = new Matrix(nq, 2);
+        int[] qidx = new int[nq];
+        int c = 0;
+        for (int i = 0; i < M; i++) {
+            if (!isDelay[i]) {
+                qidx[c] = i;
+                Lint.set(c, 0, V[i] * STlo[i]);
+                Lint.set(c, 1, V[i] * STup[i]);
+                c++;
+            }
+        }
+        Matrix Zint = new Matrix(1, 2);
+        Zint.set(0, 0, zlo);
+        Zint.set(0, 1, zup);
+        Matrix Nint = new Matrix(1, 1);
+        Nint.set(0, 0, sn.nclosedjobs);
+
+        Pfqn_mva_interval.Result res = Pfqn_mva_interval.pfqn_mva_interval(Lint, Nint, Zint);
+
+        Interval ival = new Interval(M, 1);
+        ival.X = res.X;
+        ival.Rtot = res.Rtot;
+        ival.exact = true;
+        ival.method = "mvainterval";
+        for (int j = 0; j < nq; j++) {
+            int i = qidx[j];
+            ival.Qlo.set(i, 0, res.Q.get(j, 0));
+            ival.Qup.set(i, 0, res.Q.get(j, 1));
+            ival.Ulo.set(i, 0, res.U.get(j, 0));
+            ival.Uup.set(i, 0, res.U.get(j, 1));
+            ival.Wlo.set(i, 0, res.R.get(j, 0));
+            ival.Wup.set(i, 0, res.R.get(j, 1));
+            ival.Rlo.set(i, 0, V[i] > 0 ? res.R.get(j, 0) / V[i] : 0.0);
+            ival.Rup.set(i, 0, V[i] > 0 ? res.R.get(j, 1) / V[i] : 0.0);
+        }
+        // A delay station never queues, so its residence time is its own demand interval
+        // and its population is the throughput times that demand, enclosed as a product of
+        // two intervals.
+        for (int i = 0; i < M; i++) {
+            if (!isDelay[i]) {
+                continue;
+            }
+            ival.Wlo.set(i, 0, V[i] * STlo[i]);
+            ival.Wup.set(i, 0, V[i] * STup[i]);
+            ival.Rlo.set(i, 0, STlo[i]);
+            ival.Rup.set(i, 0, STup[i]);
+            ival.Qlo.set(i, 0, res.X.get(0, 0) * V[i] * STlo[i]);
+            ival.Qup.set(i, 0, res.X.get(0, 1) * V[i] * STup[i]);
+            ival.Ulo.set(i, 0, ival.Qlo.get(i, 0));
+            ival.Uup.set(i, 0, ival.Qup.get(i, 0));
+        }
+        for (int i = 0; i < M; i++) {
+            ival.Tlo.set(i, 0, V[i] * res.X.get(0, 0));
+            ival.Tup.set(i, 0, V[i] * res.X.get(0, 1));
+        }
+        return ival;
+    }
+
+    /**
+     * Range of each metric across the alternatives that were solved.
+     *
+     * @param why the condition that ruled out the exact path, kept on the result
+     */
+    public Interval intervalBySampling(String why) {
+        if (solvers[0] == null || solvers[0].result == null) {
+            iterate();
+        }
+        int n = getNumberOfModels();
+        SolverResult first = solvers[0].result;
+        int M = first.QN.getNumRows();
+        int K = first.QN.getNumCols();
+
+        Interval ival = new Interval(M, K);
+        ival.exact = false;
+        ival.method = "sampled";
+        ival.reason = why;
+        boolean seeded = false;
+        for (int e = 0; e < n; e++) {
+            SolverResult r = solvers[e].result;
+            if (r == null) {
+                continue;
+            }
+            accumulate(ival.Qlo, ival.Qup, r.QN, seeded);
+            accumulate(ival.Ulo, ival.Uup, r.UN, seeded);
+            accumulate(ival.Rlo, ival.Rup, r.RN, seeded);
+            accumulate(ival.Tlo, ival.Tup, r.TN, seeded);
+            accumulate(ival.Wlo, ival.Wup, r.WN, seeded);
+            seeded = true;
+        }
+        return ival;
+    }
+
+    private static void accumulate(Matrix lo, Matrix up, Matrix v, boolean seeded) {
+        if (v == null) {
+            return;
+        }
+        for (int m = 0; m < lo.getNumRows(); m++) {
+            for (int k = 0; k < lo.getNumCols(); k++) {
+                double x = v.get(m, k);
+                if (!seeded) {
+                    lo.set(m, k, x);
+                    up.set(m, k, x);
+                } else {
+                    lo.set(m, k, Math.min(lo.get(m, k), x));
+                    up.set(m, k, Math.max(up.get(m, k), x));
+                }
+            }
+        }
+    }
+
+    /**
+     * Interval-valued metrics returned by {@link SolverUQ#getInterval()}. Each metric is
+     * a pair of nstations x nclasses matrices holding the two endpoints.
+     */
+    public static class Interval {
+        /** Queue-length endpoints. */
+        public final Matrix Qlo, Qup;
+        /** Utilization endpoints. */
+        public final Matrix Ulo, Uup;
+        /** Response-time endpoints. */
+        public final Matrix Rlo, Rup;
+        /** Throughput endpoints. */
+        public final Matrix Tlo, Tup;
+        /** Residence-time endpoints. */
+        public final Matrix Wlo, Wup;
+        /** System throughput interval (1 x 2); null off the exact path. */
+        public Matrix X;
+        /** Total response-time interval (1 x 2); null off the exact path. */
+        public Matrix Rtot;
+        /** Whether the interval is the exact hull over the whole parameter box. */
+        public boolean exact;
+        /** "mvainterval" or "sampled". */
+        public String method;
+        /** When not exact, the condition that ruled out the exact path. */
+        public String reason;
+
+        public Interval(int M, int K) {
+            this.Qlo = Matrix.zeros(M, K);
+            this.Qup = Matrix.zeros(M, K);
+            this.Ulo = Matrix.zeros(M, K);
+            this.Uup = Matrix.zeros(M, K);
+            this.Rlo = Matrix.zeros(M, K);
+            this.Rup = Matrix.zeros(M, K);
+            this.Tlo = Matrix.zeros(M, K);
+            this.Tup = Matrix.zeros(M, K);
+            this.Wlo = Matrix.zeros(M, K);
+            this.Wup = Matrix.zeros(M, K);
+        }
     }
 
     /**

@@ -85,7 +85,7 @@ public final class Qbd_rg {
      * @return QbdRgResult containing R, G, B, L, F, and U matrices
      */
     public static QbdRgResult qbd_rg(MatrixCell MAPa, MatrixCell MAPs, Double util) {
-        // int na = MAPa.get(0).getNumRows(); // currently unused (kept from Kotlin)
+        // int na = MAPa.get(0).getNumRows; // currently unused
         // int ns = MAPs.get(0).getNumRows();
 
         MatrixCell scaledMAPs = MAPs;

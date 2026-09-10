@@ -206,7 +206,8 @@ end
 RN = zeros(M, K);
 for ist = 1:M
     for r = 1:K
-        if TN(ist, r) > 0
+        % See solver_fluid_closing.m: TN is zero only to the integrator's accuracy.
+        if TN(ist, r) > GlobalConstants.Zero
             RN(ist, r) = QN(ist, r) / TN(ist, r);
         end
     end

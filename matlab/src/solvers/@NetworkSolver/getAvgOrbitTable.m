@@ -1,4 +1,4 @@
-function OrbitTable = getAvgOrbitTable(self)
+function varargout = getAvgOrbitTable(self,varargin)
 % ORBITTABLE = GETAVGORBITTABLE()
 %
 % Table of the mean orbit length of every retrial station-class pair, with the
@@ -11,6 +11,19 @@ function OrbitTable = getAvgOrbitTable(self)
 %
 % Copyright (c) 2012-2026, Imperial College London
 % All rights reserved.
+% The result recorder captures the returned table together with the solver
+% that produced it, so cross-codebase parity is asserted against the values a
+% solver RETURNED rather than the text it printed. Off unless a run asked for
+% it (LineResultRecorder.enable), and then it costs one appdata lookup here.
+% The wrapper exists so that recording happens on EVERY exit path, including
+% the early returns inside the implementation below.
+[scope, scopeGuard] = LineResultRecorder.enter(); %#ok<ASGLU>
+[varargout{1:max(nargout,1)}] = getAvgOrbitTable_impl(self,varargin{:});
+LineResultRecorder.capture(scope, self, 'orbit', varargout{1});
+end
+
+function OrbitTable = getAvgOrbitTable_impl(self)
+% GETAVGORBITTABLE_IMPL Implementation of GETAVGORBITTABLE; see the wrapper above.
 
 ON = self.getAvgOrbit();
 [QN,~,~,TN] = self.getAvg();

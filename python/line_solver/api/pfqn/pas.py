@@ -88,7 +88,9 @@ def pfqn_pas_is(N: Sequence[int],
 
     G_C = sum_{c in D} sum_{k=0}^{ell} Phi_1(c[:k]) Phi_2(reverse(c[k:])), where
     D is the set of orderings non-decreasing w.r.t. H and Phi_m(q) = prod_p
-    1/mu_m(supp(q[:p])). Orderings are drawn from D by placing, at each step, a
+    1/mu_m(n(q[:p])), n(.) the per-class COUNT vector of the prefix (not its
+    support: OI property P1 only makes mu permutation-invariant). Orderings are
+    drawn from D by placing, at each step, a
     uniformly random placement-order-minimal present class (auto-normalized IS,
     notebook generator IS_3); E[xi] = G_C[xi]/G_C[1] reuses the same samples.
     Taking xi = class-r count in the prefix gives the station-1 mean queue
@@ -98,17 +100,24 @@ def pfqn_pas_is(N: Sequence[int],
     ----------
     N : (R,) closed population vector (macrostate), finite.
     mu : list of exactly two callables. mu[m](n) is the total OI rank rate of
-        station m given the per-class occupancy (count) vector n (depends only
-        on supp(n)); this is the count-based svcRateFun of an OI/PAS node.
+        station m given the per-class occupancy (count) vector n
+        (permutation-invariant, but NOT a function of supp(n) alone); this is
+        the count-based svcRateFun of an OI/PAS node.
     H : (R, R) swap-graph adjacency (H[b, a] != 0 forbids a before b). Empty ->
         pure OI (all orderings feasible).
     options : dict or options object; fields ``samples`` (default 1e4),
-        ``seed`` (optional), ``verbose`` (default False).
+        ``seed`` (optional), ``verbose`` (default False), ``qlen`` (default
+        True). ``qlen=False`` estimates ONLY the normalizing constant: the
+        per-class prefix counts and their coefficients are neither accumulated
+        nor allocated, and Q comes back as zeros. The ordering is drawn from
+        the same stream either way, so G is unchanged to the last bit -- this
+        is for the callers that want G(N - e_r) and discard the rest.
 
     Returns
     -------
     (G, lG, Q) : G is the IS estimate of G_C, lG = log(G), Q is (2, R) with the
-        station-1 mean queue lengths and Q[1] = N - Q[0].
+        station-1 mean queue lengths and Q[1] = N - Q[0], or zeros when
+        ``qlen=False``.
     """
     if callable(mu):
         mu = [mu]
@@ -130,6 +139,7 @@ def pfqn_pas_is(N: Sequence[int],
     nsamples = int(round(_opt(options, 'samples', 10000)))
     seed = _opt(options, 'seed', None)
     verbose = bool(_opt(options, 'verbose', False))
+    want_qlen = bool(_opt(options, 'qlen', True))
     rng = np.random.default_rng(seed if seed is not None else None)
 
     ell = int(N.sum())
@@ -138,7 +148,10 @@ def pfqn_pas_is(N: Sequence[int],
     if ell == 0:
         return 1.0, 0.0, np.zeros((2, R))
 
-    n_coef = R + 1                     # xi = [1, n_{1,0}, ..., n_{1,R-1}]
+    # xi = [1, n_{1,0}, ..., n_{1,R-1}], or just [1] when the caller wants the
+    # constant alone -- the prefix-count coefficients are the bulk of the
+    # per-sample bookkeeping and G does not depend on them.
+    n_coef = R + 1 if want_qlen else 1
     accum = np.zeros(n_coef)
 
     for s in range(nsamples):
@@ -160,27 +173,26 @@ def pfqn_pas_is(N: Sequence[int],
 
         # ---- station-1 prefix balance and class counts up to each cut --------
         Phi1 = np.ones(ell + 1)
-        cnt1 = np.zeros((ell + 1, R))
-        supp = np.zeros(R)
+        cnt1 = np.zeros((ell + 1, R)) if want_qlen else None
         occ = np.zeros(R)
         phi = 1.0
         for k in range(1, ell + 1):
             cls = c[k - 1]
-            supp[cls] = 1
             occ[cls] += 1
-            phi = phi / mu[0](supp)
+            phi = phi / mu[0](occ)
             Phi1[k] = phi
-            cnt1[k, :] = occ
+            if want_qlen:
+                cnt1[k, :] = occ
 
         # ---- station-2 reversed-suffix balance B2[k] at cut k ---------------
         # B2[k] = Phi_2(reverse(c[k:])); B2[ell] = 1 (empty suffix).
         B2 = np.ones(ell + 1)
-        supp = np.zeros(R)
+        occ2 = np.zeros(R)
         phi = 1.0
         for pos in range(ell, 0, -1):   # pos = ell..1 -> reversed suffix c[ell..pos]
             cls = c[pos - 1]
-            supp[cls] = 1
-            phi = phi / mu[1](supp)
+            occ2[cls] += 1
+            phi = phi / mu[1](occ2)
             B2[pos - 1] = phi
 
         # ---- split-convolution sample value for every coefficient -----------
@@ -188,7 +200,7 @@ def pfqn_pas_is(N: Sequence[int],
         for k in range(ell + 1):
             w = Phi1[k] * B2[k]
             sv[0] += w                  # xi = 1
-            if k > 0:
+            if want_qlen and k > 0:
                 sv[1:] += w * cnt1[k, :]  # xi = n_{1,r}
         accum += sv / p_c
 
@@ -199,9 +211,10 @@ def pfqn_pas_is(N: Sequence[int],
     G = float(est[0])
     lG = np.log(G) if G > 0 else -np.inf
     Q = np.zeros((2, R))
-    if G > 0:
-        Q[0, :] = est[1:] / G
-    Q[1, :] = N - Q[0, :]
+    if want_qlen:
+        if G > 0:
+            Q[0, :] = est[1:] / G
+        Q[1, :] = N - Q[0, :]
     return G, lG, Q
 
 
@@ -367,7 +380,7 @@ def pfqn_pas_nc(Z: Optional[Sequence[float]],
     population sits at the delay node with weight prod_r Z_r^{N_r}/N_r!.
 
     Cost: one node per feasible ordered prefix; with an empty ``prec`` that is
-    sum_{b<=N} C(|b|+M-1, M-1) |b|!/prod_r b_r!, factorial in sum(N). A
+    ``sum_{b<=N} C(|b|+M-1, M-1) |b|!/prod_r b_r!``, factorial in sum(N). A
     placement order prunes the orderings, which is what makes the microstate
     walk affordable in the P&S case.
 

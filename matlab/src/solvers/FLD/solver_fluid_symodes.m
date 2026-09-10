@@ -22,7 +22,7 @@ function sys = solver_fluid_symodes(sn, options)
 %   'lin'      x_v
 %   'min'      x_v * min(n_i, S_i)/n_i
 %   'ext1'     1 - sum of x over phases 2..end of the class at the source
-%   'dps'      x_v / (c0 + ntilde_i), scaled weights folded into coeff;
+%   'dpsmin'   x_v * min(n_i, S_i)/ntilde_i, weight w_ir folded into coeff;
 %              ntilde_i = sum_r w_ir n_ir (normalized DPS weights)
 %   'dpspw'    piecewise: x_v if n_i <= S_i, else S_i*w_ir*x_v/ntilde_i
 %   'fcfsw'    x_v * min(n_i, S_i)/nhat_i, phase weight folded into coeff;
@@ -205,21 +205,16 @@ sys.statePhase = statePhase(keep);
 sys.nstates = length(keep);
 sys.S = S;
 sys.isSource = (sn.sched(sys.stateStation) == SchedStrategy.EXT);
+% S already holds the population at an INF station, so isinf(S) cannot tell
+% one apart; the exporter and the smoothing both need the original flag
+sys.isInfStation = isinf(sn.nservers(:));
 
-% smoothing selection mirrors use_pnorm in solver_fluid_matrix
-use_pnorm = isfield(options, 'pstar') && ~isempty(options.pstar) || ...
-    (isfield(options.config, 'pstar') && ~isempty(options.config.pstar));
+% Smoothing selection through the one rule SOLVER_FLUID_MATRIX integrates, so an
+% exported system and the trajectory it describes carry the same drift.
+[use_pnorm, pstar_val] = fluid_pstar(options.method, options, M);
 if use_pnorm
-    if isfield(options, 'pstar') && ~isempty(options.pstar)
-        pstar_val = options.pstar;
-    else
-        pstar_val = options.config.pstar;
-    end
-    if isscalar(pstar_val)
-        pstar_val = pstar_val * ones(M, 1);
-    end
     sys.smoothing = 'pnorm';
-    sys.pstar = pstar_val(:);
+    sys.pstar = pstar_val;
 else
     sys.smoothing = 'min';
     sys.pstar = [];
@@ -354,7 +349,7 @@ for i = 1:M
                                     eventVar(ne,1) = xic+ki-1; %#ok<AGROW>
                                     [factorType{ne,1}, factorData{ne,1}, coeff(ne,1)] = ...
                                         symodes_factor(method, sched(i), i, c, ki, coeff(ne,1), ...
-                                        q_indices, Kic, S, dpsw, fcfsPhaseW, xic+ki-1); %#ok<AGROW>
+                                        q_indices, Kic, dpsw, fcfsPhaseW, xic+ki-1); %#ok<AGROW>
                                 end
                             end
                         end
@@ -385,7 +380,7 @@ for i = 1:M
                             eventVar(ne,1) = xic+ki-1;
                             [factorType{ne,1}, factorData{ne,1}, coeff(ne,1)] = ...
                                 symodes_factor(method, sched(i), i, c, ki, coeff(ne,1), ...
-                                q_indices, Kic, S, dpsw, fcfsPhaseW, xic+ki-1);
+                                q_indices, Kic, dpsw, fcfsPhaseW, xic+ki-1);
                         end
                     end
                 end
@@ -412,7 +407,7 @@ if strcmp(method,'softmin')
 end
 end
 
-function [ftype, fdata, coeff] = symodes_factor(method, schedi, i, c, ki, coeff, q_indices, Kic, S, dpsw, fcfsPhaseW, var)
+function [ftype, fdata, coeff] = symodes_factor(method, schedi, i, c, ki, coeff, q_indices, Kic, dpsw, fcfsPhaseW, var)
 % Scaling factor applied to the driving state variable of an event whose
 % source station is i (class c, phase ki), matching the per-strategy rate
 % scaling in ode_rates_closing (closing), ode_statedep and ode_softmin.
@@ -432,10 +427,10 @@ switch method
             case {SchedStrategy.PS, SchedStrategy.FCFS}
                 ftype = 'min';
             case SchedStrategy.DPS
-                % ode_rates_closing uses denominator mean(w) + sum_r w_r*n_r
-                ftype = 'dps';
-                fdata.c0 = mean(dpsw(i,:));
-                coeff = coeff * S(i) * dpsw(i,c);
+                % the share w_ir*x_v/ntilde_i of the capacity min(n_i,S_i), as
+                % in ode_rates_closing_factors: no additive seed, not full S_i
+                ftype = 'dpsmin';
+                coeff = coeff * dpsw(i,c);
             otherwise
                 % strategies without a case in ode_rates_closing keep rates = x
                 ftype = 'lin';

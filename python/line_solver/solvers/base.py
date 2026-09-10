@@ -8,8 +8,12 @@ The class hierarchy mirrors the JAR implementation:
 - EnsembleSolver(Solver): For multi-model solvers (LN, UQ, ENV)
 """
 
+import functools
 from typing import Dict, List, Optional
-from ..api.io.logging import line_warning
+
+import numpy as np
+
+from ..api.io.logging import line_warning, LineError
 
 
 def method_label(requested, resolved):
@@ -23,6 +27,222 @@ def method_label(requested, resolved):
             and not str(resolved).startswith('default/'):
         return 'default/' + str(resolved)
     return resolved if resolved else requested
+
+
+# Method classification printed in the banner as '<accuracy>, <randomness>'.
+# Conventions (identical in line_method_type.m, MethodType.java, method_type.h):
+# exact means the algorithm targets the metric with no modeling approximation,
+# so numerical truncation and round-off do not make a method approximate and an
+# integral representation is exact while an asymptotic expansion is not;
+# approximate covers heuristics, expansions, decompositions and statistical
+# estimates; bound is a formal one-sided bound, guaranteed to lie on the stated
+# side of the exact value rather than to estimate it, printed with that side
+# ('gb.upper' -> 'upper bound'); randomized means the
+# algorithm consumes pseudo-random numbers. Perfect sampling (cftp) is
+# classified by the law it samples from, the stationary one, hence exact,
+# whereas an ordinary simulator is approximate because a finite horizon leaves
+# warm-up bias on top of the sampling error.
+_EXACT_DET = ('exact', 'deterministic')
+_EXACT_RND = ('exact', 'randomized')
+_APPROX_DET = ('approximate', 'deterministic')
+_APPROX_RND = ('approximate', 'randomized')
+_BOUND_DET = ('bound', 'deterministic')
+
+_METHOD_TYPES = {}
+
+
+def _register(tokens, kind):
+    for tok in tokens:
+        _METHOD_TYPES[tok] = kind
+
+
+# product-form evaluation and the exact single-queue closed forms
+_register(('exact', 'mva', 'mvac', 'recal', 'conv', 'ca', 'comom', 'comomld',
+           'rd', 'nrp', 'nrl', 'nre', 'clw', 'gleint', 'mmint2', 'lcfsqn.ca',
+           'rgf', 'dnc', 'ger', 'nintmva', 'nc.oi.exact', 'divdiff',
+           'sdr', 'sdr.mva'), _EXACT_DET)
+# mixed open/closed limited load dependence: the Bruell-Balbo-Afshari
+# effective-capacity MVA evaluates the product form itself, no expansion
+_register(('ncldmx',), _EXACT_DET)
+_register(('mm1', 'mmk', 'mxm1', 'mm1k', 'mg1', 'gm1', 'mapm1ps', 'pas'), _EXACT_DET)
+_register(('mg1.prio', 'mg1.fb', 'mg1.srpt', 'mg1.psjf', 'mg1.setf',
+           'mg1.lrpt', 'mm1.dps'), _EXACT_DET)
+# state-space enumeration: every CTMC path but the perfect samplers
+_register(('ctmc', 'sync', 'flat', 'gpu', 'fd', 'uniformization'), _EXACT_DET)
+_register(('exact.mapmap1',), _EXACT_DET)
+_register(('jmva', 'jmva.mva', 'jmva.recal', 'jmva.comom'), _EXACT_DET)
+_register(('lossn.exact', 'lossn.ms', 'lossn.manjunath'), _EXACT_DET)
+# MDD-rec: the normalising constant of a product form, summed EXACTLY over the
+# reachable set by one memoised walk of the decision diagram that holds it. On a
+# Petri net (solver_nc_spn_analyzer) and on a loss network (lossn_rec) alike.
+_register(('rec', 'lossn.rec', 'mdd.rec'), _EXACT_DET)
+# discrete-time (slotted) product form: the Bernoulli server of chapter 2 and
+# the closed cycle of chapter 3 in Daduna (2001), both closed form
+_register(('dt.bernoulli1', 'dt.cycle', 'dt.cycleld'), _EXACT_DET)
+
+# coupling from the past samples the stationary law itself
+_register(('cftp', 'ctmc.cftp'), _EXACT_RND)
+
+# approximate MVA and its variants
+_register(('amva', 'bs', 'aql', 'qsa', 'lin', 'gflin', 'egflin', 'dmlin', 'qd',
+           'qdlin', 'qdaql', 'qli', 'fli', 'ab', 'schmidt', 'schmidt-ext',
+           'schmidtext', 'sqni', 'sum', 'esum', 'cl', 'chandy-lakshmi',
+           'shadow', 'seidmann', 'linearizerms', 'conway', 'rolia', 'zhou',
+           'suri', 'reiser.ms', 'chow', 'marie', 'sqd', 'interp', 'highvar',
+           'lcp', 'pamb', 'pami', 'pamt', 'clust',
+           'balanced', 'tay', 'scat'), _APPROX_DET)
+# open-network decomposition and general-service closed forms
+_register(('qna', 'rqna', 'gig1', 'gigk', 'klb', 'kraemer', 'mg1k',
+           'mm1k.approx'), _APPROX_DET)
+# asymptotic expansions, entropy and fixed-point methods
+_register(('le', 'ble', 'aghq', 'cub', 'kt', 'bkt', 'lekt', 'pana', 'panald', 'mem', 'mem.blocking',
+           'gm', 'erlangfp', 'lossn.erlangfp', 'propfair', 'fpi', 'spm', 'spm.size',
+           'ttl'),
+          _APPROX_DET)
+# balanced fairness aggregation is not closed under composition
+_register(('oi', 'balancedfairness', 'stationtime'), _APPROX_DET)
+# mean-field, diffusion and ODE methods
+_register(('fld', 'fluid', 'matrix', 'closing', 'statedep', 'softmin',
+           'pnorm', 'mfq', 'rmf', 'tbi', 'diffusion', 'kp'), _APPROX_DET)
+# phase-type network decomposition
+_register(('mam', 'dec', 'mna', 'inap', 'inapplus', 'inapinf', 'ldqbd', 'qbd',
+           'qiu', 'cdf', 'reneging', 'retrial'), _APPROX_DET)
+# layered and environment decomposition
+_register(('ln', 'ln.mva', 'layers', 'ln.dec', 'enhanced', 'ln.fluid', 'moment3',
+           'lqns', 'srvn', 'lqnsdefault', 'exactmva', 'srvn.exactmva', 'qns',
+           'env', 'env.blend', 'blend', 'dec.avg'), _APPROX_DET)
+_register(('jmva.amva', 'jmva.chow', 'jmva.bs', 'jmva.aql', 'jmva.lin',
+           'jmva.dmlin'), _APPROX_DET)
+# solver selection is a meta-method; the selected solver's banner carries the
+# real classification
+_register(('auto',), _APPROX_DET)
+
+# formal one-sided bounds; 'cub.upper', 'qrf.mem' and 'qrf.bas.mem' are spelt
+# out because their tails 'cub' and 'mem' are NC method names
+_register(('ba', 'aba', 'bjb', 'mbjb', 'gb', 'pb', 'sb', 'mwba', 'pbh', 'pbk',
+           'bjbk', 'cbh', 'ssd', 'sib', 'scb', 'ldbcmp', 'qr', 'lr', 'qrf', 'harel',
+           'cub.upper', 'qrf.mem', 'qrf.bas.mem', 'looping', 'bpt', 'bgt',
+           'auto.upper', 'auto.lower', 'spnlp'), _BOUND_DET)
+
+# discrete-event simulation
+_register(('ssa', 'ldes', 'serial', 'para', 'parallel', 'nrm', 'jsim',
+           'replication', 'jmt', 'lqsim', 'sim', 'uq'), _APPROX_RND)
+# Monte Carlo and sampling-based normalizing constants
+_register(('mci', 'imci', 'amci', 'lhsmci', 'ls', 'is', 'sampling',
+           'lossn.mci'), _APPROX_RND)
+# Markov chain Monte Carlo on the regularized network (Chen-O'Cinneide)
+_register(('mcmc', 'nc.mcmc'), _APPROX_RND)
+# the approximate sampler stops before coalescence
+_register(('cftp.approx',), _APPROX_RND)
+
+# per-solver default for a method with no entry of its own; '#' keeps the
+# solver name out of the method namespace, since 'mva' is also a method
+_register(('#ctmc',), _EXACT_DET)
+_register(('#ssa', '#ldes', '#jmt'), _APPROX_RND)
+_register(('#ba',), _BOUND_DET)
+_register(('#mva', '#nc', '#fld', '#mam', '#ln', '#env', '#lqns',
+           '#qns', '#auto', '#uq'), _APPROX_DET)
+
+
+def method_type(solvername, method):
+    """Banner classification '<accuracy>, <randomness>' of a solution method.
+
+    Accuracy is one of exact, approximate, bound; randomness is deterministic
+    or randomized.
+
+    Lookup order: '<solver>.<method>', '<method>', the tail after each dot of
+    the method (longest suffix first), the head before its first dot,
+    '#<solver>', then 'approximate, deterministic'. The unknown-method default
+    is the conservative one: claiming exactness a method does not have is the
+    costlier error. Keep in step with the MATLAB, JAR and C++ twins.
+    """
+    solver = str(solvername or '').strip().lower()
+    if solver.startswith('solver'):
+        solver = solver[len('solver'):]
+    m = str(method or '').strip().lower()
+    # the banner label is 'default/<resolved>' once a default has been resolved
+    if '/' in m:
+        m = m.rsplit('/', 1)[1]
+
+    cand = []
+    if solver and m:
+        cand.append(solver + '.' + m)
+    if m:
+        cand.append(m)
+        parts = m.split('.')
+        for i in range(1, len(parts)):    # 'a.b.c' -> 'b.c', 'c'
+            cand.append('.'.join(parts[i:]))
+        if len(parts) > 1:
+            cand.append(parts[0])
+    if solver:
+        cand.append('#' + solver)
+
+    for tok in cand:
+        kind = _METHOD_TYPES.get(tok)
+        if kind is not None:
+            return '%s, %s' % (_bound_side(kind[0], m), kind[1])
+    return 'approximate, deterministic'
+
+
+def _bound_side(accuracy, method):
+    """A bound is reported with the side it lies on, which the method label
+    carries as its last component ('gb.upper' -> 'upper bound'). A family with
+    no sided variant (the qrf reductions) stays the unqualified 'bound'.
+    """
+    if accuracy == 'bound':
+        if method.endswith('.upper'):
+            return 'upper bound'
+        if method.endswith('.lower'):
+            return 'lower bound'
+    return accuracy
+
+
+# Banner name each solver prints natively. A solver absent from this map prints
+# no banner natively either (SolverBA), so the delegated paths stay silent too.
+_DELEGATED_BANNER_NAME = {
+    'SolverMVA': 'MVA',
+    'SolverNC': 'NC',
+    'SolverCTMC': 'CTMC',
+    'SolverMAM': 'MAM',
+    'SolverFluid': 'Fluid',
+    'SolverFLD': 'Fluid',
+    'SolverSSA': 'SSA',
+}
+
+
+def print_solver_banner(text):
+    """Print a solver's completion banner.
+
+    With the console narrating the banner is held until the closing DONE line
+    has gone out, so it reads where it would with the console off. Every native
+    banner goes through here; see line_solver/api/io/console.py.
+    """
+    from line_solver.api.io import console as _console
+    _console.defer_print(text)
+
+
+def print_delegated_banner(solver, lang, resolved_method, runtime):
+    """Print the analysis banner for a solve delegated to the JAR or to line-cli.
+
+    The native paths print `<NAME> analysis [method: ...; lang: python; ...]`;
+    without the same line under lang='java'/'cpp' the delegated run is silent,
+    which both hides the engine that ran and leaves the result table with no
+    solver header for any consumer that reads the printed output. MATLAB's own
+    lang='java'/'cpp' dispatch prints it, with `env` naming the HOST runtime and
+    not the delegated engine, so this is the parity behaviour.
+    """
+    import sys
+    name = _DELEGATED_BANNER_NAME.get(type(solver).__name__)
+    if name is None:
+        return
+    options = getattr(solver, 'options', None)
+    if options is None or not getattr(options, 'verbose', False):
+        return
+    requested = getattr(options, 'method', 'default')
+    label = method_label(requested, resolved_method or requested)
+    env = '%d.%d.%d' % sys.version_info[:3]
+    print_solver_banner("%s analysis [method: %s; type: %s; lang: %s; env: %s] completed in %fs."
+                        % (name, label, method_type(name, label), lang, env, runtime))
 
 
 class SolverFeatureSet:
@@ -71,6 +291,8 @@ class SolverFeatureSet:
         'BMAP',
         'MMPP2',
         'NHPP',
+        'MAPt',
+        'PHt',
         'EmpiricalCdf',
         'Expolynomial',
         'Normal',
@@ -105,9 +327,11 @@ class SolverFeatureSet:
         'StatelessClassSwitcher',
         'CacheClassSwitcher',
         'CacheRetrieval',
+        'CacheItemSize',
         'InfiniteServer',
         'Forker',
         'Joiner',
+        'JoinPartial',  # quorum join: k of n siblings, k < n
         'LogTunnel',
         'SharedServer',
         'Buffer',
@@ -128,7 +352,7 @@ class SolverFeatureSet:
         'RoutingStrategy_WRROBIN',
         'RoutingStrategy_JSQ',
         'RoutingStrategy_SQ',
-        'RoutingStrategy_RL',
+        'RoutingStrategy_SDR',
         'SchedStrategy_INF',
         'SchedStrategy_FCFS',
         'SchedStrategy_FCFSPR',
@@ -189,7 +413,9 @@ class SolverFeatureSet:
         'LoadDependence',
         'ClassDependence',
         'JointDependence',
+        'GlobalDependence',
         'SetupDelayOff',
+        'ServerParallelism',
         'Retrial',
         'Balking',
         'Reneging',
@@ -208,7 +434,75 @@ class SolverFeatureSet:
         'ActivityPrecedence_PRE_OR',
         'ActivityPrecedence_POST_OR',
         'SchedStrategy_REF',
+        # Layered cache-queueing models: a CacheTask holds a segmented cache
+        # whose items are ItemEntry entries, and a read is a call to one of them
+        # whose bound activity branches on a POST_CACHE precedence into hit and
+        # miss. Registered in all four codebases because the JAR
+        # SolverLDES.getLNFeatureSet DECLARES all three, and there an
+        # unregistered name is a hard error, so that whole feature set threw
+        # before it could compare anything.
+        'CacheTask',
+        'ItemEntry',
+        'ActivityPrecedence_POST_CACHE',
+        # Variable forking levels. A Fork emits tasksPerLink jobs on every
+        # outgoing link; these three name the ways that degree stops being one
+        # number. ForkFanoutVector: the count differs by destination or by class
+        # (sn.nodeparam[f]['fanOutLink']). ForkFanoutRandom: the count is a draw
+        # from a DiscreteSampler, redrawn per link and per forked job
+        # (sn.nodeparam[f]['fanOutDist']). ForkBranchProbability: a branch fires
+        # only with probability p, so the SIBLING COUNT is random even when each
+        # link carries a fixed number (sn.nodeparam[f]['fanOutProb']). Appended
+        # at the tail so every earlier index is unchanged.
+        'ForkFanoutVector',
+        'ForkFanoutRandom',
+        'ForkBranchProbability',
+        # Two names the C++ port carried alone until 2026-08-22, for
+        # capabilities this codebase can express but no gate could see.
+        # HeteroServers: Queue.addServerType gives a station several server
+        # POOLS with their own counts, class compatibilities and per-(type,
+        # class) rates. Only SolverJMT and the LDES engine honour them; every
+        # other solver reads sn.nservers and answers for a homogeneous station,
+        # which is a different system. DepartureDiscipline:
+        # Place.setDepartureDiscipline(cls, FIFO) makes the depository release a
+        # served token only after the earlier ones, which changes which
+        # transitions are enabled. NO solver implements it in any codebase, so
+        # declaring it nowhere is the point -- the model is refused instead of
+        # being solved as if it were NORMAL.
+        'HeteroServers',
+        'DepartureDiscipline',
+        # Ported from MATLAB SolverFeatureSet.m (2026-09-05), in this order, so
+        # that every earlier index is unchanged. Both are "having something"
+        # properties the registry could not name, so every rule about them lived
+        # only in structural predicates and was invisible to the gate.
+        # MultiServer: a finite-server station serving more than one job at
+        # once, i.e. a Queue whose number_of_servers is finite and > 1 (a Delay
+        # / INF station is not one). FiniteCapacity: a station or per-class
+        # buffer that can BIND, exactly the condition
+        # Network.find_binding_capacity tests (node-level capacity / class
+        # capacity below the population that can reach it; an open class always
+        # binds; a Cache model is exempt), which is also what
+        # NetworkSolver.checkBindingCapacity refuses on.
+        'MultiServer',
+        'FiniteCapacity',
     ]
+
+    # The registry name a specialization falls back to when it is not declared.
+    #
+    # A few entries name a SPECIAL CASE of another entry rather than a capability
+    # of their own: 'Cox2' is a Coxian restricted to two phases and 'Trace' is a
+    # Replayer under another class name. Marking a model with only the general
+    # name left the specific entry unreachable, which is dead registry surface;
+    # marking it with the specific name alone would instead REJECT the model at
+    # every solver declaring only the general one, i.e. at every solver that
+    # accepts it today -- which is exactly what SolverMVA did to a Cox2 model
+    # before this table existed. So get_used_lang_features marks the most
+    # specific name and the gate falls back here. The fallback runs one way
+    # only: a solver supporting just the special case declares 'Cox2' alone and
+    # keeps refusing a five-phase Coxian.
+    GENERALIZATION_OF = {
+        'Cox2': 'Coxian',
+        'Trace': 'Replayer',
+    }
 
     def __init__(self):
         """Initialize with all features set to False."""
@@ -254,6 +548,28 @@ class SolverFeatureSet:
             self.list[feat] = False
 
     @staticmethod
+    def unsupported_features(feat_supported: 'SolverFeatureSet',
+                             feat_used: 'SolverFeatureSet'):
+        """Names of the used features the given feature set does not cover.
+
+        Dispatch decisions that depend on WHICH features are missing (e.g. the
+        MAP/MMPP random-environment fallback, which fires only when the missing
+        features are all non-renewal processes) read this instead of parsing the
+        reason string of supports_with_reason.
+        """
+        unsupported = []
+        for field in SolverFeatureSet.FIELDS:
+            if not feat_used.list.get(field, False) or feat_supported.list.get(field, False):
+                continue
+            # A specialization the solver did not name is covered by the general
+            # capability when that one IS declared; see GENERALIZATION_OF.
+            general = SolverFeatureSet.GENERALIZATION_OF.get(field)
+            if general is not None and feat_supported.list.get(general, False):
+                continue
+            unsupported.append(field)
+        return unsupported
+
+    @staticmethod
     def supports_with_reason(feat_supported: 'SolverFeatureSet',
                              feat_used: 'SolverFeatureSet'):
         """
@@ -270,10 +586,7 @@ class SolverFeatureSet:
             emit a side-effect warning, so it is safe for method-aware gating
             and feature-driven method selection (which probe multiple methods).
         """
-        unsupported = []
-        for field in SolverFeatureSet.FIELDS:
-            if feat_used.list.get(field, False) and not feat_supported.list.get(field, False):
-                unsupported.append(field)
+        unsupported = SolverFeatureSet.unsupported_features(feat_supported, feat_used)
         if unsupported:
             feat_str = ', '.join(unsupported)
             reason = f'Some features are not supported by the chosen solver (feature: {feat_str}).'
@@ -400,6 +713,51 @@ class Solver:
     is_stochastic_method = isStochasticMethod
 
 
+def _lattice_points(Np):
+    """Population points the exact moment recursion would visit, prod(N+1)."""
+    import numpy as np
+    n = np.asarray(Np, dtype=float).ravel()
+    n = n[np.isfinite(n) & (n > 0)]
+    return float(np.prod(n + 1.0)) if n.size else 1.0
+
+
+def _use_momlin_branch(mom_method, Np):
+    """Whether the approximate queue-length branch is taken.
+
+    The exact recursion is exponential in the number of CLASSES, not in the
+    population, which is what the lattice gate guards against.
+    """
+    if mom_method == 'momlin':
+        return True
+    if mom_method == 'exact':
+        return False
+    return _lattice_points(Np) > 1e6
+
+
+def _pack_momlin(res):
+    """Reshape pfqn_momlin's (M,R,M,R) covariance tensor into the (M,R,R)
+    per-station layout pfqn_sens_mva returns, so both branches fill mom['qlen']
+    identically. QCovFull keeps the cross-station block the exact branch lacks.
+    """
+    import numpy as np
+    from ..api.pfqn.sens_mva import PfqnSensMva
+    Q = np.asarray(res.Q, dtype=float)
+    M, R = Q.shape
+    QCov = np.zeros((M, R, R))
+    for i in range(M):
+        for r in range(R):
+            for s in range(R):
+                QCov[i, r, s] = res.QCov[i, r, i, s]
+    QCov = (QCov + np.transpose(QCov, (0, 2, 1))) / 2.0
+    QTotVar = QCov.sum(axis=(1, 2))
+    out = PfqnSensMva(np.asarray(res.X, dtype=float).reshape(1, R), Q,
+                      np.asarray(res.U, dtype=float), np.asarray(res.R, dtype=float),
+                      QCov, np.asarray(res.QVar, dtype=float), QTotVar, 0.0)
+    out.QCovFull = res.QCov
+    out.method = 'momlin'
+    return out
+
+
 def _validate_moment_order(order, maxorder=3):
     """Normalize a moment-order SET, mirroring MATLAB's validateMomentOrder.
 
@@ -445,7 +803,7 @@ def _is_linearizer_method(method):
     with no approximate counterpart. The solver has already rejected methods it
     does not support, so no further validation belongs here.
 
-    ``options.method`` is a plain string token in the native Python solvers
+    ``options.method`` is a plain string method name in the native Python solvers
     ('default' when unset), so the comparison is a case-insensitive string
     match; there is no enum here to compare across classes.
     """
@@ -794,12 +1152,227 @@ def _service_time_of(rates, s_idx, R):
     return 0.0
 
 
+
+class MapEnvResult(dict):
+    """Analyzer result of the MAP/MMPP random-environment fallback.
+
+    The native solvers store their averages under two different conventions --
+    dict entries ('QN', 'UN', ...) in MVA and the fluid solvers, attributes
+    ('.Q', '.U', ...) in NC and the dataclass results -- and each solver's own
+    getAvg reads its own. The fallback is shared by all of them, so its result
+    answers to both: the mapping is the same one _AVG_FIELDS records.
+    """
+
+    _ALIASES = {'Q': 'QN', 'U': 'UN', 'R': 'RN', 'T': 'TN', 'A': 'AN', 'W': 'WN',
+                'X': 'XN', 'C': 'CN'}
+
+    def __getattr__(self, name):
+        key = self._ALIASES.get(name, name)
+        if key in self:
+            return self[key]
+        if name in self:
+            return self[name]
+        raise AttributeError(name)
+
+    def __setattr__(self, name, value):
+        self[self._ALIASES.get(name, name)] = value
+
+
 class NetworkSolver(Solver):
     """Base class for single-network LINE solvers.
 
     Used by: SolverMVA, SolverNC, SolverCTMC, SolverSSA, SolverMAM, SolverJMT,
-             SolverLDES, SolverQNS, SolverAuto, SolverFLD
+             SolverLDES, SolverQNS, SolverAUTO, SolverFLD
     """
+
+    # Result field aliases per average metric, in lookup order. Solvers store
+    # their averages either as Q/U/R/T/A (dataclass results) or as QN/UN/RN/TN/AN
+    # (dict results and the wrapper solvers).
+    _AVG_FIELDS = {
+        'R': ('R', 'RN'),
+        'Q': ('Q', 'QN'),
+        'U': ('U', 'UN'),
+        'T': ('T', 'TN'),
+        'A': ('A', 'AN'),
+        'W': ('W', 'WN'),
+    }
+
+    # Permanent engine of the last getProbSysMarg call, read by citations().
+    lastPermEngine = ''
+
+    def getProbSysMarg(self, nvec, engine: str = 'exact'):
+        """Joint probability of the per-station TOTAL queue lengths.
+
+        Declared here so that a solver without the metric refuses by name
+        rather than by AttributeError. Only SolverNC implements it, through
+        the permanent identity of the closed product-form joint law.
+        """
+        raise NotImplementedError(
+            "getProbSysMarg is not supported by %s" % type(self).__name__)
+
+    @property
+    def _result(self):
+        """Analyzer result, with the average-metric mask already applied."""
+        return self.__dict__.get('_result_store')
+
+    @_result.setter
+    def _result(self, value):
+        self.__dict__['_result_store'] = self._maskAvgResult(value)
+
+    @property
+    def result(self):
+        """The analyzer result.
+
+        MATLAB's `solver.result` is always the analyzer's own return, and a
+        caller reads `result.method` off it to check WHICH method answered --
+        the one assertion that catches a silent fallback. Only FLD and MAM
+        published it here, so every other solver answered None and that check
+        could not be written; the private `_result` every solver does set is the
+        fallback, which makes the two agree.
+        """
+        published = self.__dict__.get('result_store')
+        if published is not None:
+            return published
+        return self.__dict__.get('_result_store')
+
+    @result.setter
+    def result(self, value):
+        self.__dict__['result_store'] = self._maskAvgResult(value)
+
+    def _maskAvgResult(self, result):
+        """Applies the near-zero mask of MATLAB @NetworkSolver/getAvg.m.
+
+        A metric below GlobalConstants.FineTol is numerical noise and is reported
+        as zero; queue length and utilization are additionally zeroed wherever the
+        response time is below 10*FineTol, which is what makes an Immediate service
+        (rate 1/FineTol) contribute no residence. Arrival rate is zeroed at Source
+        stations. The response-time mask is disabled on stochastic Petri nets,
+        where a Place holds tokens without having a response time. Mirrors
+        filterMetric in getAvg.m and NetworkSolver.filterMetric in the JAR.
+
+        Args:
+            result: analyzer result object or dict, possibly None
+
+        Returns:
+            the same result, with its average matrices masked in place
+        """
+        if result is None:
+            return result
+        import numpy as np
+        from ..constants import GlobalConstants
+
+        def _get(name):
+            for field in self._AVG_FIELDS[name]:
+                value = result.get(field) if isinstance(result, dict) \
+                    else getattr(result, field, None)
+                if value is not None:
+                    return field, np.asarray(value, dtype=float)
+            return None, None
+
+        def _put(field, value):
+            if isinstance(result, dict):
+                result[field] = value
+            else:
+                setattr(result, field, value)
+
+        tol = GlobalConstants.FineTol
+        rfield, RN = _get('R')
+        if RN is not None and RN.ndim == 2:
+            RN = np.where(RN < tol, 0.0, RN)
+            _put(rfield, RN)
+        mask = None
+        if RN is not None and RN.ndim == 2 and not self._maskAvgIsSPN():
+            mask = RN < 10 * tol
+        for name in ('Q', 'U'):
+            field, value = _get(name)
+            if value is None or value.ndim != 2:
+                continue
+            if mask is not None and mask.shape == value.shape:
+                value = np.where(mask, 0.0, value)
+            value = np.where(value < tol, 0.0, value)
+            # A Source holds no jobs and occupies no server, so both are zero BY
+            # DISCIPLINE, not by sign. The masks above are threshold tests on a
+            # DIFFERENT quantity (response time) and only ever suppressed this row
+            # incidentally: measured on an open M/M/1, MATLAB left NC U=1, MAM Q=1
+            # and CTMC Q=Inf here. See _kb/07-cross-language-parity.md.
+            #
+            # Guarded on the row count: a station index is only meaningful when
+            # the matrix IS in station space. SolverFLD's mfq method returns a
+            # single-queue (1, K) result whose row 0 is the QUEUE, so applying a
+            # station index there zeroed the queue and reported U = 0 for an
+            # M/M/c that is 75% utilized.
+            for ist in self._maskAvgStationSpaceSources(value):
+                value[ist, :] = 0.0
+            _put(field, value)
+        for name in ('T', 'W'):
+            field, value = _get(name)
+            if value is None or value.ndim != 2:
+                continue
+            _put(field, np.where(value < tol, 0.0, value))
+        field, AN = _get('A')
+        if AN is not None and AN.ndim == 2:
+            AN = np.where(AN < tol, 0.0, AN)
+            # Same station-index-space guard as Q/U above: a bounds check alone
+            # accepts a row that exists but means something else.
+            for ist in self._maskAvgStationSpaceSources(AN):
+                AN[ist, :] = 0.0
+            _put(field, AN)
+        return result
+
+    def _maskAvgSn(self):
+        """Network structure backing the mask, or None when unavailable."""
+        sn = getattr(self, '_sn', None)
+        if sn is not None:
+            return sn
+        model = getattr(self, 'model', None)
+        if model is None or not hasattr(model, 'getStruct'):
+            return None
+        try:
+            return model.getStruct()
+        except Exception:
+            return None
+
+    def _maskAvgIsSPN(self):
+        """True when the model has Places or Transitions (no response time)."""
+        sn = self._maskAvgSn()
+        if sn is None:
+            return False
+        from ..lang.base import NodeType
+        nodetype = getattr(sn, 'nodetype', None)
+        if nodetype is None:
+            return False
+        return any(nt in (NodeType.PLACE, NodeType.TRANSITION) for nt in nodetype)
+
+    def _maskAvgStationSpaceSources(self, value):
+        """Source station indices valid for `value`, empty when it is not in
+        station index space.
+
+        A solver may return a metric whose rows are not stations: SolverFLD's
+        mfq method returns a single-queue (1, K) matrix. Indexing that with a
+        station index silently addresses the wrong row, so the row count must
+        agree with sn.nstations before any station index is used at all.
+        """
+        sn = self._maskAvgSn()
+        nstations = getattr(sn, 'nstations', None) if sn is not None else None
+        if nstations is None or int(nstations) != int(value.shape[0]):
+            return []
+        return [ist for ist in self._maskAvgSourceStations() if 0 <= ist < value.shape[0]]
+
+    def _maskAvgSourceStations(self):
+        """Station indices of the Source nodes, empty when unavailable."""
+        sn = self._maskAvgSn()
+        if sn is None:
+            return []
+        from ..lang.base import NodeType
+        nodetype = getattr(sn, 'nodetype', None)
+        node_to_station = getattr(sn, 'nodeToStation', None)
+        if nodetype is None or node_to_station is None:
+            return []
+        out = []
+        for ind, nt in enumerate(nodetype):
+            if nt == NodeType.SOURCE and ind < len(node_to_station):
+                out.append(int(node_to_station[ind]))
+        return out
 
     def libraries(self):
         """Third-party libraries this solver will use, without printing.
@@ -867,10 +1440,173 @@ class NetworkSolver(Solver):
                 elif fjm == 'heidelberger-trivedi':
                     fjm = 'ht'
                 tokens.append(fjm)
+                # a quorum join is a second method on top of the transformation: the
+                # synchronisation delay it charges is an order statistic, not a maximum
+                try:
+                    from ..api.sn import sn_has_quorum_join
+                    if sn_has_quorum_join(model.get_struct()):
+                        tokens.append('quorum')
+                except Exception:
+                    pass
+
+        # THE DAE ROUTE CARRIES THREE METHODS BESIDE ITS CLOSURE, and a user
+        # writing the run up needs all three: the Rosenbrock integrator that takes
+        # the singular mass matrix, the active set that decides which capacity
+        # limits bind, and -- when a finite horizon was asked for with a cap
+        # present -- the event location that cuts the trajectory into segments.
+        # THE RCAT ROUTE CARRIES ITS QBD, and a user writing the run up needs
+        # it: every isolated component is a quasi-birth-death process over
+        # (queue length, phase), and its open tail is Neuts' rate matrix R
+        # rather than a scalar ratio.
+        if any(t in ('inap', 'inapplus', 'inapinf',
+                     'ag.inap', 'ag.inapplus', 'ag.inapinf',
+                     'mam.inap', 'mam.inapplus', 'mam.inapinf') for t in tokens):
+            tokens.append('rcat.qbd')
+
+        # THE BETHE ARM CARRIES ITS OBJECTIVE. The polytope, the quadratic
+        # reduction and the metric readout of 'qrf.bethe' are the QRF paper's;
+        # the functional minimised over them is the tree-reweighted free
+        # entropy, and the weight lambda = 1/M is chosen by the spanning-tree
+        # polytope condition of Wainwright, Jaakkola and Willsky. Both papers
+        # are needed to write the run up.
+        if any(t in ('qrf.bethe', 'ba.qrf.bethe',
+                     'qrf.bas.bethe', 'ba.qrf.bas.bethe') for t in tokens):
+            tokens.append('qrf.trw')
+
+        # THE ITERATIVE PB(k) AND BJB(k) CARRY THE HIERARCHY THEY EVALUATE.
+        # Casale, Muntz and Serazzi name the iteration counts and tabulate
+        # them, but both brackets are produced by the Eager-Sevcik performance
+        # bound hierarchy recursion (pfqn_pbh), so a run write-up needs that
+        # paper beside theirs.
+        if any(t in ('pbk', 'pbk.upper', 'pbk.lower',
+                     'bjbk', 'bjbk.upper', 'bjbk.lower',
+                     'ba.pbk', 'ba.pbk.upper', 'ba.pbk.lower',
+                     'ba.bjbk', 'ba.bjbk.upper', 'ba.bjbk.lower') for t in tokens):
+            tokens.append('pbh')
+
+        # THE LOAD-DEPENDENT DIVDIFF ROUTE CARRIES TWO PAPERS. The outer
+        # divided difference over the class populations is Casale (SIGMETRICS
+        # 2017); only the single-class kernel it substitutes is the limited
+        # load-dependent closed form of Casale, Harrison and Ong. A run
+        # write-up needs both.
+        if any(t in ('divdiff.ld', 'nc.divdiff.ld') for t in tokens):
+            tokens.append('divdiff')
+
+        if any(t == 'dae' or t.endswith('.dae') for t in tokens):
+            tokens.append('dae.integrator')
+            try:
+                snc = model.get_struct() if model is not None else None
+            except Exception:
+                snc = None
+            if snc is not None:
+                import numpy as _np
+                cap = _np.asarray(getattr(snc, 'cap', []), dtype=float).ravel()
+                ccap = _np.atleast_2d(_np.asarray(getattr(snc, 'classcap', []), dtype=float))
+                njobs = _np.asarray(getattr(snc, 'njobs', []), dtype=float).ravel()
+                total = float(_np.sum(njobs)) if njobs.size else _np.inf
+                # a cap that the population cannot reach is not a cap: the struct
+                # refresh derives a FINITE classcap at every station of every closed
+                # model, so finiteness alone would report the active set for models
+                # that have no constraint at all
+                binds = int(getattr(snc, 'nregions', 0) or 0) > 0 \
+                    or bool(_np.any(_np.isfinite(cap) & (cap < total)))
+                for r in range(min(ccap.shape[1] if ccap.ndim == 2 else 0, njobs.size)):
+                    col = ccap[:, r]
+                    binds = binds or bool(_np.any(_np.isfinite(col) & (col < njobs[r])))
+                has_cap = binds
+                if has_cap:
+                    tokens.append('dae.activeset')
+                    ts = getattr(getattr(self, 'options', None), 'timespan', None)
+                    if ts is not None and len(ts) > 1 and _np.isfinite(ts[1]):
+                        tokens.append('dae.events')
+
+        # THE LDQBD METHOD CARRIES A SECOND CONSTRUCTION when the queue is a
+        # multiserver with phase-type service: the level's inner coordinate is then
+        # the MULTISET of the phases the busy servers sit in, which is Asmussen and
+        # Moller's state space rather than Phung-Duc's recursion. Only that shape
+        # uses it -- exponential service, or a single server, needs no
+        # configuration coordinate at all.
+        if any(t == 'ldqbd' or t.endswith('.ldqbd') for t in tokens):
+            try:
+                snq = model.get_struct() if model is not None else None
+            except Exception:
+                snq = None
+            if snq is not None:
+                import numpy as _np
+                from ..constants import ProcessType as _ProcessType
+                nsrv = _np.asarray(getattr(snq, 'nservers', []), dtype=float).ravel()
+                # a Delay carries nservers = inf and the open Source is exponential
+                # by the method's own guard, so a finite c > 1 with a non-EXP
+                # process is the queue
+                is_multiserver = bool(_np.any(_np.isfinite(nsrv) & (nsrv > 1)))
+                procid = _np.atleast_2d(_np.asarray(getattr(snq, 'procid', []), dtype=object))
+                rates = _np.atleast_2d(_np.asarray(getattr(snq, 'rates', []), dtype=float))
+                is_ph = False
+                if procid.size and procid.shape == rates.shape:
+                    for _i in range(procid.shape[0]):
+                        for _r in range(procid.shape[1]):
+                            pt = procid[_i, _r]
+                            # sn.procid holds ProcessType members natively and raw
+                            # ids elsewhere; compare by NAME, never by integer, per
+                            # the cross-codebase enum convention
+                            name = getattr(pt, 'name', None)
+                            if name is None:
+                                try:
+                                    name = _ProcessType(int(pt)).name
+                                except Exception:
+                                    continue
+                            if (name != 'EXP' and _np.isfinite(rates[_i, _r])
+                                    and rates[_i, _r] > 0):
+                                is_ph = True
+                if is_multiserver and is_ph:
+                    tokens.append('ldqbd_mphc')
+
+        # THE TBI ROUTE CARRIES ITS RELAXATION SCHEME: the cell decomposition is
+        # one method and the sweep that reconciles the cells is another, so a user
+        # writing the run up needs Lelarasmee's waveform relaxation beside the TBI
+        # paper.
+        if any(t == 'tbi' or t.endswith('.tbi') for t in tokens):
+            tokens.append('tbi.relaxation')
+
+        # THE COUPLED LAYERED TRANSIENT IS THE SAME RELAXATION over the LQN
+        # ensemble. It only runs when a finite horizon was asked for: without one
+        # get_tran_avg falls back to the decoupled, frozen-demand transient and no
+        # sweep happens.
+        if family == 'ln':
+            import numpy as _np
+            ts = getattr(getattr(self, 'options', None), 'timespan', None)
+            if ts is not None and len(ts) > 1 and bool(_np.all(_np.isfinite(_np.asarray(ts, dtype=float)))):
+                cfg = getattr(getattr(self, 'options', None), 'config', None)
+                mode = (cfg.get('ln_transient') if isinstance(cfg, dict)
+                        else getattr(cfg, 'ln_transient', None)) or 'coupled'
+                if str(mode).lower() == 'coupled':
+                    tokens.append('ln.transient.coupled')
+
+        # the random-environment image of the MAP/MMPP processes, when the run
+        # was dispatched through it rather than solving the model natively
+        reported_method = ''
+        res = getattr(self, '_result', None)
+        if isinstance(res, dict):
+            reported_method = str(res.get('method', '') or '')
+        elif res is not None:
+            reported_method = str(getattr(res, 'method', '') or '')
+        if 'env.' in reported_method:
+            tokens.append('env')
+            tokens.append('map2renv')
+            tokens.append('env.dec' if 'env.dec' in reported_method else 'env.avg')
 
         last_perct = getattr(self, '_last_perct_method', '')
         if last_perct:
             tokens.append(last_perct)
+
+        # the permanent engine of the last getProbSysMarg call, if any. The
+        # identity behind the metric is Ryser's expansion in every case, so
+        # 'perm' is reported alongside the estimator that evaluated it.
+        last_perm = str(getattr(self, 'lastPermEngine', '') or '').lower()
+        if last_perm:
+            tokens.append('perm')
+            if last_perm != 'exact':
+                tokens.append('perm.%s' % last_perm)
 
         entries = citations_for(tokens)
         if display:
@@ -879,6 +1615,378 @@ class NetworkSolver(Solver):
             for e in entries:
                 print('%s\n    covers: %s' % (e['ref'], e['covers']))
         return entries
+
+    def getAvg(self):
+        """Average station metrics (Q, U, R, T, A, W) as station x class matrices.
+
+        Single analyzer funnel of the native solvers, mirroring MATLAB
+        @NetworkSolver/getAvg.m and JAR NetworkSolver.getAvg(): it runs the
+        analyzer if there is no cached result, then reads the averages from
+        whichever result store the solver uses. Every solver used to carry its
+        own copy of this body, differing only in that store ('_result' vs
+        'result') and in the field naming ('QN' vs 'Q'), which _AVG_FIELDS
+        already reconciles; the duplication also meant there was no single place
+        to intercept a solve, as the other two codebases have.
+
+        Returns:
+            (Q, U, R, T, A, W): queue lengths, utilizations, response times,
+            throughputs, arrival rates and residence times.
+        """
+        self._ensureAvgResults()
+        cap = getattr(self, '_cap_unstable_open_util', None)
+        if callable(cap):
+            cap()
+
+        Q = self._avgMetric('Q')
+        U = self._avgMetric('U')
+        R = self._avgMetric('R')
+        T = self._avgMetric('T')
+        if Q is None or T is None:
+            return (np.array([]),) * 6
+        if T.ndim == 1:
+            T = np.tile(T, (Q.shape[0], 1))
+        # ARRIVAL RATE IS THE OFFERED FLOW, NOT THE CARRIED ONE. The analyzers
+        # store AN from sn_get_arvr_from_tput, which propagates throughput
+        # through the routing matrix, so it differs from T wherever a station
+        # loses or synchronises work, and is 0 at a Source by discipline.
+        # Substituting T here reported ArvR = lambda at the Source, which is
+        # what getAvgTable, MATLAB getAvg.m and the JAR all report as 0. T is
+        # the fallback only for a solver that stores no A at all.
+        A = self._avgMetric('A')
+        if A is None or A.shape != T.shape:
+            A = T.copy()
+            for ist in self._maskAvgStationSpaceSources(A):
+                A[ist, :] = 0.0
+        W = self._avgMetric('W')
+        if W is None:
+            W = self._avgResidT(R)
+        return Q, U, R, T, A, W
+
+    get_avg = getAvg
+
+    def _ensureAvgResults(self):
+        """Run the analyzer once, through the MAP/MMPP environment gate.
+
+        This is the interception point the other two codebases have inside
+        getAvg: a model whose only unsupported feature is a non-renewal process
+        is solved through its random-environment image rather than rejected.
+        Every accessor that needs averages calls this instead of runAnalyzer.
+
+        A DELEGATED solve keeps its own gate. The JAR owns the same fallback
+        (jline.solvers.NetworkSolver.mapEnvApprox, driven by --map-env and
+        --map-env-method, which jar_dispatch forwards), so under lang='java' the
+        model is handed over whole and the JAR decides: intercepting here instead
+        would run a python-side ensemble under a lang that names the JAR, and the
+        stage solvers of that ensemble are the calling solver, which SolverENV
+        refuses to delegate. line-cli carries no such gate, so lang='cpp' is
+        approximated here, with the recombination pinned native by mapEnvApprox.
+        """
+        if self._resultStore() is not None:
+            return
+        options = getattr(self, 'options', None)
+        lang = str(getattr(options, 'lang', 'python') or 'python') if options is not None else 'python'
+        # Solver console: this is the one interception point every accessor
+        # goes through, so the narrated run is opened and closed here. It
+        # closes on an exception too, so a failed analysis still reports what
+        # it had reached. See line_solver/api/io/console.py.
+        from line_solver.api.io import console as _console
+        _console.begin_run(self, options)
+        try:
+            if options is not None and lang != 'java' and self.needsMapEnv(options):
+                self.mapEnvApprox(options)
+            else:
+                self.runAnalyzer()
+        except LineError as refusal:
+            # A LineError is a decision, not a crash: the message says
+            # everything, and the analyzer frames under it (runAnalyzer ->
+            # runAnalyzerChecks -> ...) are LINE talking to itself. Re-raising
+            # with the traceback cleared drops them, so what the user reads is
+            # their own line, the accessor they called, and the reason. `from
+            # None` suppresses the "During handling of the above exception"
+            # block, which would put the frames straight back.
+            #
+            # This is the one interception point every accessor reaches, so it
+            # is also the only place that has to do it. Unlike the MATLAB twin
+            # a traceback survives, deliberately -- pdb, IDEs and Jupyter all
+            # navigate by one.
+            raise refusal.with_traceback(None) from None
+        finally:
+            _console.close_run(self)
+
+    def _resultStore(self):
+        """The populated analyzer result, from either store, or None."""
+        res = self._result
+        if res is None:
+            res = self.result
+        return res
+
+    def _clearResultStores(self):
+        """Empty BOTH result stores.
+
+        The delegating backends write `_result` and `result` together and
+        `_resultStore()` reads both, so clearing one leaves the other answering
+        for the previous solve: `reset()` then looks like a no-op to
+        `_ensureAvgResults` while `getAvgTable` still reads the emptied store.
+        """
+        self._result = None
+        self.result = None
+
+    _clear_result_stores = _clearResultStores
+
+    def _avgMetric(self, name):
+        """One average matrix from the result, under either field convention."""
+        res = self._resultStore()
+        if res is None:
+            return None
+        for field in self._AVG_FIELDS[name]:
+            value = res.get(field) if isinstance(res, dict) else getattr(res, field, None)
+            if value is not None:
+                return np.asarray(value, dtype=float)
+        return None
+
+    def _avgResidT(self, R):
+        """Residence times when the result carries none: visit-scaled response
+        times, or the response times themselves when there are no visit ratios."""
+        from ..api.sn import sn_get_residt_from_respt
+        sn = getattr(self, '_sn', None)
+        if sn is None:
+            sn = getattr(self, 'sn', None)
+        if sn is not None and getattr(sn, 'visits', None):
+            return sn_get_residt_from_respt(sn, R, None)
+        return R.copy()
+
+    def supportsTransientAnalysis(self):
+        """Does this solver produce transient averages, i.e. does getTranAvg
+        return trajectories on a finite options.timespan?
+
+        Declared False here and overridden by the solvers that populate
+        transient results (FLD, CTMC, LDES, JMT). It is a capability claim, not
+        a state test: it must answer before any run has taken place, because
+        mapEnvApprox uses it to decide whether the environment stages can be
+        coupled by the mean-field analyzer (which needs getTranAvg) or only by
+        the two steady-state limits.
+        """
+        return False
+
+    @staticmethod
+    def _mapEnvConfig(options, key, default=None):
+        """Read a config entry of the MAP/MMPP environment fallback."""
+        cfg = getattr(options, 'config', None)
+        if isinstance(options, dict) and cfg is None:
+            cfg = options.get('config')
+        if isinstance(cfg, dict):
+            return cfg.get(key, default)
+        if cfg is not None and hasattr(cfg, key):
+            return getattr(cfg, key)
+        return default
+
+    def needsMapEnv(self, options):
+        """Should this model be solved through the random-environment image of
+        its MAP/MMPP processes instead of natively?
+
+        True when the ONLY features the resolved method cannot consume are
+        non-renewal processes, i.e. the model becomes supported once each
+        modulated process is frozen into an exponential stage. A model that also
+        uses some other unsupported feature keeps its original rejection, since
+        the environment image would not make it solvable.
+
+        Mirrors matlab @NetworkSolver/NetworkSolver.m needsMapEnv.
+        """
+        map_tokens = ('MAP', 'MMPP2', 'MMAP')
+        model = getattr(self, 'model', None)
+        if model is None or type(model).__name__ != 'Network':
+            return False
+        if str(self._mapEnvConfig(options, 'map_env', 'auto')).lower() == 'off':
+            return False
+        if type(self).__name__ in ('SolverBA', 'BA'):
+            # A bound request must be answered with a bound: the environment
+            # image is an approximation of the model, so its bounds do not
+            # bracket the original one.
+            return False
+        feat_names = self.getMethodFeatureSet(self.resolveMethod(options))
+        if feat_names is None:
+            getter = getattr(type(self), 'getFeatureSet', None)
+            if getter is None:
+                return False   # no feature envelope to reason about (AUTO, LN)
+            try:
+                feat_names = getter()
+            except Exception:
+                return False
+        if feat_names is None:
+            return False
+        if isinstance(feat_names, SolverFeatureSet):
+            # getFeatureSet returns the envelope object, getMethodFeatureSet the
+            # bare names; accept either.
+            feat_supported = feat_names
+        else:
+            feat_supported = SolverFeatureSet()
+            feat_supported.set_true(list(feat_names))
+        if hasattr(model, 'get_used_lang_features'):
+            feat_used = model.get_used_lang_features()
+        else:
+            feat_used = model.getUsedLangFeatures()
+        unsupported = SolverFeatureSet.unsupported_features(feat_supported, feat_used)
+        if not unsupported:
+            return False
+        return all(feat in map_tokens for feat in unsupported)
+
+    def mapEnvApprox(self, options):
+        """Solver-agnostic random-environment approximation of a network with
+        MAP/MMPP/MMAP arrival or service processes, for solvers that cannot
+        consume a non-renewal process natively.
+
+        map2renv turns each modulated process into a set of environment stages in
+        which that process is exponential with the phase-conditional intensity,
+        and SolverENV recombines the stages with the calling solver as the stage
+        solver. Which recombination is reachable is decided by the solver's
+        transient capability: 'meanfield' carries the queue state across a phase
+        switch but needs getTranAvg on the stage solver, while 'dec'
+        (quasi-stationary limit) and 'avg' (rate-averaged limit) use steady state
+        alone. options.config['map_env_method'] selects one; 'auto' takes
+        'meanfield' whenever the solver supports transient analysis and otherwise
+        compares the mean stage holding time with the model relaxation time.
+
+        Mirrors matlab @NetworkSolver/mapEnvApprox.m.
+        """
+        import time as _time
+        import copy as _copy
+        from ..api.io.converters import map2renv
+        from ..api.sn import sn_get_arvr_from_tput, sn_get_residt_from_respt
+        from ..environment import SolverENV
+
+        t0 = _time.time()
+        env_model, info = map2renv(self.model, options)
+
+        env_method = str(self._mapEnvConfig(options, 'map_env_method', 'auto') or 'auto').lower()
+        if env_method == 'auto':
+            env_method = 'meanfield' if self.supportsTransientAnalysis() \
+                else self._selectEnvLimit(info)
+        if env_method not in ('dec', 'avg', 'meanfield'):
+            raise RuntimeError(
+                "options.config['map_env_method']='%s' is not a supported environment recombination. "
+                "Use 'meanfield', 'dec', 'avg' or 'auto'." % env_method)
+        if env_method == 'meanfield' and not self.supportsTransientAnalysis():
+            raise RuntimeError(
+                'The mean-field environment coupling integrates each stage over its sojourn, so it needs '
+                'transient averages from the stage solver, which %s does not produce. Use '
+                "options.config['map_env_method']='dec' or 'avg'." % type(self).__name__)
+
+        # Stage solvers are instances of the calling solver. The recursion guard
+        # is redundant on a correct transformation (no stage model carries a MAP)
+        # but keeps a mis-detected process from re-entering this driver.
+        inner_options = _copy.copy(options)
+        inner_cfg = dict(getattr(options, 'config', None) or {}) if not isinstance(options, dict) \
+            else dict(options.get('config') or {})
+        inner_cfg['map_env'] = 'off'
+        try:
+            inner_options.config = inner_cfg
+        except Exception:
+            inner_options = options
+        if env_method == 'meanfield':
+            # The stage transients are weighted by the sojourn density over the
+            # integration grid, so the horizon must cover the sojourn
+            # distribution; beyond it the weights vanish and the span is inert.
+            try:
+                inner_options.timespan = [0.0, 20.0 * info['max_hold_time']]
+            except Exception:
+                pass
+
+        stage_solvers = [type(self)(m, inner_options) for m in env_model.ensemble]
+        # The RECOMBINATION is native whatever the caller's lang: the delegating
+        # ENV engines solve every stage by the fluid transient and name no other
+        # stage solver, so a delegated ensemble whose stages are this solver
+        # would answer about a different computation (SolverENV refuses it
+        # outright). The stage solvers keep the caller's lang, so a lang='cpp'
+        # run still solves each stage through line-cli.
+        env_options = {'method': 'default' if env_method == 'meanfield' else env_method,
+                       'verbose': getattr(options, 'verbose', False),
+                       'iter_max': getattr(options, 'iter_max', 100),
+                       'iter_tol': getattr(options, 'iter_tol', 1e-4),
+                       'lang': 'python'}
+        env_solver = SolverENV(env_model, stage_solvers, env_options)
+        QN, UN, TN = env_solver.avg()
+
+        sn = self.model.getStruct()
+        self._sn = sn
+        QN = np.atleast_2d(np.asarray(QN, dtype=float))
+        UN = np.atleast_2d(np.asarray(UN, dtype=float))
+        TN = np.atleast_2d(np.asarray(TN, dtype=float))
+        M, K = QN.shape
+        RN = np.zeros((M, K))
+        nz = TN > 0
+        RN[nz] = QN[nz] / TN[nz]
+        XN = np.zeros(K)
+        CN = np.zeros(K)
+        refstat = np.asarray(sn.refstat).astype(int).ravel()
+        for k in range(K):
+            XN[k] = TN[refstat[k], k]
+            if XN[k] > 0:
+                CN[k] = float(np.sum(QN[:, k])) / XN[k]
+        WN = sn_get_residt_from_respt(sn, RN, None)
+        AN = sn_get_arvr_from_tput(sn, TN, None)
+
+        # The system metrics read the reference station, which for an open class
+        # is the Source. A stage solver whose transient does not report Source
+        # throughput leaves it at zero under the mean-field coupling, and the
+        # zero propagates into XN and CN. Report that rather than substituting
+        # the arrival rate, which would hide whose metric is missing.
+        njobs = np.asarray(sn.njobs, dtype=float).ravel()
+        open_zero = [k + 1 for k in range(K)
+                     if np.isinf(njobs[k]) and XN[k] == 0 and np.sum(QN[:, k]) > 0]
+        if open_zero:
+            line_warning('mapEnvApprox',
+                         'The %s environment coupling returned no reference-station throughput for open '
+                         'class(es) %s, so their system throughput and system response time are reported as '
+                         "zero. This stage solver does not measure Source throughput in transient mode; use "
+                         "options.config['map_env_method']='dec' or 'avg' for system-level metrics."
+                         % (env_method, open_zero))
+
+        actualmethod = 'env.%s' % env_method
+        requested = str(getattr(options, 'method', 'default') or 'default')
+        reported = 'default/%s' % actualmethod if requested == 'default' else requested
+        res = MapEnvResult(
+            QN=QN, UN=UN, RN=RN, TN=TN, AN=AN, XN=XN, CN=CN, WN=WN,
+            lG=0, runtime=_time.time() - t0, lastiter=1, method=reported,
+        )
+        # The native solvers read their averages from either store: MVA and NC
+        # from _result, FLD and MAM from the public result. Populate both so the
+        # fallback is transparent to whichever getAvg is on the other side.
+        self._result = res
+        self.result = res
+        line_warning('mapEnvApprox',
+                     'This solver has no native support for the non-renewal (MAP/MMPP) processes of this '
+                     'model; the reported averages come from its %s random-environment approximation '
+                     '(%d stages, %s image). Set options.config[\'map_env\']=\'off\' to reject the model '
+                     'instead.' % (env_method, info['nstages'],
+                                   'exact-modulation' if info['is_mmpp'] else 'intensity-matched'))
+        return self
+
+    def _selectEnvLimit(self, info):
+        """Timescale test: compare the mean stage holding time of the
+        environment with the relaxation time of the model, taken as the time the
+        slowest station needs to clear the jobs it can hold. A stage that
+        outlives the relaxation time lets each stage reach its own steady state
+        (quasi-stationary regime, 'dec'); a stage that expires first leaves the
+        model responding to the mean rate only (rate-averaged regime, 'avg').
+        The closed population enters the relaxation time because a closed queue
+        drains in N services."""
+        tau_env = float(info.get('max_hold_time', 0.0))
+        if tau_env <= 0:
+            return 'dec'   # absorbing environment: every stage is its own steady state
+        sn = self.model.getStruct()
+        rates = np.asarray(sn.rates, dtype=float).ravel()
+        rates = rates[np.isfinite(rates) & (rates > 0)]
+        if rates.size == 0:
+            return 'dec'
+        njobs = np.asarray(sn.njobs, dtype=float).ravel()
+        njobs = njobs[np.isfinite(njobs)]
+        tau_sys = (1.0 + float(np.sum(njobs))) / float(np.min(rates))
+        return 'dec' if tau_env >= tau_sys else 'avg'
+
+    # snake_case aliases
+    supports_transient_analysis = supportsTransientAnalysis
+    needs_map_env = needsMapEnv
+    map_env_approx = mapEnvApprox
 
     def avg(self, *args):
         """Alias for getAvg (returns QN, UN, RN, TN, AN, WN)."""
@@ -1033,29 +2141,62 @@ class NetworkSolver(Solver):
         avgTable = self.getAvgTable()
         data = getattr(avgTable, 'data', avgTable)
 
-        # Fork-Join quorum sibling-drop rate (LDES only), station-indexed. At a
-        # synchronizing Join the identity LossRate = ArvR - Tput does not hold
-        # (Tput is in parent units, discarded siblings in sibling units), so on
-        # Join rows the explicit drop rate replaces ArvR - Tput and the ratio
-        # uses the offered sibling rate ArvR + drop. Look up by name since the
-        # avg table carries station/class names, not indices.
+        # Fork-Join sibling-drop rate, station-indexed. At a synchronizing Join the
+        # identity LossRate = ArvR - Tput does not hold, because the two rates are
+        # in different units: ArvR counts the SIBLINGS offered (N per parent job)
+        # and Tput the PARENT jobs released. Reading ArvR - Tput there charges
+        # (N-1)/N of the offered traffic as lost at EVERY join, standard joins
+        # included. On a Join row the drop rate therefore replaces ArvR - Tput
+        # unconditionally: the solver's own measurement when it supplies one
+        # (SolverLDES counts the discards on its sample path), otherwise
+        # sn_join_droprate's ArvR - K*Tput, which is exact given the two rates.
+        # Look up by name since the avg table carries station/class names.
+        from ..api.fjnative import sn_join_droprate
+        from ..lang.base import NodeType
+
+        def _nt_val(nt):
+            return int(nt.value) if hasattr(nt, 'value') else int(nt)
+
         res = getattr(self, '_ldes_result', None) or getattr(self, '_result', None)
         dj = getattr(res, 'DropRateJoin', None) if res is not None else None
-        drop_lookup = {}
-        if dj is not None:
-            dj = np.atleast_2d(np.asarray(dj, dtype=float))
-            sn = getattr(self, '_sn', None)
-            if sn is not None:
-                nodenames = list(sn.nodenames)
-                classnames = [str(c) for c in sn.classnames]
-                stationToNode = np.asarray(sn.stationToNode).astype(int).flatten()
-                for ist in range(dj.shape[0]):
-                    if ist >= len(stationToNode):
+        sn = getattr(self, '_sn', None)
+        join_names = set()
+        if sn is not None and getattr(sn, 'fj', None) is not None and np.any(np.asarray(sn.fj)):
+            join_val = _nt_val(NodeType.JOIN)
+            nodenames0 = list(sn.nodenames)
+            for ind, nt in enumerate(sn.nodetype):
+                if _nt_val(nt) == join_val and ind < len(nodenames0):
+                    join_names.add(str(nodenames0[ind]))
+            if dj is None:
+                TNm = np.zeros((int(sn.nstations), int(sn.nclasses)))
+                ANm = np.zeros((int(sn.nstations), int(sn.nclasses)))
+                nodenames1 = list(sn.nodenames)
+                classnames1 = [str(c) for c in sn.classnames]
+                s2n = np.asarray(sn.stationToNode).astype(int).flatten()
+                idx = {}
+                for ist0 in range(min(TNm.shape[0], len(s2n))):
+                    idx[str(nodenames1[int(s2n[ist0])])] = ist0
+                for _, row0 in data.iterrows():
+                    ist0 = idx.get(str(row0['Station']))
+                    if ist0 is None or str(row0['JobClass']) not in classnames1:
                         continue
-                    sname = nodenames[int(stationToNode[ist])]
-                    for r in range(dj.shape[1]):
-                        if r < len(classnames):
-                            drop_lookup[(str(sname), classnames[r])] = float(dj[ist, r])
+                    r0 = classnames1.index(str(row0['JobClass']))
+                    TNm[ist0, r0] = float(row0['Tput'])
+                    ANm[ist0, r0] = float(row0['ArvR'])
+                dj = sn_join_droprate(sn, TNm, ANm)
+        drop_lookup = {}
+        if dj is not None and sn is not None:
+            dj = np.atleast_2d(np.asarray(dj, dtype=float))
+            nodenames = list(sn.nodenames)
+            classnames = [str(c) for c in sn.classnames]
+            stationToNode = np.asarray(sn.stationToNode).astype(int).flatten()
+            for ist in range(dj.shape[0]):
+                if ist >= len(stationToNode):
+                    continue
+                sname = nodenames[int(stationToNode[ist])]
+                for r in range(dj.shape[1]):
+                    if r < len(classnames):
+                        drop_lookup[(str(sname), classnames[r])] = float(dj[ist, r])
 
         rows = []
         for _, row in data.iterrows():
@@ -1064,9 +2205,9 @@ class NetworkSolver(Solver):
                 continue
             t = float(row['Tput'])
             d = drop_lookup.get((str(row['Station']), str(row['JobClass'])), 0.0)
-            if np.isfinite(d) and d > 0:
-                lr = d
-                lc = d / a
+            if str(row['Station']) in join_names:
+                lr = max(0.0, d)
+                lc = lr / a
             else:
                 lr = a - t
                 lc = (a - t) / a
@@ -1490,7 +2631,7 @@ class NetworkSolver(Solver):
             visited[i, :] = stateful[int(station_to_stateful[i]), :]
         return visited
 
-    def getMomentTable(self, order=None):
+    def getMomentTable(self, order=None, method=None):
         """Exact higher moments of the per-class performance measures.
 
         Returns ``(MomentTable, mom)`` where MomentTable is a DataFrame with one
@@ -1519,10 +2660,28 @@ class NetworkSolver(Solver):
         single-server models, which is the scope of pfqn_sens_mom; it is NaN
         otherwise.
 
-        All of it is exact, not simulated and not approximated. The queue-length
-        moments come from the product-form identity
-        ``Cov[n(i,r),n(j,s)] = L(j,s) dQ(i,r)/dL(j,s)``, evaluated by the
-        pfqn_sens_* family; see ``_kb/03-api-layer.md``.
+        All of it is exact, not simulated and not approximated, EXCEPT on the
+        momlin branch. The queue-length moments come from the product-form
+        identity ``Cov[n(i,r),n(j,s)] = L(j,s) dQ(i,r)/dL(j,s)``, evaluated by
+        the pfqn_sens_* family; see ``_kb/03-api-layer.md``.
+
+        ``method`` selects how the queue-length moments are obtained on a closed
+        single-server model::
+
+            ''        (default) exact, unless the population lattice prod(N+1)
+                      exceeds 1e6 points, in which case momlin is used and a
+                      warning is raised
+            'exact'   always the pfqn_sens_* recursion, however large the lattice
+            'momlin'  always pfqn_momlin: the same covariance identity, with the
+                      derivatives taken by linearizing the Schweitzer-Bard fixed
+                      point. Cost is polynomial rather than exponential in the
+                      number of classes, and BOTH moments then carry the AMVA
+                      error. ``mom['qlen'].method`` is 'momlin' on this branch,
+                      which also fills ``QCovFull``, the cross-station covariance
+                      tensor the exact branch does not return.
+
+        ``method`` is ignored on multiserver, mixed and purely open models, which
+        have no momlin path.
 
         RESPONSE-TIME MOMENTS ARE FCFS OR PROCESSOR-SHARING. RespTVar and
         RespTSCV are NaN at any station that is neither, and at an LCFS center in
@@ -1577,6 +2736,14 @@ class NetworkSolver(Solver):
         order = _validate_moment_order(order, 3)
         maxorder = max(order)
 
+        mom_method = '' if method is None else str(method).lower()
+        if mom_method == 'default':
+            mom_method = ''
+        if mom_method not in ('', 'exact', 'momlin'):
+            raise ValueError(
+                "getMomentTable: unknown moment method '%s'. "
+                "Supported: '' (auto), 'exact', 'momlin'." % method)
+
         sn = self.model.getStruct()
         R = int(sn.nclasses)
         N = np.asarray(sn.njobs, dtype=float).flatten()
@@ -1606,7 +2773,20 @@ class NetworkSolver(Solver):
 
         # ---- queue-length moments ------------------------------------------
         if not is_open:
-            if np.all(Ssrv == 1):
+            if np.all(Ssrv == 1) and _use_momlin_branch(mom_method, Np_):
+                # Approximate branch: the exact recursion is exponential in the
+                # number of classes, so above the lattice gate it is not run at
+                # all. Announced, never silent.
+                if mom_method == '':
+                    line_warning(
+                        "getMomentTable",
+                        "The exact moment recursion needs %d population points; "
+                        "falling back to the pfqn_momlin approximation. Pass "
+                        "'exact' to force the recursion, or 'momlin' to select "
+                        "this branch explicitly." % _lattice_points(Np_))
+                from ..api.pfqn import pfqn_momlin
+                mom['qlen'] = _pack_momlin(pfqn_momlin(D, Np_, Ztot))
+            elif np.all(Ssrv == 1):
                 mom['qlen'] = pfqn_sens_mva(D, Np_, Ztot)
             else:
                 mom['qlen'] = pfqn_sens_mvaldmx(np.zeros(R), D, Np_, Ztot,
@@ -2542,7 +3722,7 @@ class NetworkSolver(Solver):
 
     def reset(self):
         """Reset solver state and clear results."""
-        self._result = None
+        self._clearResultStores()
 
     @classmethod
     def supportsModel(cls, model):
@@ -2582,47 +3762,27 @@ class NetworkSolver(Solver):
         Cache models are exempt: the Cache node sets class_capacity=1 on the
         retrieval queues it builds, and MVA/NC solve those through their dedicated
         cache/retrieval analyzers rather than as a buffer constraint.
+
+        THE TEST ITSELF IS Network.find_binding_capacity, one predicate with two
+        callers: this gate, which words the refusal, and get_used_lang_features,
+        which marks the registry name 'FiniteCapacity' on the same answer, so a
+        solver method that does not declare the name is refused by the feature
+        set on exactly the models this gate refuses.
         """
-        import numpy as _np
-        if not hasattr(model, 'getStruct') or not hasattr(model, '_nodes'):
+        if not hasattr(model, 'getStruct') or not hasattr(model, 'find_binding_capacity'):
             return True, ''
-        nodes = getattr(model, '_nodes', []) or []
-        for node in nodes:
-            if type(node).__name__ == 'Cache':
-                return True, ''
-        njobs = _np.asarray(model.getStruct().njobs, dtype=float).ravel()
-        total_jobs = float(_np.sum(njobs))  # inf as soon as one class is open
-        for node in nodes:
-            tname = type(node).__name__
-            # Mirror MATLAB's isa(node,'Station') && ~isa(node,'Source'/'Sink')
-            # filter. Today only Stations carry _capacity, but do not rely on
-            # that: a future node type with the attribute must not be gated here.
-            is_station = any(b.__name__ == 'Station' for b in type(node).__mro__)
-            if not is_station or tname in ('Source', 'Sink') or not hasattr(node, '_capacity'):
-                continue
-            cap = getattr(node, '_capacity', _np.inf)
-            if cap is not None and _np.isfinite(cap) and cap >= 0 and cap < total_jobs:
-                return False, ("Finite station capacity (setCapacity=%g) at station '%s' is not "
-                               "supported by %s. Use SolverCTMC, SolverJMT or SolverLDES."
-                               % (cap, node.getName(), solver_name))
-            ccap = getattr(node, '_class_capacity', None) or {}
-            for jobclass, v in ccap.items():
-                if v is None or not _np.isfinite(v) or v <= 0:
-                    continue
-                if isinstance(jobclass, int):
-                    idx = jobclass
-                elif hasattr(jobclass, 'get_index0'):
-                    idx = jobclass.get_index0()
-                else:
-                    continue
-                if idx is None or idx >= njobs.size:
-                    continue
-                if v < njobs[idx]:
-                    return False, ("Finite per-class capacity (classCap=%g for class %d) at "
-                                   "station '%s' is not supported by %s. Use SolverCTMC, "
-                                   "SolverJMT or SolverLDES."
-                                   % (v, idx + 1, node.getName(), solver_name))
-        return True, ''
+        binds, node, cap, r, is_open = model.find_binding_capacity()
+        if not binds:
+            return True, ''
+        if r < 0:
+            return False, ("Finite station capacity (setCapacity=%g) at station '%s' is not "
+                           "supported by %s. %s"
+                           % (cap, node.getName(), solver_name,
+                              _capacity_fallback_advice(is_open)))
+        return False, ("Finite per-class capacity (classCap=%g for class %d) at "
+                       "station '%s' is not supported by %s. %s"
+                       % (cap, r + 1, node.getName(), solver_name,
+                          _capacity_fallback_advice(is_open)))
 
     check_binding_capacity = checkBindingCapacity
 
@@ -2671,6 +3831,26 @@ class NetworkSolver(Solver):
                 return cand
         return method
 
+    def unsupportedMethodReason(self, method):
+        """A BY-NAME explanation for a method this solver does not implement,
+        or '' when it has none.
+
+        It answers about the NAME and not about the model, which is what makes
+        it safe to call from :meth:`runAnalyzerChecks`: that gate runs before
+        the struct is necessarily usable, so an override must not reach for the
+        struct or for anything else that depends on the model. A reason that
+        depends on the model belongs in :meth:`supportsModelMethod`, which runs
+        later and is allowed to.
+
+        The case this exists for is a method that MOVED. Dropping the name from
+        ``listValidMethods`` is what makes the solver refuse it, and it is also
+        what loses the forwarding address, so the two have to be declared
+        together. C++ has always ordered the two this way -- ``check_method``
+        calls ``rcat_moved_to_ag`` BEFORE its unlisted-method throw -- and this
+        is the python counterpart of that helper.
+        """
+        return ''
+
     def runAnalyzerChecks(self, options):
         """Single, method-aware feature gate shared by every solver. Resolves the
         concrete method (default may map to a specific method), validates the
@@ -2684,12 +3864,21 @@ class NetworkSolver(Solver):
         except Exception:
             valid = None
         if valid is not None and req not in valid and req != 'default':
-            raise RuntimeError("The '%s' method is unsupported by this solver." % req)
+            # A solver that can SAY something about the name says it instead.
+            # This gate sits above every dispatcher, so without the ask it
+            # silently outranks them: SolverMAM's "the inap method moved to
+            # SolverAG" would reach a caller only by the accident of its own
+            # runAnalyzer firing first, and any other solver's forwarding
+            # address would not reach one at all.
+            moved = self.unsupportedMethodReason(req)
+            if moved:
+                raise LineError(moved)
+            raise LineError("The '%s' method is unsupported by this solver." % req)
         ok, reason = self.supportsModelMethod(method)
         if not ok:
             if method == req:
-                raise RuntimeError('This model contains features not supported by the solver. %s' % reason)
-            raise RuntimeError("This model contains features not supported by the solver's '%s' method. %s" % (method, reason))
+                raise LineError('This model contains features not supported by the solver. %s' % reason)
+            raise LineError("This model contains features not supported by the solver's '%s' method. %s" % (method, reason))
 
     # snake_case aliases
     resolve_method = resolveMethod
@@ -2772,6 +3961,58 @@ class NetworkSolver(Solver):
     def getWaitT(self):
         """Get average waiting times (alias for getAvgWaitT)."""
         return self.getAvgWaitT()
+
+    def getCdfRespT(self, R=None):
+        """Response time CDF at steady state, the base exponential fallback.
+
+        Mirrors MATLAB @NetworkSolver/getCdfRespT and JAR NetworkSolver: an
+        exponential law with the right mean per (station, class), tabulated on
+        100 quantile points. It is a trivial approximation that says nothing
+        about the tail; solvers with a distributional result override it, and
+        the simulators refuse instead of inheriting it.
+
+        Returns:
+            List of dicts with 'station', 'class' (1-based), 't', 'p', one per
+            (station, class) pair with a finite positive mean response time --
+            the flat native contract the analytical solvers share.
+        """
+        _, _, Rm, _, _, _ = self.getAvg()
+        if R is None:
+            R = Rm
+        RD = []
+        if R is None or getattr(R, 'size', 0) == 0:
+            return RD
+        nstations, nclasses = R.shape
+        for i in range(nstations):
+            for r in range(nclasses):
+                mean_resp_t = R[i, r]
+                if not np.isfinite(mean_resp_t) or mean_resp_t <= 0:
+                    continue
+                lambda_rate = 1.0 / mean_resp_t
+                quantiles = np.linspace(0.001, 0.999, 100)
+                times = -np.log(1 - quantiles) / lambda_rate
+                RD.append({
+                    'station': i + 1,
+                    'class': r + 1,
+                    't': times,
+                    'p': quantiles.copy(),
+                })
+        return RD
+
+    def getTranCdfRespT(self, *args, **kwargs):
+        """Not supported by this solver, as in the reference base class."""
+        raise NotImplementedError(
+            f"getTranCdfRespT is not supported by {type(self).__name__}")
+
+    def getCdfPassT(self, *args, **kwargs):
+        """Not supported by this solver, as in the reference base class."""
+        raise NotImplementedError(
+            f"getCdfPassT is not supported by {type(self).__name__}")
+
+    def getTranCdfPassT(self, *args, **kwargs):
+        """Not supported by this solver, as in the reference base class."""
+        raise NotImplementedError(
+            f"getTranCdfPassT is not supported by {type(self).__name__}")
 
     def getSjrnT(self, *args, **kwargs):
         """System sojourn-time distribution: alias of getCdfRespT (matching the
@@ -2969,3 +4210,21 @@ class EnsembleSolver(Solver):
     getAvgT = avgT
     avg_t = avgT
     a_t = avgT
+
+
+def _capacity_fallback_advice(is_open_class):
+    """Which solvers to point at when a finite capacity is refused.
+
+    The two lists differ, and naming the wrong one sends the user to a solver
+    that also refuses. An OPEN refused arrival is LOST, which SolverJMT
+    reproduces (its queue section carries the drop rule directly). A CLOSED one
+    BLOCKS: LINE disables the upstream departure and holds the job where it is,
+    and no JMT drop strategy expresses that -- "waiting queue" does not enforce
+    the size at all and "BAS blocking" completes the service before blocking, a
+    different queueing model. SolverJMT refuses the closed case by name (see
+    ``_jmt_station_cap_assert`` in ``api/solvers/jmt/handler.py`` and BUG-81), so
+    it must not be advertised here for it.
+    """
+    if is_open_class:
+        return "Use SolverCTMC, SolverJMT or SolverLDES."
+    return "Use SolverCTMC, SolverSSA or SolverLDES."

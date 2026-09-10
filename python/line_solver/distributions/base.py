@@ -40,6 +40,20 @@ class Distribution(ABC):
         """Get the name of this distribution."""
         return self._name
 
+    def get_feature_name(self) -> str:
+        """The SolverFeatureSet entry this distribution is marked under.
+
+        Separate from name because that one also selects the ProcessType and the
+        JSON wire type: a subclass whose registry name is more specific than its
+        process type (a Trace, or a two-phase Coxian) says so here without
+        moving to a different process type. Defaults to name, so a distribution
+        needing no distinction is unaffected.
+        """
+        return self._name
+
+    # MATLAB/JAR-compatible alias
+    getFeatureName = get_feature_name
+
     @abstractmethod
     def getMean(self) -> float:
         """Get the mean (expected value) of the distribution."""
@@ -175,19 +189,38 @@ class ContinuousDistribution(Distribution):
         this. Used by the G/M/1 MVA solver's sigma-root for non-PH arrivals.
         """
         import math
+        # A Markovian law has the CLOSED FORM alpha (sI - D0)^-1 (-D0 e). The
+        # rectangle rule below carries percent-level error on one (Exp(1) at
+        # s = 0.5 read 0.65672 against 2/3) and returns zero for a COMPLEX
+        # argument, since math.exp refuses it -- and complex arguments are what
+        # transform inversion and root location need. MRO puts this class ahead
+        # of Markovian for Exp and its siblings, so the dispatch is made here.
+        if hasattr(self, 'getD0') and hasattr(self, 'getInitProb'):
+            try:
+                D0 = np.atleast_2d(np.asarray(self.getD0(), dtype=float))
+                alpha = np.asarray(self.getInitProb(), dtype=float).ravel()
+                n = D0.shape[0]
+                if alpha.size == n and np.all(np.isfinite(D0)):
+                    e = np.ones(n)
+                    cplx = isinstance(s, complex) or np.iscomplexobj(s)
+                    M = s * np.eye(n) - D0
+                    val = alpha @ np.linalg.solve(M.astype(complex) if cplx else M, -(D0 @ e))
+                    return complex(val) if cplx else float(np.real(val))
+            except Exception:
+                pass
         mean = self.getMean()
         if not math.isfinite(mean) or mean <= 0.0:
             return 1.0
         n = 1000
         dx = (20.0 * mean) / n
-        total = 0.0
+        total = 0.0 + 0.0j if isinstance(s, complex) else 0.0
         for i in range(1, n + 1):
             x = i * dx
             try:
-                total += math.exp(-s * x) * self.evalPDF(x)
+                total += np.exp(-s * x) * self.evalPDF(x)
             except Exception:
                 pass
-        return total * dx
+        return (complex(total) if isinstance(s, complex) else float(total)) * dx
 
     # CamelCase alias
     evalLaplaceTransform = evalLST
@@ -254,6 +287,27 @@ class Markovian(Distribution):
     def get_representation(self) -> list:
         """snake_case alias for :meth:`getRepresentation`."""
         return self.getRepresentation()
+
+    def evalLST(self, s):
+        """
+        Laplace-Stieltjes transform, alpha (sI - D0)^-1 (-D0 e), as in MATLAB.
+
+        Distribution.evalLST is a rectangle rule over evalPDF: it carries
+        percent-level error on a phase-type law (Exp(1) at s = 0.5 read
+        0.65672 against 2/3) and returns ZERO for a COMPLEX argument, since it
+        evaluates math.exp. Every law reaching here is Markovian, so the closed
+        form applies, and being analytic it also serves the complex arguments
+        that transform inversion and root location need.
+        """
+        D0 = np.atleast_2d(np.asarray(self.getD0(), dtype=float))
+        n = D0.shape[0]
+        e = np.ones(n)
+        t = -(D0 @ e)
+        alpha = np.asarray(self.getInitProb(), dtype=float).ravel()
+        cplx = isinstance(s, complex) or np.iscomplexobj(s)
+        M = (s * np.eye(n) - D0)
+        val = alpha @ np.linalg.solve(M.astype(complex) if cplx else M, t)
+        return complex(val) if cplx else float(np.real(val))
 
     def getPH(self) -> dict:
         """Return the phase-type representation as a dict {0: D0, 1: D1},

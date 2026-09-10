@@ -35,6 +35,10 @@ switch method
         line_debug(options, 'Using RQNA method, calling solver_rqna');
         [Q,U,R,T,C,X] = solver_rqna(sn, options);
         lG = NaN;
+    case {'rqt'}
+        line_debug(options, 'Using RQT method, calling solver_rqt');
+        [Q,U,R,T,C,X] = solver_rqt(sn, options);
+        lG = NaN;
     case {'default'}
         % for non-exponential open queueing networks, use qna
         % (commented as not ready yet, it fails on example_cacheModel_3.m)
@@ -51,22 +55,30 @@ switch method
             lG = NaN;
             method = 'rqna';
         % Closed single-chain Blocking-After-Service network (finite buffers)
-        elseif isBasModel(sn)
+        elseif mva_is_bas_model(sn)
             line_debug('Default method: using BAS for blocking-after-service model\n');
             line_debug(options, 'Model has Blocking-After-Service finite buffers, calling solver_sqd');
             [Q,U,R,T,C,X,lG,iter] = solver_sqd(sn, options);
             method = 'sqd';
+        % An LCFS station has one arm, the exact LCFS/LCFS-PR recursion in
+        % solver_mva (SolverMVA.supportsLcfs has admitted the pair); the
+        % population thresholds below must not send it to AMVA, which has no
+        % LCFS arm and returned a zero wait at the station.
+        elseif any(sn.sched == SchedStrategy.LCFS)
+            line_debug('Default method: using the exact LCFS/LCFS-PR recursion\n');
+            [Q,U,R,T,C,X,lG] = solver_mva(sn, options);
+            method = 'exact';
         % Force AMVA for class- or joint-dependent models - exact MVA doesn't support them
         elseif ~isempty(sn.cdscaling) || ~isempty(sn.jdscaling)
             line_debug('Default method: using AMVA for class-/joint-dependent model\n');
             line_debug(options, 'Model has class/joint dependence, calling solver_amva');
             [Q,U,R,T,C,X,lG,iter,method,converged] = solver_amva(sn, options);
-        elseif any(isinf(sn.njobs)) && any(isfinite(sn.njobs) & sn.njobs > 0) && max(sn.nservers(isfinite(sn.nservers))) == 1 && sn_has_product_form(sn) && all(sn.njobs(isfinite(sn.njobs)) == floor(sn.njobs(isfinite(sn.njobs))))
+        elseif ~needsAmvaForInterlock(sn, options) && any(isinf(sn.njobs)) && any(isfinite(sn.njobs) & sn.njobs > 0) && max(sn.nservers(isfinite(sn.nservers))) == 1 && sn_has_product_form(sn) && all(sn.njobs(isfinite(sn.njobs)) == floor(sn.njobs(isfinite(sn.njobs))))
             % see _kb/06-solver-catalog.md (MVA section) for the default-dispatch rules
             line_debug('Default method: using exact mixed MVA\n');
             [Q,U,R,T,C,X,lG] = solver_mva(sn, options);
             method = 'exact';
-        elseif sn.nchains <= 4 && sum(sn.njobs) <= 20 && sn_has_product_form(sn) && ~sn_has_fractional_populations(sn)
+        elseif ~needsAmvaForInterlock(sn, options) && sn.nchains <= 4 && sum(sn.njobs) <= 20 && sn_has_product_form(sn) && ~sn_has_fractional_populations(sn)
             line_debug('Default method: using exact MVA\n');
             % The parameters above take in the worst case a handful of ms
             line_debug(options, 'Model qualifies for exact MVA (nchains=%d, njobs=%d, product-form=%d), calling solver_mva', sn.nchains, sum(sn.njobs), sn_has_product_form(sn));
@@ -78,16 +90,19 @@ switch method
             [Q,U,R,T,C,X,lG,iter,method,converged] = solver_amva(sn, options);
         end
         %end
-    case {'amva','bs','qd','qli','fli','lin','qdlin','sqni','egflin','gflin','ab','schmidt','schmidt-ext'} %,'aql','qdaql'
+    case {'amva','bs','qd','qli','fli','lin','qdlin','sqni','egflin','gflin','ab','schmidt','schmidt-ext','tay','scat','aql','qsa', ...
+            'lcp','chow','pamb','pami','pamt','clust','dmlin','priomva'}
         line_debug(options, 'Using approximate MVA method: %s, calling solver_amva', method);
         [Q,U,R,T,C,X,lG,iter,~,converged] = solver_amva(sn, options);
     otherwise
         % An unsupported method must error by name (returning empty metrics let the
-        % caller index into [] with an opaque message). 'aql'/'qdaql' exist in
-        % solver_amva but are deliberately not dispatched here.
+        % caller index into [] with an opaque message). 'qdaql' is NOT dispatched:
+        % solver_amvald_forward has no aql arm, so the name would silently compute
+        % qd (the trap documented at solver_amva.m:54 for amva.tay).
         line_error(mfilename, sprintf(['The ''%s'' method is not dispatched by ' ...
-            'solver_mva_analyzer. Supported: default, exact, mva, mvac, amva, bs, qd, qli, fli, ' ...
-            'lin, qdlin, sqni, egflin, gflin, ab, schmidt, schmidt-ext.'], method));
+            'solver_mva_analyzer. Supported: default, exact, mva, mvac, amva, aql, qsa, bs, qd, qli, fli, ' ...
+            'lin, qdlin, sqni, egflin, gflin, ab, schmidt, schmidt-ext, tay, scat, ' ...
+            'lcp, chow, pamb, pami, pamt, clust, dmlin, priomva.'], method));
 end
 runtime = toc(Tstart);
 
@@ -110,15 +125,14 @@ end
 
 end
 
-function tf = isBasModel(sn)
-% Detect a closed single-chain network with Blocking-After-Service (BAS) finite-buffer
-% blocking, which solver_sqd handles but exact/AMVA MVA does not.
+function tf = needsAmvaForInterlock(sn, options)
+% True when an interlock matrix is supplied but exact MVA cannot honour it.
+% PFQN_MVA carries the Eq. (4.7) correction for closed single-server models
+% only, so a mixed or multiserver model with an interlock goes to AMVA, which
+% applies the same correction to the arrival-instant queue length.
 tf = false;
-if sn.nchains ~= 1 || sn.nclosedjobs <= 0 || isempty(sn.droprule)
-    return;
+if ~isfield(options,'config') || ~isfield(options.config,'interlock') || isempty(options.config.interlock)
+    return
 end
-if any(isinf(sn.njobs))
-    return; % open class present
-end
-tf = any(sn.droprule(:) == DropStrategy.BAS);
+tf = any(isinf(sn.njobs)) || max(sn.nservers(isfinite(sn.nservers))) > 1;
 end

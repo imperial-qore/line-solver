@@ -35,7 +35,9 @@ for ist=1:M
     hasServiceTunnel(ist) = strcmpi(class(stations{ist}.server),'ServiceTunnel');
     if ~hasServiceTunnel(ist)
         for r=1:K
-            if isempty(stations{ist}.server.serviceProcess{r}) || stations{ist}.server.serviceProcess{r}{end}.isDisabled()
+            if r > numel(stations{ist}.server.serviceProcess) || ...
+                    isempty(stations{ist}.server.serviceProcess{r}) || ...
+                    stations{ist}.server.serviceProcess{r}{end}.isDisabled()
                 isServiceDefined(ist,r) = false;
             end
         end

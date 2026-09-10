@@ -68,7 +68,23 @@ newgl{isf_f}(end-R+r) = newgl{isf_f}(end-R+r) - 1;
 partials = {newgl};
 partprob = 1;
 B = length(fjentry.branchheads);
-emissions = repmat(1:B, 1, fjentry.weight);
+% fjentry.weight is one count per branch when the fork declares a
+% per-destination fanout, and a single count shared by every branch otherwise
+if isscalar(fjentry.weight)
+    emissions = repmat(1:B, 1, fjentry.weight);
+else
+    % INTERLEAVED, one round per task index, so a fork whose links all carry the
+    % same count emits in exactly the order repmat(1:B,1,w) gives. The order is
+    % not cosmetic: it fixes which partial outcome a simulation draw selects.
+    emissions = [];
+    for t=1:max(fjentry.weight)
+        for bb=1:B
+            if fjentry.weight(bb) >= t
+                emissions(end+1) = bb; %#ok<AGROW>
+            end
+        end
+    end
+end
 for b=emissions
     bh = fjentry.branchheads(b);
     isf_b = sn.nodeToStateful(bh);
@@ -102,7 +118,9 @@ for b=emissions
 end
 
 outGlobalStates = partials;
-outprob = partprob(:) * fjentry.prob;
+% fjentry.prob is one activation probability per branch when the fork declares
+% them; the firing takes every branch, so the outcome carries their product
+outprob = partprob(:) * prod(fjentry.prob);
 outrate = GlobalConstants.Immediate * ones(length(partials),1);
 
 if isSimulation

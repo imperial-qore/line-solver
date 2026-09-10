@@ -1,0 +1,50 @@
+{
+  "class": {
+    "JMT": "stochastic"
+  },
+  "example": "spn_closed_twoplaces",
+  "solvers": {
+    "JMT": [
+      {
+        "ArvR": 0.7533,
+        "JobClass": "Class1",
+        "QLen": 0.88109,
+        "ResidT": 1.1688,
+        "RespT": 1.1688,
+        "Station": "P1",
+        "Tput": 0.75488,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 1.5906,
+        "JobClass": "Class2",
+        "QLen": 1.708,
+        "ResidT": 1.1162,
+        "RespT": 1.1162,
+        "Station": "P1",
+        "Tput": 1.6042,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.75488,
+        "JobClass": "Class1",
+        "QLen": 9.1189,
+        "ResidT": 12.1,
+        "RespT": 12.1,
+        "Station": "P2",
+        "Tput": 0.75495,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 1.6042,
+        "JobClass": "Class2",
+        "QLen": 5.292,
+        "ResidT": 3.3423,
+        "RespT": 3.3423,
+        "Station": "P2",
+        "Tput": 1.5821,
+        "Util": 0.0
+      }
+    ]
+  }
+}

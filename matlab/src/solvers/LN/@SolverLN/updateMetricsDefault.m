@@ -22,9 +22,8 @@ for r=1:size(self.servt_classes_updmap,1)
     % with loop back-edges in the routing matrix)
     layerIdx = self.idxhash(idx);
     layerSn = ensemble{layerIdx}.getStruct();
-    c = find(layerSn.chains(:, classidx), 1);
-    refclass_c = layerSn.refclass(c);
-    refstat_k = layerSn.refstat(classidx);
+    % refclass is 0 on a chain with no reference class (open chain): no TN_ref
+    [hasRef, refstat_k, refclass_c] = ln_layer_refcell(layerSn, classidx);
 
     if ~isempty(self.averagingstart) && it>=iter_min % assume steady-state
         self.servt(aidx) = 0;
@@ -32,7 +31,11 @@ for r=1:size(self.servt_classes_updmap,1)
         self.tput(aidx) = 0;
         for w=0:(wnd_size-1)
             self.servt(aidx) = self.servt(aidx) + self.results{end-w,layerIdx}.RN(nodeidx,classidx) / wnd_size;
-            TN_ref = self.results{end-w,layerIdx}.TN(refstat_k, refclass_c);
+            if hasRef
+                TN_ref = self.results{end-w,layerIdx}.TN(refstat_k, refclass_c);
+            else
+                TN_ref = 0;
+            end
             if TN_ref > GlobalConstants.FineTol
                 self.residt(aidx) = self.residt(aidx) + self.results{end-w,layerIdx}.QN(nodeidx,classidx) / TN_ref / wnd_size;
             else
@@ -42,7 +45,11 @@ for r=1:size(self.servt_classes_updmap,1)
         end
     else
         self.servt(aidx) = self.results{end,layerIdx}.RN(nodeidx,classidx);
-        TN_ref = self.results{end,layerIdx}.TN(refstat_k, refclass_c);
+        if hasRef
+            TN_ref = self.results{end,layerIdx}.TN(refstat_k, refclass_c);
+        else
+            TN_ref = 0;
+        end
         QN_val = self.results{end,layerIdx}.QN(nodeidx,classidx);
         if TN_ref > GlobalConstants.FineTol
             self.residt(aidx) = QN_val / TN_ref;
@@ -175,49 +182,26 @@ for r=1:size(self.thinkt_classes_updmap,1)
     end
 end
 
-% Obtain the join times for AND-Join activities.
-% see _kb/06-solver-catalog.md (LN section) for rationale
-self.joint = zeros(lqn.nidx,1);
-joint_excess = zeros(lqn.nidx,1);
-% PRE_AND marks the branch tails, not the join target, so the joins are the activities
-% whose predecessors carry that mark.
-branchtails = find(lqn.actpretype == ActivityPrecedenceType.PRE_AND)';
-joinedacts = [];
-for tailidx = branchtails
-    succs = find(lqn.graph(tailidx, :) > 0);
-    joinedacts = [joinedacts, succs]; %#ok<AGROW>
-end
-joinedacts = unique(joinedacts);
-joinedacts = joinedacts(joinedacts > lqn.ashift & joinedacts <= lqn.ashift + lqn.nacts);
-for aidx = joinedacts
-    branches = fj_branch_members(lqn, aidx);
-    nbranches = numel(branches);
-    if nbranches == 0
-        continue;
-    end
-    branch_times = zeros(1, nbranches);
-    for bi = 1:nbranches
-        branch_times(bi) = sum(self.residt(branches{bi}));
-    end
-    if nbranches == 1
-        self.joint(aidx) = branch_times(1);
-        continue;
-    end
-    quorum = nbranches;
-    if isfield(lqn, 'actquorum') && aidx <= length(lqn.actquorum)
-        q = full(lqn.actquorum(aidx));
-        if q >= 1 && q <= nbranches
-            quorum = q;
-        end
-    end
-    % Branch times are taken as exponential, so the variance is the square of the mean.
-    self.joint(aidx) = fj_quorum_moments(branch_times, branch_times.^2, quorum);
-    joint_excess(aidx) = self.joint(aidx) - sum(branch_times);
-end
-
 % obtain the call residence time
 self.callservt = zeros(lqn.ncalls,1);
 self.callresidt = zeros(lqn.ncalls,1);
+% A call into a replicated callee registers ONE ROW PER REPLICA STATION, and
+% every row rewrites the same entry, so a residence built by Little from that
+% station's queue keeps one replica's share of it. The replicas are symmetric --
+% same law, same 1/n routing -- so the whole call is that share times the number
+% of rows. Without this, an entry whose activity calls a task replicated r times
+% reported a response time r times short of the activity's own: 0.0942105 against
+% 0.182631 at r=3, where LDES measures 0.182575. One row leaves it unchanged.
+% Count DISTINCT stations, not rows: the same call is registered once per
+% position it is reached from in the activity graph, and counting those would
+% inflate every forked or looped call in a model with no replication at all.
+callRowsPerLayer = ones(size(self.call_classes_updmap,1),1);
+for r=1:size(self.call_classes_updmap,1)
+    sib = self.call_classes_updmap(:,1) == self.call_classes_updmap(r,1) ...
+        & self.call_classes_updmap(:,2) == self.call_classes_updmap(r,2) ...
+        & self.call_classes_updmap(:,3) > 1;
+    callRowsPerLayer(r) = numel(unique(self.call_classes_updmap(sib,3)));
+end
 for r=1:size(self.call_classes_updmap,1)
     idx = self.call_classes_updmap(r,1);
     cidx = self.call_classes_updmap(r,2);
@@ -227,8 +211,52 @@ for r=1:size(self.call_classes_updmap,1)
         if nodeidx == 1
             self.callservt(cidx) = 0;
         else
-            self.callservt(cidx) = self.results{end, self.idxhash(idx)}.RN(nodeidx,classidx) * self.lqn.callproc{cidx}.getMean;
-            self.callresidt(cidx) = self.results{end, self.idxhash(idx)}.WN(nodeidx,classidx);
+            % A job blocked at an admission constraint is counted at no station
+            % (JMT WAITQ convention), so its wait is absent from RN. Recover it
+            % by Little from the layer population deficit, otherwise the caller
+            % never sees the blocking and the fixed point loses flow balance.
+            % The population is conserved per chain, not per class: a job in a
+            % layer switches class along the activity graph, so the call class
+            % itself carries population 0. Split the chain deficit by
+            % throughput, which gives every region-visiting class the same wait.
+            fcrWait = 0;
+            eidxLayer = self.idxhash(idx);
+            if ~isempty(self.layerHasRegion) && self.layerHasRegion(eidxLayer)
+                chains = self.layerChains{eidxLayer};
+                cix = find(chains(:,classidx), 1);
+                if ~isempty(cix)
+                    chainClasses = find(chains(cix,:));
+                    QNlayer = self.results{end, eidxLayer}.QN;
+                    TNlayer = self.results{end, eidxLayer}.TN;
+                    chainPop = 0;
+                    for k = chainClasses
+                        chainPop = chainPop + self.ensemble{eidxLayer}.classes{k}.population;
+                    end
+                    deficit = chainPop - sum(sum(QNlayer(:,chainClasses)));
+                    xregion = sum(TNlayer(nodeidx,chainClasses));
+                    if isfinite(deficit) && deficit > 0 && xregion > GlobalConstants.FineTol
+                        fcrWait = deficit / xregion;
+                    end
+                end
+            end
+            self.callservt(cidx) = (self.results{end, self.idxhash(idx)}.RN(nodeidx,classidx) + fcrWait) * self.lqn.callproc{cidx}.getMean;
+            % Normalise per chain-reference visit, as residt does above. WN
+            % divides by the class's own reference rate when the layer is open
+            % (an INF client task), which is per-ENTRY visit, and the entry
+            % rescaling below would then count the call once per entry.
+            callSn = ensemble{eidxLayer}.getStruct();
+            % refclass is 0 on a chain with no reference class (open chain)
+            [hasCallRef, callRefstat, callRefclass] = ln_layer_refcell(callSn, classidx);
+            TN_ref = 0;
+            if hasCallRef
+                TN_ref = self.results{end, eidxLayer}.TN(callRefstat, callRefclass);
+            end
+            if TN_ref > GlobalConstants.FineTol
+                self.callresidt(cidx) = max(1,callRowsPerLayer(r)) * ...
+                    self.results{end, eidxLayer}.QN(nodeidx,classidx) / TN_ref + fcrWait;
+            else
+                self.callresidt(cidx) = self.results{end, eidxLayer}.WN(nodeidx,classidx) + fcrWait;
+            end
         end
         % Recover from Inf/NaN (e.g. a transiently unstable open chain in a
         % layer): snap back to the previous iteration's value, otherwise the
@@ -259,6 +287,56 @@ for r=1:size(self.call_classes_updmap,1)
     end
 end
 
+% Obtain the join times for AND-Join activities. This runs after callresidt is
+% known: a branch activity with an Immediate host demand spends all its time in
+% its synchronous calls, so a branch time read from residt alone would be zero
+% and the join correction would silently vanish.
+% see _kb/06-solver-catalog.md (LN section) for rationale
+self.joint = zeros(lqn.nidx,1);
+joint_excess = zeros(lqn.nidx,1);
+% PRE_AND marks the branch tails, not the join target, so the joins are the activities
+% whose predecessors carry that mark.
+branchtails = find(lqn.actpretype == ActivityPrecedenceType.PRE_AND)';
+joinedacts = [];
+for tailidx = branchtails
+    succs = find(lqn.graph(tailidx, :) > 0);
+    joinedacts = [joinedacts, succs]; %#ok<AGROW>
+end
+joinedacts = unique(joinedacts);
+joinedacts = joinedacts(joinedacts > lqn.ashift & joinedacts <= lqn.ashift + lqn.nacts);
+for aidx = joinedacts
+    branches = fj_branch_members(lqn, aidx);
+    nbranches = numel(branches);
+    if nbranches == 0
+        continue;
+    end
+    branch_times = zeros(1, nbranches);
+    for bi = 1:nbranches
+        branch_times(bi) = sum(self.residt(branches{bi}));
+        for baidx = branches{bi}(:)'
+            for cidx = lqn.callsof{baidx}
+                if lqn.calltype(cidx) == CallType.SYNC
+                    branch_times(bi) = branch_times(bi) + self.callresidt(cidx);
+                end
+            end
+        end
+    end
+    if nbranches == 1
+        self.joint(aidx) = branch_times(1);
+        continue;
+    end
+    quorum = nbranches;
+    if isfield(lqn, 'actquorum') && aidx <= length(lqn.actquorum)
+        q = full(lqn.actquorum(aidx));
+        if q >= 1 && q <= nbranches
+            quorum = q;
+        end
+    end
+    % Branch times are taken as exponential, so the variance is the square of the mean.
+    self.joint(aidx) = fj_quorum_moments(branch_times, branch_times.^2, quorum);
+    joint_excess(aidx) = self.joint(aidx) - sum(branch_times);
+end
+
 % then resolve the entry servt summing up these contributions
 entry_servt = self.servtmatrix*[self.residt;self.callresidt(:)];
 entry_servt(1:lqn.eshift) = 0;
@@ -272,6 +350,20 @@ for eidx = (lqn.eshift+1):(lqn.eshift+lqn.nentries)
         end
     end
     entry_servt(eidx) = max(entry_servt(eidx), 0);
+end
+
+% A SetupTask's cold start is charged HERE, to the entry, and with the
+% probability that the thread was actually found powered down. It is not host
+% demand, so it does not belong to any activity's residence -- reporting it there
+% put RespT(A2) at 1.29479 against 0.333178 from LDES on lqn_setup, the bare
+% demand. The probability is the same closure method 'srvn.ph' uses (phSetupProb):
+% a thread released at a reply powers off only if its delay-off countdown D
+% expires before the next request, so p = E[I]/(E[I]+d), and admission takes an
+% ACTIVE thread before waking a sleeping one, so the pool that cycles is
+% max(1,b) threads at offered load b. Charging the FULL setup mean every time,
+% which the open QBD decomposition did, ran lqn_setup 12.67% below LDES.
+for eidx = (lqn.eshift+1):(lqn.eshift+lqn.nentries)
+    entry_servt(eidx) = entry_servt(eidx) + lqn_setup_charge(self, lqn, lqn.parent(eidx));
 end
 
 % see _kb/06-solver-catalog.md (LN section) for rationale

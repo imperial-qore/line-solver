@@ -2,7 +2,7 @@ classdef Expolynomial < ContinuousDistribution
     % Expolynomial distribution with density f(x) = sum ci * x^ai * exp(-li*x)
     %
     % Represents an expolynomial density over a bounded domain [eft, lft],
-    % matching the Sirio/ORIS GEN expolynomial format.
+    % matching the GEN expolynomial format of external stochastic Petri net tools.
     %
     % Copyright (c) 2012-2026, Imperial College London
     % All rights reserved.
@@ -11,7 +11,7 @@ classdef Expolynomial < ContinuousDistribution
         function self = Expolynomial(density, eft, lft)
             % EXPOLYNOMIAL Create an Expolynomial distribution instance
             %
-            % @param density Density expression string in Sirio format
+            % @param density Density expression string in expolynomial (GEN) format
             % @param eft Earliest firing time (lower bound of support)
             % @param lft Latest firing time (upper bound of support, can be Inf)
             % @return self Expolynomial distribution instance

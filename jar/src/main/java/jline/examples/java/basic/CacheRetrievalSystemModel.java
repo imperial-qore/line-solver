@@ -348,4 +348,71 @@ public class CacheRetrievalSystemModel {
         return retrieval_system_with_probabilistic_routing_and_self_loops(accessProb, serviceRates, routingMatrices,
                 itemLevelCap, sched);
     }
+
+    /**
+     * Retrieval system whose per-item miss routing AND service are taken, by
+     * default, from the read class.
+     *
+     * <p>Routing comes from the read class's edges among the retrieval queues in
+     * the top-level routing matrix P, and service from the read class's service
+     * distribution at each queue. Per-item overrides
+     * ({@link Cache#setItemRoutingProb} with the cache as source or destination,
+     * and {@link Queue#setItemServiceRate}) then reconfigure one item at finer
+     * granularity: here item 0 skips Queue_2 and is fetched faster at
+     * Queue_1.</p>
+     *
+     * <p>The retrieval stations are PS: per-item (class-dependent) service rates
+     * are admissible in the analytical retrieval algorithm, whereas FCFS/SIRO
+     * would require identical rates.</p>
+     *
+     * @return configured delayed-hit cache network model
+     */
+    public static Network retrieval_default() {
+        double[] accessProb = {0.6, 0.3, 0.1};   // per-item access probabilities
+
+        Network model = new Network("DelayedHits");
+
+        int n = accessProb.length;               // number of items
+        Matrix capacity = new Matrix("[1]");     // per-level cache capacity
+
+        Source source = new Source(model, "Source");
+        Cache cacheNode = new Cache(model, "Cache", n, capacity, ReplacementStrategy.FIFO);
+        Queue queue1 = new Queue(model, "Queue_1", SchedStrategy.PS);
+        Queue queue2 = new Queue(model, "Queue_2", SchedStrategy.PS);
+        Sink sink = new Sink(model, "Sink");
+
+        OpenClass jobClass = new OpenClass(model, "InitClass", 0);
+        OpenClass hitClass = new OpenClass(model, "HitClass", 0);
+        OpenClass missClass = new OpenClass(model, "MissClass", 0);
+
+        source.setArrival(jobClass, new Exp(1));
+
+        // Read-class service at each retrieval queue = default per-item fetch service.
+        queue1.setService(jobClass, new Exp(2.0));
+        queue2.setService(jobClass, new Exp(3.0));
+
+        cacheNode.setRead(jobClass, new DiscreteSampler(new Matrix(accessProb)));
+        cacheNode.setHitClass(jobClass, hitClass);
+        cacheNode.setMissClass(jobClass, missClass);
+
+        // No service rates and no routing matrices: both inherited from the read class.
+        cacheNode.setRetrievalSystem(jobClass, missClass, new Queue[] {queue1, queue2});
+
+        // Item-level overrides for item 0: skip Queue_2 and fetch faster at Queue_1.
+        cacheNode.setItemRoutingProb(jobClass, 0, queue1, queue2, 0.0);      // delete default edge
+        cacheNode.setItemRoutingProb(jobClass, 0, queue1, cacheNode, 1.0);   // exit after Queue_1
+        queue1.setItemServiceRate(cacheNode, jobClass, 0, 5.0);              // faster item-0 fetch
+
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
+        routingMatrix.set(jobClass, jobClass, source, cacheNode, 1.0);
+        // Default retrieval topology, drawn once for the read class: cache -> Q1 -> Q2 -> cache
+        routingMatrix.set(jobClass, jobClass, cacheNode, queue1, 1.0);   // entry into retrieval
+        routingMatrix.set(jobClass, jobClass, queue1, queue2, 1.0);      // Queue_1 -> Queue_2
+        routingMatrix.set(jobClass, jobClass, queue2, cacheNode, 1.0);   // exit back to cache
+        routingMatrix.set(hitClass, hitClass, cacheNode, sink, 1.0);
+        routingMatrix.set(missClass, missClass, cacheNode, sink, 1.0);
+        model.link(routingMatrix);
+
+        return model;
+    }
 }

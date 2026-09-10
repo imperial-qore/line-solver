@@ -104,8 +104,8 @@ classdef Ensemble < Model
             end
 
             % Storage for mapping old nodes/classes to new ones
-            nodeMap = cell(1, length(models));   % containers.Map for each model
-            classMap = cell(1, length(models));  % containers.Map for each model
+            nodeMap = cell(1, length(models));   % dictionary for each model
+            classMap = cell(1, length(models));  % dictionary for each model
             joinPendingList = {};  % Join nodes need Forks to exist first
 
             % Phase 1: Create nodes for each model
@@ -115,7 +115,7 @@ classdef Ensemble < Model
                 prefix = [modelName, '_'];
 
                 nodes = model.getNodes();
-                nodeMap{m} = containers.Map('KeyType', 'char', 'ValueType', 'any');
+                nodeMap{m} = configureDictionary('string', 'cell');
 
                 for n = 1:length(nodes)
                     oldNode = nodes{n};
@@ -123,11 +123,11 @@ classdef Ensemble < Model
 
                     if isa(oldNode, 'Source')
                         % Map to merged source
-                        nodeMap{m}(oldNode.getName()) = unionSource;
+                        nodeMap{m}{oldNode.getName()} = unionSource;
                         continue;
                     elseif isa(oldNode, 'Sink')
                         % Map to merged sink
-                        nodeMap{m}(oldNode.getName()) = unionSink;
+                        nodeMap{m}{oldNode.getName()} = unionSink;
                         continue;
                     elseif isa(oldNode, 'Delay')
                         newNode = Delay(unionNetwork, newName);
@@ -176,7 +176,7 @@ classdef Ensemble < Model
                         continue;
                     end
 
-                    nodeMap{m}(oldNode.getName()) = newNode;
+                    nodeMap{m}{oldNode.getName()} = newNode;
                 end
             end
 
@@ -190,7 +190,7 @@ classdef Ensemble < Model
                 if ~isempty(oldNode.joinOf)
                     forkName = oldNode.joinOf.getName();
                     if isKey(nodeMap{m}, forkName)
-                        forkNode = nodeMap{m}(forkName);
+                        forkNode = nodeMap{m}{forkName};
                         newNode = Join(unionNetwork, newName, forkNode);
                     else
                         newNode = Join(unionNetwork, newName);
@@ -198,7 +198,7 @@ classdef Ensemble < Model
                 else
                     newNode = Join(unionNetwork, newName);
                 end
-                nodeMap{m}(oldNode.getName()) = newNode;
+                nodeMap{m}{oldNode.getName()} = newNode;
             end
 
             % Phase 3: Create job classes for each model
@@ -208,7 +208,7 @@ classdef Ensemble < Model
                 prefix = [modelName, '_'];
 
                 classes = model.getClasses();
-                classMap{m} = containers.Map('KeyType', 'char', 'ValueType', 'any');
+                classMap{m} = configureDictionary('string', 'cell');
 
                 for c = 1:length(classes)
                     oldClass = classes{c};
@@ -220,7 +220,7 @@ classdef Ensemble < Model
                         % Map reference station to new node
                         oldRefStatName = oldClass.refstat.getName();
                         if isKey(nodeMap{m}, oldRefStatName)
-                            newRefStat = nodeMap{m}(oldRefStatName);
+                            newRefStat = nodeMap{m}{oldRefStatName};
                         else
                             line_error(mfilename, ...
                                 sprintf('Reference station %s not found for class %s', oldRefStatName, oldClass.getName()));
@@ -231,7 +231,7 @@ classdef Ensemble < Model
                         % Map reference station to new node
                         oldRefStatName = oldClass.refstat.getName();
                         if isKey(nodeMap{m}, oldRefStatName)
-                            newRefStat = nodeMap{m}(oldRefStatName);
+                            newRefStat = nodeMap{m}{oldRefStatName};
                         else
                             line_error(mfilename, ...
                                 sprintf('Reference station %s not found for class %s', oldRefStatName, oldClass.getName()));
@@ -244,7 +244,7 @@ classdef Ensemble < Model
                         continue;
                     end
 
-                    classMap{m}(oldClass.getName()) = newClass;
+                    classMap{m}{oldClass.getName()} = newClass;
                 end
             end
 
@@ -263,7 +263,7 @@ classdef Ensemble < Model
                             oldClass = classes{c};
                             if isa(oldClass, 'OpenClass')
                                 if isKey(classMap{m}, oldClass.getName())
-                                    newClass = classMap{m}(oldClass.getName());
+                                    newClass = classMap{m}{oldClass.getName()};
                                     if ~isempty(oldNode.arrivalProcess) && ...
                                        length(oldNode.arrivalProcess) >= oldClass.index && ...
                                        ~isempty(oldNode.arrivalProcess{oldClass.index})
@@ -292,7 +292,7 @@ classdef Ensemble < Model
                     if ~isKey(nodeMap{m}, oldNode.getName())
                         continue;
                     end
-                    newNode = nodeMap{m}(oldNode.getName());
+                    newNode = nodeMap{m}{oldNode.getName()};
 
                     % Set service distributions for Queue/Delay
                     if isa(oldNode, 'Queue') || isa(oldNode, 'Delay')
@@ -301,7 +301,7 @@ classdef Ensemble < Model
                             if ~isKey(classMap{m}, oldClass.getName())
                                 continue;
                             end
-                            newClass = classMap{m}(oldClass.getName());
+                            newClass = classMap{m}{oldClass.getName()};
 
                             try
                                 dist = oldNode.getService(oldClass);
@@ -371,7 +371,7 @@ classdef Ensemble < Model
                         if ~isKey(nodeMap{m}, oldNode.getName())
                             continue;
                         end
-                        newSrcNode = nodeMap{m}(oldNode.getName());
+                        newSrcNode = nodeMap{m}{oldNode.getName()};
 
                         for c = 1:length(classes)
                             oldClass = classes{c};
@@ -385,7 +385,7 @@ classdef Ensemble < Model
                                 continue;
                             end
 
-                            newClass = classMap{m}(oldClass.getName());
+                            newClass = classMap{m}{oldClass.getName()};
                             strategy = oldNode.output.outputStrategy{oldClass.index};
 
                             % Check for probabilistic routing with destinations
@@ -397,7 +397,7 @@ classdef Ensemble < Model
                                     prob = probs{p}{2};
 
                                     if isKey(nodeMap{m}, destNode.getName())
-                                        newDestNode = nodeMap{m}(destNode.getName());
+                                        newDestNode = nodeMap{m}{destNode.getName()};
 
                                         % Set probability in routing matrix
                                         % P{r,s}(i,j) - from class r at node i to class s at node j
@@ -418,14 +418,14 @@ classdef Ensemble < Model
                         if ~isKey(classMap{m}, oldClassR.getName())
                             continue;
                         end
-                        newClassR = classMap{m}(oldClassR.getName());
+                        newClassR = classMap{m}{oldClassR.getName()};
 
                         for s = 1:nModelClasses
                             oldClassS = classes{s};
                             if ~isKey(classMap{m}, oldClassS.getName())
                                 continue;
                             end
-                            newClassS = classMap{m}(oldClassS.getName());
+                            newClassS = classMap{m}{oldClassS.getName()};
 
                             % Check if this routing block exists in original matrix
                             if size(Pm,1) < r || size(Pm,2) < s || isempty(Pm{r,s})
@@ -446,7 +446,7 @@ classdef Ensemble < Model
                                 if ~isKey(nodeMap{m}, oldNodeI.getName())
                                     continue;
                                 end
-                                newNodeI = nodeMap{m}(oldNodeI.getName());
+                                newNodeI = nodeMap{m}{oldNodeI.getName()};
 
                                 for j = 1:min(nModelNodes, size(Prs,2))
                                     if Prs(i,j) == 0
@@ -463,7 +463,7 @@ classdef Ensemble < Model
                                     if ~isKey(nodeMap{m}, oldNodeJ.getName())
                                         continue;
                                     end
-                                    newNodeJ = nodeMap{m}(oldNodeJ.getName());
+                                    newNodeJ = nodeMap{m}{oldNodeJ.getName()};
 
                                     P{newClassR.index, newClassS.index}(newNodeI.index, newNodeJ.index) = Prs(i,j);
                                 end

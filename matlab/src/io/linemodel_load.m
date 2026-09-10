@@ -78,9 +78,9 @@ if isfield(data, 'nodes')
         nodeList{end+1} = node; %#ok<AGROW>
     end
 end
-node_map = containers.Map();
+node_map = configureDictionary('string','cell');
 for i = 1:length(nodeList)
-    node_map(nodeList{i}.name) = nodeList{i};
+    node_map{nodeList{i}.name} = nodeList{i};
 end
 
 % --- Deferred node linking (Fork/Join, Fork tasksPerLink) ---
@@ -92,16 +92,46 @@ if isfield(data, 'nodes')
     for i = 1:length(nds2)
         nd2 = nds2{i};
         nd_name2 = nd2.name;
-        node2 = node_map(nd_name2);
+        node2 = node_map{nd_name2};
         % Join: link to paired Fork
         if isfield(nd2, 'forkNode') && isa(node2, 'Join')
-            if node_map.isKey(nd2.forkNode)
-                node2.joinOf = node_map(nd2.forkNode);
+            if isKey(node_map, nd2.forkNode)
+                node2.joinOf = node_map{nd2.forkNode};
             end
         end
-        % Fork: set tasksPerLink
+        % Fork: set tasksPerLink and the variable-forking-level overrides.
+        % They are restored onto the output section directly rather than through
+        % the setters, because the setters take class and node OBJECTS and the
+        % classes do not exist yet at this point in the load.
         if isfield(nd2, 'tasksPerLink') && isa(node2, 'Fork')
             node2.setTasksPerLink(nd2.tasksPerLink);
+        end
+        if isa(node2, 'Fork')
+            if isfield(nd2, 'fanOutByDest')
+                ovs = nd2.fanOutByDest;
+                if isstruct(ovs), ovs = num2cell(ovs); end
+                for e = 1:length(ovs)
+                    node2.output.tasksPerLinkByDest(end+1) = struct( ...
+                        'dest', ovs{e}.dest, 'class', ovs{e}.class, 'value', ovs{e}.value);
+                end
+            end
+            if isfield(nd2, 'fanOutDist')
+                ovs = nd2.fanOutDist;
+                if isstruct(ovs), ovs = num2cell(ovs); end
+                for e = 1:length(ovs)
+                    node2.output.tasksPerLinkDist(end+1) = struct( ...
+                        'dest', ovs{e}.dest, 'class', ovs{e}.class, ...
+                        'dist', DiscreteSampler(ovs{e}.p, ovs{e}.x));
+                end
+            end
+            if isfield(nd2, 'fanOutProb')
+                ovs = nd2.fanOutProb;
+                if isstruct(ovs), ovs = num2cell(ovs); end
+                for e = 1:length(ovs)
+                    node2.output.branchProb(end+1) = struct( ...
+                        'dest', ovs{e}.dest, 'class', ovs{e}.class, 'value', ovs{e}.value);
+                end
+            end
         end
     end
 end
@@ -125,8 +155,8 @@ if isfield(data, 'classes')
             case {'Closed', 'SelfLooping'}
                 pop = cd.population;
                 refNode = [];
-                if isfield(cd, 'refNode') && node_map.isKey(cd.refNode)
-                    refNode = node_map(cd.refNode);
+                if isfield(cd, 'refNode') && isKey(node_map, cd.refNode)
+                    refNode = node_map{cd.refNode};
                 end
                 prio = 0;
                 if isfield(cd, 'priority'), prio = cd.priority; end
@@ -151,8 +181,8 @@ if isfield(data, 'classes')
                     jc = Signal(model, cname, sigType, prio);
                 elseif strcmp(cd.openOrClosed, 'Closed')
                     refNode = [];
-                    if isfield(cd, 'refNode') && node_map.isKey(cd.refNode)
-                        refNode = node_map(cd.refNode);
+                    if isfield(cd, 'refNode') && isKey(node_map, cd.refNode)
+                        refNode = node_map{cd.refNode};
                     end
                     if isempty(refNode)
                         error('linemodel_load:noRefNode', ...
@@ -197,9 +227,9 @@ if isfield(data, 'classes')
         classesList{end+1} = jc; %#ok<AGROW>
     end
 end
-class_map = containers.Map();
+class_map = configureDictionary('string','cell');
 for i = 1:length(classesList)
-    class_map(classesList{i}.name) = classesList{i};
+    class_map{classesList{i}.name} = classesList{i};
 end
 
 % --- Resolve signal targetClass associations ---
@@ -209,16 +239,16 @@ if isfield(data, 'classes')
     for i = 1:length(cls2)
         cd2 = cls2{i};
         if isfield(cd2, 'type') && strcmp(cd2.type, 'Signal') && isfield(cd2, 'targetClass')
-            if class_map.isKey(cd2.name) && class_map.isKey(cd2.targetClass)
-                sigCls = class_map(cd2.name);
-                sigCls.forJobClass(class_map(cd2.targetClass));
+            if isKey(class_map, cd2.name) && isKey(class_map, cd2.targetClass)
+                sigCls = class_map{cd2.name};
+                sigCls.forJobClass(class_map{cd2.targetClass});
             end
         end
         % Reply signal binding (sn.syncreply). Resolved in a second pass because
         % the reply class may be declared after the class that references it.
-        if isfield(cd2, 'replySignalClass') && class_map.isKey(cd2.name) ...
-                && class_map.isKey(cd2.replySignalClass)
-            class_map(cd2.name).setReplySignalClass(class_map(cd2.replySignalClass));
+        if isfield(cd2, 'replySignalClass') && isKey(class_map, cd2.name) ...
+                && isKey(class_map, cd2.replySignalClass)
+            class_map{cd2.name}.setReplySignalClass(class_map{cd2.replySignalClass});
         end
     end
 end
@@ -232,7 +262,7 @@ if isfield(data, 'nodes')
     for i = 1:length(nds)
         nd = nds{i};
         nd_name = nd.name;
-        node = node_map(nd_name);
+        node = node_map{nd_name};
 
         % OI/PAS queues are parameterized by oiServiceRate below, not per-class distributions -- see _kb/09-ldes-and-cache.md
         isOIQueue = isa(node, 'Queue') && ~isa(node, 'Delay') && ...
@@ -243,10 +273,10 @@ if isfield(data, 'nodes')
             for f = 1:length(svcFields)
                 cname = svcFields{f};
                 distJson = svc.(cname);
-                if ~class_map.isKey(cname)
+                if ~isKey(class_map, cname)
                     continue;
                 end
-                jc = class_map(cname);
+                jc = class_map{cname};
                 dist = json2dist(distJson);
                 if ~isempty(dist)
                     if isa(node, 'Source')
@@ -275,12 +305,12 @@ if isfield(data, 'nodes')
             batchFields = fieldnames(nd.arrivalBatch);
             for f = 1:numel(batchFields)
                 cname = batchFields{f};
-                if ~class_map.isKey(cname)
+                if ~isKey(class_map, cname)
                     continue;
                 end
                 bdist = json2dist(nd.arrivalBatch.(cname));
                 if ~isempty(bdist)
-                    node.setArrivalBatch(class_map(cname), bdist);
+                    node.setArrivalBatch(class_map{cname}, bdist);
                 end
             end
         end
@@ -292,8 +322,8 @@ if isfield(data, 'nodes')
             markedList = {};
             for f = 1:numel(markedNames)
                 mnm = markedNames{f};
-                if class_map.isKey(mnm)
-                    markedList{end+1} = class_map(mnm); %#ok<AGROW>
+                if isKey(class_map, mnm)
+                    markedList{end+1} = class_map{mnm}; %#ok<AGROW>
                 end
             end
             if ~isempty(markedList)
@@ -310,20 +340,20 @@ if isfield(data, 'nodes')
             classes = model.getClasses();
             K = length(classes);
             mat = zeros(K);
-            class_idx = containers.Map();
+            class_idx = configureDictionary('string','double');
             for ci = 1:K
                 class_idx(classes{ci}.name) = ci;
             end
             fromFields = fieldnames(csm_data);
             for fi = 1:length(fromFields)
                 fromName = fromFields{fi};
-                if ~class_idx.isKey(fromName), continue; end
+                if ~isKey(class_idx, fromName), continue; end
                 ri = class_idx(fromName);
                 toStruct = csm_data.(fromName);
                 toFields = fieldnames(toStruct);
                 for ti = 1:length(toFields)
                     toName = toFields{ti};
-                    if ~class_idx.isKey(toName), continue; end
+                    if ~isKey(class_idx, toName), continue; end
                     ci = class_idx(toName);
                     mat(ri, ci) = toStruct.(toName);
                 end
@@ -346,8 +376,8 @@ if isfield(data, 'nodes')
             ddFields = fieldnames(ddData);
             for ddi = 1:length(ddFields)
                 cname = ddFields{ddi};
-                if class_map.isKey(cname)
-                    node.setDepartureDiscipline(class_map(cname), ...
+                if isKey(class_map, cname)
+                    node.setDepartureDiscipline(class_map{cname}, ...
                         str_to_depdisc(ddData.(cname)));
                 end
             end
@@ -360,8 +390,8 @@ if isfield(data, 'nodes')
             ccFields = fieldnames(ccData);
             for cci = 1:length(ccFields)
                 cname = ccFields{cci};
-                if class_map.isKey(cname)
-                    jc = class_map(cname);
+                if isKey(class_map, cname)
+                    jc = class_map{cname};
                     % Find class index
                     cls = model.getClasses();
                     for ci = 1:length(cls)
@@ -380,7 +410,7 @@ if isfield(data, 'nodes')
             drFields = fieldnames(drData);
             for dri = 1:length(drFields)
                 cname = drFields{dri};
-                if class_map.isKey(cname)
+                if isKey(class_map, cname)
                     cls = model.getClasses();
                     for ci = 1:length(cls)
                         if strcmp(cls{ci}.name, cname)
@@ -510,9 +540,22 @@ if isfield(data, 'nodes')
             if ~isfield(cc, 'retrievalSystem') && isfield(nd, 'retrievalSystem')
                 cc.retrievalSystem = nd.retrievalSystem;
             end
+            if ~isfield(cc, 'itemSizes') && isfield(nd, 'itemSizes')
+                cc.itemSizes = nd.itemSizes;
+            end
+            if ~isfield(cc, 'costCaps') && isfield(nd, 'costCaps')
+                cc.costCaps = nd.costCaps;
+            end
             % q-LRU admission probability on a miss
             if isfield(cc, 'admissionProb')
                 node.setAdmissionProb(cc.admissionProb);
+            end
+            % per-item storage costs and per-list cost caps (ton21cache Sec. IX)
+            if isfield(cc, 'itemSizes') && ~isempty(cc.itemSizes)
+                node.setItemSizes(double(cc.itemSizes(:)'));
+            end
+            if isfield(cc, 'costCaps') && ~isempty(cc.costCaps)
+                node.setCostCaps(double(cc.costCaps(:)'));
             end
             % Restores cache-internal bookkeeping only; classes/routing/service are rebuilt elsewhere -- see _kb/09-ldes-and-cache.md
             if isfield(cc, 'retrievalSystem') && ~isempty(cc.retrievalSystem)
@@ -524,28 +567,28 @@ if isfield(data, 'nodes')
                     bcNames = fieldnames(rs.byClass);
                     for bci = 1:length(bcNames)
                         inName = bcNames{bci};
-                        if ~class_map.isKey(inName), continue; end
-                        jobin = class_map(inName);
+                        if ~isKey(class_map, inName), continue; end
+                        jobin = class_map{inName};
                         entry = rs.byClass.(inName);
                         if isfield(entry, 'queues')
                             qNames = cellify_string_array(entry.queues);
                             qIdx = [];
                             for qi = 1:numel(qNames)
-                                if node_map.isKey(qNames{qi})
-                                    qIdx(end+1) = node_map(qNames{qi}).index; %#ok<AGROW>
+                                if isKey(node_map, qNames{qi})
+                                    qIdx(end+1) = node_map{qNames{qi}}.index; %#ok<AGROW>
                                 end
                             end
-                            node.retrievalSystemQueueIndices(int32(jobin.index - 1)) = qIdx;
+                            node.retrievalSystemQueueIndices{int32(jobin.index - 1)} = qIdx;
                         end
                         if isfield(entry, 'items')
                             % jsondecode prefixes the 0-based item keys with 'x'
                             itNames = fieldnames(entry.items);
                             for iti = 1:length(itNames)
                                 rcName = entry.items.(itNames{iti});
-                                if ~class_map.isKey(rcName), continue; end
+                                if ~isKey(class_map, rcName), continue; end
                                 item0 = str2double(strrep(itNames{iti}, 'x', ''));
-                                rcIdx = class_map(rcName).index;
-                                node.setRetrievalClass(jobin, class_map(rcName), item0 + 1);
+                                rcIdx = class_map{rcName}.index;
+                                node.setRetrievalClass(jobin, class_map{rcName}, item0 + 1);
                                 if ~any(node.retrievalClassIndices == rcIdx)
                                     node.retrievalClassIndices(end+1) = rcIdx;
                                 end
@@ -561,8 +604,8 @@ if isfield(data, 'nodes')
                 for hci = 1:length(hcFields)
                     inName = hcFields{hci};
                     outName = hcData.(inName);
-                    if class_map.isKey(inName) && class_map.isKey(outName)
-                        node.setHitClass(class_map(inName), class_map(outName));
+                    if isKey(class_map, inName) && isKey(class_map, outName)
+                        node.setHitClass(class_map{inName}, class_map{outName});
                     end
                 end
             end
@@ -573,8 +616,8 @@ if isfield(data, 'nodes')
                 for mci = 1:length(mcFields)
                     inName = mcFields{mci};
                     outName = mcData.(inName);
-                    if class_map.isKey(inName) && class_map.isKey(outName)
-                        node.setMissClass(class_map(inName), class_map(outName));
+                    if isKey(class_map, inName) && isKey(class_map, outName)
+                        node.setMissClass(class_map{inName}, class_map{outName});
                     end
                 end
             end
@@ -584,10 +627,10 @@ if isfield(data, 'nodes')
                 popFields = fieldnames(popData);
                 for pfi = 1:length(popFields)
                     cname = popFields{pfi};
-                    if class_map.isKey(cname)
+                    if isKey(class_map, cname)
                         popDist = json2dist(popData.(cname));
                         if ~isempty(popDist) && ~isa(popDist, 'Disabled')
-                            node.setRead(class_map(cname), popDist);
+                            node.setRead(class_map{cname}, popDist);
                         end
                     end
                 end
@@ -632,8 +675,8 @@ if isfield(data, 'nodes')
                     ccList = stData.compatibleClasses;
                     if ~iscell(ccList), ccList = {ccList}; end
                     for cci = 1:length(ccList)
-                        if class_map.isKey(ccList{cci})
-                            st.addCompatible(class_map(ccList{cci}));
+                        if isKey(class_map, ccList{cci})
+                            st.addCompatible(class_map{ccList{cci}});
                         end
                     end
                 end
@@ -644,8 +687,8 @@ if isfield(data, 'nodes')
                     svcFields = fieldnames(svcData);
                     for fi = 1:length(svcFields)
                         cname = svcFields{fi};
-                        if class_map.isKey(cname)
-                            jc = class_map(cname);
+                        if isKey(class_map, cname)
+                            jc = class_map{cname};
                             dist = json2dist(svcData.(cname));
                             if ~isempty(dist)
                                 node.setHeteroService(jc, st, dist);
@@ -669,9 +712,17 @@ if isfield(data, 'nodes')
     if isstruct(ndsImp), ndsImp = num2cell(ndsImp); end
     for i = 1:length(ndsImp)
         ndImp = ndsImp{i};
-        if ~node_map.isKey(ndImp.name), continue; end
-        node = node_map(ndImp.name);
-        % Assigned directly, not via setStatePrior: its node.space length check cannot pass before the solver builds the state space
+        if ~isKey(node_map, ndImp.name), continue; end
+        node = node_map{ndImp.name};
+        % The prior indexes the ROWS OF THE STATE SPACE, so the space it indexes
+        % must be installed with it: a prior over rows that no `space` holds is
+        % not a state the model can be started from, and the JAR and Python
+        % readers both restore the pair. Assigned directly, not via
+        % setStatePrior: that setter checks the prior against node.space in the
+        % order MATLAB happens to write them, and the space arrives here.
+        if isfield(ndImp, 'stateSpace') && isa(node, 'StatefulNode')
+            node.setStateSpace(state_space_from_json(ndImp.stateSpace));
+        end
         if isfield(ndImp, 'statePrior') && isa(node, 'StatefulNode')
             node.statePrior = double(ndImp.statePrior(:));
         end
@@ -682,8 +733,8 @@ if isfield(data, 'nodes')
             ifNames = fieldnames(ifData);
             for fi = 1:length(ifNames)
                 cname = ifNames{fi};
-                if class_map.isKey(cname) && ifData.(cname)
-                    node.setImmediateFeedback(class_map(cname));
+                if isKey(class_map, cname) && ifData.(cname)
+                    node.setImmediateFeedback(class_map{cname});
                 end
             end
         end
@@ -693,10 +744,10 @@ if isfield(data, 'nodes')
             orbNames = fieldnames(orbData);
             for fi = 1:length(orbNames)
                 cname = orbNames{fi};
-                if ~class_map.isKey(cname), continue; end
+                if ~isKey(class_map, cname), continue; end
                 orbDist = json2dist(orbData.(cname));
                 if ~isempty(orbDist) && ~isa(orbDist, 'Disabled')
-                    node.setOrbitImpatience(class_map(cname), orbDist);
+                    node.setOrbitImpatience(class_map{cname}, orbDist);
                 end
             end
         end
@@ -706,8 +757,18 @@ if isfield(data, 'nodes')
             brpNames = fieldnames(brpData);
             for fi = 1:length(brpNames)
                 cname = brpNames{fi};
-                if ~class_map.isKey(cname), continue; end
-                node.setBatchRejectProbability(class_map(cname), brpData.(cname));
+                if ~isKey(class_map, cname), continue; end
+                node.setBatchRejectProbability(class_map{cname}, brpData.(cname));
+            end
+        end
+        % Job parallelism: servers seized at once by a job, per class
+        if isfield(ndImp, 'serverParallelism') && ~isempty(ndImp.serverParallelism)
+            parData = ndImp.serverParallelism;
+            parNames = fieldnames(parData);
+            for fi = 1:length(parNames)
+                cname = parNames{fi};
+                if ~isKey(class_map, cname), continue; end
+                node.setServerParallelism(class_map{cname}, double(parData.(cname)));
             end
         end
         % Balking
@@ -716,8 +777,8 @@ if isfield(data, 'nodes')
             fnames = fieldnames(balkData);
             for fi = 1:length(fnames)
                 className = fnames{fi};
-                if ~class_map.isKey(className), continue; end
-                jc = class_map(className);
+                if ~isKey(class_map, className), continue; end
+                jc = class_map{className};
                 bjc = balkData.(className);
                 % Parse strategy
                 switch bjc.strategy
@@ -745,8 +806,8 @@ if isfield(data, 'nodes')
             fnames = fieldnames(retData);
             for fi = 1:length(fnames)
                 className = fnames{fi};
-                if ~class_map.isKey(className), continue; end
-                jc = class_map(className);
+                if ~isKey(class_map, className), continue; end
+                jc = class_map{className};
                 rjc = retData.(className);
                 delayDist = json2dist(rjc.delay);
                 maxAttempts = -1;
@@ -762,8 +823,8 @@ if isfield(data, 'nodes')
             fnames = fieldnames(patData);
             for fi = 1:length(fnames)
                 className = fnames{fi};
-                if ~class_map.isKey(className), continue; end
-                jc = class_map(className);
+                if ~isKey(class_map, className), continue; end
+                jc = class_map{className};
                 pjc = patData.(className);
                 patDist = json2dist(pjc.distribution);
                 if isfield(pjc, 'impatienceType')
@@ -787,7 +848,7 @@ if isfield(data, 'nodes')
         nd3 = nds3{i};
         if ~isfield(nd3, 'modes'), continue; end
         if ~strcmp(nd3.type, 'Transition'), continue; end
-        tnode = node_map(nd3.name);
+        tnode = node_map{nd3.name};
         modesData = nd3.modes;
         if isstruct(modesData)
             modesData = num2cell(modesData);
@@ -836,8 +897,8 @@ if isfield(data, 'nodes')
                 if isstruct(ecList), ecList = num2cell(ecList); end
                 for ei = 1:length(ecList)
                     ec = ecList{ei};
-                    if node_map.isKey(ec.node) && class_map.isKey(ec.class)
-                        tnode.setEnablingConditions(mode, class_map(ec.class), node_map(ec.node), ec.count);
+                    if isKey(node_map, ec.node) && isKey(class_map, ec.class)
+                        tnode.setEnablingConditions(mode, class_map{ec.class}, node_map{ec.node}, ec.count);
                     end
                 end
             end
@@ -847,8 +908,8 @@ if isfield(data, 'nodes')
                 if isstruct(icList), icList = num2cell(icList); end
                 for ii = 1:length(icList)
                     ic = icList{ii};
-                    if node_map.isKey(ic.node) && class_map.isKey(ic.class)
-                        tnode.setInhibitingConditions(mode, class_map(ic.class), node_map(ic.node), ic.count);
+                    if isKey(node_map, ic.node) && isKey(class_map, ic.class)
+                        tnode.setInhibitingConditions(mode, class_map{ic.class}, node_map{ic.node}, ic.count);
                     end
                 end
             end
@@ -858,8 +919,8 @@ if isfield(data, 'nodes')
                 if isstruct(foList), foList = num2cell(foList); end
                 for fi = 1:length(foList)
                     fo = foList{fi};
-                    if node_map.isKey(fo.node) && class_map.isKey(fo.class)
-                        tnode.setFiringOutcome(mode, class_map(fo.class), node_map(fo.node), fo.count);
+                    if isKey(node_map, fo.node) && isKey(class_map, fo.class)
+                        tnode.setFiringOutcome(mode, class_map{fo.class}, node_map{fo.node}, fo.count);
                     end
                 end
             end
@@ -875,18 +936,49 @@ if isfield(data, 'nodes')
     end
 end
 
-% --- Restore initial state for Place nodes ---
+% --- Restore the initial state of every stateful node the document names ---
+% A Place's token counts are one reading of this field, not the only one: a
+% station whose state the document carries is initialized as surely as a Place is,
+% and restoring only the Place left the model reading as uninitialized, so the
+% first solve rebuilt the default state over it.
 if isfield(data, 'nodes')
     nds4 = data.nodes;
     if isstruct(nds4), nds4 = num2cell(nds4); end
     for i = 1:length(nds4)
         nd4 = nds4{i};
-        if isfield(nd4, 'initialState') && node_map.isKey(nd4.name)
-            nodeObj = node_map(nd4.name);
-            if isa(nodeObj, 'Place')
-                stVal = nd4.initialState;
+        if isfield(nd4, 'initialState') && isKey(node_map, nd4.name)
+            nodeObj = node_map{nd4.name};
+            if isa(nodeObj, 'StatefulNode')
+                stVal = state_from_json(nd4.initialState);
                 stVal = stVal(:)';  % Ensure row vector (jsondecode returns column vectors)
                 nodeObj.setState(stVal);
+                % AND ITS ONE-ROW STATE SPACE AND TRIVIAL PRIOR. The writer
+                % deliberately omits a [1] prior over one row, on the stated
+                % ground that `initialState` already carries that row -- so
+                % restoring the row alone only half-honours the contract and
+                % leaves a node whose state, space and prior disagree, which is
+                % not what any of initDefault / initFromMarginal* ever builds:
+                % all three set the TRIO together.
+                %
+                % The space is the half that decides. SolverFluid indexes
+                % sn.space directly (runAnalyzer), so an empty space raised
+                % "Index in position 1 exceeds array bounds" on every stage of a
+                % reloaded Environment; SolverENV swallows a stage error in its
+                % pre_ pass, so the failure surfaced only as an all-zero
+                % QN/UN/TN and hence an EMPTY table for tut12_random_env and
+                % both renv_*_repairmen, against which compare_env then raised
+                % MATLAB:sizeDimensionsMustMatch.
+                %
+                % Assigned directly rather than through setStatePrior for the
+                % same reason as the statePrior block above. A space or prior
+                % the document DID carry was restored there and is not
+                % overwritten here.
+                if isempty(nodeObj.space)
+                    nodeObj.setStateSpace(stVal);
+                end
+                if isempty(nodeObj.statePrior)
+                    nodeObj.statePrior = 1;
+                end
             end
         end
     end
@@ -899,11 +991,11 @@ if isfield(data, 'routing') && isfield(data.routing, 'type') && strcmp(data.rout
     M = length(nodeList);
 
     % Build node/class index maps
-    nodeIdx = containers.Map();
+    nodeIdx = configureDictionary('string','double');
     for i = 1:M
         nodeIdx(nodeList{i}.name) = i;
     end
-    classIdx = containers.Map();
+    classIdx = configureDictionary('string','double');
     for i = 1:K
         classIdx(classesList{i}.name) = i;
     end
@@ -925,35 +1017,77 @@ end
 
 % --- Restore routing strategies ---
 if isfield(data, 'routingStrategies')
-    stratMap = containers.Map();
-    stratMap('RAND') = RoutingStrategy.RAND;
-    stratMap('RROBIN') = RoutingStrategy.RROBIN;
-    stratMap('WRROBIN') = RoutingStrategy.WRROBIN;
-    stratMap('JSQ') = RoutingStrategy.JSQ;
-    stratMap('SQ') = RoutingStrategy.SQ;
-    stratMap('FIRING') = RoutingStrategy.FIRING;
-    stratMap('RL') = RoutingStrategy.RL;
-    stratMap('DISABLED') = RoutingStrategy.DISABLED;
+    stratMap = configureDictionary('string','cell');
+    stratMap{'RAND'} = RoutingStrategy.RAND;
+    stratMap{'RROBIN'} = RoutingStrategy.RROBIN;
+    stratMap{'WRROBIN'} = RoutingStrategy.WRROBIN;
+    stratMap{'JSQ'} = RoutingStrategy.JSQ;
+    stratMap{'SQ'} = RoutingStrategy.SQ;
+    stratMap{'FIRING'} = RoutingStrategy.FIRING;
+    stratMap{'DISABLED'} = RoutingStrategy.DISABLED;
 
     rsFields = fieldnames(data.routingStrategies);
     for fi = 1:length(rsFields)
         nodeName = rsFields{fi};
-        if node_map.isKey(nodeName)
-            nodeObj = node_map(nodeName);
+        if isKey(node_map, nodeName)
+            nodeObj = node_map{nodeName};
             classStrats = data.routingStrategies.(nodeName);
             csFields = fieldnames(classStrats);
             for ci = 1:length(csFields)
                 className = csFields{ci};
                 stratName = classStrats.(className);
-                if class_map.isKey(className) && stratMap.isKey(stratName)
-                    % Skip RAND, PROB: already handled by routing matrix
-                    % Skip WRROBIN: handled separately in routingWeights section
-                    rs = stratMap(stratName);
-                    if rs ~= RoutingStrategy.RAND && rs ~= RoutingStrategy.PROB && rs ~= RoutingStrategy.WRROBIN
-                        nodeObj.setRouting(class_map(className), rs);
+                if isKey(class_map, className) && isKey(stratMap, stratName)
+                    % PROB=link(P) applied, WRROBIN=routingWeights section; RAND is DECLARED not derived, restored here after link(P), which leaves its destinations.
+                    rs = stratMap{stratName};
+                    if rs ~= RoutingStrategy.PROB && rs ~= RoutingStrategy.WRROBIN
+                        nodeObj.setRouting(class_map{className}, rs);
                     end
                 end
             end
+        end
+    end
+end
+
+% --- Restore Krzesinski state-dependent routing ---
+% Written by NODE NAME, so it is restored after every node exists and after
+% link(P), whose uniform placeholder in the entry row this block supersedes.
+if isfield(data, 'stateDepRouting')
+    sdrData = data.stateDepRouting;
+    if isKey(node_map, sdrData.entry) && isKey(node_map, sdrData.departure) ...
+            && isKey(class_map, sdrData.class)
+        br = sdrData.branches;
+        if ~iscell(br)
+            br = num2cell(br);
+        end
+        branches = cell(1, numel(br));
+        branches{1} = [];
+        for b = 2:numel(br)
+            names = br{b};
+            if ischar(names) || isstring(names)
+                names = {char(names)};
+            end
+            bn = cell(1, numel(names));
+            for q = 1:numel(names)
+                bn{q} = node_map{char(names{q})};
+            end
+            branches{b} = bn;
+        end
+        node_map{sdrData.entry}.setStateDepRouting(class_map{sdrData.class}, ...
+            node_map{sdrData.departure}, branches, ...
+            double(sdrData.level(:)'), double(sdrData.C(:)'), double(sdrData.d));
+    end
+end
+
+% --- Restore the global (Whittle) dependence phi(n) ---
+% Rebuilt from the materialized slot lattice written by GD_BLOCK
+% (linemodel_save). The slots are matched by NAME so a station or class
+% reordering on the writing side cannot silently shift a coordinate.
+if isfield(data, 'globalDependence')
+    gdep = data.globalDependence;
+    if isfield(gdep, 'type') && strcmp(gdep.type, 'globalDependent') && isfield(gdep, 'scaling')
+        [gdHandle, gdPeak, gdCut] = gd_block_to_handle(gdep, node_map, class_map, model);
+        if ~isempty(gdHandle)
+            model.setGlobalDependence(gdHandle, gdPeak, gdCut);
         end
     end
 end
@@ -963,17 +1097,17 @@ if isfield(data, 'routingWeights')
     rwFields = fieldnames(data.routingWeights);
     for fi = 1:length(rwFields)
         nodeName = rwFields{fi};
-        if node_map.isKey(nodeName)
-            nodeObj = node_map(nodeName);
+        if isKey(node_map, nodeName)
+            nodeObj = node_map{nodeName};
             classWeights = data.routingWeights.(nodeName);
             cwFields = fieldnames(classWeights);
             for ci = 1:length(cwFields)
                 className = cwFields{ci};
                 destWeights = classWeights.(className);
-                if class_map.isKey(className)
+                if isKey(class_map, className)
                     % Clear existing routing entries for this class
                     % (link() may have set PROB entries that would accumulate)
-                    classIdx = class_map(className).index;
+                    classIdx = class_map{className}.index;
                     if length(nodeObj.output.outputStrategy) >= classIdx && ...
                             length(nodeObj.output.outputStrategy{1, classIdx}) >= 3
                         nodeObj.output.outputStrategy{1, classIdx}{3} = {};
@@ -982,10 +1116,30 @@ if isfield(data, 'routingWeights')
                     for di = 1:length(dwFields)
                         destName = dwFields{di};
                         weight = destWeights.(destName);
-                        if node_map.isKey(destName)
-                            nodeObj.setRouting(class_map(className), RoutingStrategy.WRROBIN, node_map(destName), weight);
+                        if isKey(node_map, destName)
+                            nodeObj.setRouting(class_map{className}, RoutingStrategy.WRROBIN, node_map{destName}, weight);
                         end
                     end
+                end
+            end
+        end
+    end
+end
+
+% --- Restore routing parameters (SQ sampling width d) ---
+% Re-applied AFTER the strategies block, which installs SQ with the API default d=2; setRouting overwrites the width, so the declared d wins.
+if isfield(data, 'routingParams')
+    rpFields = fieldnames(data.routingParams);
+    for fi = 1:length(rpFields)
+        nodeName = rpFields{fi};
+        if isKey(node_map, nodeName)
+            nodeObj = node_map{nodeName};
+            classParams = data.routingParams.(nodeName);
+            cpFields = fieldnames(classParams);
+            for ci = 1:length(cpFields)
+                className = cpFields{ci};
+                if isKey(class_map, className) && isfield(classParams.(className), 'd')
+                    nodeObj.setRouting(class_map{className}, RoutingStrategy.SQ, classParams.(className).d);
                 end
             end
         end
@@ -998,7 +1152,7 @@ ndsSo = data.nodes;
 if isstruct(ndsSo), ndsSo = num2cell(ndsSo); end
 for ni = 1:length(ndsSo)
     nd = ndsSo{ni};
-    if ~node_map.isKey(nd.name)
+    if ~isKey(node_map, nd.name)
         continue;
     end
 
@@ -1006,24 +1160,52 @@ for ni = 1:length(ndsSo)
     % class name, because setDelayOff requires both distributions.
     if isfield(nd, 'setupTime') && ~isempty(nd.setupTime) && ...
             isfield(nd, 'delayOffTime') && ~isempty(nd.delayOffTime)
-        nodeObj = node_map(nd.name);
+        nodeObj = node_map{nd.name};
         suNames = fieldnames(nd.setupTime);
         for fi = 1:length(suNames)
             cname = suNames{fi};
-            if ~class_map.isKey(cname) || ~isfield(nd.delayOffTime, cname)
+            if ~isKey(class_map, cname) || ~isfield(nd.delayOffTime, cname)
                 continue;
             end
             suDist = json2dist(nd.setupTime.(cname));
             doffDist = json2dist(nd.delayOffTime.(cname));
             if ~isempty(suDist) && ~isempty(doffDist)
-                nodeObj.setDelayOff(class_map(cname), suDist, doffDist);
+                nodeObj.setDelayOff(class_map{cname}, suDist, doffDist);
             end
         end
     end
 
+    % Server breakdown/repair, with the optional per-class degraded
+    % down-server service.
+    if isfield(nd, 'breakdown') && ~isempty(nd.breakdown)
+        nodeObj = node_map{nd.name};
+        bd = nd.breakdown;
+        if ~isfield(bd, 'failure') || ~isfield(bd, 'repair')
+            line_error(mfilename, sprintf(['Node "%s": "breakdown" requires both a ' ...
+                '"failure" and a "repair" distribution.'], nd.name));
+        end
+        failDist = json2dist(bd.failure);
+        repairDist = json2dist(bd.repair);
+        downList = {};
+        if isfield(bd, 'downService') && ~isempty(bd.downService)
+            downList = cell(1, length(classesList));
+            dsNames = fieldnames(bd.downService);
+            for fi = 1:length(dsNames)
+                cname = dsNames{fi};
+                for ci = 1:length(classesList)
+                    if strcmp(classesList{ci}.name, cname)
+                        downList{ci} = json2dist(bd.downService.(cname));
+                        break;
+                    end
+                end
+            end
+        end
+        nodeObj.setBreakdown(failDist, repairDist, downList);
+    end
+
     % Polling type restored by name, must precede switchover restore (setPollingType resets it to Immediate)
     if isfield(nd, 'pollingType') && ~isempty(nd.pollingType)
-        nodeObj = node_map(nd.name);
+        nodeObj = node_map{nd.name};
         ptId = PollingType.fromName(nd.pollingType);
         if ptId == PollingType.KLIMITED
             if isfield(nd, 'pollingPar') && ~isempty(nd.pollingPar)
@@ -1039,26 +1221,26 @@ for ni = 1:length(ndsSo)
     % Switchover times: entries without a "to" field carry the per-class
     % polling form, entries with one the (from,to) pair form.
     if isfield(nd, 'switchoverTimes') && ~isempty(nd.switchoverTimes)
-        nodeObj = node_map(nd.name);
+        nodeObj = node_map{nd.name};
         soArr = nd.switchoverTimes;
         if ~iscell(soArr)
             soArr = num2cell(soArr);
         end
         for si = 1:length(soArr)
             so = soArr{si};
-            if ~class_map.isKey(so.from)
+            if ~isKey(class_map, so.from)
                 continue;
             end
-            fromCls = class_map(so.from);
+            fromCls = class_map{so.from};
             dist = json2dist(so.distribution);
             if isempty(dist)
                 continue;
             end
             if isfield(so, 'to') && ~isempty(so.to)
-                if ~class_map.isKey(so.to)
+                if ~isKey(class_map, so.to)
                     continue;
                 end
-                nodeObj.setSwitchover(fromCls, class_map(so.to), dist);
+                nodeObj.setSwitchover(fromCls, class_map{so.to}, dist);
             else
                 nodeObj.setSwitchover(fromCls, dist);
             end
@@ -1083,15 +1265,15 @@ if isfield(data, 'finiteCapacityRegions')
             if iscell(stArr)
                 for si = 1:length(stArr)
                     nodeName = stArr{si}.node;
-                    if node_map.isKey(nodeName)
-                        regNodes{end+1} = node_map(nodeName); %#ok<AGROW>
+                    if isKey(node_map, nodeName)
+                        regNodes{end+1} = node_map{nodeName}; %#ok<AGROW>
                     end
                 end
             else
                 for si = 1:length(stArr)
                     nodeName = stArr(si).node;
-                    if node_map.isKey(nodeName)
-                        regNodes{end+1} = node_map(nodeName); %#ok<AGROW>
+                    if isKey(node_map, nodeName)
+                        regNodes{end+1} = node_map{nodeName}; %#ok<AGROW>
                     end
                 end
             end
@@ -1099,8 +1281,8 @@ if isfield(data, 'finiteCapacityRegions')
             nodeNames = rj.nodes;
             if ~iscell(nodeNames), nodeNames = {nodeNames}; end
             for ni = 1:length(nodeNames)
-                if node_map.isKey(nodeNames{ni})
-                    regNodes{end+1} = node_map(nodeNames{ni}); %#ok<AGROW>
+                if isKey(node_map, nodeNames{ni})
+                    regNodes{end+1} = node_map{nodeNames{ni}}; %#ok<AGROW>
                 end
             end
         end
@@ -1127,8 +1309,8 @@ if isfield(data, 'finiteCapacityRegions')
                     cmjFields = fieldnames(cmj);
                     for ci = 1:length(cmjFields)
                         cname = cmjFields{ci};
-                        if class_map.isKey(cname)
-                            jc = class_map(cname);
+                        if isKey(class_map, cname)
+                            jc = class_map{cname};
                             region.classMaxJobs(jc.index) = cmj.(cname);
                         end
                     end
@@ -1139,8 +1321,8 @@ if isfield(data, 'finiteCapacityRegions')
                     drFields = fieldnames(drData);
                     for di = 1:length(drFields)
                         cname = drFields{di};
-                        if class_map.isKey(cname)
-                            jc = class_map(cname);
+                        if isKey(class_map, cname)
+                            jc = class_map{cname};
                             region.dropRule(jc.index) = str_to_droprule(drData.(cname));
                         end
                     end
@@ -1156,8 +1338,8 @@ if isfield(data, 'finiteCapacityRegions')
                             cwFields = fieldnames(cwData);
                             for ci = 1:length(cwFields)
                                 cname = cwFields{ci};
-                                if class_map.isKey(cname)
-                                    jc = class_map(cname);
+                                if isKey(class_map, cname)
+                                    jc = class_map{cname};
                                     region.classWeight(jc.index) = cwData.(cname);
                                 end
                             end
@@ -1167,8 +1349,8 @@ if isfield(data, 'finiteCapacityRegions')
                             csFields = fieldnames(csData);
                             for ci = 1:length(csFields)
                                 cname = csFields{ci};
-                                if class_map.isKey(cname)
-                                    jc = class_map(cname);
+                                if isKey(class_map, cname)
+                                    jc = class_map{cname};
                                     region.classSize(jc.index) = csData.(cname);
                                 end
                             end
@@ -1210,20 +1392,20 @@ if isfield(data, 'rewards')
         end
         rname = rw.name;
         rtype = rw.type;
-        if ~isfield(rw, 'node') || isempty(rw.node) || ~node_map.isKey(rw.node)
+        if ~isfield(rw, 'node') || isempty(rw.node) || ~isKey(node_map, rw.node)
             line_warning(mfilename, sprintf(['Reward "%s" refers to node "%s", which is not defined in this ' ...
                 'model; the reward is ignored.'], rname, char(getfield_default(rw, 'node', ''))));
             continue;
         end
-        rnode = node_map(rw.node);
+        rnode = node_map{rw.node};
         rclass = [];
         if isfield(rw, 'class') && ~isempty(rw.class)
-            if ~class_map.isKey(rw.class)
+            if ~isKey(class_map, rw.class)
                 line_warning(mfilename, sprintf(['Reward "%s" refers to class "%s", which is not defined in ' ...
                     'this model; the reward is ignored.'], rname, rw.class));
                 continue;
             end
-            rclass = class_map(rw.class);
+            rclass = class_map{rw.class};
         end
         switch rtype
             case 'QLen'
@@ -1324,8 +1506,25 @@ switch ntype
         end
     case 'Transition'
         node = Transition(model, name);
+    case 'Logger'
+        % The Logger constructor needs the log DIRECTORY to have been set on
+        % the model, and the wire carries only the base file name; default it
+        % to the working directory so a round-trip does not error on a model
+        % that saved cleanly.
+        if isempty(model.getLogPath)
+            model.setLogPath(pwd);
+        end
+        fileName = 'default.csv';
+        if isfield(nd, 'fileName') && ~isempty(nd.fileName)
+            fileName = nd.fileName;
+        end
+        node = Logger(model, name, fileName);
     otherwise
-        node = Queue(model, name, SchedStrategy.FCFS);
+        % No silent default: a node type this loader does not know became an
+        % FCFS Queue, which adds a station and a service process the model
+        % never declared and shifts every station index after it.
+        line_error(mfilename, sprintf(['Node "%s" is declared with type "%s", which this ' ...
+            'loader does not build.'], name, ntype));
 end
 end
 
@@ -1341,6 +1540,70 @@ if ischar(v) || isstring(v)
     end
 else
     ns = double(v);
+end
+end
+
+
+function st = state_from_json(v)
+% Decode an initialState row, WHICH MAY MIX NUMBERS AND STRINGS.
+%
+% A non-finite entry crosses the wire as a string ("Infinity"/"-Infinity"),
+% the same encoding servers_from_json decodes, and jsondecode then hands the
+% row back as a CELL with a char element among the doubles. cell2mat cannot
+% concatenate that: it fails with "Dimensions of arrays being concatenated are
+% not consistent", eight frames below linemodel_load, which reads as a
+% malformed document rather than as an infinite entry.
+%
+% This is the COMMON case, not an exotic one. Every Source carries state
+% [Inf 1], so once initialState began to be emitted for every StatefulNode and
+% not only for a Place, MATLAB could no longer read back its own document for
+% any model with a Source.
+if iscell(v)
+    st = zeros(1, numel(v));
+    for k = 1:numel(v)
+        st(k) = state_scalar_from_json(v{k});
+    end
+else
+    st = double(v(:))';
+end
+end
+
+
+function sp = state_space_from_json(v)
+% Decode a "stateSpace" block: an array of rows, each read like an
+% initialState row so a non-finite entry survives the same string encoding.
+%
+% jsondecode collapses a rectangular array of numbers to a matrix and keeps a
+% ragged or string-bearing one as a cell of rows, so both forms arrive here.
+if isempty(v)
+    sp = [];
+elseif iscell(v)
+    rows = cell(1, numel(v));
+    for k = 1:numel(v)
+        rows{k} = state_from_json(v{k});
+    end
+    sp = vertcat(rows{:});
+else
+    % Left as decoded: the writer emits an array OF ROWS, so jsondecode already
+    % returns rows-by-columns and reshaping a single row or a single column here
+    % would transpose one of the two legitimate degenerate shapes.
+    sp = double(v);
+end
+end
+
+
+function x = state_scalar_from_json(v)
+% One initialState entry: a number, or the string form of a non-finite one.
+if ischar(v) || isstring(v)
+    if strcmpi(v, 'Infinity')
+        x = Inf;
+    elseif strcmpi(v, '-Infinity')
+        x = -Inf;
+    else
+        x = str2double(v);
+    end
+else
+    x = double(v);
 end
 end
 
@@ -1374,7 +1637,7 @@ end
 model = LayeredNetwork(modelName);
 
 % --- Processors (Python schema: "processors", JAR schema: "hosts") ---
-proc_map = containers.Map();
+proc_map = configureDictionary('string','cell');
 if isfield(data, 'processors')
     procs = data.processors;
 elseif isfield(data, 'hosts')
@@ -1400,12 +1663,17 @@ if ~isempty(procs)
         if isfield(pd, 'replication') && pd.replication > 1
             proc.setReplication(pd.replication);
         end
-        proc_map(pname) = proc;
+        % Admission constraints name their operands, so they can be replayed
+        % before the tasks they reference exist; getStruct resolves them.
+        if isfield(pd, 'admissionConstraints')
+            apply_lincon(proc, pd.admissionConstraints);
+        end
+        proc_map{pname} = proc;
     end
 end
 
 % --- Tasks ---
-task_map = containers.Map();
+task_map = configureDictionary('string','cell');
 if isfield(data, 'tasks')
     tsks = data.tasks;
     if isstruct(tsks), tsks = num2cell(tsks); end
@@ -1419,8 +1687,9 @@ if isfield(data, 'tasks')
         schedId = str_to_sched_id(schedStr);
         taskType = 'Task';
         if isfield(td, 'taskType'), taskType = td.taskType; end
-        if strcmp(taskType, 'FunctionTask')
-            task = FunctionTask(model, tname, mult, schedId);
+        if strcmp(taskType, 'SetupTask') || strcmp(taskType, 'FunctionTask')
+            % FunctionTask is the legacy name of SetupTask on the wire
+            task = SetupTask(model, tname, mult, schedId);
         elseif strcmp(taskType, 'CacheTask')
             totalItems = 1;
             if isfield(td, 'totalItems'), totalItems = td.totalItems; end
@@ -1428,11 +1697,11 @@ if isfield(data, 'tasks')
             if isfield(td, 'cacheCapacity'), cacheCap = td.cacheCapacity; end
             rsStr = 'FIFO';
             if isfield(td, 'replacementStrategy'), rsStr = td.replacementStrategy; end
-            rsMap = containers.Map({'RR','FIFO','SFIFO','LRU'}, ...
+            rsMap = dictionary(["RR","FIFO","SFIFO","LRU"], ...
                 {ReplacementStrategy.RR, ReplacementStrategy.FIFO, ...
                  ReplacementStrategy.SFIFO, ReplacementStrategy.LRU});
-            if rsMap.isKey(upper(rsStr))
-                rs = rsMap(upper(rsStr));
+            if isKey(rsMap, upper(rsStr))
+                rs = rsMap{upper(rsStr)};
             else
                 rs = ReplacementStrategy.FIFO;
             end
@@ -1445,8 +1714,8 @@ if isfield(data, 'tasks')
         if isfield(td, 'processor'), procRef = td.processor;
         elseif isfield(td, 'host'), procRef = td.host;
         end
-        if ~isempty(procRef) && proc_map.isKey(procRef)
-            task.on(proc_map(procRef));
+        if ~isempty(procRef) && isKey(proc_map, procRef)
+            task.on(proc_map{procRef});
         end
         % Think time (Python schema: "thinkTime" as dist, JAR schema: "thinkTimeMean"/"thinkTimeSCV")
         if isfield(td, 'thinkTime')
@@ -1493,12 +1762,17 @@ if isfield(data, 'tasks')
         if isfield(td, 'replication') && td.replication > 1
             task.setReplication(td.replication);
         end
-        task_map(tname) = task;
+        % Admission constraints name their operands, so they can be replayed
+        % before the entries they reference exist; getStruct resolves them.
+        if isfield(td, 'admissionConstraints')
+            apply_lincon(task, td.admissionConstraints);
+        end
+        task_map{tname} = task;
     end
 end
 
 % --- Entries ---
-entry_map = containers.Map();
+entry_map = configureDictionary('string','cell');
 if isfield(data, 'entries')
     ents = data.entries;
     if isstruct(ents), ents = num2cell(ents); end
@@ -1527,8 +1801,8 @@ if isfield(data, 'entries')
         else
             entry = Entry(model, ename);
         end
-        if isfield(ed, 'task') && task_map.isKey(ed.task)
-            entry.on(task_map(ed.task));
+        if isfield(ed, 'task') && isKey(task_map, ed.task)
+            entry.on(task_map{ed.task});
         end
         % Entry arrival distribution
         if isfield(ed, 'arrival')
@@ -1537,12 +1811,12 @@ if isfield(data, 'entries')
                 entry.setArrival(dist);
             end
         end
-        entry_map(ename) = entry;
+        entry_map{ename} = entry;
     end
 end
 
 % --- Activities ---
-act_map = containers.Map();
+act_map = configureDictionary('string','cell');
 if isfield(data, 'activities')
     acts = data.activities;
     if isstruct(acts), acts = num2cell(acts); end
@@ -1570,13 +1844,13 @@ if isfield(data, 'activities')
         act = Activity(model, aname, hd, bte);
 
         % Assign to task
-        if isfield(ad, 'task') && task_map.isKey(ad.task)
-            act.on(task_map(ad.task));
+        if isfield(ad, 'task') && isKey(task_map, ad.task)
+            act.on(task_map{ad.task});
         end
 
         % Replies to entry
-        if isfield(ad, 'repliesTo') && entry_map.isKey(ad.repliesTo)
-            act.repliesTo(entry_map(ad.repliesTo));
+        if isfield(ad, 'repliesTo') && isKey(entry_map, ad.repliesTo)
+            act.repliesTo(entry_map{ad.repliesTo});
         end
 
         % Synch calls (Python schema: "entry", JAR schema: "dest")
@@ -1591,8 +1865,8 @@ if isfield(data, 'activities')
                 end
                 meanCalls = 1.0;
                 if isfield(sc, 'mean'), meanCalls = sc.mean; end
-                if entry_map.isKey(ename)
-                    act.synchCall(entry_map(ename), meanCalls);
+                if isKey(entry_map, ename)
+                    act.synchCall(entry_map{ename}, meanCalls);
                 end
             end
         end
@@ -1609,13 +1883,13 @@ if isfield(data, 'activities')
                 end
                 meanCalls = 1.0;
                 if isfield(ac, 'mean'), meanCalls = ac.mean; end
-                if entry_map.isKey(ename)
-                    act.asynchCall(entry_map(ename), meanCalls);
+                if isKey(entry_map, ename)
+                    act.asynchCall(entry_map{ename}, meanCalls);
                 end
             end
         end
 
-        act_map(aname) = act;
+        act_map{aname} = act;
     end
 end
 
@@ -1625,10 +1899,10 @@ if isfield(data, 'precedences')
     if isstruct(precs), precs = num2cell(precs); end
     for i = 1:length(precs)
         pd = precs{i};
-        if ~isfield(pd, 'task') || ~task_map.isKey(pd.task)
+        if ~isfield(pd, 'task') || ~isKey(task_map, pd.task)
             continue;
         end
-        task = task_map(pd.task);
+        task = task_map{pd.task};
 
         if isfield(pd, 'preActs') || isfield(pd, 'postActs')
             % JAR schema
@@ -1667,14 +1941,14 @@ if isfield(data, 'precedences')
 
             preActs = {};
             for ai = 1:length(preNames)
-                if act_map.isKey(preNames{ai})
-                    preActs{end+1} = act_map(preNames{ai}); %#ok<AGROW>
+                if isKey(act_map, preNames{ai})
+                    preActs{end+1} = act_map{preNames{ai}}; %#ok<AGROW>
                 end
             end
             postActs = {};
             for ai = 1:length(postNames)
-                if act_map.isKey(postNames{ai})
-                    postActs{end+1} = act_map(postNames{ai}); %#ok<AGROW>
+                if isKey(act_map, postNames{ai})
+                    postActs{end+1} = act_map{postNames{ai}}; %#ok<AGROW>
                 end
             end
 
@@ -1745,13 +2019,13 @@ if isfield(data, 'precedences')
             actObjs = {};
             for ai = 1:length(actNames)
                 an = actNames{ai};
-                if act_map.isKey(an)
-                    actObjs{end+1} = act_map(an); %#ok<AGROW>
+                if isKey(act_map, an)
+                    actObjs{end+1} = act_map{an}; %#ok<AGROW>
                 end
             end
             % A Loop's trigger is separate ('preActivity'), so its body may be a single activity -- see _kb/04-networkstruct.md
             isLoopWithPre = strcmp(ptype, 'Loop') && isfield(pd, 'preActivity') ...
-                && act_map.isKey(pd.preActivity) && ~isempty(actObjs);
+                && isKey(act_map, pd.preActivity) && ~isempty(actObjs);
             if length(actObjs) < 2 && ~isLoopWithPre
                 continue;
             end
@@ -1785,8 +2059,8 @@ if isfield(data, 'precedences')
                     count = 1.0;
                     if isfield(pd, 'loopCount'), count = pd.loopCount; end
                     % Check for explicit preActivity field (new format)
-                    if isfield(pd, 'preActivity') && act_map.isKey(pd.preActivity)
-                        preAct = act_map(pd.preActivity);
+                    if isfield(pd, 'preActivity') && isKey(act_map, pd.preActivity)
+                        preAct = act_map{pd.preActivity};
                         ap = ActivityPrecedence.Loop(preAct, actObjs, count);
                     elseif length(actObjs) >= 3
                         % Legacy format: first is pre, rest is body+end
@@ -2062,7 +2336,7 @@ switch dtype
         dist = Immediate.getInstance();
         return;
     case 'Expolynomial'
-        % Nested object (the density is a Sirio expression string); "Inf" carries
+        % Nested object (the density is an expolynomial expression string); "Inf" carries
         % an unbounded latest firing time.
         ep = d.expolynomial;
         if ischar(ep.lft) || isstring(ep.lft)
@@ -2175,6 +2449,26 @@ if isfield(d, 'params') && ~isempty(d.params)
             end
             dist = NHPP(p.breakpoints(:)', p.rates(:)', cyc);
             return;
+        case {'MAPt','PHt'}
+            % Absent 'cyclic' means cyclic, matching the constructor default.
+            if isfield(p, 'cyclic')
+                cyc = logical(p.cyclic);
+            else
+                cyc = true;
+            end
+            if strcmp(dtype, 'MAPt')
+                segA = json2matcellseq(p.D0);
+                segB = json2matcellseq(p.D1);
+                dist = MAPt(p.breakpoints(:)', segA, segB, cyc);
+            else
+                segA = json2matcellseq(p.alpha);
+                for zz = 1:numel(segA)
+                    segA{zz} = segA{zz}(:)';
+                end
+                segB = json2matcellseq(p.S);
+                dist = PHt(p.breakpoints(:)', segA, segB, cyc);
+            end
+            return;
         case 'ME'
             dist = ME(p.alpha(:)', json2mat(p.A));
             return;
@@ -2227,6 +2521,28 @@ end
 
 % Prior distribution (mixture of alternatives with prior probabilities)
 if strcmp(dtype, 'Prior')
+    kind = 'discrete';
+    if isfield(d, 'kind') && ~isempty(d.kind)
+        kind = char(d.kind);
+    end
+    if strcmp(kind, 'continuous')
+        if ~isfield(d, 'paramDist') || ~isfield(d, 'factory')
+            line_error(mfilename, ['A continuous Prior carries "paramDist" and "factory" ' ...
+                '(a template distribution plus the parameter slots it fills)']);
+        end
+        paramDist = json2dist(d.paramDist);
+        fac = d.factory;
+        if ~isfield(fac, 'template') || ~isfield(fac, 'slots')
+            line_error(mfilename, 'A continuous Prior factory carries "template" and "slots"');
+        end
+        tmpl = fac.template;
+        slots = fac.slots;
+        if ~iscell(slots)
+            slots = cellstr(slots);
+        end
+        dist = Prior(paramDist, @(theta) json2dist(prior_slot_subst(tmpl, slots, theta)));
+        return;
+    end
     if isfield(d, 'distributions') && isfield(d, 'probabilities')
         altJsons = d.distributions;
         probs = d.probabilities;
@@ -2353,6 +2669,25 @@ end
 %  Routing parser (handles comma keys in JSON)
 % =========================================================================
 
+function tmpl = prior_slot_subst(tmpl, slots, theta)
+% Place the Prior parameter into the slots of a factory template distribution.
+%
+% The twin of prior_factory2json in linemodel_save: the template carries the
+% constant parameters as probed and each named slot is overwritten with theta,
+% so json2dist rebuilds the alternative the MATLAB factory handle would return.
+if ~isfield(tmpl, 'params')
+    line_error(mfilename, 'A continuous Prior factory template carries a "params" object');
+end
+for i = 1:numel(slots)
+    slot = slots{i};
+    if ~isfield(tmpl.params, slot)
+        line_error(mfilename, sprintf(['A continuous Prior factory names "%s" as a parameter ' ...
+            'slot, but the template has no such parameter'], slot));
+    end
+    tmpl.params.(slot) = theta;
+end
+end
+
 function entries = parse_routing_keys(rawJson, class_map, node_map)
 % Parse routing matrix from raw JSON text to handle keys with commas.
 % Returns a cell array of structs with fields:
@@ -2361,15 +2696,15 @@ entries = {};
 
 % Build reverse mapping: jsondecode-sanitized name -> original node name
 % jsondecode uses matlab.lang.makeValidName which replaces spaces etc.
-nodeNames = node_map.keys();
-sanitized_map = containers.Map();
+nodeNames = keys(node_map);
+sanitized_map = configureDictionary('string','cell');
 for ni = 1:length(nodeNames)
     origName = nodeNames{ni};
     sanitized = matlab.lang.makeValidName(origName);
-    sanitized_map(sanitized) = origName;
+    sanitized_map{sanitized} = origName;
 end
 
-classNames = class_map.keys();
+classNames = keys(class_map);
 
 % For each pair of class names, try to find the corresponding key in the JSON
 for ri = 1:length(classNames)
@@ -2409,21 +2744,21 @@ for ri = 1:length(classNames)
                     toStruct = fromTo.(fromField);
                     toNames = fieldnames(toStruct);
                     % Resolve sanitized field names back to original node names
-                    if sanitized_map.isKey(fromField)
-                        fromName = sanitized_map(fromField);
+                    if isKey(sanitized_map, fromField)
+                        fromName = sanitized_map{fromField};
                     else
                         fromName = fromField;
                     end
                     for ti = 1:length(toNames)
                         toField = toNames{ti};
                         prob = toStruct.(toField);
-                        if sanitized_map.isKey(toField)
-                            toName = sanitized_map(toField);
+                        if isKey(sanitized_map, toField)
+                            toName = sanitized_map{toField};
                         else
                             toName = toField;
                         end
                         % Verify names exist in the model
-                        if node_map.isKey(fromName) && node_map.isKey(toName)
+                        if isKey(node_map, fromName) && isKey(node_map, toName)
                             re = struct();
                             re.className1 = cn1;
                             re.className2 = cn2;
@@ -2485,6 +2820,30 @@ end
 % =========================================================================
 %  Helper functions
 % =========================================================================
+
+function apply_lincon(elem, rows)
+% APPLY_LINCON(ELEM, ROWS) replays admission constraint rows from the wire onto
+% a Task or Host. Rows name their operands, so no column order is assumed and
+% the referenced entries or tasks need not exist yet.
+if isempty(rows)
+    return
+end
+if isstruct(rows)
+    rows = num2cell(rows);
+elseif ~iscell(rows)
+    rows = {rows};
+end
+for r = 1:length(rows)
+    row = rows{r};
+    ops = row.operands;
+    if ischar(ops)
+        ops = {ops};
+    elseif isstring(ops)
+        ops = cellstr(ops);
+    end
+    elem.addConstraint(ops(:)', row.coeffs(:)', row.cap);
+end
+end
 
 function id = str_to_sched_id(str)
 % Map a wire scheduling enum name to a SchedStrategy numeric ID.
@@ -2649,7 +3008,7 @@ function muFun = oi_table_to_handle(tblStruct, cutoffs)
 % so mu saturates beyond the tabulated range exactly as the table intends. As in
 % CD_TABLE_TO_HANDLE, jsondecode mangles the JSON keys ("1,1") into valid MATLAB
 % identifiers ("x1_1"), so the counts are parsed back out of the field names.
-map = containers.Map('KeyType', 'char', 'ValueType', 'double');
+map = configureDictionary('string','double');
 fn = fieldnames(tblStruct);
 K = numel(cutoffs);
 for i = 1:numel(fn)
@@ -2696,16 +3055,91 @@ function beta = cd_table_to_handle(tblStruct, cutoffs)
 % parsed back out of the field names rather than reconstructed from them. The
 % population is clamped to CUTOFFS, so beta saturates beyond the tabulated range
 % exactly as the table intends.
-map = containers.Map('KeyType', 'char', 'ValueType', 'any');
+map = configureDictionary('string','cell');
 fn = fieldnames(tblStruct);
 for i = 1:numel(fn)
     nm = fn{i};
     parts = strsplit(nm(2:end), '_');   % drop the 'x' prefix jsondecode prepends
     n = cellfun(@str2double, parts);
     v = double(tblStruct.(nm));
-    map(cd_state_key(n)) = v(:)';
+    map{cd_state_key(n)} = v(:)';
 end
 beta = @(ni) cd_table_eval(ni, map, cutoffs);
+end
+
+function [phi, peak, wcut] = gd_block_to_handle(gdep, node_map, class_map, model)
+% Rebuild the network-level global (Whittle) dependence from the slot lattice
+% written by GD_BLOCK (linemodel_save). Slots carry station and class NAMES, so
+% they are resolved through the model's own index spaces rather than assumed to
+% line up positionally. The population is clamped to the tabulated cutoffs, which
+% is the same saturation the writer's box lattice declares.
+phi = []; peak = []; wcut = 10;
+sn = model.getStruct();
+M = sn.nstations; K = sn.nclasses;
+
+slotsData = [];
+if isfield(gdep, 'slots'), slotsData = gdep.slots; end
+if isstruct(slotsData), slotsData = num2cell(slotsData); end
+P = numel(slotsData);
+slotSt = zeros(1,P); slotCl = zeros(1,P);
+for s = 1:P
+    sm = slotsData{s};
+    if ~isKey(node_map, sm.station) || ~isKey(class_map, sm.class), return; end
+    slotSt(s) = sn.nodeToStation(node_map{sm.station}.index);
+    slotCl(s) = class_map{sm.class}.index;
+end
+
+cuts = zeros(1,P);
+if isfield(gdep, 'cutoffs')
+    cv = double(cell2mat_or_vec(gdep.cutoffs));
+    cuts = round(cv(:)');
+end
+if isfield(gdep, 'cutoff') && ~isempty(gdep.cutoff)
+    wcut = round(double(gdep.cutoff));
+end
+
+map = configureDictionary('string','cell');
+fn = fieldnames(gdep.scaling);
+for i = 1:numel(fn)
+    nm = fn{i};
+    parts = strsplit(nm(2:end), '_');   % drop the 'x' prefix jsondecode prepends
+    c = cellfun(@str2double, parts);
+    v = double(cell2mat_or_vec(gdep.scaling.(nm)));
+    if P == 0
+        map{'0'} = v(:)';
+    else
+        map{cd_state_key(c)} = v(:)';
+    end
+end
+
+if isfield(gdep, 'peak') && ~isempty(gdep.peak)
+    pv = double(cell2mat_or_vec(gdep.peak));
+    peak = reshape(pv(:), K, M)';
+else
+    peak = ones(M,K);
+end
+
+phi = @(n) gd_table_eval(n, slotSt, slotCl, cuts, map, M, K);
+end
+
+function v = gd_table_eval(n, slotSt, slotCl, cuts, map, M, K)
+P = numel(cuts);
+if P == 0
+    key = '0';
+else
+    c = zeros(1,P);
+    for s = 1:P
+        c(s) = round(n(slotSt(s), slotCl(s)));
+    end
+    c(c < 0) = 0;
+    c = min(c, cuts);
+    key = cd_state_key(c);
+end
+if isKey(map, key)
+    v = reshape(map{key}(:), K, M)';
+else
+    v = ones(M,K);
+end
 end
 
 function k = cd_state_key(n)
@@ -2724,20 +3158,20 @@ if isstruct(slotsData), slotsData = num2cell(slotsData); end
 slotIdx = zeros(numel(slotsData), 2);
 for s = 1:numel(slotsData)
     sm = slotsData{s};
-    if ~node_map.isKey(sm.node) || ~class_map.isKey(sm.class), return; end
-    slotIdx(s,:) = [node_map(sm.node).index, class_map(sm.class).index];
+    if ~isKey(node_map, sm.node) || ~isKey(class_map, sm.class), return; end
+    slotIdx(s,:) = [node_map{sm.node}.index, class_map{sm.class}.index];
 end
 cutoffs = [];
 if isfield(frm, 'cutoffs')
     cutoffs = double(cell2mat_or_vec(frm.cutoffs));
 end
-map = containers.Map('KeyType', 'char', 'ValueType', 'any');
+map = configureDictionary('string','cell');
 fn = fieldnames(frm.scaling);
 for i = 1:numel(fn)
     nm = fn{i};
     parts = strsplit(nm(2:end), '_');   % drop the 'x' prefix jsondecode prepends
     c = cellfun(@str2double, parts);
-    map(cd_state_key(c)) = double(frm.scaling.(nm));
+    map{cd_state_key(c)} = double(frm.scaling.(nm));
 end
 g = @(M) firingdep_table_eval(M, slotIdx, map, cutoffs);
 end
@@ -2755,7 +3189,7 @@ if ~isempty(cutoffs)
 end
 k = cd_state_key(c);
 if isKey(map, k)
-    v = map(k);
+    v = map{k};
 else
     v = 1;   % a marking absent from the table is neutral (no dependence)
 end
@@ -2780,8 +3214,34 @@ if ~isempty(cutoffs)
 end
 k = cd_state_key(n);
 if isKey(map, k)
-    v = map(k);
+    v = map{k};
 else
     v = 1;   % a state absent from the table is neutral (no scaling)
+end
+end
+
+
+function segs = json2matcellseq(raw)
+% SEGS = JSON2MATCELLSEQ(RAW)
+% A JSON array of matrices decodes either as a cell of rows or, when every
+% segment has the same shape, as one numeric array with the segment on the first
+% dimension. Normalise both to a 1-by-n cell of matrices.
+if iscell(raw)
+    segs = cell(1, numel(raw));
+    for k = 1:numel(raw)
+        segs{k} = json2mat(raw{k});
+    end
+elseif isnumeric(raw) && ndims(raw) == 3
+    segs = cell(1, size(raw,1));
+    for k = 1:size(raw,1)
+        segs{k} = squeeze(raw(k,:,:));
+    end
+elseif isnumeric(raw)
+    segs = cell(1, size(raw,1));
+    for k = 1:size(raw,1)
+        segs{k} = raw(k,:);
+    end
+else
+    line_error(mfilename, 'json2matcellseq: unrecognised segment array layout');
 end
 end

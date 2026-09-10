@@ -61,7 +61,7 @@ void b_log(const emlrtStack *sp, emxArray_real_T *x)
   }
   if (p) {
     emlrtErrorWithMessageIdR2018a(
-        sp, &e_emlrtRTEI, "Coder:toolbox:ElFunDomainError",
+        sp, &emlrtRTEI, "Coder:toolbox:ElFunDomainError",
         "Coder:toolbox:ElFunDomainError", 3, 4, 3, "log");
   }
   st.site = &ob_emlrtRSI;

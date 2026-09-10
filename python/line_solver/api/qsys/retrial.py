@@ -180,13 +180,15 @@ class QbdStatespace:
     - n = level (number of retrying customers in orbit)
     - i = phase (service phase or phase-type stage)
 
-    Generator matrix has block structure:
-    Q = | B_0   A_0    0     0   ...  |
-        | A_2   A_1   A_0    0   ...  |
-        | 0     A_2   A_1   A_0  ...  |
-        | ...                          |
+    Generator matrix has block structure::
 
-    Properties:
+        Q = | B_0   A_0    0     0   ...  |
+            | A_2   A_1   A_0    0   ...  |
+            | 0     A_2   A_1   A_0  ...  |
+            | ...                         |
+
+    Properties::
+
         max_level: Maximum retrial orbit size (truncation level)
         phase_dim: Number of phases at each level
         total_states: Total state space dimension
@@ -298,7 +300,8 @@ class RetrialQueueAnalyzer:
     This class provides the foundation for future full solver implementation,
     including topology detection, parameter extraction, and QBD setup.
 
-    Example:
+    Example::
+
         analyzer = RetrialQueueAnalyzer(model)
         queue_type = analyzer.detect_queue_type()
         if queue_type == QueueType.RETRIAL:
@@ -837,7 +840,7 @@ def qsys_bmapphnn_retrial(
     Queueing System with Flexible Retrials Admission Control",
     Mathematics 2025, 13(9), 1434.
 
-    Parameters:
+    Args:
         arrival_matrix: Dict with 'D0', 'D1', ... for BMAP matrices.
             D0: hidden transition matrix (V x V).
             D1, ..., DK: arrival matrices for batch sizes 1, ..., K.
@@ -847,25 +850,31 @@ def qsys_bmapphnn_retrial(
         retrial_params: Dict with 'alpha' (retrial rate per customer),
             'gamma' (impatience/abandonment rate), 'p' (batch rejection
             probability), 'R' (admission threshold, scalar or 1xV).
-        options: Dict with optional keys:
+        options: Dict with optional keys::
+
             'MaxLevel': fixed orbit truncation level. When None or
                 non-positive (default) the level is chosen adaptively: it is
                 doubled until the mass retained at the top level contributes
                 less than 'TailTolerance' of the mean orbit length. A fixed
                 level disables the adaptive refinement.
+
             'Tolerance': convergence tolerance (default: 1e-10).
             'TailTolerance': relative orbit-truncation error target
                 (default: 1e-6).
+
             'MaxDim': cap on the total generator dimension explored by the
                 adaptive refinement (default: 2e5).
+
             'MaxBlockSize': cap on the per-level block size V*d
                 (default: 5000). Exceeding it is an error: the phase-type
                 service order and the server count make the level block
                 intractable.
+
             'RetrialPolicy': RetrialPolicy.LINEAR (default), where the
                 aggregate retrial rate is (orbit size)*alpha, or
                 RetrialPolicy.CONSTANT, where the orbit retries as a whole at
                 rate alpha whenever it is non-empty.
+
             'Verbose': print progress (default: False).
 
     Returns:
@@ -1842,36 +1851,13 @@ def _proc_to_d0d1(entry: Any) -> Optional[list]:
     """
     if entry is None:
         return None
-    if isinstance(entry, (list, tuple)) and len(entry) >= 2:
-        A = np.atleast_2d(np.array(entry[0], dtype=float))
-        Bm = np.atleast_2d(np.array(entry[1], dtype=float))
-        # [alpha, T] (row alpha, square T of larger order) -> convert to [D0, D1].
-        if A.shape[0] == 1 and Bm.shape[0] == Bm.shape[1] and A.shape[1] == Bm.shape[0] \
-                and A.shape[0] != Bm.shape[0]:
-            alpha = A.flatten()
-            T = Bm
-            return [T, np.outer(-np.sum(T, axis=1), alpha)]
-        return [A, Bm]
-    if isinstance(entry, dict):
-        if 'rate' in entry:
-            r = float(entry['rate'])
-            return [np.array([[-r]]), np.array([[r]])]
-        if 'probs' in entry and 'rates' in entry:
-            p = np.array(entry['probs'], dtype=float).flatten()
-            rates = np.array(entry['rates'], dtype=float).flatten()
-            return [np.diag(-rates), np.outer(rates, p)]
-        if 'k' in entry and 'mu' in entry:
-            k = int(entry['k'])
-            mu = float(entry['mu'])
-            D0 = np.zeros((k, k))
-            for i in range(k):
-                D0[i, i] = -mu
-                if i < k - 1:
-                    D0[i, i + 1] = mu
-            D1 = np.zeros((k, k))
-            D1[k - 1, 0] = mu
-            return [D0, D1]
-    return None
+    # sn.proc stores (D0, D1); proc_to_map also accepts the legacy descriptors
+    # and the [alpha, T] pair this used to disambiguate by shape.
+    from ..sn.proc_form import proc_to_map
+    D0, D1 = proc_to_map(entry)
+    if D0 is None:
+        return None
+    return [np.atleast_2d(D0), np.atleast_2d(D1)]
 
 
 def detect_reneging_topology(sn: Any) -> Tuple[bool, RenegingInfo]:
@@ -2226,7 +2212,8 @@ def solver_mam_retrial(sn: Any, options: Optional[Dict] = None) -> Tuple[
 
     Args:
         sn: NetworkStruct object
-        options: Solver options dict with optional keys:
+        options: Solver options dict with optional keys::
+
             'tol': Convergence tolerance (default 1e-10)
             'verbose': Print progress messages (default False)
             'config': Dict with 'mapmsg_quantization' (default 11),
@@ -2235,7 +2222,8 @@ def solver_mam_retrial(sn: Any, options: Optional[Dict] = None) -> Tuple[
                 (relative orbit-truncation error target, default 1e-6)
 
     Returns:
-        Tuple of (QN, UN, RN, TN, CN, XN, totiter, perf) where:
+        Tuple of (QN, UN, RN, TN, CN, XN, totiter, perf) where::
+
             QN: (M, K) queue lengths
             UN: (M, K) server utilizations
             RN: (M, K) response times

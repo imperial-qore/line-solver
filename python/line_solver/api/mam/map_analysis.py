@@ -174,7 +174,7 @@ def map_var(D0: np.ndarray, D1: np.ndarray = None) -> float:
 
     Var[X] = E[X²] - E[X]²
 
-    Uses map_moment for consistency with Kotlin implementation.
+    Uses map_moment for consistency with the JAR implementation.
 
     Args:
         D0: Hidden transition matrix, or stacked [D0, D1] if D1 is None
@@ -224,7 +224,7 @@ def map_scv(D0: np.ndarray, D1: np.ndarray = None) -> float:
     D0 = np.asarray(D0, dtype=np.float64)
     D1 = np.asarray(D1, dtype=np.float64)
 
-    # Match Kotlin: compute from moments directly
+    # Compute from moments directly
     e1 = map_moment(D0, D1, 1)
     e2 = map_moment(D0, D1, 2)
 
@@ -258,8 +258,19 @@ def map_moment(D0: np.ndarray, D1: np.ndarray, k: int) -> float:
     if k < 1:
         raise ValueError("Moment order must be >= 1")
 
-    # Check if D0 is zero matrix or singular (matching Kotlin implementation)
-    if np.all(np.abs(D0) < 1e-14) or np.abs(linalg.det(D0)) < 1e-12:
+    # MATLAB map_moment.m guards exactly one degenerate case, `if MAP{1}==0`.
+    # Do NOT reinstate a det(D0) test here: det scales as rate^n, so any fixed
+    # threshold misfires on a perfectly healthy slow MAP -- order 4 with rates
+    # around 1e-3, or order 16 with rates around 0.1, both land under 1e-12 --
+    # and the moment comes back silently as 0.0. Singularity is scale-free only
+    # through the condition number.
+    if not np.any(D0):
+        return 0.0
+    if not np.isfinite(D0).all():
+        return float('nan')
+    with np.errstate(divide='ignore', invalid='ignore'):
+        rcond = 1.0 / np.linalg.cond(D0)
+    if not np.isfinite(rcond) or rcond < np.finfo(np.float64).eps:
         return 0.0
 
     n = D0.shape[0]
@@ -273,7 +284,7 @@ def map_moment(D0: np.ndarray, D1: np.ndarray, k: int) -> float:
     except LinAlgError:
         D0_inv = linalg.pinv(-D0)
 
-    # Compute k! * (-D0)^{-k} incrementally as in Kotlin
+    # Compute k! * (-D0)^{-k} incrementally
     # Start with (-D0)^{-1}, then multiply by (-D0)^{-1} * i for factorial
     D0_inv_k = D0_inv.copy()
     for i in range(2, k + 1):
@@ -286,47 +297,76 @@ def map_moment(D0: np.ndarray, D1: np.ndarray, k: int) -> float:
     return float(moment)
 
 
-def map_scale(D0: np.ndarray, D1: np.ndarray, factor: float
+def map_scale(D0: np.ndarray, D1: np.ndarray, new_mean: float
               ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Scale a MAP by a given factor.
+    Rescale a MAP to a given MEAN inter-arrival time.
 
-    Scaling changes the time scale: D0' = factor * D0, D1' = factor * D1.
+    Port of map_scale.m: the third argument is the TARGET MEAN, not a
+    multiplier. The rates are scaled by mean/new_mean, which leaves every
+    normalized moment and every autocorrelation alone and moves only the first
+    moment, and the result is passed through map_normalize (the feasibility
+    repair) as the reference does.
+
+    THIS ARGUMENT USED TO BE A FACTOR here, and nowhere else: MATLAB, the JAR
+    and the C++ port all take the new mean, and this module's own private
+    helper `_map_scale` in api/solvers/mam/mmap_fj.py already did too. The two
+    conventions are each other's reciprocal-ish (a factor c gives mean/c), so
+    a call written for one and read by the other produces a MAP with the wrong
+    rate and the right shape, which no moment check on the SCV would catch.
 
     Args:
         D0: Hidden transition matrix
         D1: Visible transition matrix
-        factor: Scaling factor (> 0)
+        new_mean: target mean inter-arrival time (> 0)
 
     Returns:
-        Tuple of scaled (D0', D1')
+        Tuple of rescaled (D0', D1')
     """
     D0 = np.asarray(D0, dtype=np.float64)
     D1 = np.asarray(D1, dtype=np.float64)
 
-    if factor <= 0:
-        raise ValueError("Scaling factor must be positive")
+    if new_mean <= 0:
+        raise ValueError("The target mean must be positive")
 
-    return factor * D0, factor * D1
+    ratio = map_mean(D0, D1) / new_mean
+    return map_normalize(ratio * np.asarray(D0, dtype=np.float64),
+                         ratio * np.asarray(D1, dtype=np.float64))
 
 
 def map_normalize(D0: np.ndarray, D1: np.ndarray
                   ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Normalize a MAP to have unit mean inter-arrival time.
+    Make a MAP feasible again: port of map_normalize.m.
+
+    Takes real parts, clips negative entries to zero and rebuilds D0's diagonal
+    so that (D0 + D1) e = 0. MATLAB, the JAR (`Map_normalize.java`) and the C++
+    port (`map_transform.h`) all do exactly this, and every caller here wants
+    it: `map_scale` closes with it, `kpcfit`'s rescaling helper closes with it,
+    and `mmpp_rand` uses it to turn two random matrices into a generator pair.
+
+    IT USED TO RESCALE THE MEAN TO ONE, which is a different operation
+    altogether and left every one of those callers wrong in a way no moment
+    check would show: `mmpp_rand` returned a D0 whose diagonal had never been
+    repaired, so the pair was not a generator at all, and the two rescaling
+    helpers had the mean they had just set pulled straight back to one. Use
+    `map_scale(D0, D1, 1.0)` where unit mean is what is wanted.
 
     Args:
         D0: Hidden transition matrix
         D1: Visible transition matrix
 
     Returns:
-        Tuple of normalized (D0', D1')
+        Tuple of (D0', D1') satisfying the generator condition
     """
-    mean = map_mean(D0, D1)
-    if mean > 0 and np.isfinite(mean):
-        return map_scale(D0, D1, mean)
-    else:
-        return D0.copy(), D1.copy()
+    A = np.real(np.asarray(D0, dtype=np.float64)).copy()
+    B = np.real(np.asarray(D1, dtype=np.float64)).copy()
+    A[A < 0] = 0.0
+    B[B < 0] = 0.0
+    for n in range(A.shape[0]):
+        A[n, n] = 0.0
+        A[n, n] = -(np.sum(A[n, :]) + np.sum(B[n, :]))
+    return A, B
 
 
 def map_isfeasible(D0: np.ndarray, D1: np.ndarray,
@@ -529,38 +569,12 @@ def map_erlang(mean: float, k: int) -> Tuple[np.ndarray, np.ndarray]:
 def _map_normalize_generator(D0: np.ndarray, D1: np.ndarray
                               ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Normalize MAP to have proper generator structure.
+    The same repair as `map_normalize`, under the name the fitting code uses.
 
-    Sets D0 diagonal so that (D0 + D1) has zero row sums.
-
-    Args:
-        D0: Hidden transition matrix
-        D1: Visible transition matrix
-
-    Returns:
-        Tuple of normalized (D0, D1)
+    Kept as one implementation rather than two: the pair had drifted, with the
+    public name rescaling the mean and this one repairing the generator.
     """
-    D0 = np.asarray(D0, dtype=np.float64).copy()
-    D1 = np.asarray(D1, dtype=np.float64).copy()
-    n = D0.shape[0]
-
-    # Set non-negative off-diagonal elements
-    for i in range(n):
-        for j in range(n):
-            D0[i, j] = np.real(D0[i, j])
-            D1[i, j] = np.real(D1[i, j])
-            if i != j and D0[i, j] < 0:
-                D0[i, j] = 0
-            if D1[i, j] < 0:
-                D1[i, j] = 0
-
-    # Normalize diagonal
-    for i in range(n):
-        D0[i, i] = 0
-        row_sum = np.sum(D0[i, :]) + np.sum(D1[i, :])
-        D0[i, i] = -row_sum
-
-    return D0, D1
+    return map_normalize(D0, D1)
 
 
 def map_sumind(maps: list) -> Tuple[np.ndarray, np.ndarray]:
@@ -1858,13 +1872,30 @@ def map_pntiter(D0: np.ndarray, D1: np.ndarray, na: int, t: float,
         V = [[np.zeros_like(I) for _ in range(N + 1)] for _ in range(na + 1)]
         P = [np.zeros_like(I) for _ in range(na + 1)]
 
+        # Uniformization: V(n,k) is the sub-stochastic matrix of paths making
+        # exactly n arrivals in k STEPS of the uniformized chain, so the Poisson
+        # weight mixing the terms is that of the STEP count k, not of the
+        # arrival count n, and V(0,k) = V(0,k-1) @ K carries real mass for every
+        # k rather than being zero past k = 0.
+        #   V(0,0) = I,  V(0,k) = V(0,k-1) @ K,
+        #   V(n,k) = V(n,k-1) @ K + V(n-1,k-1) @ K1,
+        #   P_n(t) = sum_k br(tau,t,k) * V(n,k)
+        #
+        # Both faults were previously present and NEITHER IS VISIBLE ON A
+        # POISSON PROCESS: there K = D0/tau + I = 0, V(n,k) collapses to
+        # delta(n,k), and the two weights coincide on the only surviving term.
+        # The identities that do see them are P_0(t) = expm(D0 t) and
+        # sum_n P_n(t) = expm((D0 + D1) t).
         V[0][0] = I
         P[0] = V[0][0] * br(tau, t, 0)
+        for k in range(1, N + 1):
+            V[0][k] = V[0][k - 1] @ K
+            P[0] = P[0] + V[0][k] * br(tau, t, k)
 
         for n in range(1, na + 1):
             for k in range(1, N + 1):
                 V[n][k] = V[n][k - 1] @ K + V[n - 1][k - 1] @ K1
-                P[n] = P[n] + V[n][k] * br(tau, t, n)
+                P[n] = P[n] + V[n][k] * br(tau, t, k)
 
         return P
 
@@ -2032,7 +2063,7 @@ def map_feasblock(E1: float, E2: float, E3: float, G2: float,
     if abs(E2 - 2 * E1 ** 2) < 1e-10:
         D0 = np.array([[-1.0, 0], [0, -1.0]])
         D1 = np.array([[0.5, 0.5], [0.5, 0.5]])
-        return map_scale(D0, D1, 1.0 / E1)
+        return map_scale(D0, D1, E1)
 
     KPC_TOL = 1e-10
 
@@ -2092,6 +2123,61 @@ def map_largemap() -> int:
         Order threshold (default: 100)
     """
     return 100
+
+
+def map2_fit_idc(e1: float, e2: float, e3: float, idc: float
+                 ) -> Tuple[Tuple[np.ndarray, np.ndarray], int]:
+    """
+    Fit a MAP(2) matching the first three moments and the index of dispersion.
+
+    A MAP(2) has a geometrically decaying autocorrelation, so its index of
+    dispersion obeys I = SCV + (SCV-1)*g2/(1-g2), as reported in Section 5.2.2 of
+    Casale, Mi, Cherkasova and Smirni, IEEE Trans. Soft. Eng. 37(5), 2011. The
+    relation is inverted in closed form as g2 = (I-SCV)/(I-1) and the decay rate is
+    passed to map2_fit. A third moment outside the feasible region is replaced by
+    its lower limit (3/2)*e2^2/e1, the largest heavy-tail decay a MAP(2) admits.
+
+    The paper returns an exponential whenever SCV <= 1 or I < SCV. The rule does
+    more than avoid an infeasible fit and must not be relaxed: a flow-equivalent
+    server whose service is exponential and load dependent is exact for a
+    product-form subnetwork by Norton's theorem, whereas any MAP(2) fitted to the
+    marginal inter-departure statistics is not, because the departure stream of the
+    subnetwork is not independent of the rest of the model.
+
+    Args:
+        e1: first moment
+        e2: second moment
+        e3: third moment
+        idc: asymptotic index of dispersion
+
+    Returns:
+        Tuple (MAP, status) with status 0 all four descriptors matched,
+        1 exponential as burstiness is not representable, 2 third moment clamped,
+        3 third moment selected automatically, 4 fit failed and an exponential is
+        returned
+    """
+    scv = (e2 - e1 ** 2) / e1 ** 2
+
+    if scv <= 1 + 1e-8 or idc < scv:
+        return map_exponential(e1), 1
+
+    g2 = (idc - scv) / (idc - 1)
+
+    fit, err = map2_fit(e1, e2, e3, g2)
+    if err == 0:
+        return fit, 0
+
+    e3min = (3.0 / 2 + 1e-6) * e2 ** 2 / e1
+    if e3 < e3min:
+        fit, err = map2_fit(e1, e2, e3min, g2)
+        if err == 0:
+            return fit, 2
+
+    fit, err = map2_fit(e1, e2, -1, g2)
+    if err == 0:
+        return fit, 3
+
+    return map_exponential(e1), 4
 
 
 def map2_fit(e1: float, e2: float, e3: float = -1.0, g2: float = 0.0

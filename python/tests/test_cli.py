@@ -445,6 +445,83 @@ class TestNewParserArguments(unittest.TestCase):
         self.assertEqual(args.solver, 'mam')
 
 
+class TestPnmlInputFormat(unittest.TestCase):
+    """The -i pnml token, from the parser down to the reader that answers it."""
+
+    def _write_cyclic_net(self, path):
+        """Write the two-place cyclic net through save_pnml.
+
+        Built by the writer rather than kept as a fixture file so the document
+        cannot drift from the grammar the writer emits.
+        """
+        from line_solver import Network, ClosedClass, Place, Transition, Exp
+        from line_solver.io.pnml_io import save_pnml
+
+        model = Network('cyclicspn')
+        p1 = Place(model, 'P1')
+        p2 = Place(model, 'P2')
+        t1 = Transition(model, 'T1')
+        t2 = Transition(model, 'T2')
+        jc = ClosedClass(model, 'Class1', 3, p1, 0)
+
+        m1 = t1.addMode('Mode1')
+        t1.setDistribution(m1, Exp(2.0))
+        t1.setEnablingConditions(m1, jc, p1, 1)
+        t1.setFiringOutcome(m1, jc, p2, 1)
+
+        m2 = t2.addMode('Mode2')
+        t2.setDistribution(m2, Exp(1.5))
+        t2.setEnablingConditions(m2, jc, p2, 1)
+        t2.setFiringOutcome(m2, jc, p1, 1)
+
+        R = model.initRoutingMatrix()
+        R.set(jc, jc, p1, t1, 1.0)
+        R.set(jc, jc, t1, p2, 1.0)
+        R.set(jc, jc, p2, t2, 1.0)
+        R.set(jc, jc, t2, p1, 1.0)
+        model.link(R)
+        p1.setMarking(3)
+        p2.setMarking(0)
+
+        save_pnml(model, path)
+
+    def test_pnml_is_a_supported_format(self):
+        """The parser accepts -i pnml and the extension auto-detects to it."""
+        from line_solver.cli import SUPPORTED_FORMATS
+
+        self.assertIn('pnml', SUPPORTED_FORMATS)
+        parser = create_parser()
+        args = parser.parse_args(['-i', 'pnml'])
+        self.assertEqual(args.input, 'pnml')
+        self.assertEqual(detect_input_format('model.pnml'), 'pnml')
+
+    def test_pnml_token_reaches_the_reader(self):
+        """load_model returns the net, not a format error.
+
+        A format accepted by the parser but missing from load_model's dispatch
+        raises 'Unsupported format' one frame down, which reads as a model
+        defect rather than as an unwired token.
+        """
+        from line_solver.cli import load_model
+
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, 'cyclicspn.pnml')
+            self._write_cyclic_net(path)
+            model = load_model(path, 'pnml')
+            self.assertEqual(model.getNumberOfNodes(), 4)
+            self.assertEqual(model.getNumberOfClasses(), 1)
+
+    def test_pnml_refuses_a_product_form_solver(self):
+        """A place/transition net is refused by the solvers that cannot serve it."""
+        from line_solver.cli import PNML_COMPATIBLE_SOLVERS
+
+        for solver in ('ctmc', 'ssa', 'jmt', 'ldes', 'auto'):
+            self.assertIn(solver, PNML_COMPATIBLE_SOLVERS)
+        for solver in ('mva', 'nc', 'fld', 'mam'):
+            with self.assertRaises(ValueError):
+                validate_solver_compatibility('pnml', solver)
+
+
 def run_tests():
     """Run all tests."""
     # Create test suite
@@ -461,6 +538,7 @@ def run_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestAnalysisSolverCompatibility))
     suite.addTests(loader.loadTestsFromTestCase(TestAnalysisParamValidation))
     suite.addTests(loader.loadTestsFromTestCase(TestNewParserArguments))
+    suite.addTests(loader.loadTestsFromTestCase(TestPnmlInputFormat))
 
     # Run tests
     runner = unittest.TextTestRunner(verbosity=2)

@@ -22,7 +22,9 @@ import java.util.function.ToDoubleFunction;
  * extensions of the placement partial order induced by H. Writing D for that
  * set of orderings and Phi_m for the balanced-fairness balance of station m,
  *   G_C = sum_{c in D} sum_{k=0..ell} Phi_1(c_{1..k}) Phi_2(c_{ell..k+1}),
- * with Phi_m(q) = prod_p 1/mu_m(supp(q_{1..p})) (OI: depends only on support).
+ * with Phi_m(q) = prod_p 1/mu_m(n(q_{1..p})), n(.) the per-class COUNT vector of
+ * the prefix (OI property P1 makes mu permutation-invariant, i.e. a function of the
+ * counts -- NOT of the support alone, which differs once a class holds two jobs).
  *
  * <p>Auto-normalized IS (notebook generator IS_3): orderings c are drawn from D
  * by placing, at each step, a uniformly random placement-order-minimal present
@@ -54,7 +56,8 @@ public final class Pfqn_pas_is {
      * @param N        (1 x R) closed population vector (macrostate).
      * @param mu       list of exactly two OI rank-rate handles; mu.get(m)(n)
      *                 returns the total service rate of station m for the
-     *                 per-class support/count vector n (depends only on supp).
+     *                 per-class count vector n (permutation-invariant, but not
+     *                 in general a function of supp(n) alone).
      * @param H        (R x R) placement-order DAG; H[i][j] != 0 iff i precedes j.
      *                 Null/all-zero => pure OI (every ordering feasible).
      * @param nsamples number of IS samples.
@@ -63,6 +66,22 @@ public final class Pfqn_pas_is {
      */
     public static Result pfqn_pas_is(int[] N, List<ToDoubleFunction<int[]>> mu, int[][] H,
                                     long nsamples, long seed, boolean verbose) {
+        return pfqn_pas_is(N, mu, H, nsamples, seed, verbose, true);
+    }
+
+    /**
+     * As {@link #pfqn_pas_is(int[], List, int[][], long, long, boolean)}, with
+     * the queue-length coefficients made optional.
+     *
+     * @param wantQlen estimate the per-class queue lengths as well as the
+     *                 constant. False estimates ONLY G: the xi = n_{1,r}
+     *                 coefficients are not accumulated and Q comes back zero.
+     *                 The ordering is drawn from the same stream either way, so
+     *                 G is unchanged to the last bit -- this is for the callers
+     *                 that want G(N - e_r) and read nothing else from it.
+     */
+    public static Result pfqn_pas_is(int[] N, List<ToDoubleFunction<int[]>> mu, int[][] H,
+                                    long nsamples, long seed, boolean verbose, boolean wantQlen) {
         if (mu == null || mu.size() != 2) {
             throw new RuntimeException("pfqn_pas_is models a two-station pass-and-swap tandem: mu must have exactly two rate functions.");
         }
@@ -80,7 +99,7 @@ public final class Pfqn_pas_is {
         // Placement-order logic isolated in Pas_placement.
         int[][] P = Pas_placement.closure(H);
 
-        int nCoef = R + 1;                          // xi = [1, n_{1,1}, ..., n_{1,R}]
+        int nCoef = wantQlen ? R + 1 : 1;           // xi = [1, n_{1,1}, ..., n_{1,R}]
         double[] Q0 = new double[R];
         double[][] Q = new double[2][R];
         if (ell == 0) {
@@ -94,7 +113,7 @@ public final class Pfqn_pas_is {
         double[] accum = new double[nCoef];
         int[] x = new int[R];
         int[] c = new int[ell];
-        int[] supp = new int[R];
+        int[] occ2 = new int[R];
         double[] Phi1 = new double[ell + 1];
         double[] Phi2cut = new double[ell + 1];
         int[][] cnt1 = new int[ell + 1][R];
@@ -119,32 +138,33 @@ public final class Pfqn_pas_is {
 
             // ---- prefix balance Phi_1 and class counts up to each cut ----------
             for (int r = 0; r < R; r++) {
-                supp[r] = 0;
                 cnt1[0][r] = 0;
             }
             Phi1[0] = 1.0;
             double phi = 1.0;
             for (int k = 1; k <= ell; k++) {
                 int cls = c[k - 1];
-                supp[cls] = 1;
-                phi /= mu1.applyAsDouble(supp);
-                Phi1[k] = phi;
                 for (int r = 0; r < R; r++) {
                     cnt1[k][r] = cnt1[k - 1][r];
                 }
                 cnt1[k][cls]++;
+                // the rank rate is evaluated at the prefix COUNT vector, not at its
+                // support: OI property P1 makes mu permutation-invariant, i.e. a
+                // function of the counts (an INF station has mu(n)=sum_r n_r sigma_r)
+                phi /= mu1.applyAsDouble(cnt1[k]);
+                Phi1[k] = phi;
             }
 
             // see _kb/03-api-layer.md for rationale
             for (int r = 0; r < R; r++) {
-                supp[r] = 0;
+                occ2[r] = 0;
             }
             phi = 1.0;
             Phi2cut[ell] = 1.0;   // placeholder; overwritten below for indices 1..ell
             for (int k = ell; k >= 1; k--) {
                 int cls = c[k - 1];
-                supp[cls] = 1;
-                phi /= mu2.applyAsDouble(supp);
+                occ2[cls]++;
+                phi /= mu2.applyAsDouble(occ2);
                 Phi2cut[k] = phi;
             }
 
@@ -153,7 +173,7 @@ public final class Pfqn_pas_is {
                 double phi2 = (k >= ell) ? 1.0 : Phi2cut[k + 1];
                 double w = Phi1[k] * phi2;
                 accum[0] += w / p_c;
-                if (k > 0) {
+                if (wantQlen && k > 0) {
                     for (int r = 0; r < R; r++) {
                         if (cnt1[k][r] != 0) {
                             accum[1 + r] += (w * cnt1[k][r]) / p_c;
@@ -169,14 +189,16 @@ public final class Pfqn_pas_is {
 
         double G = accum[0] / nsamples;
         double lG = (G > 0) ? Math.log(G) : Double.NEGATIVE_INFINITY;
-        if (G > 0) {
-            for (int r = 0; r < R; r++) {
-                Q0[r] = (accum[1 + r] / nsamples) / G;
+        if (wantQlen) {
+            if (G > 0) {
+                for (int r = 0; r < R; r++) {
+                    Q0[r] = (accum[1 + r] / nsamples) / G;
+                }
             }
-        }
-        for (int r = 0; r < R; r++) {
-            Q[0][r] = Q0[r];
-            Q[1][r] = N[r] - Q0[r];
+            for (int r = 0; r < R; r++) {
+                Q[0][r] = Q0[r];
+                Q[1][r] = N[r] - Q0[r];
+            }
         }
         return new Result(G, lG, Q);
     }

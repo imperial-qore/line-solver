@@ -8,13 +8,15 @@ package jline.examples.java.basic;
 import jline.lang.Network;
 import jline.solvers.wrappers.jmt.JMT;
 import jline.solvers.mva.MVA;
+import jline.solvers.ldes.LDES;
+import jline.solvers.mam.MAM;
 import java.util.Scanner;
 
 /**
- * Fork-join network examples mirroring the Kotlin notebooks in forkJoin.
+ * Fork-join network examples mirroring the example notebooks in forkJoin.
  * <p>
- * This class contains Java implementations that mirror the Kotlin notebook examples
- * found in jar/src/main/kotlin/jline/examples/kotlin/basic/forkJoin/. Each method 
+ * This class contains Java implementations that mirror the example notebooks
+ * found in jar/src/main/java/jline/examples/java/basic/forkJoin/. Each method
  * demonstrates a specific fork-join concept using models from the basic package.
  * <p>
  * The examples cover:
@@ -144,25 +146,29 @@ public class ForkJoinExamples {
      */
     public static void fj_basic_open() throws Exception {
         Network model = ForkJoinModel.fj_basic_open();
-        
-        // Solve with multiple solvers exactly as in the notebook
-        JMT solverJMT = new JMT(model, "seed", 23000, "verbose", false, "keep", false);
-        MVA solverMVA = new MVA(model);
-        
-        Object[] solvers = {solverJMT, solverMVA};
-        
-        for (Object solverObj : solvers) {
-            try {
-                if (solverObj instanceof JMT) {
-                    JMT solver = (JMT) solverObj;
-                    solver.getAvgTable().print();
-                } else if (solverObj instanceof MVA) {
-                    MVA solver = (MVA) solverObj;
-                    solver.getAvgTable().print();
-                }
-            } catch (Exception e) {
-                System.out.println("Error with solver: " + e.getMessage());
-            }
+
+        // The solvers the reference runs, in its order. MAM is pinned to the
+        // source-decomposition MMAP analyzer: the default analyzer answers a
+        // different question on a forked open network.
+        try {
+            new JMT(model, "seed", 23000).getAvgTable().print();
+        } catch (Exception e) {
+            System.out.println("JMT failed: " + e.getMessage());
+        }
+        try {
+            new MVA(model).getAvgTable().print();
+        } catch (Exception e) {
+            System.out.println("MVA failed: " + e.getMessage());
+        }
+        try {
+            new LDES(model, "seed", 23000).getAvgTable().print();
+        } catch (Exception e) {
+            System.out.println("LDES failed: " + e.getMessage());
+        }
+        try {
+            new MAM(model, "method", "dec.source.mmap").getAvgTable().print();
+        } catch (Exception e) {
+            System.out.println("MAM failed: " + e.getMessage());
         }
         pauseForUser();
     }

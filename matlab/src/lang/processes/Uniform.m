@@ -71,9 +71,9 @@ classdef Uniform < ContinuousDistribution
             if t < minVal
                 Ft = 0;
             elseif t > maxVal
-                Ft = 0;
+                Ft = 1;
             else
-                Ft = 1/(maxVal-minVal);
+                Ft = (t - minVal)/(maxVal - minVal);
             end
         end
         

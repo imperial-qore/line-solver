@@ -22,6 +22,7 @@ classdef SolverLN < EnsembleSolver
         nlayers; % number of model layers
         lqn; % lqn data structure
         hasconverged; % true if last iteration converged, false otherwise
+        momentPassDone; % method='moment3': true once the moment-based entry-law pass has run
         averagingstart; % iteration at which result averaging started
         idxhash; % ensemble model associated to host or task
         servtmatrix; % auxiliary matrix to determine entry servt
@@ -64,6 +65,7 @@ classdef SolverLN < EnsembleSolver
         util_prev_host;     % Previous processor utilizations (for delta computation)
         util_prev_task;     % Previous task utilizations (for delta computation)
         pyMode;             % Flag: delegate to native python SolverLN (lang='python')
+        cppMode;            % Flag: delegate to the C++ line-cli layered solver (lang='cpp')
         % Phase-2 support properties
         hasPhase2;          % Flag: model has phase-2 activities
         servt_ph1;          % Phase-1 service time per activity (nidx x 1)
@@ -71,6 +73,16 @@ classdef SolverLN < EnsembleSolver
         util_ph1;           % Phase-1 utilization per entry
         util_ph2;           % Phase-2 utilization per entry
         prOvertake;         % Overtaking probability per entry (nentries x 1)
+        % the PH encodings ('srvn.ph', 'flat.ph'): per-entry Workflow objects,
+        % their composed laws and the layer maps that split a per-caller layer
+        % result back over the entries, activities and calls -- see buildLayersPH
+        ph;
+        % The method the layers were actually BUILT for: 'srvn.ph', 'srvn.cs',
+        % 'flat.cs', 'flat.ph' or 'moment3'. Resolved once in buildLayers,
+        % because the alias 'srvn' may fall back; every dispatch reads this and
+        % not options.method, so a reconstruction can never disagree with the
+        % layers it is reading.
+        lnmethod;
     end
 
     properties %(Hidden) % performance metrics and related processes
@@ -104,6 +116,8 @@ classdef SolverLN < EnsembleSolver
         route_prob_updmap; % [modelidx, actidxfrom, actidxto, nodefrom, nodeto, classfrom, classto]
         unique_route_prob_updmap; % auxiliary cache of unique route_prob_updmap rows
         solverFactory; % function handle to create layer solvers
+        layerHasRegion; % logical per ensemble index, true if the layer carries an admission constraint
+        layerChains; % cell per ensemble index, cached sn.chains of a constrained layer
     end
 
     methods
@@ -111,29 +125,176 @@ classdef SolverLN < EnsembleSolver
             % SELF = SOLVERLN(MODEL,SOLVERFACTORY,VARARGIN)
             self@EnsembleSolver(lqnmodel, mfilename);
 
+            % Solver console: constructing the ensemble compiles one auxiliary
+            % network per layer. Each keeps its headline; the stage-by-stage
+            % detail of a layer would bury the layered narration itself.
+            consoleQuiet = LineConsole.pushQuiet(); %#ok<NASGU>
+
             % Collect all trailing args (solverFactory may itself be the lang
             % string or an options struct) to detect lang='python'/'java'.
             allArgs = varargin;
             if nargin > 1
                 allArgs = [{solverFactory}, varargin];
             end
-            wantsPython = any(cellfun(@(s) (ischar(s) && strcmpi(s,'python')) || ...
-                (isstruct(s) && isfield(s,'lang') && strcmpi(s.lang,'python')), allArgs));
+            % THE LANGUAGE IS NOT ONLY AN ARGUMENT. options.lang is what every
+            % other solver dispatches on -- runAnalyzerPreamble for the eight
+            % Network solvers, an explicit switch in AUTO and JMT, and
+            % self.options.lang at solve time in ENV -- and SolverOptions fills
+            % it from the LINEDefaultLang global, itself seeded from
+            % LINE_DEFAULT_LANG. A caller that selects the engine GLOBALLY, which
+            % is how the cross-language parity rows do it, therefore puts NOTHING
+            % in allArgs, and reading the arguments alone left this solver in
+            % MATLAB mode on exactly those runs.
+            %
+            % What that cost was not an error but a silent downgrade: the
+            % ensemble delegation below was skipped and the MATLAB fixed point
+            % ran instead, dispatching each layer to the foreign engine on its
+            % own. Under lang='cpp' that is one line-cli PROCESS per layer per
+            % iteration -- several hundred on a small LQN, each paying the
+            % binary's multi-second static initialization -- and the engine's own
+            % LAYERED solver was never exercised at all, so the row measured a
+            % different thing than its name says.
+            %
+            % An explicit argument still WINS over the ambient setting, and the
+            % last one given wins, so SolverLN(model,f,'matlab') under a global
+            % 'cpp' stays MATLAB.
+            global LINEDefaultLang
+            lang = '';
+            for argIdx = 1:numel(allArgs)
+                thisArg = allArgs{argIdx};
+                if ischar(thisArg) && any(strcmpi(thisArg, {'matlab','java','python','cpp'}))
+                    lang = lower(thisArg);
+                elseif isstruct(thisArg) && isfield(thisArg,'lang') && ~isempty(thisArg.lang)
+                    lang = lower(char(thisArg.lang));
+                end
+            end
+            if isempty(lang)
+                if isempty(LINEDefaultLang)
+                    LINEDefaultLang = getenv('LINE_DEFAULT_LANG');
+                end
+                lang = lower(char(LINEDefaultLang));
+            end
+            wantsPython = strcmpi(lang, 'python');
+            wantsCpp = strcmpi(lang, 'cpp');
 
-            if any(cellfun(@(s) ischar(s) && strcmpi(s,'java'), allArgs))
-                self.obj = JLINE.SolverLN(JLINE.from_line_layered_network(lqnmodel));
+            if strcmpi(lang, 'java')
+                % THE OPTIONS ARRIVE IN THE THIRD SLOT and THE LAYER FACTORY IN
+                % THE SECOND, on the documented form
+                % SolverLN(model, solverFactory, options); this branch read
+                % NEITHER. It built the JAR solver from the model alone, so the
+                % JAR fell back to its DefaultSolverFactory -- SolverMVA at
+                % every layer -- and LN(model, @(l)NC(l,...)) under lang='java'
+                % answered with MVA layers. On lcq_threehosts that is the cache
+                % hit probability 0.5 against the exact 0.48331, because the
+                % cache layer is what the substituted solver was substituted in.
+                % The python and cpp branches below already resolve both; this
+                % is the same resolution.
+                % ALL FOUR CALL SHAPES, as the native branch below resolves
+                % them: on SolverLN(model,'verbose',false) the option NAME sits
+                % in solverFactory and only its VALUE in varargin, so reading
+                % varargin alone hands parseOptions the list {false} and
+                % `Solver.m @ line 299: Invalid parameter` kills the row.
+                if nargin == 1
+                    self.setOptions(SolverLN.defaultOptions);
+                elseif isstruct(solverFactory)
+                    self.setOptions(solverFactory);
+                elseif nargin > 2
+                    if ischar(solverFactory)
+                        inputvar = [{solverFactory}, varargin];
+                    else
+                        inputvar = varargin;
+                    end
+                    self.setOptions(Solver.parseOptions(inputvar, SolverLN.defaultOptions));
+                else
+                    self.setOptions(SolverLN.defaultOptions);
+                end
+                self.options.lang = 'java';
+                if isa(solverFactory,'function_handle')
+                    % Kept unconstructed, exactly as the python and cpp
+                    % branches do: it is read only to resolve which layer
+                    % engine the JAR SolverLN must be given.
+                    self.solverFactory = solverFactory;
+                end
+                self.obj = JLINE.SolverLN(JLINE.from_line_layered_network(lqnmodel), ...
+                    self.options, JLINE.lnLayerSolverType(self));
                 self.obj.options.verbose = jline.VerboseLevel.SILENT;
                 % see _kb/06-solver-catalog.md (LN section) for rationale
                 self.lqn = lqnmodel.getStruct();
             elseif wantsPython
                 % see _kb/06-solver-catalog.md (LN section) for rationale
                 self.pyMode = true;
-                if nargin > 1 && isstruct(solverFactory)
+                % THE OPTIONS ARRIVE IN THE THIRD SLOT on the documented form
+                % SolverLN(model, solverFactory, options), and reading only the
+                % SECOND one discarded them whole: `options.config.layering`,
+                % `options.method` and the convergence knobs never reached the
+                % bridge at all, so widening PYLINE.acceptedKwargs alone was
+                % INERT. Resolve them the way the native branch below does.
+                % ALL FOUR CALL SHAPES, as the native branch below resolves
+                % them: on SolverLN(model,'verbose',false) the option NAME sits
+                % in solverFactory and only its VALUE in varargin, so reading
+                % varargin alone hands parseOptions the list {false} and
+                % `Solver.m @ line 299: Invalid parameter` kills the row.
+                if nargin == 1
+                    self.setOptions(SolverLN.defaultOptions);
+                elseif isstruct(solverFactory)
                     self.setOptions(solverFactory);
+                elseif nargin > 2
+                    if ischar(solverFactory)
+                        inputvar = [{solverFactory}, varargin];
+                    else
+                        inputvar = varargin;
+                    end
+                    self.setOptions(Solver.parseOptions(inputvar, SolverLN.defaultOptions));
                 else
                     self.setOptions(SolverLN.defaultOptions);
                 end
+                if isa(solverFactory,'function_handle')
+                    % Kept unconstructed, exactly as the cpp branch below does:
+                    % it is read only to resolve which layer engine the native
+                    % SolverLN must be given. Dropping it made
+                    % LN(model,@(l)NC(l,...)) answer with the native default
+                    % (AMVA) layers.
+                    self.solverFactory = solverFactory;
+                end
                 self.options.lang = 'python';
+                self.lqn = lqnmodel.getStruct();
+            elseif wantsCpp
+                % ONE subprocess solves the whole ensemble, so no layers are
+                % built here: letting the MATLAB fixed point run and dispatching
+                % each layer separately would spawn one process per layer per
+                % iteration. see _kb/06-solver-catalog.md (LN section)
+                self.cppMode = true;
+                % THE OPTIONS ARRIVE IN THE THIRD SLOT on the documented form
+                % SolverLN(model, solverFactory, options), exactly as in the
+                % python branch above, and reading only the SECOND one replaced
+                % the whole struct with the defaults: config.layering never
+                % reached CPPLINE.lnKnobs, so lang='cpp' silently answered the
+                % srvn model whatever was asked for.
+                % ALL FOUR CALL SHAPES, as the native branch below resolves
+                % them: on SolverLN(model,'verbose',false) the option NAME sits
+                % in solverFactory and only its VALUE in varargin, so reading
+                % varargin alone hands parseOptions the list {false} and
+                % `Solver.m @ line 299: Invalid parameter` kills the row.
+                if nargin == 1
+                    self.setOptions(SolverLN.defaultOptions);
+                elseif isstruct(solverFactory)
+                    self.setOptions(solverFactory);
+                elseif nargin > 2
+                    if ischar(solverFactory)
+                        inputvar = [{solverFactory}, varargin];
+                    else
+                        inputvar = varargin;
+                    end
+                    self.setOptions(Solver.parseOptions(inputvar, SolverLN.defaultOptions));
+                else
+                    self.setOptions(SolverLN.defaultOptions);
+                end
+                self.options.lang = 'cpp';
+                if isa(solverFactory,'function_handle')
+                    % Kept unconstructed: it is read only to resolve which layer
+                    % engine the C++ --layer-solver must name.
+                    self.solverFactory = solverFactory;
+                end
                 self.lqn = lqnmodel.getStruct();
             else
                 % Default solver factory: Use JMT for open networks, MVA for closed networks
@@ -173,20 +334,22 @@ classdef SolverLN < EnsembleSolver
                     self.hasPhase2 = false;
                 end
 
+                % stored before construct(): buildLayers gates routed call groups
+                % on the layer solver, so the handle has to be readable by then
+                self.solverFactory = solverFactory;
                 self.construct();
                 line_debug('LN: solver factory=%s, constructing layers', func2str(solverFactory));
                 for e=1:self.getNumberOfModels
                     % see _kb/06-solver-catalog.md (LN section) for rationale
-                    if numel(find(self.lqn.isfunction == 1)) && ~isempty(self.ensemble{e}.stations{2}.setupTime)
-                        layerFactory = @(m) SolverMAM(m,'verbose',false,'method','dec.poisson');
-                    else
-                        layerFactory = solverFactory;
-                    end
+                    % A setup no longer forces the MAM decomposition on the layer:
+                    % the cold start is charged to the entry by lqn_setup_charge,
+                    % not wired into the station, so the layer is an ordinary one
+                    % and the user's own layer solver serves it.
+                    layerFactory = solverFactory;
                     layerSolver = layerFactory(self.ensemble{e});
                     self.assertLayerSolverSupportsModel(layerSolver, self.ensemble{e}, e);
                     self.setSolver(layerSolver,e);
                 end
-                self.solverFactory = solverFactory; % Store for later use
             end
         end
 
@@ -223,8 +386,12 @@ classdef SolverLN < EnsembleSolver
             end
 
             % initialize internal data structures
-            self.entrycdfrespt = cell(length(self.lqn.nentries),1);
+            % one cell per ENTRY: nentries is a scalar, so length() of it was 1
+            % and the table only reached its full size because the moment3 pass
+            % grew it on assignment
+            self.entrycdfrespt = cell(max(1,self.lqn.nentries),1);
             self.hasconverged = false;
+            self.momentPassDone = false;
 
             % initialize svc and think times
             self.servtproc = self.lqn.hostdem;
@@ -259,6 +426,13 @@ classdef SolverLN < EnsembleSolver
 
         function init(self) % operations before starting to iterate
             % INIT() % OPERATIONS BEFORE STARTING TO ITERATE
+            % The moment3 pass is terminal WITHIN ONE SOLVE, so the flag is
+            % scoped to one iterate(). Left standing across solves, the terminal
+            % test in converged() fires at it=0 on the NEXT one, the loop body
+            % never runs, and every metric comes back ZERO -- which a caller
+            % meets simply by asking for the table twice, or by calling
+            % getCdfRespT and then the table again. See BUGS.md BUG-97.
+            self.momentPassDone = false;
             self.unique_route_prob_updmap = unique(self.route_prob_updmap(:,1))';
             self.tput = zeros(self.lqn.nidx,1);
             self.tputproc = cell(self.lqn.nidx,1);
@@ -382,9 +556,9 @@ classdef SolverLN < EnsembleSolver
             line_debug('LN analyze: iteration %d, layer %d (%s)', it, e, class(self.solvers{e}));
             result = struct();
             %jresult = struct();
-            if e==1 && self.solvers{e}.options.verbose
-                line_printf('\n');
-            end
+            % A layer solver is SILENT (see setSolver), so it prints no banner
+            % of its own and there is nothing left here to separate: the blank
+            % line that used to precede layer 1 is gone with the banner.
 
             % Protection for unstable queues during LN iterations
             % If a solver fails (e.g., due to queue instability with open arrivals),
@@ -393,7 +567,9 @@ classdef SolverLN < EnsembleSolver
                 [result.QN, result.UN, result.RN, result.TN, result.AN, result.WN] = self.solvers{e}.getAvg();
             catch ME
                 if it > 1 && ~isempty(self.results) && size(self.results, 1) >= (it-1) && size(self.results, 2) >= e
-                    if self.solvers{e}.options.verbose
+                    % LN'S OWN verbosity decides, not the layer's: the layer is
+                    % always SILENT now, and gating on it swallowed the warning
+                    if self.options.verbose ~= VerboseLevel.SILENT
                         warning('LINE:SolverLN:Instability', ...
                             'Layer %d at iteration %d encountered instability (possibly due to high service demand with open arrivals). Using previous iteration values and continuing.', ...
                             e, it);
@@ -428,6 +604,22 @@ classdef SolverLN < EnsembleSolver
                         Qch(:,c) = sum(QNe(:,sne.chains(c,:)>0),2);
                     end
                     self.solvers{e}.options.init_sol = Qch;
+                end
+            end
+            % A fluid layer integrates its ODEs from the cold placement built
+            % by SOLVER_FLUID_INITSOL, so without this every outer iteration
+            % re-runs the whole transient. Carry the terminal state forward:
+            % SOLVER_FLUID_ANALYZER rebuilds it when the layer's phase
+            % expansion moved under it.
+            if strcmp(self.solvers{e}.name, 'SolverFLD') ...
+                    && (~isfield(self.options.config, 'fluid_warmstart') ...
+                    || self.options.config.fluid_warmstart)
+                lastSol = self.solvers{e}.result;
+                if isstruct(lastSol) && isfield(lastSol, 'solverSpecific') ...
+                        && isstruct(lastSol.solverSpecific) ...
+                        && isfield(lastSol.solverSpecific, 'odeStateVec') ...
+                        && ~isempty(lastSol.solverSpecific.odeStateVec)
+                    self.solvers{e}.options.init_sol = lastSol.solverSpecific.odeStateVec(:);
                 end
             end
             runtime = toc(T0);
@@ -469,8 +661,10 @@ classdef SolverLN < EnsembleSolver
                 switch self.solvers{e}.name
                     case {'SolverMVA', 'SolverNC'} %leaner than refreshProcesses, no need to refresh phases
                         % see _kb/06-solver-catalog.md (LN section) for rationale
-                        switch self.options.method
-                            case 'moment3'
+                        switch self.lnmethod
+                            case {'moment3','srvn.ph','flat.ph'}
+                                % both carry a phase-type service law, whose
+                                % phases a rate-only refresh would drop
                                 self.ensemble{e}.refreshProcesses();
                             otherwise
                                 self.ensemble{e}.refreshRates();
@@ -585,19 +779,47 @@ classdef SolverLN < EnsembleSolver
 
         function [cdfRespT] = getCdfRespT(self)
             if isempty(self.entrycdfrespt{1})
+                % The distribution pass reads the routing encoding of the
+                % activity graph, which srvn.ph layers do not carry: re-running
+                % getAvg over them would reconstruct the wrong topology rather
+                % than a coarser answer. Refuse by name.
+                if self.isPHEncoding()
+                    line_error(mfilename, sprintf(['getCdfRespT needs the routing encoding of ' ...
+                        'the activity graph, which method=''%s'' does not build. Rebuild the ' ...
+                        'solver with method=''srvn.cs'' or method=''moment3''.'], self.lnmethod));
+                end
                 % save user-specified method to temporary variable
                 curMethod = self.getOptions.method;
-                % run with moment 3
+                curLnMethod = self.lnmethod;
+                % Run with moment 3. BOTH the option and the RESOLVED method have
+                % to move: updateMetrics dispatches on self.lnmethod, which
+                % buildLayers resolved once, so setting options.method alone left
+                % the mean-based update in place and returned an EMPTY table. The
+                % routing layers already built serve moment3 unchanged, so only
+                % the update pass changes.
                 self.options.method = 'moment3';
+                self.lnmethod = 'moment3';
                 self.getAvg();
                 % restore user-specified method
                 self.options.method = curMethod;
+                self.lnmethod = curLnMethod;
             end
             cdfRespT = self.entrycdfrespt;
         end
 
-        function [AvgTable,QT,UT,RT,WT,AT,TT] = getAvgTable(self)
+        function varargout = getAvgTable(self, varargin)
             % [AVGTABLE,QT,UT,RT,WT,TT] = GETAVGTABLE(USELQNSNAMING)
+            % The result recorder captures the returned table together with the solver
+            % that produced it -- see LineResultRecorder. Recording an ensemble here
+            % rather than in the member solver it delegates to is what keeps an
+            % AUTO/LN/ENV/UQ answer from being filed under the member's name.
+            [scope, scopeGuard] = LineResultRecorder.enter(); %#ok<ASGLU>
+            [varargout{1:max(nargout,1)}] = self.getAvgTable_impl(varargin{:});
+            LineResultRecorder.capture(scope, self, 'avg', varargout{1});
+        end
+
+        function [AvgTable,QT,UT,RT,WT,AT,TT] = getAvgTable_impl(self)
+            % GETAVGTABLE_IMPL Implementation of GETAVGTABLE; see the wrapper above.
             if (GlobalConstants.DummyMode)
                 [AvgTable, QT, UT, RT, TT, WT] = deal([]);
                 return
@@ -624,7 +846,14 @@ classdef SolverLN < EnsembleSolver
                 avgTable = self.obj.getEnsembleAvg();
                 [QN,UN,RN,WN,AN,TN] = JLINE.arrayListToResults(avgTable);
             elseif ~isempty(self.pyMode) && self.pyMode
-                [QN,UN,RN,TN,AN,WN] = PYLINE.getEnsembleAvg(self.model, self.options, numel(self.lqn.names));
+                % the layer solver this ensemble was built with decides the
+                % bridge's layer-solver class; see PYLINE.SolverLN. Under
+                % pyMode no layer is constructed, so the class is read off the
+                % factory the same way CPPLINE.lnLayerSolver reads it.
+                layerSolverName = PYLINE.lnLayerSolverName(self);
+                [QN,UN,RN,TN,AN,WN] = PYLINE.getEnsembleAvg(self.model, self.options, self.lqn.names, layerSolverName);
+            elseif ~isempty(self.cppMode) && self.cppMode
+                [QN,UN,RN,TN,AN,WN] = CPPLINE.getEnsembleAvg(self, self.options);
             else
                 [QN,UN,RN,TN,AN,WN] = getAvg(self);
             end
@@ -698,6 +927,7 @@ classdef SolverLN < EnsembleSolver
 
     methods
         [QN,UN,RN,TN,AN,WN] = getEnsembleAvg(self);
+        [QN,UN,RN,TN,AN,WN] = getEnsembleAvgPH(self);
         [QNlqn_t, UNlqn_t, TNlqn_t] = getTranAvgCoupled(self, Qt, Ut, Tt);
 
         function [bool, featSupported] = supports(self, model)
@@ -715,15 +945,79 @@ classdef SolverLN < EnsembleSolver
 
     methods (Hidden)
         buildLayers(self, lqn, resptproc, callservtproc);
-        buildLayersRecursive(self, idx, callers, ishostlayer);
+        buildLayersRecursive(self, idxSet, callers, ishostlayer, flat);
+        ok = buildLayersPH(self, mode, flat);  % mode 'probe' answers feasibility only
+        phComposeEntryLaws(self);
         initInterlock(self);
         updateLayers(self, it);
+        updateLayersPH(self, it);
         updatePopulations(self, it);
         updateThinkTimes(self, it);
+        updateThinkTimesPH(self, it);
         updateMetrics(self, it);
+        updateMetricsPH(self, it);
         updateRoutingProbabilities(self, it);
         svcmatrix = getEntryServiceMatrix(self)
         prOt = overtake_prob(self, eidx);  % Phase-2 overtaking probability
+
+        function tf = isPHEncoding(self)
+            % True when the layers carry the COMPOSED phase-type server law
+            % rather than the routing encoding of the activity graph, under
+            % either layering. The encoding, not the layering, decides which
+            % update and reconstruction passes run, so every such dispatch asks
+            % this and not for one method name.
+            tf = any(strcmp(self.lnmethod, {'srvn.ph','flat.ph'}));
+        end
+
+        function [e, sIdx] = layerOf(self, idx)
+            % [E, SIDX] = LAYEROF(IDX) returns the ensemble index of the layer
+            % where the LQN element IDX acts as a server, and the index of its
+            % station within that layer. Under 'flat' layering every server
+            % lives in the same layer, so SIDX is what tells them apart.
+            e = self.idxhash(idx);
+            if isnan(e)
+                sIdx = NaN;
+                return
+            end
+            sIdx = self.stationIdxOf(e, idx);
+        end
+
+        function sIdx = stationIdxOf(self, e, idx)
+            % Station index of the LQN element IDX inside layer E, falling back
+            % to the layer's own server when IDX is not a server there
+            attr = self.ensemble{e}.attribute;
+            sIdx = attr.serverIdx;
+            if isfield(attr,'serverIdxOf') && ~isnan(idx) && idx >= 1 && ...
+                    idx <= length(attr.serverIdxOf) && ~isnan(attr.serverIdxOf(idx))
+                sIdx = attr.serverIdxOf(idx);
+            end
+        end
+
+        function sIdx = stationIdxOfClass(self, e, c)
+            % Station of layer E that class C is served at: the processor of an
+            % activity, the called task of a call, the layer's server otherwise
+            attr = self.ensemble{e}.classes{c}.attribute;
+            elem = NaN;
+            if ~isempty(attr)
+                switch attr(1)
+                    case LayeredNetworkElement.ACTIVITY
+                        elem = self.lqn.parent(self.lqn.parent(attr(2)));
+                    case LayeredNetworkElement.CALL
+                        elem = self.lqn.parent(self.lqn.callpair(attr(2),2));
+                end
+            end
+            sIdx = self.stationIdxOf(e, elem);
+        end
+
+        function rows = serverStationsOf(self, e, ishost)
+            % Station indices of the host (ISHOST true) or task servers of layer E
+            if ishost
+                rows = self.ensemble{e}.attribute.hostStations;
+            else
+                rows = self.ensemble{e}.attribute.taskStations;
+            end
+            rows = rows(:)';
+        end
     end
 
     methods
@@ -954,6 +1248,14 @@ classdef SolverLN < EnsembleSolver
             % model actually carries immfeed. A SolverJMT layer solver on an
             % immfeed-free layer is allowed, and non-JMT factories are never
             % rejected.
+            % A layer carrying an admission constraint needs a Region-capable
+            % solver; the check is by feature set, not by solver name.
+            lsnRegion = layerModel.getStruct();
+            if isfield(lsnRegion,'nregions') && ~isempty(lsnRegion.nregions) && lsnRegion.nregions > 0
+                if ~layerSolver.supports(layerModel)
+                    line_error(mfilename, '%s cannot solve LN layer %d: the layer carries an admission constraint (finite capacity region) that its feature set does not cover. Use a layer solver that declares Region, such as SolverCTMC, SolverLDES or SolverSSA.', class(layerSolver), e);
+                end
+            end
             if isa(layerSolver, 'SolverJMT')
                 lsn = layerModel.getStruct();
                 if isfield(lsn,'immfeed') && ~isempty(lsn.immfeed) && any(lsn.immfeed(:))
@@ -962,11 +1264,116 @@ classdef SolverLN < EnsembleSolver
             end
         end
 
+        function solver = setSolver(self, solver, e)
+            % SOLVER = SETSOLVER(SOLVER, E) registers a layer solver, silenced
+            %
+            % A LAYER SOLVER NEVER NARRATES. The fixed point runs every layer
+            % once per iteration, so a layer left at the caller's verbosity
+            % prints its own banner nlayers*iter_max times and buries the
+            % layered narration that the caller actually asked for. The level
+            % is stamped HERE rather than in the factory because a factory the
+            % user supplied -- SolverLN(model, @(m) SolverNC(m)) -- never sees
+            % the LN options at all, and stamping it in the default factory
+            % alone left exactly that case loud.
+            %
+            % SolverLN's own reporting is unaffected: it reads
+            % self.options.verbose, not the layer's.
+            if nargin < 3
+                solver = setSolver@EnsembleSolver(self, SolverLN.silenced(solver));
+            else
+                solver = setSolver@EnsembleSolver(self, SolverLN.silenced(solver), e);
+            end
+        end
+
+        function reportCompletion(self, runtime)
+            % REPORTCOMPLETION(RUNTIME) writes the closing banner of an LN run
+            %
+            % NetworkSolver.setAvgResults prints this line for every
+            % NetworkSolver, but SolverLN is an EnsembleSolver and never passes
+            % through it, so an LN run used to end on its iteration summary
+            % without ever saying which method had run or how long it took --
+            % the one solver whose table arrived anonymous. SolverENV, the
+            % other ensemble solver, already reported its own; this mirrors it.
+            %
+            % deferPrint, not line_printf: with the console narrating, the
+            % banner is held until after the closing DONE line, exactly as the
+            % NetworkSolver one is.
+            if self.options.verbose == VerboseLevel.SILENT
+                return
+            end
+            % THE RESOLVED LAYERING, not just the token the caller asked for.
+            % 'srvn' and 'default' both resolve at layer-build time to
+            % 'srvn.ph' or 'srvn.cs' depending on what the model needs, and
+            % that choice is what the run actually made -- reporting 'default'
+            % told the reader nothing. Printed 'requested/resolved', the same
+            % shape NetworkSolver uses for 'default/exact' and 'default/nrm'.
+            method = 'default';
+            if isfield(self.options,'method') && ~isempty(self.options.method)
+                method = char(self.options.method);
+            end
+            if ~isempty(self.lnmethod) && ~strcmp(char(self.lnmethod), method)
+                method = sprintf('%s/%s', method, char(self.lnmethod));
+            end
+            lang = 'matlab';
+            if isfield(self.options,'lang') && ~isempty(self.options.lang)
+                lang = char(self.options.lang);
+            end
+            iter = 0;
+            if ~isempty(self.results)
+                iter = size(self.results,1);
+            end
+            LineConsole.deferPrint(['LN analysis [method: %s; type: %s; lang: %s; ' ...
+                'env: %s] completed in %fs. Iterations: %d.\n'], ...
+                method, line_method_type('LN', method), lang, ...
+                version('-release'), runtime, iter);
+        end
+
         function [allMethods] = listValidMethods(self)
-            sn = self.model.getStruct();
             % allMethods = LISTVALIDMETHODS()
-            % List valid methods for this solver
-            allMethods = {'default','moment3'};
+            % List valid methods for this solver.
+            %
+            % The list is the same eight names for every model; which of them can
+            % actually encode THIS model is SUPPORTSMODELMETHOD's question, and
+            % LN_METHOD_REFUSAL is where the rules live. This used to compute SN
+            % and discard it, which read as if the list were being narrowed.
+            allMethods = {'srvn','srvn.ph','srvn.cs','flat','flat.cs','flat.ph','moment3','default'};
+        end
+
+        function [bool, reason] = supportsModelMethod(self, method)
+            % [BOOL, REASON] = SUPPORTSMODELMETHOD(METHOD)
+            % The encoding rules the layer builders enforce at solve time,
+            % stated here so a CALLER can see them before running.
+            %
+            % 'srvn.ph' and 'flat.ph' compose each entry into ONE phase-type law,
+            % and several constructs have nowhere to go in that law: a forwarding
+            % call whose target is not in the caller's activity graph, a routed
+            % call group whose dispatch order the composition folds away, a cache
+            % task, an admission constraint, a queue-dependent rate on a station
+            % the composition replaces. 'flat.ph' additionally squashes every
+            % layer into one network, which per-layer state (a replica, a
+            % powered-down setup thread) cannot survive.
+            %
+            % None of these is a feature name, so none can be a feature-set
+            % delta: they are properties of what the METHOD does to the model.
+            % Left only in BUILDLAYERSPH they were invisible to every gate above
+            % it, and model.help() offered all eight names on every layered
+            % model.
+            % NO SUPER CALL: SolverLN descends from EnsembleSolver, which
+            % descends from Solver, and neither declares supportsModelMethod --
+            % the base gate lives on NetworkSolver, which is a sibling. A model
+            % feature set is a Network notion and a LayeredNetwork does not carry
+            % one, so there is nothing above this to consult.
+            bool = true;
+            reason = '';
+            if ~isempty(self.lqn)
+                % the layering the run would use, since 'flat' rules differ
+                layering = '';
+                if isstruct(self.options) && isfield(self.options,'config') ...
+                        && isstruct(self.options.config) && isfield(self.options.config,'layering')
+                    layering = self.options.config.layering;
+                end
+                [bool, reason] = ln_method_refusal(self.lqn, method, layering);
+            end
         end
     end
 
@@ -981,19 +1388,66 @@ classdef SolverLN < EnsembleSolver
             % LN uses internal algorithms, no external library attribution needed
             libs = {};
         end
+
+        function solver = silenced(solver)
+            % SOLVER = SILENCED(SOLVER) sets a layer solver to SILENT
+            %
+            % Accepts the cell form of setSolver as well as a single solver.
+            if iscell(solver)
+                for k = 1:numel(solver)
+                    solver{k} = SolverLN.silenced(solver{k});
+                end
+                return
+            end
+            if ~isempty(solver) && isprop(solver,'options') && isstruct(solver.options) ...
+                    && isfield(solver.options,'verbose')
+                solver.options.verbose = VerboseLevel.SILENT;
+            end
+        end
     end
 end
 
-function solver = adaptiveSolverFactory(model, parentOptions)
+function solver = adaptiveSolverFactory(model, parentOptions) %#ok<INUSD>
     % ADAPTIVESOLVERFACTORY - Select appropriate solver based on model characteristics
     % Use JMT for models with open classes, MVA for pure closed networks
-    if nargin < 2
-        verbose = false;
-    else
-        verbose = parentOptions.verbose;
+    %
+    % The caller's verbosity is NOT inherited: SolverLN.setSolver silences
+    % every layer solver, this one included, so reading parentOptions.verbose
+    % here only decided what to build and immediately discard.
+    verbose = VerboseLevel.SILENT;
+
+    % A layer carrying an admission constraint needs a Region-capable solver
+    if layerHasRegion(model)
+        solver = regionCapableLayerSolver(model, verbose);
+        return
     end
 
     % Create MVA solver with reduced iter_max for sublayer stability (Python parity)
     solver = SolverMVA(model, 'verbose', verbose);
     solver.options.iter_max = 1000; % Cap sublayer MVA iterations
+end
+
+function tf = layerHasRegion(model)
+    % TF = LAYERHASREGION(MODEL) - true if the layer carries a finite capacity region
+    lsn = model.getStruct();
+    tf = isfield(lsn,'nregions') && ~isempty(lsn.nregions) && lsn.nregions > 0;
+end
+
+function solver = regionCapableLayerSolver(model, verbose)
+    % SOLVER = REGIONCAPABLELAYERSOLVER(MODEL, VERBOSE)
+    %
+    % Picks the first solver whose feature set covers the layer. The order is
+    % by decreasing accuracy: CTMC is exact but state-space bound, LDES and SSA
+    % simulate. Selection is by SolverX.supports so it self-corrects if another
+    % solver later declares Region.
+    ctors = {@SolverCTMC, @SolverLDES, @SolverSSA};
+    checks = {@SolverCTMC.supports, @SolverLDES.supports, @SolverSSA.supports};
+    names = {'SolverCTMC','SolverLDES','SolverSSA'};
+    for k = 1:length(ctors)
+        if checks{k}(model)
+            solver = ctors{k}(model, 'verbose', verbose);
+            return
+        end
+    end
+    line_error(mfilename,'LN layer %s carries an admission constraint but none of %s supports it. Supply a layer solver factory explicitly.', model.getName(), strjoin(names,', '));
 end

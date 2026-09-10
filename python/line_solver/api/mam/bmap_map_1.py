@@ -62,12 +62,11 @@ def solver_mam_bmap_map_1(D: List[np.ndarray], S0: np.ndarray,
     - S0: transitions without service completions
     - S1: transitions triggering service completions
 
-    The M/G/1-type structure for BMAP/MAP/1 is:
-    ```
+    The M/G/1-type structure for BMAP/MAP/1 is::
+
         A0 = I_ma otimes S1           (service completion, level -1)
         A1 = D0 otimes I_ms + I_ma otimes S0  (phase changes, level 0)
         A_{k+1} = D_k otimes I_ms     (batch arrival size k, level +k)
-    ```
 
     Args:
         D: BMAP matrices as list [D0, D1, D2, ..., DK]

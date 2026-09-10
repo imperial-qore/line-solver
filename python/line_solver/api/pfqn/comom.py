@@ -495,6 +495,7 @@ def pfqn_procomom(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
     Returns:
         Pr: Marginal probability matrix (M x sumN+1).
             Pr[k, j] = P(n_k = j) for station k, queue length j.
+
         Q: Mean queue length vector (M,).
 
     References:

@@ -36,9 +36,46 @@ from ....lang.sync import refresh_sync, refresh_global_sync
 from ...state.after_event import after_event, after_event_init
 from ...state.after_fj_event import after_fj_event
 from ...state.after_global_event import after_global_event
-from ...state.marginal import toMarginal, fromMarginal
+from ...state.marginal import toMarginal, fromMarginal, _ext_class_disabled
 from ...state.ctmc_ssg import _is_bas_station
+
+# Entries the per-run after_event memo may hold before it stops growing. The key
+# is one NODE state, not a global one, so a few thousand covers most models;
+# the cap only bounds the pathological case.
+_AE_MEMO_MAX = 50000
 from ...sn import sn_region_members
+
+
+def _gd_factor_now(sn, cur_state):
+    """Evaluate the global (Whittle) rate scaling phi(n) on the CURRENT state.
+
+    Returns the (nstations, nclasses) matrix of scalings. SolverCTMC tabulates
+    phi once per state of the enumerated space; a simulator has one state at a
+    time, so the same factorization applies with the table collapsed to a single
+    row. Within a state phi is a constant multiplying every station service rate.
+    """
+    M = int(sn.nstations)
+    K = int(sn.nclasses)
+    npop = np.zeros((M, K))
+    for ind in range(int(sn.nnodes)):
+        if not sn.isstateful[ind] or not sn.isstation[ind]:
+            continue
+        isf = int(sn.nodeToStateful[ind])
+        ist = int(sn.nodeToStation[ind])
+        nir = np.asarray(toMarginal(sn, ind, np.atleast_2d(cur_state[isf]))[1],
+                         dtype=float).ravel()[:K]
+        npop[ist, :len(nir)] = nir
+    v = np.asarray(sn.gdscaling(npop), dtype=float)
+    if v.size == 1:
+        out = np.full((M, K), float(v.ravel()[0]))
+    elif v.shape == (M,) or v.shape == (M, 1):
+        out = np.tile(v.reshape(M, 1), (1, K))
+    else:
+        out = v.reshape(M, K)
+    if not np.all(np.isfinite(out)) or np.any(out < 0):
+        raise ValueError("The global dependence handle returned a non-finite or "
+                         "negative scaling.")
+    return out
 
 
 def _sched_name(sn, ist):
@@ -184,6 +221,33 @@ def solver_ssa_serial(sn, options, seed=None):
     # reflects the same sn the Gillespie loop passes to after_event.
     aectx = after_event_init(sn)
 
+    # The enabled-transition enumeration is a PURE function of (node, node
+    # state, event, class): after_event reads sn and its arguments, never
+    # sn.state, and this loop never writes sn.state back. A sample path revisits
+    # the same node state constantly -- every step re-enumerates every sync
+    # action -- so the answer is memoised for the run, the same reaction cache
+    # the NRM engine keeps (nrm.py react_cache, JAR Solver_ssa_nrm_space).
+    # On the delayed-hit retrieval fixture of test_ssa_nrm_cache that is a 98%
+    # hit rate and an 8x speedup with a bit-identical sample path.
+    # Callers only READ the stored arrays -- they copy through
+    # atleast_2d/ravel/astype before use -- so every hit shares one tuple.
+    # The cap bounds memory on models whose per-node state space is large; past
+    # it the engine simply stops memoising and stays correct.
+    _ae_memo = {}
+
+    def _after_event_cached(ind, inspace, event, job_class, no_promote=False):
+        row = np.ascontiguousarray(inspace, dtype=float)
+        key = (ind, event, int(job_class), bool(no_promote), row.shape, row.tobytes())
+        out = _ae_memo.get(key)
+        if out is None:
+            out = after_event(sn, ind, inspace, event, job_class, True,
+                              ctx=aectx, no_promote=no_promote)
+            if len(_ae_memo) < _AE_MEMO_MAX:
+                _ae_memo[key] = out
+        return out
+    # Global (Whittle) rate scaling declared through set_global_dependence.
+    _has_gd = getattr(sn, 'gdscaling', None) is not None
+
     nstateful = sn.nstateful
     M, R = sn.nstations, sn.nclasses
     nnodes = sn.nnodes
@@ -313,9 +377,13 @@ def solver_ssa_serial(sn, options, seed=None):
         V = int(np.sum(nvars[ind])) if nvars is not None else 0
         if _sched_name(sn, ist) == 'EXT':
             # Started Source: each enabled class's renewal active in entry phase.
+            # phasessz is the column WIDTH (always >=1) and never the enabled
+            # test; a class that does not arrive here keeps a zero column, as in
+            # MATLAB State.fromMarginal's EXT branch.
             row = np.zeros(sumK + V)
             for r in range(R):
-                if phasessz[ist, r] > 0 and int(phaseshift[ist, r]) < row.size:
+                if (phasessz[ist, r] > 0 and int(phaseshift[ist, r]) < row.size
+                        and not _ext_class_disabled(sn, ist, r)):
                     row[int(phaseshift[ist, r])] = 1.0
             # Seed RR outlink pointer in trailing V columns; a zero pointer
             # deadlocks the simulation (every RR routing probability would be 0).
@@ -379,15 +447,28 @@ def solver_ssa_serial(sn, options, seed=None):
         if _nd < len(sn.nodetype) and sn.nodetype[_nd] == NodeType.SOURCE:
             _pop_st_mask[_ist] = False
 
-    tally = {}            # key -> [dwell, nir_vec, depRates(nstateful*R), arvRates(nstateful*R)]
+    tally = {}            # key -> [dwell, nir_vec, depRates, arvRates, dlyRates, visits, startRates, preemptRates]
     total_time = 0.0
     cur_time = 0.0
+
+    # see _kb/09-ldes-and-cache.md (SSA: "delayed-hit rate from the merge transition").
+    # Cache row layout is [srv(R) | var(V)], so the srv block ends V columns
+    # from the right; keep the slice per node rather than assuming V == 0.
+    cache_srv_slice = {}
+    for _ind in range(nnodes):
+        if _ind < len(sn.nodetype) and sn.nodetype[_ind] == NodeType.CACHE:
+            _csf = int(sn.nodeToStateful[_ind])
+            if _csf >= 0:
+                _cv = int(np.sum(sn.nvars[_ind])) if sn.nvars is not None else 0
+                cache_srv_slice[_csf] = _cv
 
     # Per-transition event log for SolverSSA.sample; only built when requested
     # (tally-based analysis needs no extra bookkeeping).
     record_events = bool(getattr(options, 'record_events', False))
     event_log = [] if record_events else None
     state_log = [] if record_events else None
+    # (time, station, class, kind) rows with kind 0 = START and 1 = PREEMPT
+    tag_log = [] if record_events else None
     sf2st = np.asarray(sn.statefulToStation, dtype=int).reshape(-1)
 
     def _sf_to_station(isf):
@@ -475,7 +556,7 @@ def solver_ssa_serial(sn, options, seed=None):
                 if _fcr_violates(fi, xn):
                     continue
                 isf_d = int(sn.nodeToStateful[dest])
-                od, _rd, _pd = after_event(sn, dest, state_cells[isf_d], EventType.ARV, r, True, ctx=aectx)
+                od, _rd, _pd, _sd, _ppd = _after_event_cached(dest, state_cells[isf_d], EventType.ARV, r)
                 od = np.atleast_2d(od)
                 if od.size == 0:
                     continue
@@ -488,7 +569,14 @@ def solver_ssa_serial(sn, options, seed=None):
     _wf = float(getattr(options, 'warmupfrac', 0.0) or 0.0)
     n_drop = int(math.floor(min(max(_wf, 0.0), 0.99) * samples)) if _wf > 0 else 0
 
+    from line_solver.api.io import console as _console
+    _console.loop('drawing the sample path: %d samples requested', samples)
+    _console_every = max(1, samples // 20)
     for _it in range(samples):
+        if (_it + 1) % _console_every == 0:
+            _console.iter_line((_it + 1) // _console_every,
+                               'simulated %d of %d samples (%.0f%%)',
+                               _it + 1, samples, 100.0 * (_it + 1) / samples)
         if math.isfinite(_tmo) and _tmo > 0 and (time.time() - _tmo_start) > _tmo:
             break
         if math.isfinite(_max_pop) and (_it % _POP_CHECK_EVERY) == 0:
@@ -510,14 +598,28 @@ def solver_ssa_serial(sn, options, seed=None):
         cand_rates = []
         cand_states = []
         cand_meta = [] if record_events else None
+        # derived tags of each candidate transition, as [(statefulIndex, class, kind)]
+        # rows with kind 0 = START and 1 = PREEMPT; sn.sync carries none, so the
+        # trace can only report them from here
+        cand_tags = [] if record_events else None
         dep_acc = np.zeros((nstateful, R))
         arv_acc = np.zeros((nstateful, R))
+        dly_acc = np.zeros((nstateful, R))
+        # Derived START/PREEMPT rates, sampled exactly like the three above: the
+        # rate at which the transitions enabled in the current state start a
+        # class-r service, or push a class-r job in service back into the buffer.
+        start_acc = np.zeros((nstateful, R))
+        preempt_acc = np.zeros((nstateful, R))
 
         # FCR: current aggregate per-class population of each region.
         _xcur = None
         cand_fcr = {} if _fcr_on else None  # cand index -> (region, class, dest, isSwitch)
         if _fcr_on:
             _xcur = [_fcr_regionpop(fi, cur_state) for fi in range(len(_fcr))]
+
+        # Global (Whittle) rate scaling: constant within a state, so one
+        # evaluation serves every transition out of it.
+        _gd_now = _gd_factor_now(sn, cur_state) if _has_gd else None
 
         # ---- regular sync actions (mirror solver_ssa_findenabled.m) ----
         for (na, ea, ca, npn, ep, cp, pprob) in acts:
@@ -534,11 +636,17 @@ def solver_ssa_serial(sn, options, seed=None):
                         and 0 <= cp < sn.immfeed.shape[1]
                         and sn.immfeed[_ist_if, cp]):
                     no_promote = True
-            oa, ra, _pa = after_event(sn, na, cur_state[isf_a], ea, ca, True, ctx=aectx, no_promote=no_promote)
+            oa, ra, _pa, sa_tag, pa_tag = _after_event_cached(na, cur_state[isf_a], ea, ca,
+                                                              no_promote=no_promote)
             oa = np.atleast_2d(oa)
             ra = np.ravel(ra)
             if oa.size == 0 or ra.size == 0:
                 continue
+            # PHASE matters as much as DEP: refresh_sync emits phase moves as
+            # active station events, so phase-type service would otherwise
+            # advance unscaled.
+            if _has_gd and sn.isstation[na] and ea in (EventType.DEP, EventType.PHASE):
+                ra = ra * _gd_now[int(sn.nodeToStation[na]), ca]
             is_local = (npn >= nnodes)
             isf_p = int(sn.nodeToStateful[npn]) if (not is_local and sn.isstateful[npn]) else -1
             for ia in range(oa.shape[0]):
@@ -546,6 +654,17 @@ def solver_ssa_serial(sn, options, seed=None):
                 if not np.isfinite(rate_ia) or rate_ia == 0:
                     continue
                 row_a = oa[ia].astype(float)
+                # A delayed hit is the ONLY cache transition that empties the
+                # node: the request merges onto the in-flight fetch and is held
+                # in block B, so it departs later in the hit class and is
+                # otherwise indistinguishable there from a true hit.
+                is_merge_a = False
+                if isf_a in cache_srv_slice and ea == EventType.READ:
+                    _cv = cache_srv_slice[isf_a]
+                    _pre = np.ravel(cur_state[isf_a])
+                    _e0, _e1 = row_a.size - _cv, _pre.size - _cv
+                    is_merge_a = (float(np.sum(row_a[_e0 - R:_e0]))
+                                  - float(np.sum(_pre[_e1 - R:_e1]))) == -1.0
                 if is_local:
                     # Passive LOCAL probability is the routing mass leaving the
                     # system; without it, feedback networks drain too fast.
@@ -562,8 +681,11 @@ def solver_ssa_serial(sn, options, seed=None):
                     cand_states.append(nstate)
                     if cand_meta is not None:
                         cand_meta.append((isf_a, ca, -1, -1) if ea == EventType.DEP else None)
+                        cand_tags.append(_tag_rows(isf_a, sa_tag, pa_tag, ia, R))
                     if ea == EventType.DEP:
                         dep_acc[isf_a, ca] += eff_loc
+                    if is_merge_a:
+                        dly_acc[isf_a, ca] += eff_loc
                     continue
                 if isf_p < 0:
                     continue
@@ -610,12 +732,13 @@ def solver_ssa_serial(sn, options, seed=None):
                             cand_fcr[len(cand_states) - 1] = _mark
                             if cand_meta is not None:
                                 cand_meta.append((isf_a, ca, isf_p, cp) if ea == EventType.DEP else None)
+                                cand_tags.append(_tag_rows(isf_a, sa_tag, pa_tag, ia, R))
                             if ea == EventType.DEP:
                                 dep_acc[isf_a, ca] += eff_b
                                 arv_acc[isf_p, cp] += eff_b
                             continue
                 pin = row_a if npn == na else cur_state[isf_p]
-                op, _rp, pp = after_event(sn, npn, pin, ep, cp, True, ctx=aectx)
+                op, _rp, pp, sp_tag, pp_tag = _after_event_cached(npn, pin, ep, cp)
                 op = np.atleast_2d(op)
                 pp = np.ravel(pp)
                 if op.size == 0:
@@ -631,6 +754,7 @@ def solver_ssa_serial(sn, options, seed=None):
                             cand_states.append(nstate)
                             if cand_meta is not None:
                                 cand_meta.append(None)
+                                cand_tags.append([])
                     continue
                 for ip in range(op.shape[0]):
                     row_p = op[ip].astype(float)
@@ -647,8 +771,17 @@ def solver_ssa_serial(sn, options, seed=None):
                     nstate[isf_p] = row_p.copy()
                     cand_rates.append(eff)
                     cand_states.append(nstate)
+                    # START/PREEMPT tags of this arc, weighted like the rate it
+                    # carries: they annotate the transition itself. Written for
+                    # EVERY action, not only for departures -- a retrial or a
+                    # polling switchover starts service without being a DEP, and
+                    # the arrival half of a departure is where most starts happen.
+                    _accumulate_tags(start_acc, preempt_acc, isf_a, sa_tag, pa_tag, ia, eff, R)
+                    _accumulate_tags(start_acc, preempt_acc, isf_p, sp_tag, pp_tag, ip, eff, R)
                     if cand_meta is not None:
                         cand_meta.append((isf_a, ca, isf_p, cp) if ea == EventType.DEP else None)
+                        cand_tags.append(_tag_rows(isf_a, sa_tag, pa_tag, ia, R)
+                                         + _tag_rows(isf_p, sp_tag, pp_tag, ip, R))
                     if ea == EventType.DEP:
                         # see _kb/06-solver-catalog.md (SSA: "Python serial
                         # engine: state-construction traps") -- ARV convention
@@ -659,6 +792,8 @@ def solver_ssa_serial(sn, options, seed=None):
                         if not refused or is_physical_cap[jp, cp]:
                             dep_acc[isf_a, ca] += eff
                             arv_acc[isf_p, cp] += eff
+                    if is_merge_a:
+                        dly_acc[isf_a, ca] += eff
 
         # ---- SPN global sync events (mirror solver_ssa.m:244-282) ----
         for glevent in gsync_events:
@@ -688,6 +823,7 @@ def solver_ssa_serial(sn, options, seed=None):
                     # SPN token moves have no single (src,dst) station pair; the
                     # sample-path trace covers queueing transitions only.
                     cand_meta.append(None)
+                    cand_tags.append([])
                 # ModeEvent carries the place node index and class directly;
                 # use them rather than decoding a linear index (old lin%nnodes decode
                 # only coincided for R=1).
@@ -741,6 +877,27 @@ def solver_ssa_serial(sn, options, seed=None):
         if tot <= 0:
             break
 
+        # GILLESPIE DIRECT, IN THE REFERENCE'S DRAW ORDER: the ACTION first, the
+        # holding time second. `solver_ssa.m:578` selects the transition against
+        # `cumsum(enabled_rates)/tot_rate` and only then, at line 615, draws
+        # `dt = -log(rand)/tot_rate`. Drawing them the other way round consumes
+        # the same MT19937 stream in the opposite order, and from the second step
+        # onward the two engines are on DIFFERENT sample paths -- distributionally
+        # identical, so nothing looks wrong until a seeded golden is compared. The
+        # streams themselves already agree: `rng(s,'twister')` and
+        # `np.random.seed(s)` both init_genrand(s) and both take 53 bits per
+        # double, so seed 1 gives 0.417022004702574 in either (s = 0 is MATLAB's
+        # one special case, remapped to 5489).
+        #
+        # The comparison mirrors the reference exactly, normalized cumulative
+        # against a raw uniform, rather than `rand*tot` against the unnormalized
+        # sum: the two differ in the last bits and that is enough to pick a
+        # different transition at a boundary.
+        cum = np.cumsum(rates) / tot
+        sel = int(np.searchsorted(cum, np.random.random()))
+        if sel >= len(cand_states):
+            sel = len(cand_states) - 1
+
         dt = -np.log(np.random.random()) / tot
 
         if n_drop and _it == n_drop:
@@ -756,16 +913,20 @@ def solver_ssa_serial(sn, options, seed=None):
         ent = tally.get(key)
         if ent is None:
             tally[key] = [dt, _state_nir_vector(sn, cur_state, M, R),
-                          dep_acc.ravel().copy(), arv_acc.ravel().copy()]
+                          dep_acc.ravel().copy(), arv_acc.ravel().copy(),
+                          dly_acc.ravel().copy(), 1,
+                          start_acc.ravel().copy(), preempt_acc.ravel().copy()]
         else:
             ent[0] += dt
+            if cache_srv_slice:
+                # see _kb/09-ldes-and-cache.md (SSA: the merge rate needs EVERY
+                # visit). Unlike a DEP rate, the merge rate is random given the
+                # state, so one visit is a single Bernoulli draw whose variance
+                # does not shrink with the sample count.
+                ent[4] += dly_acc.ravel()
+                ent[5] += 1
         total_time += dt
         cur_time += dt
-
-        u = np.random.random() * tot
-        sel = int(np.searchsorted(np.cumsum(rates), u))
-        if sel >= len(cand_states):
-            sel = len(cand_states) - 1
 
         if record_events:
             meta = cand_meta[sel]
@@ -775,6 +936,12 @@ def solver_ssa_serial(sn, options, seed=None):
                                   _sf_to_station(src_isf), int(src_k),
                                   _sf_to_station(dst_isf), int(dst_k)))
                 state_log.append(_state_nir_vector(sn, cur_state, M, R).reshape(M, R))
+            # PREEMPT before START at the same instant: the victim leaves the
+            # server before the job that displaced it takes it. Emitted even when
+            # meta is None, since a START can ride on a non-DEP action.
+            if sel < len(cand_tags):
+                for (isf_t, cls_t, kind_t) in sorted(cand_tags[sel], key=lambda x: -x[2]):
+                    tag_log.append((total_time, _sf_to_station(isf_t), int(cls_t), int(kind_t)))
 
         cur_state = cand_states[sel]
 
@@ -795,7 +962,7 @@ def solver_ssa_serial(sn, options, seed=None):
                 _admitted = False
                 if not _fcr_violates(_fi, xn):
                     isf_d = int(sn.nodeToStateful[_dest])
-                    od, _rd, _pd = after_event(sn, _dest, cur_state[isf_d], EventType.ARV, _cls, True, ctx=aectx)
+                    od, _rd, _pd, _sd2, _pd2 = _after_event_cached(_dest, cur_state[isf_d], EventType.ARV, _cls)
                     od = np.atleast_2d(od)
                     if od.size > 0:
                         cur_state[isf_d] = od[0].astype(float)
@@ -813,14 +980,58 @@ def solver_ssa_serial(sn, options, seed=None):
     SSq = np.zeros((nuniq, M * R))
     depRates = np.zeros((nuniq, nstateful, R))
     arvRates = np.zeros((nuniq, nstateful, R))
+    dlyRates = np.zeros((nuniq, nstateful, R))
+    startRates = np.zeros((nuniq, nstateful, R))
+    preemptRates = np.zeros((nuniq, nstateful, R))
     for s, (_key, ent) in enumerate(tally.items()):
         pi[s] = ent[0]
         SSq[s, :] = ent[1]
         depRates[s] = ent[2].reshape(nstateful, R)
         arvRates[s] = ent[3].reshape(nstateful, R)
+        dlyRates[s] = ent[4].reshape(nstateful, R) / max(ent[5], 1)
+        # the tag rates are a deterministic function of the state too, so one
+        # visit gives them exactly, as for the departure and arrival rates
+        if len(ent) > 7:
+            startRates[s] = ent[6].reshape(nstateful, R)
+            preemptRates[s] = ent[7].reshape(nstateful, R)
     if pi.sum() > 0:
         pi = pi / pi.sum()
-    return pi, SSq, arvRates, depRates, total_time, event_log, state_log
+    return (pi, SSq, arvRates, depRates, dlyRates, total_time, event_log, state_log,
+            startRates, preemptRates, tag_log)
+
+
+def _tag_rows(isf, start_tag, preempt_tag, row, R):
+    """One (statefulIndex, class, kind) row per tagged job on this successor,
+    kind 0 = START and 1 = PREEMPT."""
+    out = []
+    if isf is None or isf < 0:
+        return out
+    for kind, tag in ((0, start_tag), (1, preempt_tag)):
+        if tag is None:
+            continue
+        arr = np.atleast_2d(np.asarray(tag, dtype=float))
+        if row >= arr.shape[0]:
+            continue
+        for r in range(min(R, arr.shape[1])):
+            for _ in range(int(arr[row, r])):
+                out.append((isf, r, kind))
+    return out
+
+
+def _accumulate_tags(start_acc, preempt_acc, isf, start_tag, preempt_tag, row, w, R):
+    """Add the START/PREEMPT counts of one successor row to the per-state rate
+    accumulators, weighted by the rate of the arc that carries them."""
+    if isf is None or isf < 0 or w == 0:
+        return
+    for tag, acc in ((start_tag, start_acc), (preempt_tag, preempt_acc)):
+        if tag is None:
+            continue
+        arr = np.atleast_2d(np.asarray(tag, dtype=float))
+        if row >= arr.shape[0]:
+            continue
+        for r in range(min(R, arr.shape[1])):
+            if arr[row, r] != 0:
+                acc[isf, r] += w * arr[row, r]
 
 
 def _analyze(sn, pi, SSq, arvRates, depRates, user_cap=None, user_classcap=None):
@@ -884,15 +1095,20 @@ def _analyze(sn, pi, SSq, arvRates, depRates, user_cap=None, user_classcap=None)
             _is_jd = _jd is not None and (
                 (_jd.get(ist) if isinstance(_jd, dict)
                  else (_jd[ist] if ist < len(_jd) else None)) is not None)
+            # A global (Whittle) dependence rescales the service rate the same
+            # way, so the peak it declares normalizes the utilization too.
+            _is_gd = getattr(sn, 'gdscaling', None) is not None
             for r in range(R):
                 mu = rates[ist, r]
                 if np.isfinite(mu) and mu > 0:
-                    if _is_cd or _is_jd:
+                    if _is_cd or _is_jd or _is_gd:
                         cdiv = 1.0
                         if _is_cd:
                             cdiv *= sn.cdscalingpeak[ist, r]
                         if _is_jd:
                             cdiv *= sn.jdscalingpeak[ist, r]
+                        if _is_gd:
+                            cdiv *= sn.gdscalingpeak[ist, r]
                     else:
                         cdiv = eff_c
                     if not (cdiv > 0):
@@ -921,9 +1137,9 @@ def _analyze(sn, pi, SSq, arvRates, depRates, user_cap=None, user_classcap=None)
     return XN, UN, QN, RN, TN, CN
 
 
-def _compute_cache_hitprob(sn, pi, depRates):
-    """Populate sn.nodeparam[cache].actualhitprob/actualmissprob from the
-    simulated cache departure rates.
+def _compute_cache_hitprob(sn, pi, depRates, dlyRates=None):
+    """Populate sn.nodeparam[cache].actualhitprob/actualmissprob/
+    actualdelayedhitprob from the simulated cache departure rates.
 
     Mirrors the CTMC analyzer (_compute_cache_hit_miss_probs): a Cache is not a
     station, so its hit/miss split is read off the stateful-indexed departure
@@ -932,6 +1148,11 @@ def _compute_cache_hitprob(sn, pi, depRates):
     without this the downstream node-throughput expansion
     (sn_get_node_tput_from_tput) has no actualhitprob to use and falls back to
     the static routing matrix, yielding an even 0.5/0.5 hit/miss split.
+
+    With a retrieval system the hit-class departure rate is (true hits +
+    delayed hits), because a request merged onto an in-flight fetch is released
+    in the hit class when that fetch completes. `dlyRates` carries the rate of
+    the merge transitions, which is what separates the two.
     """
     if sn.nodeparam is None or sn.nodetype is None or depRates is None:
         return
@@ -954,6 +1175,8 @@ def _compute_cache_hitprob(sn, pi, depRates):
             continue
         ahp = np.zeros(K)
         amp = np.zeros(K)
+        adhp = np.zeros(K)
+        has_delayed = False
         for oc in range(len(hitclass)):
             h = int(hitclass[oc])
             m = int(missclass[oc])
@@ -961,11 +1184,21 @@ def _compute_cache_hitprob(sn, pi, depRates):
                 continue
             t_hit = float(pi @ depRates[:, cache_sf, h])
             t_miss = float(pi @ depRates[:, cache_sf, m])
+            t_dly = 0.0
+            if dlyRates is not None and oc < dlyRates.shape[2]:
+                t_dly = float(pi @ dlyRates[:, cache_sf, oc])
             if t_hit + t_miss > 0:
-                ahp[oc] = t_hit / (t_hit + t_miss)
+                # t_hit already contains the released delayed hits, so carve
+                # them out rather than adding a fourth share.
+                ahp[oc] = max(t_hit - t_dly, 0.0) / (t_hit + t_miss)
                 amp[oc] = t_miss / (t_hit + t_miss)
+                adhp[oc] = t_dly / (t_hit + t_miss)
+                if t_dly > 0:
+                    has_delayed = True
         npar.actualhitprob = ahp
         npar.actualmissprob = amp
+        if has_delayed:
+            npar.actualdelayedhitprob = adhp
 
 
 def solver_ssa_run(sn, options, method='serial', seed=None):
@@ -978,9 +1211,9 @@ def solver_ssa_run(sn, options, method='serial', seed=None):
     _orig = {f: _copy.deepcopy(getattr(sn, f))
              for f in ('nservers', 'classcap', 'cap', 'mu', 'phi', 'pie', 'proc')}
     try:
-        pi, SSq, arvRates, depRates, total_time, event_log, state_log = \
-            solver_ssa_serial(sn, options, seed=seed)
-        _compute_cache_hitprob(sn, pi, depRates)
+        (pi, SSq, arvRates, depRates, dlyRates, total_time, event_log, state_log,
+         startRates, preemptRates, tag_log) = solver_ssa_serial(sn, options, seed=seed)
+        _compute_cache_hitprob(sn, pi, depRates, dlyRates)
         # Pre-preamble USER capacities so the BUG-12 canDropClass guard sees
         # real finite-capacity stations, not the cutoff-derived truncation.
         XN, UN, QN, RN, TN, CN = _analyze(sn, pi, SSq, arvRates, depRates,
@@ -989,10 +1222,15 @@ def solver_ssa_run(sn, options, method='serial', seed=None):
         M, R = sn.nstations, sn.nclasses
         AN = np.zeros((M, R))
         st2sf = np.asarray(sn.stationToStateful, dtype=int).reshape(-1)
+        StartN = np.zeros((M, R))
+        PreemptN = np.zeros((M, R))
         for ist in range(M):
             isf = int(st2sf[ist])
             for r in range(R):
                 AN[ist, r] = float(pi @ arvRates[:, isf, r])
+                # same time average as TN, over the derived tag rates
+                StartN[ist, r] = float(pi @ startRates[:, isf, r])
+                PreemptN[ist, r] = float(pi @ preemptRates[:, isf, r])
     finally:
         for f, v in _orig.items():
             setattr(sn, f, v)
@@ -1004,6 +1242,11 @@ def solver_ssa_run(sn, options, method='serial', seed=None):
     res.samples = int(getattr(options, 'samples', 0))
     res.event_log = event_log
     res.state_log = state_log
+    # Derived START/PREEMPT rates: annotations on the transitions the engine
+    # already fires, so they add no getAvgTable column.
+    res.startRate = StartN
+    res.preemptRate = PreemptN
+    res.tag_log = tag_log
     _tmo = float(getattr(options, 'timeout', float('inf')))
     res.timedOut = math.isfinite(_tmo) and _tmo > 0 and res.runtime > _tmo
     if res.timedOut:

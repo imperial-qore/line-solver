@@ -1,9 +1,14 @@
-function model = LQN2QN(lqn)
+function model = LQN2QN(lqn, replication)
 % LQN2QN Convert a LayeredNetwork (LQN) to a Network (QN) using REPLY signals
 %
 % model = LQN2QN(lqn) flattens a LayeredNetwork into a single queueing
 % network in which synchronous call blocking is represented by REPLY
 % signals.
+%
+% model = LQN2QN(lqn, replication) selects how task and processor
+% replication is represented: 'auto' (default) materialises the replicas
+% while the expansion stays within the instantiation budget and pools them
+% otherwise, 'materialize' always materialises, 'pool' always pools.
 %
 % Construction
 % - One station per host processor (scheduling and multiplicity taken from
@@ -86,10 +91,35 @@ function model = LQN2QN(lqn)
 %   ActivityThink delay, in series with the host demand, so the task keeps its
 %   thread for it while its processor is released.
 %
-% Not yet represented: delayed-hit retrieval on the cache miss path, the thread
-% pool of a task with an internal AND-fork, task and processor replication with
-% its fan-out, and the setup and delay-off times of a function task. Each is
-% reported through line_warning.
+% - Replication is represented in one of two ways. Under materialisation each
+%   replica of a processor is a station of its own and each replica of a task
+%   carries its own copy of the expanded step graph, its own reply signals and
+%   its own admission row; a call from replica i of the caller reaches the
+%   fan-out block {(i*f+k) mod r} of the callee replicas and splits its call
+%   mean uniformly over them, which is deterministic pairing at f=1 and a
+%   uniform broadcast at f=r. Under pooling the replicas of a processor
+%   collapse into one station of r times the servers, a replicated thread pool
+%   into one admission row of r times the bound, and a replicated reference
+%   task into one class of r times the population; that is exact at an
+%   infinite-server host and optimistic elsewhere, since pooled servers share
+%   one queue while the replicas hold r separate ones.
+%
+% - A CacheTask with delayed-hit retrieval gets a retrieval system, which is an
+%   ordinary queueing network: one PS fetch station per cache replica, entered
+%   and left by the read class, with the Cache node coalescing concurrent misses
+%   of the same item. The fetch is what the miss branch does, so the miss
+%   activity's host demand moves onto that station; calls issued by the miss
+%   activity stay outside the retrieval system and are warned.
+%
+% - A SetupTask carries its setup and delay-off times onto its host station
+%   as the Queue setup/delay-off pair, per step class: the server shuts down
+%   after the delay-off idle period and pays the setup on the next arrival. An
+%   infinite-server processor never shuts down, so the pair is dropped there
+%   with a warning, as is a setup with no delay-off time.
+%
+% Not yet represented: retrieval on a cache read with phase-2 successors and the
+% thread pool of a task with an internal AND-fork. Each is reported through
+% line_warning.
 %
 % Example:
 %   lqn = LayeredNetwork('MyLQN');
@@ -99,6 +129,13 @@ function model = LQN2QN(lqn)
 %
 % Copyright (c) 2012-2026, Imperial College London
 % All rights reserved.
+
+if nargin < 2 || isempty(replication)
+    replication = 'auto';
+end
+if ~any(strcmp(replication, {'auto', 'materialize', 'pool'}))
+    line_error(mfilename, 'replication must be ''auto'', ''materialize'' or ''pool''.');
+end
 
 lsn = lqn.getStruct();
 model = Network([lqn.getName(), '-QN']);
@@ -122,9 +159,36 @@ if isempty(refTaskIndices) && isempty(openEntries)
 end
 
 MAXCALLSTAGES = 20;   % guard against unrolling a huge call multiplicity
+% Above this many replica subgraph instantiations 'auto' pools instead of
+% materialising: the routing matrix is dense in (classes x nodes), so the
+% conversion cost grows quadratically in the instantiation count.
+MAXREPLINSTANCES = 128;
 
 %% Unsupported features, reported once each
 warnUnsupported(lsn);
+
+%% Replication
+% A replicated element is r identical copies of itself, either materialised one
+% station and one step-graph copy per replica, or pooled -- see _kb/06-solver-catalog.md
+replRaw = ones(lsn.nhosts + lsn.ntasks, 1);
+if isfield(lsn, 'repl') && ~isempty(lsn.repl)
+    raw_ = full(lsn.repl(:));
+    nr_ = min(length(raw_), lsn.nhosts + lsn.ntasks);
+    replRaw(1:nr_) = max(1, round(raw_(1:nr_)));
+end
+replicated = find(replRaw > 1).';
+% Stride of the (element, replica) composite keys used for maps and stacks
+RKEY = max(1, max(replRaw));
+
+materialize = ~isempty(replicated) && (strcmp(replication, 'materialize') || ...
+    (strcmp(replication, 'auto') && replInstantiations() <= MAXREPLINSTANCES));
+if ~isempty(replicated) && ~materialize
+    line_warning(mfilename, sprintf(['Replication of %s is pooled: its replicas become ' ...
+        'one station of r times the servers, one admission row of r times the bound ' ...
+        'and one reference class of r times the population, which is exact at an ' ...
+        'infinite-server host and optimistic elsewhere. Pass ''materialize'' for one ' ...
+        'station and one step-graph copy per replica.'], lsn.names{replicated(1)}));
+end
 
 %% Tasks whose multiplicity is a thread pool
 % One thread per request, capped by a finite capacity region instead of server-hold blocking -- see _kb/04-networkstruct.md
@@ -205,76 +269,90 @@ if ~isempty(branchActs) && any(fcrTask)
     end
 end
 
-%% Stations: one per host processor
-hostStation = cell(lsn.nhosts, 1);
-hostIsDelay = false(lsn.nhosts, 1);
+%% Stations: one per host processor replica
+hostStation = cell(lsn.nhosts, RKEY);
+hostIsDelay = false(lsn.nhosts, RKEY);
 for h = 1:lsn.nhosts
     nservers = lsn.mult(h);
     sched = lsn.sched(h);
-    if isinf(nservers) || sched == SchedStrategy.INF
-        hostStation{h} = Delay(model, lsn.names{h});
-        hostIsDelay(h) = true;
-    else
-        q = Queue(model, lsn.names{h}, sched);
-        q.setNumberOfServers(nservers);
-        hostStation{h} = q;
+    for m_ = 0:nrep(h)-1
+        if isinf(nservers) || sched == SchedStrategy.INF
+            hostStation{h, m_+1} = Delay(model, suffixed(lsn.names{h}, m_));
+            hostIsDelay(h, m_+1) = true;
+        else
+            q = Queue(model, suffixed(lsn.names{h}, m_), sched);
+            % A pooled processor carries the servers of all its replicas
+            q.setNumberOfServers(nservers * poolFactor(h));
+            hostStation{h, m_+1} = q;
+        end
     end
 end
 
-%% Think delays, one per reference task
-thinkNode = containers.Map('KeyType', 'double', 'ValueType', 'any');
+%% Think delays, one per reference task replica
+thinkNode = configureDictionary('double','cell');
 for rt = 1:length(refTaskIndices)
     refTidx = refTaskIndices(rt);
-    thinkNode(refTidx) = Delay(model, [lsn.names{refTidx}, '_Think']);
+    for m_ = 0:nrep(refTidx)-1
+        thinkNode{ekey(refTidx, m_)} = Delay(model, ...
+            suffixed([lsn.names{refTidx}, '_Think'], m_));
+    end
 end
 
 %% Pass 1: expand the activity graph into a step graph
 % Steps carry no LINE objects yet, so all classes can be created before the routing matrix is initialised
 stepAidx = [];        % activity index of the step
-stepHost = [];        % host processor index of the step station
+stepHost = zeros(0, 2); % [host processor, replica] of the step station
 stepSvc = {};         % service distribution at the step station, [] if none
 stepName = {};        % class name
 stepBlocks = [];      % true if the step blocks on a synchronous call
 stepIsThink = [];     % true for a think step (reference task)
-stepRefTask = [];     % reference task the step belongs to
+stepRefTask = zeros(0, 2); % [reference task, replica] the step belongs to, [0 0] on an open chain
 stepNode = {};        % Fork/Join/Router node the step sits on, [] for stations
 stepClassOwner = [];  % step whose class this step travels in (itself, normally)
-stepTasks = {};       % thread-pool tasks holding a thread while at this step
+stepTasks = {};       % thread-pool task replicas holding a thread while at this step, as composite keys
 
 % flow/reply/spawnPairs/ph2Exits step-graph arrays -- see _kb/04-networkstruct.md
 flow = zeros(0, 5);
 reply = zeros(0, 4);
 spawnPairs = zeros(0, 2);
-ph2Exits = zeros(0, 4);
+ph2Exits = zeros(0, 5);
 
-entryStack = [];   % guards against recursive call cycles
-threadStack = [];  % tasks holding a thread during expansion; tracks entryStack except across forwarding (releases the forwarder's thread)
+entryStack = zeros(0, 2);   % [entry, replica]; guards against recursive call cycles
+threadStack = [];  % task replicas holding a thread during expansion, as composite keys; tracks entryStack except across forwarding (releases the forwarder's thread)
 
 % Cache nodes, one per CacheTask, and the read/hit/miss wiring to apply once
 % the classes exist.
-cacheNodeOf = containers.Map('KeyType', 'double', 'ValueType', 'any');
+cacheNodeOf = configureDictionary('double','cell');
+fetchNodeOf = configureDictionary('double','cell');
 cacheWiring = struct('node', {}, 'readStep', {}, 'hitStep', {}, 'missStep', {}, ...
-    'itemproc', {}, 'nitems', {});
+    'itemproc', {}, 'nitems', {}, 'fetch', {}, 'fetchSvc', {});
 
+usedNames = configureDictionary('string', 'double');  % class and node names must be unique
 joinQuorum = zeros(0, 2);   % [joinStep, joinAidx]; applied once the fork class exists
 actThinkNode = [];          % shared INF station carrying the activity think times
 
+% One closed chain per reference task replica: the replicas are separate
+% populations that meet only where they share a station.
 for rt = 1:length(refTaskIndices)
     refTidx = refTaskIndices(rt);
-    thinkStep = addStep([], [], [], [lsn.names{refTidx}, '_Think'], false, true, refTidx);
+    for rep = 0:nrep(refTidx)-1
+        refKey = [refTidx, rep];
+        thinkStep = addStep([], [], [], ...
+            uniqueName(suffixed([lsn.names{refTidx}, '_Think'], rep)), false, true, refKey);
 
-    entries = lsn.entriesof{refTidx};
-    for eidx = entries
-        [firstStep, replyExits, terminals] = expandEntry(eidx, refTidx);
-        if isempty(firstStep)
-            continue;
-        end
-        addRoute([thinkStep, 0], firstStep, 1.0);
-        % A reference task has no caller: its replies and its dead ends
-        % both close the cycle at the think delay.
-        exits = [replyExits; terminals];
-        for s = 1:size(exits, 1)
-            addRoute(exits(s, 1:2), thinkStep, exits(s, 3));
+        entries = lsn.entriesof{refTidx};
+        for eidx = entries
+            [firstStep, replyExits, terminals] = expandEntry(eidx, refKey, rep);
+            if isempty(firstStep)
+                continue;
+            end
+            addRoute([thinkStep, 0], firstStep, 1.0);
+            % A reference task has no caller: its replies and its dead ends
+            % both close the cycle at the think delay.
+            exits = [replyExits; terminals];
+            for s = 1:size(exits, 1)
+                addRoute(exits(s, 1:2), thinkStep, exits(s, 3));
+            end
         end
     end
 end
@@ -288,14 +366,17 @@ if ~isempty(openEntries)
     snkNode = Sink(model, 'Sink');
 end
 for eidx = openEntries
-    [firstStep, replyExits, terminals] = expandEntry(eidx, 0);
-    if isempty(firstStep)
-        line_warning(mfilename, sprintf('Open arrival entry %s has no bound activity; ignored.', ...
-            lsn.names{eidx}));
-        continue;
+    % Each replica of the entry's task receives its own arrival stream.
+    for rep = 0:nrep(lsn.parent(eidx))-1
+        [firstStep, replyExits, terminals] = expandEntry(eidx, [0, 0], rep);
+        if isempty(firstStep)
+            line_warning(mfilename, sprintf('Open arrival entry %s has no bound activity; ignored.', ...
+                lsn.names{eidx}));
+            continue;
+        end
+        openWiring(end+1) = struct('eidx', eidx, 'firstStep', firstStep, ...
+            'exits', [replyExits; terminals]); %#ok<AGROW>
     end
-    openWiring(end+1) = struct('eidx', eidx, 'firstStep', firstStep, ...
-        'exits', [replyExits; terminals]); %#ok<AGROW>
 end
 
 %% Pass 2: create classes and reply signals
@@ -304,7 +385,7 @@ stepClass = cell(nsteps, 1);
 stepSignal = cell(nsteps, 1);
 
 for i = 1:nsteps
-    refTidx = stepRefTask(i);
+    refTidx = stepRefTask(i, 1);
     if stepClassOwner(i) ~= i
         % Fork/Join/Router steps carry the job unchanged in the class that entered the fork
         continue;
@@ -313,10 +394,11 @@ for i = 1:nsteps
         % A step of an open arrival chain travels in an open class.
         stepClass{i} = OpenClass(model, stepName{i});
     elseif stepIsThink(i)
-        population = lsn.mult(refTidx);
-        stepClass{i} = ClosedClass(model, stepName{i}, population, thinkNode(refTidx));
+        % A pooled reference task holds the population of all its replicas
+        population = lsn.mult(refTidx) * poolFactor(refTidx);
+        stepClass{i} = ClosedClass(model, stepName{i}, population, thinkNode{ekey(refTidx, stepRefTask(i, 2))});
     else
-        stepClass{i} = ClosedClass(model, stepName{i}, 0, thinkNode(refTidx));
+        stepClass{i} = ClosedClass(model, stepName{i}, 0, thinkNode{ekey(refTidx, stepRefTask(i, 2))});
     end
 end
 for i = 1:nsteps
@@ -356,19 +438,21 @@ end
 
 % Phase-2 token destructor (closed chains): NEGATIVE signal at a station nothing visits, one per reference task -- see _kb/04-networkstruct.md
 ph2DumpNode = [];
-ph2DestructorOf = containers.Map('KeyType', 'double', 'ValueType', 'any');
+ph2DestructorOf = configureDictionary('double','cell');
 if ~isempty(ph2Exits) && any(ph2Exits(:, 4) > 0)
     ph2DumpNode = Queue(model, 'Ph2Sink', SchedStrategy.FCFS);
-    for rft = unique(ph2Exits(ph2Exits(:, 4) > 0, 4).')
-        sig = ClosedSignal(model, sprintf('Ph2End_%s', lsn.names{rft}), ...
-            SignalType.NEGATIVE, thinkNode(rft));
+    ph2Ref = unique(ph2Exits(ph2Exits(:, 4) > 0, 4:5), 'rows');
+    for r_ = 1:size(ph2Ref, 1)
+        rft = ph2Ref(r_, 1); rrep = ph2Ref(r_, 2);
+        sig = ClosedSignal(model, suffixed(sprintf('Ph2End_%s', lsn.names{rft}), rrep), ...
+            SignalType.NEGATIVE, thinkNode{ekey(rft, rrep)});
         for n = 1:length(model.nodes)
             if ~isa(model.nodes{n}, 'Sink')
                 model.nodes{n}.setRouting(sig, RoutingStrategy.DISABLED);
             end
         end
         ph2DumpNode.setService(sig, Immediate());
-        ph2DestructorOf(rft) = sig;
+        ph2DestructorOf{ekey(rft, rrep)} = sig;
     end
 end
 
@@ -381,27 +465,27 @@ for i = 1:nsteps
         end
         % A Router-hosted merge step owns a class, declared Immediate at the reference think delay (as for signals)
         if stepClassOwner(i) == i && isa(stepNode{i}, 'Router')
-            if stepRefTask(i) == 0
+            if stepRefTask(i, 1) == 0
                 % Open chain: no think delay exists; declare at the caller's host station, which the class never visits
-                hostStation{stepHost(i)}.setService(stepClass{i}, Immediate());
+                hostStation{stepHost(i, 1), stepHost(i, 2)+1}.setService(stepClass{i}, Immediate());
             else
-                tn_ = thinkNode(stepRefTask(i));
+                tn_ = thinkNode{ekey(stepRefTask(i, 1), stepRefTask(i, 2))};
                 tn_.setService(stepClass{i}, Immediate());
             end
         end
         continue;
     end
     if stepIsThink(i)
-        refTidx = stepRefTask(i);
+        refTidx = stepRefTask(i, 1);
         thinkDist = lsn.think{refTidx};
-        tnode = thinkNode(refTidx);
+        tnode = thinkNode{ekey(refTidx, stepRefTask(i, 2))};
         if isempty(thinkDist) || isa(thinkDist, 'Immediate') || thinkDist.getMean() < GlobalConstants.FineTol
             tnode.setService(stepClass{i}, Immediate());
         else
             tnode.setService(stepClass{i}, thinkDist);
         end
     else
-        station = hostStation{stepHost(i)};
+        station = hostStation{stepHost(i, 1), stepHost(i, 2)+1};
         if isempty(stepSvc{i})
             station.setService(stepClass{i}, Immediate());
         else
@@ -410,15 +494,50 @@ for i = 1:nsteps
     end
 end
 
-% A reply signal is consumed at the caller's station; declared at every station since a signal with no pending reply falls back to its reference station
+% A SetupTask is a server that shuts down when idle and pays a setup on the
+% next arrival, which is the Queue setup/delay-off pair at its host station
+warnedSetup = [];
+for i = 1:nsteps
+    if ~isempty(stepNode{i}) || stepIsThink(i) || stepAidx(i) == 0
+        continue;
+    end
+    tidx_ = lsn.parent(stepAidx(i));
+    [su_, do_, status_] = functionTimesOf(tidx_);
+    if strcmp(status_, 'none')
+        continue;
+    end
+    if strcmp(status_, 'nodelayoff')
+        if ~any(warnedSetup == tidx_)
+            line_warning(mfilename, sprintf(['Setup of setup task %s is not represented: ' ...
+                'it has no delay-off time, so its server never shuts down and never sets ' ...
+                'up again.'], lsn.names{tidx_}));
+            warnedSetup(end+1) = tidx_; %#ok<AGROW>
+        end
+        continue;
+    end
+    % Delay subclasses Queue, so the infinite server is tested by hostIsDelay
+    if hostIsDelay(stepHost(i, 1), stepHost(i, 2)+1)
+        if ~any(warnedSetup == tidx_)
+            line_warning(mfilename, sprintf(['Setup of setup task %s is not represented: ' ...
+                'its processor is an infinite server, which never shuts down.'], lsn.names{tidx_}));
+            warnedSetup(end+1) = tidx_; %#ok<AGROW>
+        end
+        continue;
+    end
+    hostStation{stepHost(i, 1), stepHost(i, 2)+1}.setDelayOff(stepClass{i}, su_, do_);
+end
+
+% A reply signal is consumed at the caller's station; declared at every station since one with no pending reply falls back to its reference station
 for i = 1:nsteps
     if ~isempty(stepSignal{i})
         for h = 1:lsn.nhosts
-            hostStation{h}.setService(stepSignal{i}, Immediate());
+            for m_ = 0:nrep(h)-1
+                hostStation{h, m_+1}.setService(stepSignal{i}, Immediate());
+            end
         end
-        tkeys = cell2mat(thinkNode.keys);
+        tkeys = keys(thinkNode);
         for kk = tkeys
-            tn = thinkNode(kk);
+            tn = thinkNode{kk};
             tn.setService(stepSignal{i}, Immediate());
         end
     end
@@ -430,6 +549,15 @@ for w = 1:length(cacheWiring)
     cw.node.setReadItemEntry(stepClass{cw.readStep}, cw.itemproc, cw.nitems);
     cw.node.setHitClass(stepClass{cw.readStep}, stepClass{cw.hitStep});
     cw.node.setMissClass(stepClass{cw.readStep}, stepClass{cw.missStep});
+    if ~isempty(cw.fetch)
+        % Service and routing of the retrieval system are read off the read class
+        if isempty(cw.fetchSvc)
+            cw.fetch.setService(stepClass{cw.readStep}, Immediate());
+        else
+            cw.fetch.setService(stepClass{cw.readStep}, cw.fetchSvc);
+        end
+        cw.node.setRetrievalSystem(stepClass{cw.readStep}, stepClass{cw.missStep}, cw.fetch);
+    end
 end
 
 %% Pass 4: routing
@@ -457,17 +585,28 @@ for e = 1:size(reply, 1)
     end
 end
 
+%% Retrieval systems: the read class circulates cache -> fetch -> cache
+for w = 1:length(cacheWiring)
+    cw = cacheWiring(w);
+    if ~isempty(cw.fetch)
+        rcls = stepClass{cw.readStep};
+        P{rcls, rcls}(cw.node, cw.fetch) = 1.0;
+        P{rcls, rcls}(cw.fetch, cw.node) = 1.0;
+    end
+end
+
 %% Phase-2 chain ends: destroy the spawned token
 for e = 1:size(ph2Exits, 1)
-    i = ph2Exits(e, 1); viaSig = ph2Exits(e, 2); p = ph2Exits(e, 3); rft = ph2Exits(e, 4);
+    i = ph2Exits(e, 1); viaSig = ph2Exits(e, 2); p = ph2Exits(e, 3);
+    rft = ph2Exits(e, 4); rrep = ph2Exits(e, 5);
     if rft == 0
         % Open chain: the spawned token leaves through the Sink.
         ecls = stepClass{i};
         P{ecls, ecls}(stationOf(i), snkNode) = p;
     elseif viaSig
-        P{stepSignal{i}, ph2DestructorOf(rft)}(stationOf(i), ph2DumpNode) = p;
+        P{stepSignal{i}, ph2DestructorOf{ekey(rft, rrep)}}(stationOf(i), ph2DumpNode) = p;
     else
-        P{stepClass{i}, ph2DestructorOf(rft)}(stationOf(i), ph2DumpNode) = p;
+        P{stepClass{i}, ph2DestructorOf{ekey(rft, rrep)}}(stationOf(i), ph2DumpNode) = p;
     end
 end
 
@@ -486,9 +625,9 @@ end
 
 model.link(P);
 
-%% Thread pools: one finite capacity region, one linear constraint per task
-% One admission row A(t,:)*x <= mult(t) per task, coefficients shared across nested tasks -- see _kb/04-networkstruct.md
-fcrList = find(fcrTask(:).');
+%% Thread pools: one finite capacity region, one linear constraint per task replica
+% One admission row A(t,:)*x <= mult(t) per task replica, coefficients shared across nested tasks -- see _kb/04-networkstruct.md
+fcrList = unique([stepTasks{:}]);
 if ~isempty(fcrList)
     Amat = zeros(length(fcrList), length(model.classes));
     bvec = zeros(length(fcrList), 1);
@@ -503,8 +642,17 @@ if ~isempty(fcrList)
             if isa(nd, 'Station') && ~any(cellfun(@(x) x == nd, regionNodes))
                 regionNodes{end+1} = nd; %#ok<AGROW>
             end
+            for w_ = 1:length(cacheWiring)
+                % The caller holds its thread for the whole fetch
+                if cacheWiring(w_).readStep == stp && ~isempty(cacheWiring(w_).fetch) && ...
+                        ~any(cellfun(@(x) x == cacheWiring(w_).fetch, regionNodes))
+                    regionNodes{end+1} = cacheWiring(w_).fetch; %#ok<AGROW>
+                end
+            end
         end
-        bvec(tsel) = lsn.mult(fcrList(tsel));
+        % A pooled task keeps one row whose bound covers all its replicas
+        tsel_ = ekeyIdx(fcrList(tsel));
+        bvec(tsel) = lsn.mult(tsel_) * poolFactor(tsel_);
     end
     if any(Amat(:)) && ~isempty(regionNodes)
         fcr = model.addRegion(regionNodes);
@@ -518,52 +666,52 @@ end
         if ~isempty(stepNode{i})
             node = stepNode{i};
         elseif stepIsThink(i)
-            node = thinkNode(stepRefTask(i));
+            node = thinkNode{ekey(stepRefTask(i, 1), stepRefTask(i, 2))};
         else
-            node = hostStation{stepHost(i)};
+            node = hostStation{stepHost(i, 1), stepHost(i, 2)+1};
         end
     end
 
-    function id = addStep(aidx, hidx, svc, name, blocks, isthink, refTidx)
+    function id = addStep(aidx, hidx, svc, name, blocks, isthink, refKey)
         stepAidx(end+1) = ifempty(aidx, 0); %#ok<AGROW>
-        stepHost(end+1) = ifempty(hidx, 0); %#ok<AGROW>
+        stepHost(end+1, :) = ifempty(hidx, [0, 0]); %#ok<AGROW>
         stepSvc{end+1} = svc; %#ok<AGROW>
         stepName{end+1} = name; %#ok<AGROW>
         stepBlocks(end+1) = blocks; %#ok<AGROW>
         stepIsThink(end+1) = isthink; %#ok<AGROW>
-        stepRefTask(end+1) = refTidx; %#ok<AGROW>
+        stepRefTask(end+1, :) = refKey; %#ok<AGROW>
         stepNode{end+1} = []; %#ok<AGROW>
         id = length(stepAidx);
         stepClassOwner(end+1) = id; %#ok<AGROW>
-        % Every thread-pool task on the stack holds a thread here (a synchronous caller releases it only on reply)
+        % Every thread-pool task replica on the stack holds a thread here (a synchronous caller releases it only on reply)
         if isempty(threadStack)
             stepTasks{end+1} = []; %#ok<AGROW>
         else
-            stepTasks{end+1} = unique(threadStack(fcrTask(threadStack))); %#ok<AGROW>
+            stepTasks{end+1} = unique(threadStack(fcrTask(ekeyIdx(threadStack)))); %#ok<AGROW>
         end
     end
 
-    function id = addAuxStep(nodeObj, ownerStep, name, refTidx)
+    function id = addAuxStep(nodeObj, ownerStep, name, refKey)
         % A step on a Fork, Join or Router node: no station, no service, and
         % no class of its own.
-        id = addStep([], [], [], name, false, false, refTidx);
+        id = addStep([], [], [], name, false, false, refKey);
         stepNode{id} = nodeObj;
         stepClassOwner(id) = stepClassOwner(ownerStep);
     end
 
-    function [firstStep, replyExits, terminals] = expandEntry(eidx, refTidx)
-        % Expands the activity subgraph bound to an entry, in the call
-        % context given by the current entry stack.
+    function [firstStep, replyExits, terminals] = expandEntry(eidx, refKey, trep)
+        % Expands the activity subgraph bound to an entry of replica trep of
+        % its task, in the call context given by the current entry stack.
         firstStep = [];
         replyExits = zeros(0, 3);
         terminals = zeros(0, 3);
 
-        if any(entryStack == eidx)
+        if ~isempty(entryStack) && any(entryStack(:, 1) == eidx & entryStack(:, 2) == trep)
             line_warning(mfilename, sprintf('Recursive call cycle at entry %s truncated.', lsn.names{eidx}));
             return;
         end
-        entryStack(end+1) = eidx;
-        threadStack(end+1) = lsn.parent(eidx);
+        entryStack(end+1, :) = [eidx, trep];
+        threadStack(end+1) = ekey(lsn.parent(eidx), trep);
         restore = onCleanup(@() popEntry());
 
         if eidx > length(lsn.actsof) || isempty(lsn.actsof{eidx})
@@ -578,7 +726,7 @@ end
             return;
         end
 
-        [firstStep, replyExits, terminals] = expandActivities(boundActs(1), eidx, refTidx);
+        [firstStep, replyExits, terminals] = expandActivities(boundActs(1), eidx, refKey, trep);
 
         % Forwarding: with prob p the entry hands off to another entry, which replies directly to the original caller
         fwd = forwardingOf(eidx);
@@ -589,17 +737,24 @@ end
             % Forwarder's thread released at handoff; the forwarded chain expands without it on the thread stack
             fwdThread = threadStack(end);
             threadStack(end) = [];
+            fwdTidx = lsn.parent(eidx);
             for f = 1:size(fwd, 1)
-                [fFirst, fReplies, fTerms] = expandEntry(fwd(f, 1), refTidx);
-                if isempty(fFirst)
-                    continue;
-                end
+                % A forwarding call spreads over the reached callee replicas exactly as a synchronous one does
+                reps = targetReplicas(fwdTidx, trep, lsn.parent(fwd(f, 1)));
                 p = fwd(f, 2);
-                for r = 1:size(ownPorts, 1)
-                    addRoute(ownPorts(r, 1:2), fFirst, ownPorts(r, 3) * p);
+                reached = 0;
+                for fmrep_ = reps
+                    [fFirst, fReplies, fTerms] = expandEntry(fwd(f, 1), refKey, fmrep_);
+                    if isempty(fFirst)
+                        continue;
+                    end
+                    reached = reached + 1;
+                    for r = 1:size(ownPorts, 1)
+                        addRoute(ownPorts(r, 1:2), fFirst, ownPorts(r, 3) * p / length(reps));
+                    end
+                    fwdExits = [fwdExits; fReplies; fTerms]; %#ok<AGROW>
                 end
-                pforw = pforw + p;
-                fwdExits = [fwdExits; fReplies; fTerms]; %#ok<AGROW>
+                pforw = pforw + p * reached / length(reps);
             end
             threadStack(end+1) = fwdThread;
             % What is left of each of this entry's own ports still replies.
@@ -631,11 +786,11 @@ end
     end
 
     function popEntry()
-        entryStack(end) = [];
+        entryStack(end, :) = [];
         threadStack(end) = [];
     end
 
-    function [firstStep, replyExits, terminals] = expandActivities(a0, eidx, refTidx)
+    function [firstStep, replyExits, terminals] = expandActivities(a0, eidx, refKey, trep)
         % Walks the intra-task activity graph from a0, creating steps and
         % expanding every synchronous call site. Reply exits and terminals
         % are returned as ports, [step, isSignal] rows.
@@ -645,8 +800,8 @@ end
 
         tidx = lsn.parent(a0);
         localActs = lsn.actsof{eidx};
-        visited = containers.Map('KeyType', 'double', 'ValueType', 'any'); % aidx -> [entryStep, exitStep, exitIsSignal]
-        joinOf = containers.Map('KeyType', 'double', 'ValueType', 'any');  % join activity -> [joinStep, entryStep]
+        visited = configureDictionary('double','cell'); % aidx -> [entryStep, exitStep, exitIsSignal]
+        joinOf = configureDictionary('double','cell');  % join activity -> [joinStep, entryStep]
         forkOwnerStack = [];   % class-owner step of each enclosing AND-fork
         sawReply = false;
 
@@ -660,7 +815,7 @@ end
 
         function [entryStep, exitPort] = walk(aidx)
             if isKey(visited, aidx)
-                se = visited(aidx);
+                se = visited{aidx};
                 entryStep = se(1);
                 exitPort = se(2:3);
                 return;
@@ -669,10 +824,10 @@ end
             % step: it sits on the Cache node rather than on the processor.
             cacheNode = [];
             if tidx <= length(lsn.iscache) && lsn.iscache(tidx) && full(lsn.graph(eidx, aidx)) > 0
-                cacheNode = getCacheNode(tidx);
+                cacheNode = getCacheNode(tidx, trep);
             end
-            [entryStep, exitPort] = makeActivitySteps(aidx, tidx, refTidx, cacheNode);
-            visited(aidx) = [entryStep, exitPort];
+            [entryStep, exitPort] = makeActivitySteps(aidx, tidx, refKey, trep, cacheNode);
+            visited{aidx} = [entryStep, exitPort];
 
             % Reply is deferred to the ends of the chain, not emitted here -- see _kb/04-networkstruct.md
             repliesHere = false;
@@ -699,25 +854,31 @@ end
             if repliesHere
                 if ~isempty(cacheNode) && length(succ) >= 2
                     % Phase 2 at a cache read: each hit/miss outcome routes through its own immediate trigger step -- see _kb/04-networkstruct.md
-                    trigH = addStep(aidx, lsn.parent(tidx), [], ...
-                        [lsn.names{aidx}, '_ph2h'], false, false, refTidx);
-                    trigM = addStep(aidx, lsn.parent(tidx), [], ...
-                        [lsn.names{aidx}, '_ph2m'], false, false, refTidx);
+                    trigH = addStep(aidx, hostKey(tidx, trep), [], ...
+                        sname([lsn.names{aidx}, '_ph2h']), false, false, refKey);
+                    trigM = addStep(aidx, hostKey(tidx, trep), [], ...
+                        sname([lsn.names{aidx}, '_ph2m']), false, false, refKey);
                     addCacheRoute(entryStep, trigH);
                     addCacheRoute(entryStep, trigM);
+                    if hasRetrievalOf(tidx)
+                        line_warning(mfilename, sprintf(['Delayed-hit retrieval of %s is not ' ...
+                            'represented on a cache read with phase-2 successors.'], ...
+                            lsn.names{tidx}));
+                    end
                     cacheWiring(end+1) = struct('node', cacheNode, ...
                         'readStep', entryStep, 'hitStep', trigH, 'missStep', trigM, ...
-                        'itemproc', lsn.itemproc{eidx}, 'nitems', lsn.nitems(eidx)); %#ok<AGROW>
+                        'itemproc', lsn.itemproc{eidx}, 'nitems', lsn.nitems(eidx), ...
+                        'fetch', [], 'fetchSvc', []); %#ok<AGROW>
                     replyExits(end+1, :) = [trigH, 0, 1.0]; %#ok<AGROW>
                     replyExits(end+1, :) = [trigM, 0, 1.0]; %#ok<AGROW>
                     savedStack = threadStack;
-                    threadStack = tidx;
+                    threadStack = ekey(tidx, trep);
                     nT0 = size(terminals, 1);
                     for hm = 1:2
                         [sEntry, ~] = walk(succ(hm));
                         if ~isempty(stepNode{sEntry})
-                            hmHead = addStep(aidx, lsn.parent(tidx), [], ...
-                                sprintf('%s_ph2b%d', lsn.names{aidx}, hm), false, false, refTidx);
+                            hmHead = addStep(aidx, hostKey(tidx, trep), [], ...
+                                sname(sprintf('%s_ph2b%d', lsn.names{aidx}, hm)), false, false, refKey);
                             addRoute([hmHead, 0], sEntry, 1.0);
                             sEntry = hmHead;
                         end
@@ -730,7 +891,7 @@ end
                     ph2New = terminals(nT0+1:end, :);
                     terminals(nT0+1:end, :) = [];
                     for r2 = 1:size(ph2New, 1)
-                        ph2Exits(end+1, :) = [ph2New(r2, 1:3), refTidx]; %#ok<AGROW>
+                        ph2Exits(end+1, :) = [ph2New(r2, 1:3), refKey]; %#ok<AGROW>
                     end
                     threadStack = savedStack;
                     return;
@@ -741,8 +902,8 @@ end
                 % A merge step at the host station normalises a call-site exit to a station departure before the phase-2 walk
                 if okCtx && (exitPort(2) == 1 || ...
                         (~isempty(stepNode{exitPort(1)}) && isa(stepNode{exitPort(1)}, 'Router')))
-                    trig = addStep(aidx, lsn.parent(tidx), [], ...
-                        [lsn.names{aidx}, '_ph2t'], false, false, refTidx);
+                    trig = addStep(aidx, hostKey(tidx, trep), [], ...
+                        sname([lsn.names{aidx}, '_ph2t']), false, false, refKey);
                     addRoute(exitPort, trig, 1.0);
                     exitPort = [trig, 0];
                 end
@@ -755,20 +916,20 @@ end
                 else
                     replyExits(end+1, :) = [exitPort, 1.0]; %#ok<AGROW>
                     savedStack = threadStack;
-                    threadStack = tidx;
+                    threadStack = ekey(tidx, trep);
                     nT0 = size(terminals, 1);
                     posSucc = succ(full(lsn.graph(aidx, succ)) > 0);
                     target = [];
                     if isAndFork(succ)
                         % Phase 2 opens with an AND-fork: spawn into an immediate head step and fork from there
-                        head = addStep(aidx, lsn.parent(tidx), [], ...
-                            [lsn.names{aidx}, '_ph2'], false, false, refTidx);
+                        head = addStep(aidx, hostKey(tidx, trep), [], ...
+                            sname([lsn.names{aidx}, '_ph2']), false, false, refKey);
                         wireAndFork([head, 0], succ, aidx);
                         target = head;
                     elseif isAndJoinPre(aidx)
                         % Phase 2 at an AND-join branch tail: spawn into an immediate head standing in for this branch at the Join
-                        head = addStep(aidx, lsn.parent(tidx), [], ...
-                            [lsn.names{aidx}, '_ph2'], false, false, refTidx);
+                        head = addStep(aidx, hostKey(tidx, trep), [], ...
+                            sname([lsn.names{aidx}, '_ph2']), false, false, refKey);
                         wireAndJoin([head, 0], succ(1));
                         target = head;
                     elseif isscalar(posSucc)
@@ -779,8 +940,8 @@ end
                     end
                     if isempty(target)
                         % Branching phase 2, or a head on a non-station node: spawn into an immediate head carrying branch probabilities
-                        head = addStep(aidx, lsn.parent(tidx), [], ...
-                            [lsn.names{aidx}, '_ph2'], false, false, refTidx);
+                        head = addStep(aidx, hostKey(tidx, trep), [], ...
+                            sname([lsn.names{aidx}, '_ph2']), false, false, refKey);
                         for s2 = posSucc
                             [sEntry, ~] = walk(s2);
                             addRoute([head, 0], sEntry, full(lsn.graph(aidx, s2)));
@@ -791,7 +952,7 @@ end
                     ph2New = terminals(nT0+1:end, :);
                     terminals(nT0+1:end, :) = [];
                     for r2 = 1:size(ph2New, 1)
-                        ph2Exits(end+1, :) = [ph2New(r2, 1:3), refTidx]; %#ok<AGROW>
+                        ph2Exits(end+1, :) = [ph2New(r2, 1:3), refKey]; %#ok<AGROW>
                     end
                     threadStack = savedStack;
                     return;
@@ -809,9 +970,23 @@ end
                     [mEntry, ~] = walk(succ(2));
                     addCacheRoute(entryStep, hEntry);
                     addCacheRoute(entryStep, mEntry);
+                    fetch_ = []; fetchSvc_ = [];
+                    if hasRetrievalOf(tidx)
+                        % The fetch is what the miss branch does, so its demand moves to
+                        % the fetch station where concurrent misses coalesce
+                        fetch_ = getFetchNode(tidx, trep);
+                        fetchSvc_ = stepSvc{mEntry};
+                        stepSvc{mEntry} = [];
+                        if succ(2) <= length(lsn.callsof) && ~isempty(lsn.callsof{succ(2)})
+                            line_warning(mfilename, sprintf(['Calls of miss activity %s stay ' ...
+                                'outside the retrieval system, so they are not coalesced ' ...
+                                'across concurrent misses.'], lsn.names{succ(2)}));
+                        end
+                    end
                     cacheWiring(end+1) = struct('node', cacheNode, ...
                         'readStep', entryStep, 'hitStep', hEntry, 'missStep', mEntry, ...
-                        'itemproc', lsn.itemproc{eidx}, 'nitems', lsn.nitems(eidx)); %#ok<AGROW>
+                        'itemproc', lsn.itemproc{eidx}, 'nitems', lsn.nitems(eidx), ...
+                        'fetch', fetch_, 'fetchSvc', fetchSvc_); %#ok<AGROW>
                     return;
                 end
             end
@@ -841,17 +1016,18 @@ end
             % replicated by a Fork node. One Router per branch, because a
             % Fork cannot switch class per output link, and the branch
             % class is what tells the branch apart.
-            forkNode = Fork(model, ['Fork_', lsn.names{aidx}]);
-            forkStep = addAuxStep(forkNode, fromPort(1), ['Fork_', lsn.names{aidx}], refTidx);
+            forkName_ = sname(['Fork_', lsn.names{aidx}]);
+            forkNode = Fork(model, forkName_);
+            forkStep = addAuxStep(forkNode, fromPort(1), forkName_, refKey);
             addRoute(fromPort, forkStep, 1.0);
             forkOwnerStack(end+1) = forkStep;
             % Walk a replying branch first so the Join/post-join subgraph is created in its phase-2 context
-            rep = arrayfun(@branchReplies, fsucc);
-            fsucc = [fsucc(rep), fsucc(~rep)];
+            repliesFirst_ = arrayfun(@branchReplies, fsucc);
+            fsucc = [fsucc(repliesFirst_), fsucc(~repliesFirst_)];
             for b = 1:length(fsucc)
-                routerNode = Router(model, sprintf('Fork_%s_%d', lsn.names{aidx}, b));
-                routerStep = addAuxStep(routerNode, forkStep, ...
-                    sprintf('Fork_%s_%d', lsn.names{aidx}, b), refTidx);
+                routerName_ = sname(sprintf('Fork_%s_%d', lsn.names{aidx}, b));
+                routerNode = Router(model, routerName_);
+                routerStep = addAuxStep(routerNode, forkStep, routerName_, refKey);
                 addRoute([forkStep, 0], routerStep, 1.0);
                 [sEntry, ~] = walk(fsucc(b));
                 addRoute([routerStep, 0], sEntry, 1.0);
@@ -865,7 +1041,7 @@ end
             % that entered the fork, so switch back to it on the way in.
             % The post-join subgraph is walked in the calling context.
             if isKey(joinOf, joinAidx)
-                js = joinOf(joinAidx);
+                js = joinOf{joinAidx};
                 addRoute(fromPort, js(1), 1.0);
                 return;
             end
@@ -877,14 +1053,19 @@ end
                 addRoute(fromPort, sEntry, 1.0);
                 return;
             end
-            joinNode = Join(model, ['Join_', lsn.names{joinAidx}], stepNode{forkOwnerStack(end)});
-            joinStep = addAuxStep(joinNode, forkOwnerStack(end), ...
-                ['Join_', lsn.names{joinAidx}], refTidx);
+            joinName_ = sname(['Join_', lsn.names{joinAidx}]);
+            joinNode = Join(model, joinName_, stepNode{forkOwnerStack(end)});
+            joinStep = addAuxStep(joinNode, forkOwnerStack(end), joinName_, refKey);
             addRoute(fromPort, joinStep, 1.0);
             [sEntry, ~] = walk(joinAidx);
             addRoute([joinStep, 0], sEntry, 1.0);
-            joinOf(joinAidx) = [joinStep, sEntry];
+            joinOf{joinAidx} = [joinStep, sEntry];
             joinQuorum(end+1, :) = [joinStep, joinAidx]; %#ok<AGROW>
+        end
+
+        function nm = sname(name)
+            % A class name carries the replica of the task that owns the step
+            nm = uniqueName(suffixed(name, trep));
         end
 
         function tf = branchReplies(a0)
@@ -920,14 +1101,14 @@ end
         end
     end
 
-    function [entryStep, exitPort] = makeActivitySteps(aidx, tidx, refTidx, cacheNode)
+    function [entryStep, exitPort] = makeActivitySteps(aidx, tidx, refKey, trep, cacheNode)
         % One step for the host demand, plus one step per unrolled
         % synchronous call stage.
-        hidx = lsn.parent(tidx);
-        if nargin >= 4 && ~isempty(cacheNode)
+        hidx = hostKey(tidx, trep);
+        if nargin >= 5 && ~isempty(cacheNode)
             % A read step holds no demand and issues no call: the lookup is
             % instantaneous and the work is done on the hit or miss branch.
-            entryStep = addStep(aidx, hidx, [], lsn.names{aidx}, false, false, refTidx);
+            entryStep = addStep(aidx, hidx, [], uniqueName(suffixed(lsn.names{aidx}, trep)), false, false, refKey);
             stepNode{entryStep} = cacheNode;
             if aidx <= length(lsn.callsof) && ~isempty(lsn.callsof{aidx})
                 line_warning(mfilename, sprintf(...
@@ -950,7 +1131,7 @@ end
         end
 
         callStages = synchCallStages(aidx);
-        entryStep = addStep(aidx, hidx, svc, lsn.names{aidx}, false, false, refTidx);
+        entryStep = addStep(aidx, hidx, svc, uniqueName(suffixed(lsn.names{aidx}, trep)), false, false, refKey);
         % cur is the port through which the activity is currently left. A
         % blocking call site is left through its reply signal.
         cur = [entryStep, 0];
@@ -958,7 +1139,8 @@ end
         % Activity think time: a delay in series with the host demand, on a shared INF station so the processor is released
         actThinkDist_ = actThinkOf(aidx);
         if ~isempty(actThinkDist_)
-            actThinkStep_ = addStep(aidx, hidx, actThinkDist_, [lsn.names{aidx}, '_think'], false, false, refTidx);
+            actThinkStep_ = addStep(aidx, hidx, actThinkDist_, ...
+                uniqueName(suffixed([lsn.names{aidx}, '_think'], trep)), false, false, refKey);
             stepNode{actThinkStep_} = actThinkStation();
             addRoute(cur, actThinkStep_, 1.0);
             cur = [actThinkStep_, 0];
@@ -966,7 +1148,7 @@ end
 
         % A call blocks the caller's server only when host servers are finite, the task is not a thread pool,
         % multiplicity is finite, and the chain is not open -- see _kb/04-networkstruct.md
-        hostBlocks = ~hostIsDelay(hidx) && ~fcrTask(tidx) && refTidx ~= 0 && ...
+        hostBlocks = ~hostIsDelay(hidx(1), hidx(2)+1) && ~fcrTask(tidx) && refKey(1) ~= 0 && ...
             isfinite(lsn.mult(tidx)) && lsn.sched(tidx) ~= SchedStrategy.INF;
 
         for k = 1:length(callStages)
@@ -978,26 +1160,38 @@ end
                 asyncThread = threadStack(end);
                 threadStack(end) = [];
             end
-            [calleeFirst, calleeReplies, calleeTerms] = expandEntry(stage.targetEidx, refTidx);
+            % The stage is routed to the callee replicas this caller replica reaches, which share the call mean uniformly
+            reps = targetReplicas(tidx, trep, lsn.parent(stage.targetEidx));
+            calleeFirsts = [];
+            calleeReplies = zeros(0, 3);
+            for mrep_ = reps
+                [cFirst, cReplies, cTerms] = expandEntry(stage.targetEidx, refKey, mrep_);
+                if isempty(cFirst)
+                    continue;
+                end
+                calleeFirsts(end+1) = cFirst; %#ok<AGROW>
+                % A callee path that neither replies nor continues still holds a
+                % token, so it returns to the caller like a reply would.
+                calleeReplies = [calleeReplies; cReplies; cTerms]; %#ok<AGROW>
+            end
             if stage.isasync
                 threadStack(end+1) = asyncThread;
             end
-            if isempty(calleeFirst)
+            if isempty(calleeFirsts)
                 continue;   % callee not expandable: drop the call, never block
             end
-            % A callee path that neither replies nor continues still holds a
-            % token, so it returns to the caller like a reply would.
-            calleeReplies = [calleeReplies; calleeTerms]; %#ok<AGROW>
+            share = 1.0 / length(calleeFirsts);
 
             % Merge step needed when the call may be skipped, another stage follows, or an AND-join branch tail must reach
             % the Join in an ordinary class (a REPLY signal carries no forked-task identity) -- see _kb/04-networkstruct.md
             needsMerge = (stage.prob < 1.0) || (k < length(callStages)) || ...
                 ~blocks || isAndJoinPre(aidx);
             if needsMerge
-                nxt = addStep(aidx, hidx, [], sprintf('%s_c%d_ret', lsn.names{aidx}, k), false, false, refTidx);
+                retName_ = uniqueName(suffixed(sprintf('%s_c%d_ret', lsn.names{aidx}, k), trep));
+                nxt = addStep(aidx, hidx, [], retName_, false, false, refKey);
                 if ~blocks
                     % Non-blocking return carries no signal, so the merge point can sit on a Router (no server to queue behind)
-                    stepNode{nxt} = Router(model, sprintf('%s_c%d_ret', lsn.names{aidx}, k));
+                    stepNode{nxt} = Router(model, retName_);
                 end
             end
 
@@ -1007,13 +1201,17 @@ end
                     blk = entryStep;
                     stepBlocks(blk) = true;
                 else
-                    blk = addStep(aidx, hidx, [], sprintf('%s_c%d', lsn.names{aidx}, k), true, false, refTidx);
+                    blk = addStep(aidx, hidx, [], ...
+                        uniqueName(suffixed(sprintf('%s_c%d', lsn.names{aidx}, k), trep)), true, false, refKey);
                     addRoute(cur, blk, stage.prob);
                     if stage.prob < 1.0
                         addRoute(cur, nxt, 1.0 - stage.prob);
                     end
                 end
-                addRoute([blk, 0], calleeFirst, 1.0);
+                % Every reached replica replies into the same signal, so the call site blocks once however many replicas it has
+                for cf_ = calleeFirsts
+                    addRoute([blk, 0], cf_, share);
+                end
                 for r = 1:size(calleeReplies, 1)
                     reply(end+1, :) = [calleeReplies(r, 1), blk, calleeReplies(r, 2), calleeReplies(r, 3)]; %#ok<AGROW>
                 end
@@ -1024,7 +1222,9 @@ end
                     cur = [blk, 1];
                 end
             else
-                addRoute(cur, calleeFirst, stage.prob);
+                for cf_ = calleeFirsts
+                    addRoute(cur, cf_, stage.prob * share);
+                end
                 if stage.prob < 1.0
                     addRoute(cur, nxt, 1.0 - stage.prob);
                 end
@@ -1037,16 +1237,60 @@ end
         exitPort = cur;
     end
 
-    function cnode = getCacheNode(tidx)
-        % One Cache node per CacheTask. The name is suffixed so that it does
-        % not collide with the station of the task's processor.
-        if isKey(cacheNodeOf, tidx)
-            cnode = cacheNodeOf(tidx);
+    function cnode = getCacheNode(tidx, trep)
+        % One Cache node per CacheTask replica. The name is suffixed so that it
+        % does not collide with the station of the task's processor.
+        if isKey(cacheNodeOf, ekey(tidx, trep))
+            cnode = cacheNodeOf{ekey(tidx, trep)};
             return;
         end
-        cnode = Cache(model, [lsn.names{tidx}, '_Cache'], lsn.nitems(tidx), ...
+        cnode = Cache(model, suffixed([lsn.names{tidx}, '_Cache'], trep), lsn.nitems(tidx), ...
             lsn.itemcap{tidx}, lsn.replacestrat(tidx));
-        cacheNodeOf(tidx) = cnode;
+        cacheNodeOf{ekey(tidx, trep)} = cnode;
+    end
+
+    function [setup_, delayoff_, status_] = functionTimesOf(tidx)
+        % Setup and delay-off of a SetupTask. Both are needed: without a
+        % delay-off the server never shuts down, so it pays the setup once at
+        % most and the pair carries no information
+        setup_ = []; delayoff_ = []; status_ = 'none';
+        if ~isfield(lsn, 'hassetup') || isempty(lsn.hassetup) || ...
+                tidx > numel(lsn.hassetup) || full(lsn.hassetup(tidx)) == 0
+            return;
+        end
+        if ~isfield(lsn, 'setuptime') || tidx > numel(lsn.setuptime)
+            return;
+        end
+        su_ = lsn.setuptime{tidx};
+        if ~isa(su_, 'Distribution') || isa(su_, 'Immediate') || su_.getMean() <= GlobalConstants.FineTol
+            return;
+        end
+        do_ = [];
+        if isfield(lsn, 'delayofftime') && tidx <= numel(lsn.delayofftime)
+            do_ = lsn.delayofftime{tidx};
+        end
+        if ~isa(do_, 'Distribution')
+            status_ = 'nodelayoff';
+            return;
+        end
+        setup_ = su_; delayoff_ = do_; status_ = 'ok';
+    end
+
+    function tf = hasRetrievalOf(tidx)
+        % True when the CacheTask coalesces concurrent misses of the same item
+        tf = isfield(lsn, 'hasretrieval') && ~isempty(lsn.hasretrieval) && ...
+            tidx <= length(lsn.hasretrieval) && full(lsn.hasretrieval(tidx)) ~= 0;
+    end
+
+    function fnode = getFetchNode(tidx, trep)
+        % The retrieval system of a CacheTask is an ordinary queueing network: one
+        % PS fetch station per cache replica, as in the LN cache sublayer
+        if isKey(fetchNodeOf, ekey(tidx, trep))
+            fnode = fetchNodeOf{ekey(tidx, trep)};
+            return;
+        end
+        fnode = Queue(model, suffixed([lsn.names{tidx}, '_Cache_Fetch'], trep), SchedStrategy.PS);
+        fetchNodeOf{ekey(tidx, trep)} = fnode;
     end
 
     function tf = isAndFork(succ)
@@ -1167,19 +1411,6 @@ end
                 'non-blocking visits: the caller releases its server but remains ' ...
                 'serialised behind the callee.']);
         end
-        if isfield(lsn, 'hasretrieval') && any(lsn.hasretrieval)
-            line_warning(mfilename, 'Delayed-hit retrieval on the cache miss path is not represented by LQN2QN.');
-        end
-        if isfield(lsn, 'repl') && any(full(lsn.repl(1:lsn.nhosts+lsn.ntasks)) > 1)
-            idx_ = find(full(lsn.repl(1:lsn.nhosts+lsn.ntasks)) > 1, 1);
-            line_warning(mfilename, sprintf(['Replication of %s is not represented by LQN2QN: ' ...
-                'the replicas are collapsed into a single station and their fan-out is ignored.'], ...
-                lsn.names{idx_}));
-        end
-        if isfield(lsn, 'isfunction') && any(full(lsn.isfunction))
-            line_warning(mfilename, ['Setup and delay-off times of function tasks are not ' ...
-                'represented by LQN2QN: the task is converted as an ordinary always-on station.']);
-        end
     end
 
     function tf = taskHasAndFork(tidx_)
@@ -1195,6 +1426,145 @@ end
                 tf = true;
                 return;
             end
+        end
+    end
+
+    function n_ = nrep(idx)
+        % Replicas materialised for a host or task index
+        if materialize
+            n_ = replRaw(idx);
+        else
+            n_ = 1;
+        end
+    end
+
+    function f_ = poolFactor(idx)
+        % Capacity multiplier carried by a pooled element, 1 when materialised
+        if materialize
+            f_ = 1;
+        else
+            f_ = replRaw(idx);
+        end
+    end
+
+    function f_ = fanOutOf(aTidx, bTidx, rb)
+        % Callee replicas reached by one caller replica. An unset fan-out is the
+        % smallest value consistent with repl(a)*fanout = repl(b)*fanin.
+        if rb <= 1
+            f_ = 1;
+            return;
+        end
+        f_ = 0;
+        if isfield(lsn, 'fanout') && ~isempty(lsn.fanout) && ...
+                aTidx <= size(lsn.fanout, 1) && bTidx <= size(lsn.fanout, 2)
+            f_ = full(lsn.fanout(aTidx, bTidx));
+        end
+        if f_ <= 0
+            ra = replRaw(aTidx);
+            if rb > ra
+                f_ = max(1, floor(rb / ra));
+            else
+                f_ = 1;
+            end
+        end
+        f_ = min(max(1, round(f_)), rb);
+    end
+
+    function reps = targetReplicas(aTidx, aRep, bTidx)
+        % Replicas of the callee reached by replica aRep of the caller
+        rb = nrep(bTidx);
+        if rb <= 1
+            reps = 0;
+            return;
+        end
+        f_ = fanOutOf(aTidx, bTidx, rb);
+        reps = mod(aRep * f_ + (0:f_-1), rb);
+    end
+
+    function k_ = hostKey(tidx_, trep_)
+        % Station of the processor replica running replica trep of a task
+        hidx_ = lsn.parent(tidx_);
+        k_ = [hidx_, mod(trep_, nrep(hidx_))];
+    end
+
+    function k_ = ekey(idx, rep)
+        % Composite (element, 0-based replica) key for maps and stacks
+        k_ = (idx - 1) * RKEY + rep + 1;
+    end
+
+    function idx = ekeyIdx(k_)
+        % Element index of a composite key
+        idx = floor((k_ - 1) / RKEY) + 1;
+    end
+
+    function nm = uniqueName(base)
+        % A subgraph copied per call site or per replica repeats its names, which
+        % Network rejects, so a repeat is disambiguated by occurrence
+        if isKey(usedNames, base)
+            n_ = usedNames(base) + 1;
+            usedNames(base) = n_;
+            nm = sprintf('%s_d%d', base, n_);
+        else
+            usedNames(base) = 1;
+            nm = base;
+        end
+    end
+
+    function nm = suffixed(name, rep)
+        % Replica 1 keeps the plain name. The suffix stays inside [A-Za-z0-9_]
+        % because a class name is a JSON object key, and jsondecode mangles any
+        % key that is not a valid identifier -- see _kb/11-conventions-and-gotchas.md
+        if rep == 0
+            nm = name;
+        else
+            nm = sprintf('%s_r%d', name, rep + 1);
+        end
+    end
+
+    function n_ = replInstantiations()
+        % Copies of the task step graphs a materialised expansion would create
+        rimemo_ = configureDictionary('double', 'double');
+        n_ = 0;
+        riseeds_ = unique([refTaskIndices(:).', arrayfun(@(e) lsn.parent(e), openEntries)]);
+        for rit_ = riseeds_
+            n_ = n_ + replRaw(rit_) * taskCost(rit_, []);
+        end
+
+        function ric_ = taskCost(ritidx_, ristack_)
+            if any(ristack_ == ritidx_)
+                ric_ = 1;   % recursive cycle: truncated anyway
+                return;
+            end
+            if isKey(rimemo_, ritidx_)
+                ric_ = rimemo_(ritidx_);
+                return;
+            end
+            rideeper_ = [ristack_, ritidx_];
+            ric_ = 1;
+            for rieidx_ = lsn.entriesof{ritidx_}
+                ritargets_ = [];
+                for ria_ = lsn.actsof{rieidx_}
+                    if ria_ > length(lsn.callsof) || isempty(lsn.callsof{ria_})
+                        continue;
+                    end
+                    for ricidx_ = lsn.callsof{ria_}
+                        rict_ = full(lsn.calltype(ricidx_));
+                        if rict_ == CallType.SYNC || rict_ == CallType.ASYNC
+                            ritargets_(end+1) = lsn.callpair(ricidx_, 2); %#ok<AGROW>
+                        end
+                    end
+                end
+                % A forwarded entry is expanded per replica just as a call is
+                rifwd_ = forwardingOf(rieidx_);
+                if ~isempty(rifwd_)
+                    ritargets_ = [ritargets_, rifwd_(:, 1).']; %#ok<AGROW>
+                end
+                for rite_ = ritargets_
+                    rib_ = lsn.parent(rite_);
+                    ric_ = ric_ + fanOutOf(ritidx_, rib_, replRaw(rib_)) * taskCost(rib_, rideeper_);
+                end
+            end
+            rimemo_(ritidx_) = ric_;
         end
     end
 

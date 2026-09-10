@@ -27,9 +27,15 @@ class SolverLNCoreTest extends SolverLNTestBase {
     public void test_single_layer() throws Exception {
         SolverOptions options = new LNOptions();
         options.verbose = VerboseLevel.SILENT;
+        // asserts the ROUTING-encoded layer, so it names that encoding rather
+        // than taking the 'srvn' alias, which now resolves to 'srvn.ph' here
+        options.method = "srvn.cs";
+        // the layer solver reads its own method, so it takes its own options
+        SolverOptions mvaoptions = new jline.solvers.mva.MVAOptions();
+        mvaoptions.verbose = VerboseLevel.SILENT;
         SolverLN solverLN = new SolverLN(SolverLNTestFixtures.buildModel1(), options);
         Network network = solverLN.getEnsemble().get(0);
-        SolverMVA layersolver = new SolverMVA(network,options);
+        SolverMVA layersolver = new SolverMVA(network,mvaoptions);
         layersolver.runAnalyzer();
 
         //test queue length
@@ -52,81 +58,90 @@ class SolverLNCoreTest extends SolverLNTestBase {
         assertEquals(0.346278, layersolver.result.RN.get(1, 2), relativeTolerance(0.346278, TestTools.MID_TOL));
         assertEquals(5.194165, layersolver.result.RN.get(1, 3), relativeTolerance(5.194165, TestTools.MID_TOL));
 
-        //test idxhash
-        assertTrue(Double.isNaN(solverLN.getIdxhash().get(0)));
-        assertEquals(1.0, solverLN.getIdxhash().get(1), relativeTolerance(1.0, TestTools.MID_TOL));
-        assertTrue(Double.isNaN(solverLN.getIdxhash().get(2)));
+        // idxhash is indexed by ELEMENT and the element space is 0-based, so it no
+        // longer carries the unused slot 0: P1 is entry 0 and the list is one shorter.
+        assertEquals(1.0, solverLN.getIdxhash().get(0), relativeTolerance(1.0, TestTools.MID_TOL));
+        assertTrue(Double.isNaN(solverLN.getIdxhash().get(1)));
+        assertEquals(2, solverLN.getIdxhash().size());
     }
 
     @org.junit.jupiter.api.Test
     public void test_multiple_layer() throws Exception {
         SolverOptions options = new LNOptions();
         options.verbose = VerboseLevel.SILENT;
+        // routing-encoded layers, as above
+        options.method = "srvn.cs";
+        // the layer solver reads its own method, so it takes its own options
+        SolverOptions mvaoptions = new jline.solvers.mva.MVAOptions();
+        mvaoptions.verbose = VerboseLevel.SILENT;
         SolverLN solverLN = new SolverLN(SolverLNTestFixtures.buildModel2(), options);
 
         //Layer 1
         Network network1 = solverLN.getEnsemble().get(0);
-        SolverMVA layersolver1 = new SolverMVA(network1,options);
+        SolverMVA layersolver1 = new SolverMVA(network1,mvaoptions);
         layersolver1.runAnalyzer();
 
         //Layer 2
         Network network2 = solverLN.getEnsemble().get(1);
-        SolverMVA layersolver2 = new SolverMVA(network2,options);
+        SolverMVA layersolver2 = new SolverMVA(network2,mvaoptions);
         layersolver2.runAnalyzer();
 
         //Layer 3
         Network network3 = solverLN.getEnsemble().get(2);
-        SolverMVA layersolver3 = new SolverMVA(network3,options);
+        SolverMVA layersolver3 = new SolverMVA(network3,mvaoptions);
         layersolver3.runAnalyzer();
 
+        // Columns 1 and 2 are element / activity / call indices and moved with the
+        // 0-based rebase; columns 3 and 4 are layer-internal node and class indices
+        // and did not.
         // test Servt_classes_updmap
-        assertEquals(solverLN.getServt_classes_updmap().get(1, 1), 1);
-        assertEquals(solverLN.getServt_classes_updmap().get(1, 2), 7);
+        assertEquals(solverLN.getServt_classes_updmap().get(1, 1), 0);
+        assertEquals(solverLN.getServt_classes_updmap().get(1, 2), 6);
         assertEquals(solverLN.getServt_classes_updmap().get(1, 3), 2);
         assertEquals(solverLN.getServt_classes_updmap().get(1, 4), 3);
-        assertEquals(solverLN.getServt_classes_updmap().get(2, 1), 1);
-        assertEquals(solverLN.getServt_classes_updmap().get(2, 2), 8);
+        assertEquals(solverLN.getServt_classes_updmap().get(2, 1), 0);
+        assertEquals(solverLN.getServt_classes_updmap().get(2, 2), 7);
         assertEquals(solverLN.getServt_classes_updmap().get(2, 3), 2);
         assertEquals(solverLN.getServt_classes_updmap().get(2, 4), 4);
-        assertEquals(solverLN.getServt_classes_updmap().get(3, 1), 2);
-        assertEquals(solverLN.getServt_classes_updmap().get(3, 2), 9);
+        assertEquals(solverLN.getServt_classes_updmap().get(3, 1), 1);
+        assertEquals(solverLN.getServt_classes_updmap().get(3, 2), 8);
         assertEquals(solverLN.getServt_classes_updmap().get(3, 3), 2);
         assertEquals(solverLN.getServt_classes_updmap().get(3, 4), 3);
-        assertEquals(solverLN.getServt_classes_updmap().get(4, 1), 2);
-        assertEquals(solverLN.getServt_classes_updmap().get(4, 2), 10);
+        assertEquals(solverLN.getServt_classes_updmap().get(4, 1), 1);
+        assertEquals(solverLN.getServt_classes_updmap().get(4, 2), 9);
         assertEquals(solverLN.getServt_classes_updmap().get(4, 3), 2);
         assertEquals(solverLN.getServt_classes_updmap().get(4, 4), 4);
 
         // test Call_classes_updmap
-        assertEquals(solverLN.getCall_classes_updmap().get(1, 1), 1);
-        assertEquals(solverLN.getCall_classes_updmap().get(1, 2), 1);
+        assertEquals(solverLN.getCall_classes_updmap().get(1, 1), 0);
+        assertEquals(solverLN.getCall_classes_updmap().get(1, 2), 0);
         assertEquals(solverLN.getCall_classes_updmap().get(1, 3), 1);
         assertEquals(solverLN.getCall_classes_updmap().get(1, 4), 5);
-        assertEquals(solverLN.getCall_classes_updmap().get(2, 1), 4);
-        assertEquals(solverLN.getCall_classes_updmap().get(2, 2), 1);
+        assertEquals(solverLN.getCall_classes_updmap().get(2, 1), 3);
+        assertEquals(solverLN.getCall_classes_updmap().get(2, 2), 0);
         assertEquals(solverLN.getCall_classes_updmap().get(2, 3), 2);
         assertEquals(solverLN.getCall_classes_updmap().get(2, 4), 5);
 
         // test getThinkt_classes_updmap
-        assertEquals(solverLN.getThinkt_classes_updmap().get(1, 1), 2);
-        assertEquals(solverLN.getThinkt_classes_updmap().get(1, 2), 4);
+        assertEquals(solverLN.getThinkt_classes_updmap().get(1, 1), 1);
+        assertEquals(solverLN.getThinkt_classes_updmap().get(1, 2), 3);
         assertEquals(solverLN.getThinkt_classes_updmap().get(1, 3), 1);
         assertEquals(solverLN.getThinkt_classes_updmap().get(1, 4), 1);
-        assertEquals(solverLN.getThinkt_classes_updmap().get(2, 1), 4);
-        assertEquals(solverLN.getThinkt_classes_updmap().get(2, 2), 7);
+        assertEquals(solverLN.getThinkt_classes_updmap().get(2, 1), 3);
+        assertEquals(solverLN.getThinkt_classes_updmap().get(2, 2), 6);
         assertEquals(solverLN.getThinkt_classes_updmap().get(2, 3), 1);
         assertEquals(solverLN.getThinkt_classes_updmap().get(2, 4), 3);
-        assertEquals(solverLN.getThinkt_classes_updmap().get(3, 1), 4);
-        assertEquals(solverLN.getThinkt_classes_updmap().get(3, 2), 8);
+        assertEquals(solverLN.getThinkt_classes_updmap().get(3, 1), 3);
+        assertEquals(solverLN.getThinkt_classes_updmap().get(3, 2), 7);
         assertEquals(solverLN.getThinkt_classes_updmap().get(3, 3), 1);
         assertEquals(solverLN.getThinkt_classes_updmap().get(3, 4), 4);
 
-        //test idxhash
-        assertEquals(solverLN.getIdxhash().get(0), Double.NaN);
-        assertEquals(solverLN.getIdxhash().get(1), 1);
-        assertEquals(solverLN.getIdxhash().get(2), 2);
-        assertEquals(solverLN.getIdxhash().get(3), Double.NaN);
-        assertEquals(solverLN.getIdxhash().get(4), 3);
+        // 0-based element space: no unused slot 0, so the list is one shorter.
+        assertEquals(solverLN.getIdxhash().get(0), 1);
+        assertEquals(solverLN.getIdxhash().get(1), 2);
+        assertEquals(solverLN.getIdxhash().get(2), Double.NaN);
+        assertEquals(solverLN.getIdxhash().get(3), 3);
+        assertEquals(4, solverLN.getIdxhash().size());
     }
 
     @org.junit.jupiter.api.Test
@@ -144,103 +159,108 @@ class SolverLNCoreTest extends SolverLNTestBase {
         assertEquals(lqn.ashift, 6);
         assertEquals(lqn.cshift, 10);
 
+        // Every index below moved with the 0-based rebase: the element space is now
+        // {0=P1, 1=P2, 2=T1, 3=T2, 4=E1, 5=E2, 6=A1, 7=A2, 8=A3, 9=A4}, matching the
+        // shifts asserted above, and the vectors lost the slot that used to sit
+        // before the first element.
         assertEquals(lqn.tasksof.size(), 2);
+        assertEquals(lqn.tasksof.get(0).size(), 1);
         assertEquals(lqn.tasksof.get(1).size(), 1);
-        assertEquals(lqn.tasksof.get(2).size(), 1);
+        assertEquals(lqn.tasksof.get(0).get(0), 2);
         assertEquals(lqn.tasksof.get(1).get(0), 3);
-        assertEquals(lqn.tasksof.get(2).get(0), 4);
 
         assertEquals(lqn.entriesof.size(), 2);
-        assertEquals(lqn.entriesof.get(4).size(), 1);
         assertEquals(lqn.entriesof.get(3).size(), 1);
-        assertEquals(lqn.entriesof.get(4).get(0), 6);
+        assertEquals(lqn.entriesof.get(2).size(), 1);
         assertEquals(lqn.entriesof.get(3).get(0), 5);
+        assertEquals(lqn.entriesof.get(2).get(0), 4);
 
         assertEquals(lqn.actsof.size(), 4);
-        assertEquals(lqn.actsof.get(4).size(), 2);
         assertEquals(lqn.actsof.get(3).size(), 2);
-        assertEquals(lqn.actsof.get(4).get(0), 9);
-        assertEquals(lqn.actsof.get(4).get(1), 10);
-        assertEquals(lqn.actsof.get(3).get(0), 7);
-        assertEquals(lqn.actsof.get(3).get(1), 8);
+        assertEquals(lqn.actsof.get(2).size(), 2);
+        assertEquals(lqn.actsof.get(3).get(0), 8);
+        assertEquals(lqn.actsof.get(3).get(1), 9);
+        assertEquals(lqn.actsof.get(2).get(0), 6);
+        assertEquals(lqn.actsof.get(2).get(1), 7);
 
-        assertEquals(lqn.callsof.get(8).size(), 1);
-        assertEquals(lqn.callsof.get(8).get(0), 1);
+        assertEquals(lqn.callsof.get(7).size(), 1);
+        assertEquals(lqn.callsof.get(7).get(0), 0);
 
+        assertTrue(lqn.hostdem.get(2).isImmediate());
         assertTrue(lqn.hostdem.get(3).isImmediate());
         assertTrue(lqn.hostdem.get(4).isImmediate());
         assertTrue(lqn.hostdem.get(5).isImmediate());
-        assertTrue(lqn.hostdem.get(6).isImmediate());
-        assertTrue(lqn.hostdem.get(8).isImmediate());
-        assertTrue(lqn.hostdem.get(7) instanceof Exp);
+        assertTrue(lqn.hostdem.get(7).isImmediate());
+        assertTrue(lqn.hostdem.get(6) instanceof Exp);
+        assertTrue(lqn.hostdem.get(8) instanceof Exp);
         assertTrue(lqn.hostdem.get(9) instanceof Exp);
-        assertTrue(lqn.hostdem.get(10) instanceof Exp);
-        assertEquals(lqn.hostdem.get(7).getMean(), 1 / 0.625);
-        assertEquals(lqn.hostdem.get(9).getMean(), 1 / 0.2);
-        assertEquals(lqn.hostdem.get(10).getMean(), 1.0);
+        assertEquals(lqn.hostdem.get(6).getMean(), 1 / 0.625);
+        assertEquals(lqn.hostdem.get(8).getMean(), 1 / 0.2);
+        assertEquals(lqn.hostdem.get(9).getMean(), 1.0);
 
         assertEquals(lqn.think.size(), 2);
-        assertTrue(lqn.think.get(3) instanceof Exp);
-        assertEquals(lqn.think.get(3).getMean(), 1 / 0.01);
-        assertTrue(lqn.think.get(4).isImmediate());
+        assertTrue(lqn.think.get(2) instanceof Exp);
+        assertEquals(lqn.think.get(2).getMean(), 1 / 0.01);
+        assertTrue(lqn.think.get(3).isImmediate());
 
         assertEquals(lqn.sched.size(), 4);
+        assertSame(lqn.sched.get(0), SchedStrategy.PS);
         assertSame(lqn.sched.get(1), SchedStrategy.PS);
-        assertSame(lqn.sched.get(2), SchedStrategy.PS);
-        assertSame(lqn.sched.get(3), SchedStrategy.REF);
-        assertSame(lqn.sched.get(4), SchedStrategy.FCFS);
+        assertSame(lqn.sched.get(2), SchedStrategy.REF);
+        assertSame(lqn.sched.get(3), SchedStrategy.FCFS);
 
         assertEquals(lqn.names.size(), 10);
-        assertEquals(lqn.names.get(1), "P1");
-        assertEquals(lqn.names.get(2), "P2");
-        assertEquals(lqn.names.get(3), "T1");
-        assertEquals(lqn.names.get(4), "T2");
-        assertEquals(lqn.names.get(5), "E1");
-        assertEquals(lqn.names.get(6), "E2");
-        assertEquals(lqn.names.get(7), "A1");
-        assertEquals(lqn.names.get(8), "A2");
-        assertEquals(lqn.names.get(9), "A3");
-        assertEquals(lqn.names.get(10), "A4");
+        assertEquals(lqn.names.get(0), "P1");
+        assertEquals(lqn.names.get(1), "P2");
+        assertEquals(lqn.names.get(2), "T1");
+        assertEquals(lqn.names.get(3), "T2");
+        assertEquals(lqn.names.get(4), "E1");
+        assertEquals(lqn.names.get(5), "E2");
+        assertEquals(lqn.names.get(6), "A1");
+        assertEquals(lqn.names.get(7), "A2");
+        assertEquals(lqn.names.get(8), "A3");
+        assertEquals(lqn.names.get(9), "A4");
 
         assertEquals(lqn.hashnames.size(), 10);
-        assertEquals(lqn.hashnames.get(1), "P:P1");
-        assertEquals(lqn.hashnames.get(2), "P:P2");
-        assertEquals(lqn.hashnames.get(3), "R:T1");
-        assertEquals(lqn.hashnames.get(4), "T:T2");
-        assertEquals(lqn.hashnames.get(5), "E:E1");
-        assertEquals(lqn.hashnames.get(6), "E:E2");
-        assertEquals(lqn.hashnames.get(7), "A:A1");
-        assertEquals(lqn.hashnames.get(8), "A:A2");
-        assertEquals(lqn.hashnames.get(9), "A:A3");
-        assertEquals(lqn.hashnames.get(10), "A:A4");
+        assertEquals(lqn.hashnames.get(0), "P:P1");
+        assertEquals(lqn.hashnames.get(1), "P:P2");
+        assertEquals(lqn.hashnames.get(2), "R:T1");
+        assertEquals(lqn.hashnames.get(3), "T:T2");
+        assertEquals(lqn.hashnames.get(4), "E:E1");
+        assertEquals(lqn.hashnames.get(5), "E:E2");
+        assertEquals(lqn.hashnames.get(6), "A:A1");
+        assertEquals(lqn.hashnames.get(7), "A:A2");
+        assertEquals(lqn.hashnames.get(8), "A:A3");
+        assertEquals(lqn.hashnames.get(9), "A:A4");
 
+        // one column per host/task now, rather than that plus an unused leading slot
         assertEquals(lqn.mult.getNumRows(), 1);
-        assertEquals(lqn.mult.getNumCols(), 5);
+        assertEquals(lqn.mult.getNumCols(), 4);
         assertEquals(lqn.mult.getNonZeros(), 4);
+        assertEquals(lqn.mult.get(0), 1);
         assertEquals(lqn.mult.get(1), 1);
-        assertEquals(lqn.mult.get(2), 1);
-        assertEquals(lqn.mult.get(3), 10);
-        assertEquals(lqn.mult.get(4), 1);
+        assertEquals(lqn.mult.get(2), 10);
+        assertEquals(lqn.mult.get(3), 1);
 
         assertEquals(lqn.repl.getNumRows(), 1);
-        assertEquals(lqn.repl.getNumCols(), 5);
+        assertEquals(lqn.repl.getNumCols(), 4);
         assertEquals(lqn.repl.getNonZeros(), 4);
+        assertEquals(lqn.repl.get(0), 1);
         assertEquals(lqn.repl.get(1), 1);
         assertEquals(lqn.repl.get(2), 1);
         assertEquals(lqn.repl.get(3), 1);
-        assertEquals(lqn.repl.get(4), 1);
 
         assertEquals(lqn.type.getNumRows(), 1);
-        assertEquals(lqn.type.getNumCols(), 11);
+        assertEquals(lqn.type.getNumCols(), 10);
         assertEquals(lqn.type.getNonZeros(), 8);
+        assertEquals(lqn.type.get(2), 1);
         assertEquals(lqn.type.get(3), 1);
-        assertEquals(lqn.type.get(4), 1);
+        assertEquals(lqn.type.get(4), 2);
         assertEquals(lqn.type.get(5), 2);
-        assertEquals(lqn.type.get(6), 2);
+        assertEquals(lqn.type.get(6), 3);
         assertEquals(lqn.type.get(7), 3);
         assertEquals(lqn.type.get(8), 3);
         assertEquals(lqn.type.get(9), 3);
-        assertEquals(lqn.type.get(10), 3);
 
         assertEquals(lqn.nitems.getNonZeros(), 0);
 
@@ -250,91 +270,98 @@ class SolverLNCoreTest extends SolverLNTestBase {
 
         assertTrue(lqn.itemproc.isEmpty());
 
+        // calls are numbered separately and are 0-based too
         assertEquals(lqn.calltype.size(), 1);
-        assertSame(lqn.calltype.get(1), CallType.SYNC);
+        assertSame(lqn.calltype.get(0), CallType.SYNC);
 
-        assertEquals(lqn.callpair.getNumCols(), 3);
-        assertEquals(lqn.callpair.getNumRows(), 2);
+        assertEquals(lqn.callpair.getNumCols(), 2);
+        assertEquals(lqn.callpair.getNumRows(), 1);
         assertEquals(lqn.callpair.getNonZeros(), 2);
-        assertEquals(lqn.callpair.get(1, 1), 8);
-        assertEquals(lqn.callpair.get(1, 2), 6);
+        assertEquals(lqn.callpair.get(0, 0), 7);
+        assertEquals(lqn.callpair.get(0, 1), 5);
 
         assertEquals(lqn.callproc.size(), 1);
-        assertNotNull(lqn.callproc.get(1));
+        assertNotNull(lqn.callproc.get(0));
 
         assertEquals(lqn.callnames.size(), 1);
-        assertEquals(lqn.callnames.get(1), "A2=>E2");
+        assertEquals(lqn.callnames.get(0), "A2=>E2");
 
         assertEquals(lqn.callhashnames.size(), 1);
-        assertEquals(lqn.callhashnames.get(1), "A:A2=>E:E2");
+        assertEquals(lqn.callhashnames.get(0), "A:A2=>E:E2");
 
         assertEquals(lqn.actpretype.getNumRows(), 1);
-        assertEquals(lqn.actpretype.getNumCols(), 11);
+        assertEquals(lqn.actpretype.getNumCols(), 10);
         assertEquals(lqn.actpretype.getNonZeros(), 2);
-        assertEquals(lqn.actpretype.get(0, 7), 1);
-        assertEquals(lqn.actpretype.get(0, 9), 1);
+        assertEquals(lqn.actpretype.get(0, 6), 1);
+        assertEquals(lqn.actpretype.get(0, 8), 1);
 
-        assertEquals(lqn.actposttype.getNumCols(), 11);
+        assertEquals(lqn.actposttype.getNumCols(), 10);
         assertEquals(lqn.actposttype.getNumRows(), 1);
         assertEquals(lqn.actposttype.getNonZeros(), 2);
-        assertEquals(lqn.actposttype.get(0, 8), 11);
-        assertEquals(lqn.actposttype.get(0, 10), 11);
+        assertEquals(lqn.actposttype.get(0, 7), 11);
+        assertEquals(lqn.actposttype.get(0, 9), 11);
 
-        assertEquals(lqn.graph.getNumRows(), 11);
-        assertEquals(lqn.graph.getNumCols(), 11);
+        assertEquals(lqn.graph.getNumRows(), 10);
+        assertEquals(lqn.graph.getNumCols(), 10);
         assertEquals(lqn.graph.getNonZeros(), 9);
+        assertEquals(lqn.graph.get(2, 0), 1);
         assertEquals(lqn.graph.get(3, 1), 1);
-        assertEquals(lqn.graph.get(4, 2), 1);
+        assertEquals(lqn.graph.get(2, 4), 1);
         assertEquals(lqn.graph.get(3, 5), 1);
+        assertEquals(lqn.graph.get(7, 5), 1);
         assertEquals(lqn.graph.get(4, 6), 1);
-        assertEquals(lqn.graph.get(8, 6), 1);
-        assertEquals(lqn.graph.get(5, 7), 1);
-        assertEquals(lqn.graph.get(7, 8), 1);
-        assertEquals(lqn.graph.get(6, 9), 1);
-        assertEquals(lqn.graph.get(9, 10), 1);
+        assertEquals(lqn.graph.get(6, 7), 1);
+        assertEquals(lqn.graph.get(5, 8), 1);
+        assertEquals(lqn.graph.get(8, 9), 1);
 
-        assertEquals(lqn.parent.getNonZeros(), 8);
+        // a host has no parent, and the "none" marker is -1 rather than 0 now that 0
+        // is a real element, so the two hosts count towards the non-zeros and T1,
+        // whose parent IS host 0, no longer does
+        assertEquals(lqn.parent.getNonZeros(), 9);
         assertEquals(lqn.parent.getNumRows(), 1);
-        assertEquals(lqn.parent.getNumCols(), 11);
+        assertEquals(lqn.parent.getNumCols(), 10);
+        assertEquals(lqn.parent.get(0, 0), -1);
+        assertEquals(lqn.parent.get(0, 1), -1);
+        assertEquals(lqn.parent.get(0, 2), 0);
         assertEquals(lqn.parent.get(0, 3), 1);
         assertEquals(lqn.parent.get(0, 4), 2);
         assertEquals(lqn.parent.get(0, 5), 3);
-        assertEquals(lqn.parent.get(0, 6), 4);
-        assertEquals(lqn.parent.get(0, 7), 3);
+        assertEquals(lqn.parent.get(0, 6), 2);
+        assertEquals(lqn.parent.get(0, 7), 2);
         assertEquals(lqn.parent.get(0, 8), 3);
-        assertEquals(lqn.parent.get(0, 9), 4);
-        assertEquals(lqn.parent.get(0, 10), 4);
+        assertEquals(lqn.parent.get(0, 9), 3);
 
-        assertEquals(lqn.replygraph.getNumCols(), 3);
-        assertEquals(lqn.replygraph.getNumRows(), 5);
+        // replygraph is (nacts x nentries), indexed by LOCAL activity and entry
+        assertEquals(lqn.replygraph.getNumCols(), 2);
+        assertEquals(lqn.replygraph.getNumRows(), 4);
         assertEquals(lqn.replygraph.getNonZeros(), 2);
-        assertEquals(lqn.replygraph.get(2, 1), 1);
-        assertEquals(lqn.replygraph.get(4, 2), 1);
+        assertEquals(lqn.replygraph.get(1, 0), 1);
+        assertEquals(lqn.replygraph.get(3, 1), 1);
 
         assertEquals(lqn.iscache.getNonZeros(), 0);
 
         assertEquals(lqn.iscaller.getNonZeros(), 4);
-        assertEquals(lqn.iscaller.getNumRows(), 11);
-        assertEquals(lqn.iscaller.getNumCols(), 11);
-        assertEquals(lqn.iscaller.get(3, 4), 1);
-        assertEquals(lqn.iscaller.get(8, 4), 1);
-        assertEquals(lqn.iscaller.get(3, 6), 1);
-        assertEquals(lqn.iscaller.get(8, 6), 1);
+        assertEquals(lqn.iscaller.getNumRows(), 10);
+        assertEquals(lqn.iscaller.getNumCols(), 10);
+        assertEquals(lqn.iscaller.get(2, 3), 1);
+        assertEquals(lqn.iscaller.get(7, 3), 1);
+        assertEquals(lqn.iscaller.get(2, 5), 1);
+        assertEquals(lqn.iscaller.get(7, 5), 1);
 
-        assertEquals(lqn.issynccaller.getNumCols(), 11);
-        assertEquals(lqn.issynccaller.getNumRows(), 11);
+        assertEquals(lqn.issynccaller.getNumCols(), 10);
+        assertEquals(lqn.issynccaller.getNumRows(), 10);
         assertEquals(lqn.issynccaller.getNonZeros(), 4);
-        assertEquals(lqn.issynccaller.get(3, 4), 1);
-        assertEquals(lqn.issynccaller.get(8, 4), 1);
-        assertEquals(lqn.issynccaller.get(3, 6), 1);
-        assertEquals(lqn.issynccaller.get(8, 6), 1);
+        assertEquals(lqn.issynccaller.get(2, 3), 1);
+        assertEquals(lqn.issynccaller.get(7, 3), 1);
+        assertEquals(lqn.issynccaller.get(2, 5), 1);
+        assertEquals(lqn.issynccaller.get(7, 5), 1);
 
         assertEquals(lqn.isasynccaller.getNonZeros(), 0);
 
         assertEquals(lqn.isref.getNumRows(), 1);
         assertEquals(lqn.isref.getNonZeros(), 1);
-        assertEquals(lqn.isref.getNumCols(), 5);
-        assertEquals(lqn.isref.get(0, 3), 1);
+        assertEquals(lqn.isref.getNumCols(), 4);
+        assertEquals(lqn.isref.get(0, 2), 1);
     }
 
     @org.junit.jupiter.api.Test
@@ -343,6 +370,8 @@ class SolverLNCoreTest extends SolverLNTestBase {
 
         SolverOptions options = new LNOptions();
         options.verbose = VerboseLevel.SILENT;
+        // routing-encoded layers, as above
+        options.method = "srvn.cs";
         SolverLN solverLN = new SolverLN(SolverLNTestFixtures.buildModel3(), options);
 
         Network network1 = solverLN.getEnsemble().get(0);
@@ -471,10 +500,10 @@ class SolverLNCoreTest extends SolverLNTestBase {
         assertTrue(queue.getServiceProcess(network2.getJobClasses().get(4)) instanceof Immediate);
         assertEquals(queue.getNumberOfServers(), 10);
 
-        //test idxhash
-        assertEquals(solverLN.getIdxhash().get(0), Double.NaN);
-        assertEquals(solverLN.getIdxhash().get(1), 1);
-        assertEquals(solverLN.getIdxhash().get(2), Double.NaN);
-        assertEquals(solverLN.getIdxhash().get(3), 2);
+        // 0-based element space: no unused slot 0, so the list is one shorter.
+        assertEquals(solverLN.getIdxhash().get(0), 1);
+        assertEquals(solverLN.getIdxhash().get(1), Double.NaN);
+        assertEquals(solverLN.getIdxhash().get(2), 2);
+        assertEquals(3, solverLN.getIdxhash().size());
     }
 }

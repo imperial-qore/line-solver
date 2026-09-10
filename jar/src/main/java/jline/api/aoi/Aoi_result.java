@@ -1,7 +1,7 @@
 /**
  * @file AoI result types marker
  *
- * Marker file for the Kotlin source Aoi_result.kt. The data classes
+ * Result holder for the AOI API. The data classes
  * (AoiResult, AoiLstResult, AoiValidationResult, AoiParams) and the
  * LstFunction interface declared in that file have been split into
  * separate top-level Java classes living in this package.

@@ -73,7 +73,7 @@ class State:
         else:
             raise ValueError("Cannot get network struct from model")
 
-        return _fromMarginal(sn, node_idx, n)
+        return _fromMarginal(sn, State._node_index(model, node_idx), n)
 
     @staticmethod
     def fromMarginalAndRunning(model: 'Network', node_idx: int,
@@ -106,7 +106,7 @@ class State:
         else:
             raise ValueError("Cannot get network struct from model")
 
-        return _fromMarginalAndRunning(sn, node_idx, n, s)
+        return _fromMarginalAndRunning(sn, State._node_index(model, node_idx), n, s)
 
     @staticmethod
     def fromMarginalAndStarted(model: 'Network', node_idx: int,
@@ -139,7 +139,93 @@ class State:
         else:
             raise ValueError("Cannot get network struct from model")
 
-        return _fromMarginalAndStarted(sn, node_idx, n, s)
+        return _fromMarginalAndStarted(sn, State._node_index(model, node_idx), n, s)
+
+    @staticmethod
+    def fromMarg(model: 'Network', node_idx: int, ntot: int) -> np.ndarray:
+        """
+        Generate the state space with a given TOTAL queue length at a node.
+
+        Class-summed counterpart of fromMarginal: it fixes only how many jobs
+        the node holds ALTOGETHER, and returns the union of fromMarginal over
+        every class split of ntot the node can hold. Classes disabled at the
+        station are excluded from the split enumeration through classcap.
+
+        Args:
+            model: Network model
+            node_idx: Node index (0-based)
+            ntot: Total number of jobs at the node, all classes summed
+
+        Returns:
+            State space matrix with the requested total.
+
+        References:
+            MATLAB: matlab/src/lang/+State/fromMarg.m
+        """
+        from ..api.state.marginal import fromMarg as _fromMarg
+
+        return _fromMarg(State._struct(model), State._node_index(model, node_idx), ntot)
+
+    @staticmethod
+    def fromMargAndStarted(model: 'Network', node_idx: int, ntot: int, stot: int) -> np.ndarray:
+        """
+        Generate the states with a given TOTAL queue length and a given TOTAL
+        number of started jobs.
+
+        Returns the union of fromMarginalAndStarted over every (n,s) pair with
+        sum(n)=ntot, sum(s)=stot and s <= n elementwise.
+
+        Args:
+            model: Network model
+            node_idx: Node index (0-based)
+            ntot: Total number of jobs at the node, all classes summed
+            stot: Total number of jobs that have started service
+
+        Returns:
+            State space matrix with the requested totals.
+
+        References:
+            MATLAB: matlab/src/lang/+State/fromMargAndStarted.m
+        """
+        from ..api.state.marginal import fromMargAndStarted as _fromMargAndStarted
+
+        return _fromMargAndStarted(State._struct(model),
+                                   State._node_index(model, node_idx), ntot, stot)
+
+    @staticmethod
+    def _struct(model):
+        """The NetworkStruct of a model, however the model exposes it."""
+        if hasattr(model, 'get_struct'):
+            return model.get_struct()
+        if hasattr(model, 'getStruct'):
+            return model.getStruct()
+        if hasattr(model, '_sn'):
+            return model._sn
+        raise ValueError("Cannot get network struct from model")
+
+    @staticmethod
+    def _node_index(model, node):
+        """A node argument as the 0-based node index the api layer expects.
+
+        MATLAB gets this for free: Node defines `subsindex` (lang/nodes/Node.m),
+        so `sn.nodetype(node{2})` IS `sn.nodetype(2)` and every +State function
+        takes a node object without knowing it. Python has no such protocol, so
+        the identical example call (`State.fromMarginalAndStarted(model,
+        node{2}, ...)` -> `State.from_marginal_and_started(model, node[1], ...)`)
+        arrives holding a Queue. Normalizing here rather than in api/ keeps that
+        layer's `ind: int` contract, which is also what the MATLAB +State
+        functions document.
+
+        `get_node_index` is 1-based, as its docstring says; these entry points
+        are 0-based.
+        """
+        if isinstance(node, (int, np.integer)):
+            return int(node)
+        getter = getattr(model, 'get_node_index', None) or \
+            getattr(model, 'getNodeIndex', None)
+        if getter is None:
+            return node  # a bare struct cannot resolve an object; leave it be
+        return int(getter(node)) - 1
 
     @staticmethod
     def _struct_of(model):
@@ -176,7 +262,7 @@ class State:
         """
         from ..api.state.marginal import toMarginal as _toMarginal
         sn = State._struct_of(model)
-        return _toMarginal(sn, node_idx, state_i)
+        return _toMarginal(sn, State._node_index(model, node_idx), state_i)
 
     @staticmethod
     def fromMarginalBounds(model: 'Network', node_idx: int,
@@ -204,6 +290,7 @@ class State:
         from ..api.state.ctmc_ssg import _from_marginal_bounds
         from ..api.state.marginal import toMarginal as _toMarginal
         sn = State._struct_of(model)
+        node_idx = State._node_index(model, node_idx)
         R = sn.nclasses
 
         ub_vec = np.atleast_1d(ub).astype(int)
@@ -334,6 +421,8 @@ class State:
     from_marginal = fromMarginal
     from_marginal_and_running = fromMarginalAndRunning
     from_marginal_and_started = fromMarginalAndStarted
+    from_marg = fromMarg
+    from_marg_and_started = fromMargAndStarted
     to_marginal = toMarginal
     from_marginal_bounds = fromMarginalBounds
     is_valid = isValid

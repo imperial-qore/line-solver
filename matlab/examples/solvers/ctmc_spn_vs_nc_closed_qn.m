@@ -142,7 +142,7 @@ p3.setState([0]);
 
 % Solve with CTMC
 fprintf('\nSolving with CTMC solver...\n');
-solver_ctmc = CTMC(model_spn);
+solver_ctmc = CTMC(model_spn,'exact');
 result_ctmc = solver_ctmc.getAvgTable();
 
 fprintf('CTMC Results:\n');

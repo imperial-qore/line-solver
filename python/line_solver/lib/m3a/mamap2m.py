@@ -3,8 +3,8 @@ probabilities are matched exactly and the forward moments, backward moments and
 one-step class transition probabilities as closely as the form allows.
 
 Port of m3a ``mamap2m_fit_fb_multiclass.m``, ``mamap2m_fit_gamma_fb.m``,
-``mamap2m_fit.m``, ``mamap2m_fit_mmap.m`` and ``mamap2m_fit_trace.m``. An MMAP
-is a list ``[D0, D1, D11, ..., D1m]``.
+``mamap2m_fit_gamma_fb_mmap.m``, ``mamap2m_fit.m``, ``mamap2m_fit_mmap.m`` and
+``mamap2m_fit_trace.m``. An MMAP is a list ``[D0, D1, D11, ..., D1m]``.
 """
 from typing import List, Optional, Sequence, Tuple
 
@@ -332,11 +332,11 @@ def mamap2m_fit(M1: float, M2: float, M3: float, GAMMA: float,
             if r1 < DEGENTOL or (1 - r2) < DEGENTOL:
                 raise RuntimeError('Fitting MAMAP(2,m): should not happen')
             elif abs(h2 - h1 * r2) < DEGENTOL:
-                fitted = _fs_unavailable('h2 = h1*r2')
+                fitted = _fit_fs(mp, P, F, S, w)
             elif abs(h1 - h2 + h2 * r1) < DEGENTOL:
-                fitted = _bs_unavailable('h1 - h2 + h2*r1 = 0')
+                fitted = _fit_bs(mp, P, B, S, w)
             elif (1 - r1) < DEGENTOL:
-                fitted = _fs_unavailable('r1 = 1 (non-canonical APH(2))')
+                fitted = _fit_fs(mp, P, F, S, w)
             elif r2 < DEGENTOL:
                 fitted, _ = maph2m_fit_multiclass(mp, P, B)
             else:
@@ -345,16 +345,16 @@ def mamap2m_fit(M1: float, M2: float, M3: float, GAMMA: float,
             if (1 - r2) < DEGENTOL:
                 raise RuntimeError('Fitting MAMAP(2,m): should not happen')
             elif abs(h1 - h2 - h1 * r1 + h1 * r1 * r2) < DEGENTOL:
-                fitted = _fs_unavailable('h1 - h2 - h1*r1 + h1*r1*r2 = 0')
+                fitted = _fit_fs(mp, P, F, S, w)
             elif abs(h1 - h2 + h2 * r1) < DEGENTOL:
-                fitted = _bs_unavailable('h1 - h2 + h2*r1 = 0')
+                fitted = _fit_bs(mp, P, B, S, w)
             elif r2 < DEGENTOL and (1 - r1) < DEGENTOL:
                 fitted, _ = maph2m_fit_multiclass(mp, P, B)
             elif r2 < DEGENTOL:
                 if w[0] >= w[1]:
-                    fitted = _fs_unavailable('r2 = 0, forward preferred')
+                    fitted = _fit_fs(mp, P, F, S, w)
                 else:
-                    fitted = _bs_unavailable('r2 = 0, backward preferred')
+                    fitted = _fit_bs(mp, P, B, S, w)
             else:
                 degen = False
 
@@ -362,9 +362,9 @@ def mamap2m_fit(M1: float, M2: float, M3: float, GAMMA: float,
             if w[0] >= w[2] and w[1] >= w[2]:
                 fitted, _, _ = mamap2m_fit_fb_multiclass(mp, P, F, B, None, fbW)
             elif w[0] >= w[1]:
-                fitted = _fs_unavailable('forward and sigma preferred')
+                fitted = _fit_fs(mp, P, F, S, w)
             else:
-                fitted = _bs_unavailable('backward and sigma preferred')
+                fitted = _fit_bs(mp, P, B, S, w)
 
         fF, fB = _fwd_bwd(fitted)
         fS = np.atleast_2d(np.asarray(mmap_sigma(list(fitted)), dtype=float))
@@ -376,16 +376,42 @@ def mamap2m_fit(M1: float, M2: float, M3: float, GAMMA: float,
     return best
 
 
-def _fs_unavailable(reason: str):
-    raise NotImplementedError(
-        'mamap2m_fit: this underlying form (%s) needs mamap22_fit_fs_multiclass, '
-        'which is not yet ported to native Python (see _kb/03-api-layer.md)' % reason)
+def _fit_fs(mp, P, F, S, w):
+    """mamap22_fit_fs_multiclass with the weights mamap2m_fit derives: the
+    forward weight and the sigma weight, and no class weights."""
+    from .mamap22 import mamap22_fit_fs_multiclass
+    mmap, _, _, _ = mamap22_fit_fs_multiclass(mp, P, F, S, None, [w[0], w[2]])
+    return mmap
 
 
-def _bs_unavailable(reason: str):
-    raise NotImplementedError(
-        'mamap2m_fit: this underlying form (%s) needs mamap22_fit_bs_multiclass, '
-        'which is not yet ported to native Python (see _kb/03-api-layer.md)' % reason)
+def _fit_bs(mp, P, B, S, w):
+    """mamap22_fit_bs_multiclass with the backward and sigma weights."""
+    from .mamap22 import mamap22_fit_bs_multiclass
+    mmap, _, _, _ = mamap22_fit_bs_multiclass(mp, P, B, S, None, [w[1], w[2]])
+    return mmap
+
+
+def mamap2m_fit_gamma_fb_mmap(mmap: Sequence[np.ndarray]) -> List[np.ndarray]:
+    """MAMAP(2,m) fitting an MMAP's class probabilities and its forward and
+    backward moments, but not the one-step class transition probabilities.
+
+    Port of ``mamap2m_fit_gamma_fb_mmap.m``. This is the compression
+    ``mmap_super_safe`` applies to a component that would push the Kronecker
+    product past its order budget.
+    """
+    from line_solver.api.mam.map_analysis import map_gamma, map_moment
+    from line_solver.api.mam.mmap_ops import (mmap_backward_moment, mmap_forward_moment,
+                                              mmap_pc)
+    D0 = np.asarray(mmap[0], float)
+    D1 = np.asarray(mmap[1], float)
+    M1 = map_moment(D0, D1, 1)
+    M2 = map_moment(D0, D1, 2)
+    M3 = map_moment(D0, D1, 3)
+    GAMMA = map_gamma(D0, D1)
+    P = np.asarray(mmap_pc(list(mmap)), float).ravel()
+    F = np.asarray(mmap_forward_moment(list(mmap), [1]), float).ravel()
+    B = np.asarray(mmap_backward_moment(list(mmap), [1]), float).ravel()
+    return mamap2m_fit_gamma_fb(M1, M2, M3, GAMMA, P, F, B)
 
 
 def mamap2m_fit_mmap(mmap: Sequence[np.ndarray]) -> List[np.ndarray]:
@@ -417,11 +443,10 @@ def mamap2m_fit_trace(T: Sequence[float], A: Sequence[int]) -> List[np.ndarray]:
     M1 = float(np.mean(T))
     M2 = float(np.mean(T ** 2))
     M3 = float(np.mean(T ** 3))
-    Tc = T - M1
-    denom = float(np.sum(Tc * Tc))
-    rho1 = float(np.sum(Tc[:-1] * Tc[1:]) / denom) if denom > 0 else 0.0
-    rho2 = float(np.sum(Tc[:-2] * Tc[2:]) / denom) if denom > 0 else 0.0
-    GAMMA = rho2 / rho1 if abs(rho1) > 1e-12 else 0.0
+    # mamap2m_fit_trace.m reads the decay rate off trace_gamma, the robust
+    # geometric fit of the whole ACF, not off a lag-2 / lag-1 ratio.
+    from line_solver.api.trace.trace_analysis import trace_gamma
+    GAMMA = float(np.asarray(trace_gamma(T), dtype=float).ravel()[0])
     P = np.array([np.mean(A == c) for c in classes], dtype=float)
     F = np.asarray(mtrace_forward_moment(T, A, [1]), dtype=float).ravel()
     B = np.asarray(mtrace_backward_moment(T, A, [1]), dtype=float).ravel()

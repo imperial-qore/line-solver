@@ -100,6 +100,18 @@ public class CLITest {
 
     /**
      * Test default output format is readable
+     *
+     * <p>THE FLUID INVOCATIONS IN THIS CLASS PIN {@code --method dae}, and that is
+     * not incidental. Every one of them drives the shared fixture
+     * {@code open_1class_1stat_mm1k.jsimg}, an M/M/1/K whose buffer of 11 BINDS,
+     * and the fluid tree reads neither {@code sn.cap} nor {@code sn.classcap} on
+     * any other route -- so it used to integrate the station as unbounded and
+     * report more jobs in the buffer than the buffer holds. SolverFluid now
+     * refuses that model through the shared structural gate
+     * ({@code NetworkSolver.bindingCapacityReason}) and names {@code dae} as the
+     * route that carries the buffer as an algebraic constraint on the drift.
+     * These tests assert what the CLI PRINTS, so they take the method that can
+     * actually solve the fixture rather than a solver that must decline it.
      */
     @Test
     public void testDefaultOutputFormat() throws IOException {
@@ -111,7 +123,7 @@ public class CLITest {
         Files.write(testFile, jsimContent.getBytes());
 
         // Test with file input - default output should be readable
-        String result = LineCLI.parseArgs(new String[]{"-f", testFile.toString(), "-s", "fluid"});
+        String result = LineCLI.parseArgs(new String[]{"-f", testFile.toString(), "-s", "fluid", "--method", "dae"});
         assertNotNull(result, "Result should not be null for valid input");
         // Check that output is in readable format (contains table headers)
         assertTrue(result.contains("Station") || result.contains("JobClass") || 
@@ -132,7 +144,7 @@ public class CLITest {
         Files.write(testFile, jsimContent.getBytes());
 
         // Test with explicit JSON output
-        String result = LineCLI.parseArgs(new String[]{"-f", testFile.toString(), "-s", "fluid", "-o", "json"});
+        String result = LineCLI.parseArgs(new String[]{"-f", testFile.toString(), "-s", "fluid", "--method", "dae", "-o", "json"});
         assertNotNull(result, "Result should not be null for valid input");
         assertTrue(result.startsWith("{"), "JSON output should start with {");
         assertTrue(result.contains("\"avg\"") || result.contains("\"sys\"") || result.contains("\"all\""),
@@ -152,7 +164,7 @@ public class CLITest {
         Files.write(testFile, jsimContent.getBytes());
 
         // Test with explicit readable output
-        String result = LineCLI.parseArgs(new String[]{"-f", testFile.toString(), "-s", "fluid", "-o", "readable"});
+        String result = LineCLI.parseArgs(new String[]{"-f", testFile.toString(), "-s", "fluid", "--method", "dae", "-o", "readable"});
         assertNotNull(result, "Result should not be null for valid input");
         assertTrue(result.contains("Station") || result.contains("JobClass") || 
                   result.contains("---"), "Readable output should contain table formatting");
@@ -325,7 +337,7 @@ public class CLITest {
             "-f", testFile.toString(),
             "-i", "jsim",
             "-o", "json",
-            "-s", "fluid",
+            "-s", "fluid", "--method", "dae",
             "-a", "avg",
             "-v", "silent"
         });
@@ -351,7 +363,7 @@ public class CLITest {
             "--file", testFile.toString(),
             "--input", "jsim",
             "--output", "json",
-            "--solver", "fluid",
+            "--solver", "fluid", "--method", "dae",
             "--analysis", "avg",
             "--verbosity", "silent",
             "--seed", "42"
@@ -404,7 +416,7 @@ public class CLITest {
         // Test comma-separated analysis types
         String result = LineCLI.parseArgs(new String[]{
             "-f", testFile.toString(),
-            "-s", "fluid",
+            "-s", "fluid", "--method", "dae",
             "-a", "avg,sys"
         });
 
@@ -565,7 +577,7 @@ public class CLITest {
         // Test stage analysis type
         String result = LineCLI.parseArgs(new String[]{
             "-f", testFile.toString(),
-            "-s", "fluid",
+            "-s", "fluid", "--method", "dae",
             "-a", "stage"
         });
 
@@ -650,5 +662,86 @@ public class CLITest {
         String errorOutput = errContent.toString();
         assertTrue(errorOutput.contains("Invalid analysis type") || errorOutput.contains("Unknown analysis type"),
                   "Should report invalid analysis type");
+    }
+
+    /**
+     * Write the two-place cyclic net used by the PNML tests below and return its path.
+     *
+     * Built through PnmlIO.save rather than kept as a resource so the fixture cannot
+     * drift from the writer: a hand-edited document would test the reader against a
+     * grammar the writer no longer emits.
+     */
+    private Path writeCyclicNet() throws IOException {
+        jline.lang.Network model = new jline.lang.Network("cyclicspn");
+        jline.lang.nodes.Place p1 = new jline.lang.nodes.Place(model, "P1");
+        jline.lang.nodes.Place p2 = new jline.lang.nodes.Place(model, "P2");
+        jline.lang.nodes.Transition t1 = new jline.lang.nodes.Transition(model, "T1");
+        jline.lang.nodes.Transition t2 = new jline.lang.nodes.Transition(model, "T2");
+        jline.lang.ClosedClass jc = new jline.lang.ClosedClass(model, "Class1", 3, p1, 0);
+
+        jline.lang.Mode m1 = t1.addMode("Mode1");
+        t1.setDistribution(m1, new jline.lang.processes.Exp(2.0));
+        t1.setEnablingConditions(m1, jc, p1, 1);
+        t1.setFiringOutcome(m1, jc, p2, 1);
+
+        jline.lang.Mode m2 = t2.addMode("Mode2");
+        t2.setDistribution(m2, new jline.lang.processes.Exp(1.5));
+        t2.setEnablingConditions(m2, jc, p2, 1);
+        t2.setFiringOutcome(m2, jc, p1, 1);
+
+        jline.lang.RoutingMatrix R = model.initRoutingMatrix();
+        R.set(jc, jc, p1, t1, 1.0);
+        R.set(jc, jc, t1, p2, 1.0);
+        R.set(jc, jc, p2, t2, 1.0);
+        R.set(jc, jc, t2, p1, 1.0);
+        model.link(R);
+        p1.setMarking(3);
+        p2.setMarking(0);
+
+        Path pnmlFile = tempDir.resolve("cyclicspn.pnml");
+        jline.io.PnmlIO.save(model, pnmlFile.toString());
+        return pnmlFile;
+    }
+
+    /**
+     * Test that -i pnml reaches the PNML reader and the solver that answers for it.
+     *
+     * The token has to reach a handler, not merely pass validation: an accepted
+     * format whose case is missing from the model-loading switch leaves the model
+     * null and fails one frame further down, which reads as a model defect.
+     */
+    @Test
+    public void testPnmlInputFormatSolves() throws IOException {
+        Path pnmlFile = writeCyclicNet();
+
+        String result = LineCLI.parseArgs(new String[]{
+            "-f", pnmlFile.toString(), "-i", "pnml", "-s", "ctmc", "-a", "avg"
+        });
+
+        assertNotNull(result, "the PNML path should return a table");
+        assertTrue(result.contains("P1") && result.contains("P2"),
+                  "both places should appear as stations");
+        // The exact aggregate of the three-token cyclic net: QLen 1.1486 at P1 and
+        // 1.8514 at P2, which MATLAB, Python and C++ reproduce on the same document.
+        assertTrue(result.contains("1.1486"), "P1 queue length should be 1.1486");
+        assertTrue(result.contains("1.8514"), "P2 queue length should be 1.8514");
+    }
+
+    /**
+     * Test that a product-form solver is refused on a place/transition net.
+     */
+    @Test
+    public void testPnmlRejectsProductFormSolver() throws IOException {
+        outContent.reset();
+        errContent.reset();
+        Path pnmlFile = writeCyclicNet();
+
+        String result = LineCLI.parseArgs(new String[]{
+            "-f", pnmlFile.toString(), "-i", "pnml", "-s", "mva", "-a", "avg"
+        });
+
+        assertNull(result, "an incompatible solver should not produce a table");
+        assertTrue(errContent.toString().contains("not compatible with input format 'pnml'"),
+                  "the refusal should name the format");
     }
 }

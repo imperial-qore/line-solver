@@ -1,6 +1,6 @@
-%% Open Tandem Queue with MAM
+%% Open Tandem Queue with AG
 %
-% This example demonstrates MAM with RCAT methods on an open tandem queueing network
+% This example demonstrates SolverAG, the agent-based solver, on an open tandem queueing network
 % (M/M/1 -> M/M/1) using the INAP algorithm.
 %
 % Reference: Marin and Rota-Bulo', "A Mean-Field Analysis of a Class of
@@ -31,8 +31,8 @@ queue2.setService(oclass, Exp(mu2));
 
 model.link(Network.serialRouting({source, queue1, queue2, sink}));
 
-%% Solve with MAM using INAP method (default)
-solverINAP = MAM(model, 'method', 'inap');
+%% Solve with AG using INAP method (default)
+solverINAP = AG(model, 'method', 'inap');
 avgTableINAP = solverINAP.getAvgTable()
 
 %% Compare with MVA

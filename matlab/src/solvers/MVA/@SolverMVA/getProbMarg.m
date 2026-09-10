@@ -16,11 +16,17 @@ function [Pmarg, logPmarg] = getProbMarg(self, ist, jobclass, state_m)
 %   Pmarg    - Vector where Pmarg(n+1) = P(n jobs of this class)
 %   logPmarg - Log probabilities for numerical stability
 
+
 if nargin < 3
     line_error(mfilename,'getProbMarg requires station and job class parameters.');
 end
 if nargin < 4
     state_m = [];
+end
+if isfield(self.options,'lang') && strcmp(self.options.lang,'cpp')
+    [Pmarg, logPmarg] = CPPLINE.probMarg(self.name, self.model, self.options, ...
+        ist, jobclass, state_m);
+    return
 end
 
 sn = self.getStruct;
@@ -32,7 +38,7 @@ if jobclass > sn.nclasses
 end
 
 if isempty(self.result)
-    self.run;
+    self.runAnalyzer;
 end
 
 N = sn.njobs;
@@ -113,7 +119,7 @@ if all(isfinite(N))
 else
     % Open class marginal probability
     if isempty(self.result)
-        self.run;
+        self.runAnalyzer;
     end
     U = self.result.Avg.U;
     Q = self.result.Avg.Q;

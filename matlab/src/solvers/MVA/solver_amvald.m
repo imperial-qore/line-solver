@@ -70,19 +70,29 @@ switch options.method
     case {'lin','qdlin'}
         gamma = zeros(K,M,K); % class-based customer fraction corrections
         tau = zeros(K,K); % throughput difference
+        hasTau = true;
     otherwise
         gamma = zeros(K,M); % total customer fraction corrections
         tau = zeros(K,K); % throughput difference
+        hasTau = false;
 end
 
 %% main loop
 omicron = 0.5; % under-relaxation parameter
+inner_resid = Inf; % residual of the last population-N sweep, drives `converged`
 outer_iter = 0;
+LineConsole.loop('running the AMVA fixed point (tolerance %g)', tol);
 while (outer_iter < 2 || max(max(abs(Qchain-QchainOuter_1))) > tol) && outer_iter < sqrt(options.iter_max) && totiter <= max_totiter && ~lineTimeoutExceeded(options)
     outer_iter = outer_iter + 1;
     QchainOuter_1 = Qchain;
     XchainOuter_1 = Xchain;
     UchainOuter_1 = Uchain;
+    % baseline the tau differences below are taken against; see solver_amvald_forward
+    if hasTau
+        Xchain_ref = XchainOuter_1;
+    else
+        Xchain_ref = [];
+    end
 
     if isfinite(Nt) && Nt>0
         switch options.method
@@ -104,7 +114,7 @@ while (outer_iter < 2 || max(max(abs(Qchain-QchainOuter_1))) > tol) && outer_ite
                             Xchain_s_1 = Xchain_s;
                             Uchain_s_1 = Uchain_s;
 
-                            [Wchain_s, STeff_s] = solver_amvald_forward(M, K, nservers, schedparam, lldscaling, cdscaling, jdscaling, sched, classprio, gamma, tau, Qchain_s_1, Xchain_s_1, Uchain_s_1, STchain, Vchain, Nchain_s, SCVchain, options);
+                            [Wchain_s, STeff_s] = solver_amvald_forward(M, K, nservers, schedparam, lldscaling, cdscaling, jdscaling, sched, classprio, gamma, tau, Xchain_ref, Qchain_s_1, Xchain_s_1, Uchain_s_1, STchain, Vchain, Nchain_s, SCVchain, options);
                             totiter = totiter + 1;
                             if totiter >= max_totiter
                                 break
@@ -183,7 +193,7 @@ while (outer_iter < 2 || max(max(abs(Qchain-QchainOuter_1))) > tol) && outer_ite
         Xchain_1 = Xchain;
         Uchain_1 = Uchain;
 
-        [Wchain, STeff] = solver_amvald_forward(M, K, nservers, schedparam, lldscaling, cdscaling, jdscaling, sched, classprio, gamma, tau, Qchain_1, Xchain_1, Uchain_1, STchain, Vchain, Nchain, SCVchain, options);
+        [Wchain, STeff] = solver_amvald_forward(M, K, nservers, schedparam, lldscaling, cdscaling, jdscaling, sched, classprio, gamma, tau, Xchain_ref, Qchain_1, Xchain_1, Uchain_1, STchain, Vchain, Nchain, SCVchain, options);
         totiter = totiter + 1;
         if totiter >= max_totiter
             break
@@ -213,6 +223,9 @@ while (outer_iter < 2 || max(max(abs(Qchain-QchainOuter_1))) > tol) && outer_ite
                 Uchain(k,r) = omicron * Vchain(k,r) * STeff(k,r) * Xchain(r) + (1-omicron) * Uchain_1(k,r);
             end
         end
+        inner_resid = max(max(abs(Qchain - Qchain_1)));
+        LineConsole.iter(totiter, 'AMVA sweep %d: queue-length residual %.3e, X = %.6g', ...
+            totiter, inner_resid, sum(Xchain(isfinite(Xchain))));
     end
 end
 
@@ -294,7 +307,16 @@ Nclosed = Nchain(ccl);
 Xclosed = Xchain(ccl);
 lG = - Nclosed(Xclosed>options.tol) * log(Xclosed(Xclosed>options.tol))'; % asymptotic approximation
 
-% Residual (not totiter, which aggregates nested sweeps) decides convergence;
+% Residual (not totiter, which aggregates nested sweeps) decides convergence.
+% The inner residual must be tested too: a chaotic orbit can exit with a small
+% OUTER delta while the population-N sweep never met tol (lqn_bpmn layer 10);
 % see _kb/06-solver-catalog.md (MVA section) for AMVA convergence flag-vs-count
-converged = max(max(abs(Qchain-QchainOuter_1))) <= tol;
+converged = inner_resid <= tol && max(max(abs(Qchain-QchainOuter_1))) <= tol;
+if converged
+    LineConsole.step('AMVA converged after %d sweeps, residual %.3e within tolerance %.3e', ...
+        totiter, inner_resid, tol);
+else
+    LineConsole.step('AMVA stopped after %d sweeps with residual %.3e above tolerance %.3e', ...
+        totiter, inner_resid, tol);
+end
 end

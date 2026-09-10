@@ -42,7 +42,7 @@ import java.util.List;
  * OPEN). On a hand-built closed model this driver readily hits a reducible /
  * singular routing and a zero read-rate denominator (NaN read rate), so a plain
  * closed model can return an empty or unreliable table. Treat the closed path as
- * experimental and validate against LDES. The C++ SolverMVA (line-mp)
+ * experimental and validate against LDES. The C++ SolverMVA (line-cli)
  * deliberately REFUSES this closed path by name; only the OPEN retrieval
  * analyzer is ported there. Verified 2026-07-24 that the open path matches
  * across codebases while the closed path lacks a clean, exampled reference.

@@ -239,12 +239,16 @@ public final class Pfqn_clw_lld {
                     if (Nn <= 0) {
                         an = 1.0;
                     } else {
-                        double prod = 1.0;
+                        // in the log domain: the product runs over N_{ij}
+                        // factors below one and underflows to zero at a few
+                        // hundred of them, which would silently set alpha_j = 0
+                        // and lG = NaN
+                        double lp = 0.0;
                         double twolK = 2.0 * lj * Kj;
                         for (int ll = 1; ll <= Nn; ll++) {
-                            prod *= (Kj + ll) / (Kj + twolK + ll);
+                            lp += Math.log((Kj + ll) / (Kj + twolK + ll));
                         }
-                        an = Math.pow(prod, 1.0 / twolK);
+                        an = Math.exp(lp / twolK);
                     }
                     aj = Math.min(aj, an / cumrho);
                 }

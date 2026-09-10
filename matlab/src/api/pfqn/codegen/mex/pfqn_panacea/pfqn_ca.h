@@ -22,7 +22,7 @@
 #include <string.h>
 
 /* Function Declarations */
-real_T pfqn_ca(const emlrtStack *sp, emxArray_real_T *L,
+real_T pfqn_ca(const emlrtStack *sp, const emxArray_real_T *L,
                const emxArray_real_T *N);
 
 /* End of code generation (pfqn_ca.h) */

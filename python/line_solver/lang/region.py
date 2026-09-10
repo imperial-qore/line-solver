@@ -3,7 +3,7 @@ Finite Capacity Region for LINE native Python implementation.
 
 This module provides the Region class for defining finite capacity regions
 in queueing networks. Ported from MATLAB implementation in matlab/src/lang/Region.m
-and Java implementation in jar/src/main/kotlin/jline/lang/Region.java
+and Java implementation in jar/src/main/java/jline/lang/Region.java
 """
 
 from typing import Dict, List, Optional, Union
@@ -311,6 +311,16 @@ class Region:
     # MATLAB-style alias
     def setLinearConstraints(self, A, b) -> 'Region':
         """MATLAB-compatible alias for set_linear_constraints()."""
+        return self.set_linear_constraints(A, b)
+
+    def set_constraint(self, A, b) -> 'Region':
+        """Alias of set_linear_constraints, matching MATLAB Region.setConstraint
+        and the JAR jline.lang.Region API."""
+        return self.set_linear_constraints(A, b)
+
+    # MATLAB-style alias
+    def setConstraint(self, A, b) -> 'Region':
+        """MATLAB-compatible alias for set_constraint()."""
         return self.set_linear_constraints(A, b)
 
     def get_linear_constraints(self):

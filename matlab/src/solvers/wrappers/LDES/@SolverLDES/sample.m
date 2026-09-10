@@ -41,12 +41,15 @@ if isempty(res.t) || isempty(res.QNt)
     return
 end
 
-isf = sn.nodeToStateful(nodeIdx);
+% The engine's QNt is STATION-major (see runTransientJson), so the row is found
+% by station index; sn.nodeToStateful indexed a different space and returned
+% another station's path, or an empty one, whenever the two differ.
+ist = sn.nodeToStation(nodeIdx);
 nt = numel(res.t);
 R = sn.nclasses;
 state = zeros(nt, R);
-if isf >= 1 && isf <= numel(res.QNt)
-    classCells = res.QNt{isf};
+if ist >= 1 && ist <= numel(res.QNt)
+    classCells = res.QNt{ist};
     for k = 1:min(R, numel(classCells))
         cd = classCells{k};
         if ~isempty(cd)

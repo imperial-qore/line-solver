@@ -63,7 +63,8 @@ for c=1:nchains
         end
     end    
     
-    Pchain = rt(cols,cols); % routing probability of the chain
+    % routing probability of the chain, kept in sparse storage
+    Pchain = sparse(rt(cols,cols));
 
     % Handle NaN values in routing matrix (e.g., from Cache class switching)
     % For visits calculation, replace NaN with equal probabilities
@@ -83,7 +84,26 @@ for c=1:nchains
         end
     end
 
-    visited = sum(Pchain,2) > 0;
+    % getRoutingMatrix leaves a JMT-oriented uniform fill on DISABLED (node,class) pairs;
+    % a class with no service at a station cannot be there, so drop those states -- see _kb/06-solver-catalog.md
+    served = true(size(Pchain,1),1);
+    for ist=1:M
+        sti = sn.statefulToStation(ist);
+        % a Place, and a station declaring server types, carry NaN station rates by construction
+        if ~isnan(sti) && sti >= 1 && sn.nodetype(sn.stationToNode(sti)) ~= NodeType.Place && ...
+                sn.nodetype(sn.stationToNode(sti)) ~= NodeType.Transition && ...
+                ~hasServerTypes(sn, sti)
+            for ik=1:nIC
+                if isnan(sn.rates(sti,inchain{c}(ik)))
+                    served((ist-1)*nIC+ik) = false;
+                end
+            end
+        end
+    end
+    Pchain(~served,:) = 0;
+    Pchain(:,~served) = 0;
+
+    visited = full(sum(Pchain,2) > 0); % full: a sparse logical mask breaks alpha(visited)=...
 
     % Normalize routing matrix for Fork-containing models
     % Fork nodes have row sums > 1 (sending to all branches with prob 1 each)
@@ -102,7 +122,7 @@ for c=1:nchains
 
     % Use dtmc_solve as primary, fallback to dtmc_solve_reducible for chains with transient states
     Pchain_visited = Pchain(visited,visited);
-    % see _kb/04-networkstruct.md (api/sn/*.m derived-field helpers) for rationale
+    % see _kb/04-networkstruct.md (api/sn derived-field helpers) for rationale
     try
         alpha_visited = dtmc_solve(Pchain_visited);
         if all(alpha_visited == 0) || any(isnan(alpha_visited))
@@ -112,10 +132,17 @@ for c=1:nchains
         [alpha_visited, ~, ~, ~, ~] = dtmc_solve_reducible(Pchain_visited, [], struct('tol', GlobalConstants.FineTol));
     end
     alpha = zeros(1,M*K); alpha(visited) = alpha_visited;
-    if max(alpha)>=1-GlobalConstants.FineTol
-        %disabled because a self-looping customer is an absorbing chain
-        %line_error(mfilename,'One chain has an absorbing state.');
-    end
+    % A visit vector that concentrates on a single (station,class) entry is not
+    % an error, so the former line_error('One chain has an absorbing state.')
+    % here stays removed: a CLOSED class confined to one station legitimately
+    % pays all its visits there.
+    %
+    % Note also what this check does NOT cover. It inspects the per-chain ROUTING
+    % only. The joint CTMC state space can be reducible while every routing chain
+    % is perfectly ordinary -- two classes sharing an LCFS-PR server decompose
+    % into separate recurrent classes because the SERVICE ORDER, not the routing,
+    % makes some orderings unreachable. Reducibility of `alpha` and reducibility
+    % of the generator are independent properties; see _kb/11.
 
     % SPN-based fork correction: population-preserving SPN analysis proves
     % that all visited entries have uniform visit ratios in fork-join models.
@@ -151,7 +178,8 @@ for c=1:nchains
             nodes_cols(1,(ind-1)*nIC+ik) = (ind-1)*K+inchain{c}(ik);
         end
     end
-    nodes_Pchain = rtnodes(nodes_cols, nodes_cols); % routing probability of the chain
+    % routing probability of the chain, kept in sparse storage
+    nodes_Pchain = sparse(rtnodes(nodes_cols, nodes_cols));
 
     % Handle NaN values in routing matrix (e.g., from Cache class switching)
     % For visits calculation, replace NaN with equal probabilities
@@ -171,7 +199,32 @@ for c=1:nchains
         end
     end
 
-    nodes_visited = sum(nodes_Pchain,2) > 0;
+    % THE SAME DISABLED-PAIR MASK THE STATION BLOCK APPLIES ABOVE, and it
+    % matters more here: at station level a (station,class) the class cannot be
+    % served at is a dead end, while the node kernel keeps the class-switch nodes
+    % between the stations, so the disabled states close into a whole spurious
+    % CYCLE. A materialised LQN replica is exactly that -- replica 2's stations
+    % still carry replica 1's classes in rtnodes -- and dtmc_solve_reducible then
+    % splits the mass between the real chain and the phantom one, giving every
+    % node of replica 2 a visit in replica 1's classes.
+    nIC = length(inchain{c});
+    nodes_served = true(size(nodes_Pchain,1),1);
+    for ind=1:I
+        sti = sn.nodeToStation(ind);
+        % a Place, and a station declaring server types, carry NaN station rates by construction
+        if ~isnan(sti) && sti >= 1 && sn.nodetype(ind) ~= NodeType.Place && ...
+                sn.nodetype(ind) ~= NodeType.Transition && ~hasServerTypes(sn, sti)
+            for ik=1:nIC
+                if isnan(sn.rates(sti,inchain{c}(ik)))
+                    nodes_served((ind-1)*nIC+ik) = false;
+                end
+            end
+        end
+    end
+    nodes_Pchain(~nodes_served,:) = 0;
+    nodes_Pchain(:,~nodes_served) = 0;
+
+    nodes_visited = full(sum(nodes_Pchain,2) > 0); % full: see the station-visit mask above
 
     % Normalize routing matrix for Fork-containing models
     % Record original row sums to correct visit ratios after DTMC solve.
@@ -240,4 +293,14 @@ end
 sn.visits = visits;
 sn.nodevisits = nodevisits;
 sn.inchain = inchain;
+end
+
+function tf = hasServerTypes(sn, ist)
+% True when the station declares heterogeneous server types, whose rates live in nodeparam
+tf = false;
+ind = sn.stationToNode(ist);
+if isfield(sn, 'nodeparam') && iscell(sn.nodeparam) && ind <= length(sn.nodeparam) && ...
+        isstruct(sn.nodeparam{ind}) && isfield(sn.nodeparam{ind}, 'nservertypes')
+    tf = sn.nodeparam{ind}.nservertypes > 0;
+end
 end

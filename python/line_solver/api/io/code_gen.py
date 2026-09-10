@@ -733,7 +733,7 @@ def _generate_lqn_java_code(sn: Any, model: Any, model_name: str, output: TextIO
         eidx = eshift + e
         name = sn.names[eidx] if hasattr(sn, 'names') else f'Entry{e}'
         parent = sn.parent[eidx] if hasattr(sn, 'parent') else 1
-        output.write(f'\tEntry E{e+1} = new Entry(model, "{name}").on(T{parent - tshift});\n')
+        output.write(f'\tEntry E{e+1} = new Entry(model, "{name}").on(T{parent - tshift + 1});\n')
 
     output.write("\n")
 
@@ -744,8 +744,8 @@ def _generate_lqn_java_code(sn: Any, model: Any, model_name: str, output: TextIO
     for a in range(nacts):
         aidx = ashift + a
         name = sn.names[aidx] if hasattr(sn, 'names') else f'Activity{a}'
-        parent_tidx = sn.parent[aidx] if hasattr(sn, 'parent') else tshift + 1
-        on_task = parent_tidx - tshift
+        parent_tidx = sn.parent[aidx] if hasattr(sn, 'parent') else tshift
+        on_task = parent_tidx - tshift + 1
 
         # Get host demand distribution
         hostdem_type = sn.hostdem_type[aidx] if hasattr(sn, 'hostdem_type') else None
@@ -776,7 +776,7 @@ def _generate_lqn_java_code(sn: Any, model: Any, model_name: str, output: TextIO
         if hasattr(sn, 'callpair') and sn.callpair is not None:
             for c in range(len(sn.callpair)):
                 if sn.callpair[c, 0] == aidx:
-                    target_entry = sn.callpair[c, 1] - eshift
+                    target_entry = sn.callpair[c, 1] - eshift + 1
                     call_mean = sn.callproc_mean[c] if hasattr(sn, 'callproc_mean') else 1
                     call_type = sn.calltype[c] if hasattr(sn, 'calltype') else None
                     call_type_name = call_type.name if hasattr(call_type, 'name') else 'SYNC'

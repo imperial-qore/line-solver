@@ -27,51 +27,15 @@ def _proc_entry_to_map(entry):
     if isinstance(e, (list, tuple)) and len(e) == 1 and \
             isinstance(e[0], (list, tuple, dict)):
         e = e[0]
-    alpha = None
-    T = None
-    if isinstance(e, dict):
-        if 'rate' in e:
-            r = float(e['rate'])
-            if r <= 0:
-                return None
-            alpha = np.array([1.0])
-            T = np.array([[-r]])
-        elif 'k' in e and 'mu' in e:
-            k = int(e['k'])
-            mu = float(e['mu'])
-            alpha = np.zeros(k); alpha[0] = 1.0
-            T = np.zeros((k, k))
-            for j in range(k):
-                T[j, j] = -mu
-                if j + 1 < k:
-                    T[j, j + 1] = mu
-        elif 'probs' in e and 'rates' in e:
-            p = np.asarray(e['probs'], dtype=float).ravel()
-            r = np.asarray(e['rates'], dtype=float).ravel()
-            alpha = p / p.sum() if p.sum() > 0 else p
-            T = np.diag(-r)
-        else:
-            return None
-    elif isinstance(e, (list, tuple)) and len(e) >= 2 and \
-            not isinstance(e[0], dict):
-        a0 = np.asarray(e[0], dtype=float).ravel()
-        M0 = np.atleast_2d(np.asarray(e[1], dtype=float))
-        # PH may be stored as [alpha, T] or [D0, D1]; disambiguate by whether
-        # the first array is a probability row (nonnegative, sums ~1).
-        if a0.size == M0.shape[0] and a0.min() >= -1e-12 and \
-                abs(a0.sum() - 1.0) < 1e-6:
-            alpha = a0; T = M0
-        else:
-            # Treat as [D0, D1] already.
-            D0 = a0.reshape(M0.shape) if a0.ndim == 1 and \
-                a0.size == M0.size else np.atleast_2d(np.asarray(e[0], float))
-            D1 = M0
-            return [np.atleast_2d(D0), np.atleast_2d(D1)]
-    else:
+    # sn.proc now stores (D0, D1) as MATLAB does; proc_to_map also accepts the
+    # legacy descriptors, so this reader needs no shape heuristic of its own.
+    from ...sn.proc_form import proc_to_map
+    D0, D1 = proc_to_map(e)
+    if D0 is None:
         return None
-    t0 = -T @ np.ones(T.shape[0])
-    D1 = np.outer(t0, alpha)
-    return [np.atleast_2d(T), np.atleast_2d(D1)]
+    if D0.shape[0] == 1 and not (-D0[0, 0] > 0):
+        return None
+    return [np.atleast_2d(D0), np.atleast_2d(D1)]
 
 
 def solver_ctmc_qrf_analyzer(sn, options):
@@ -111,13 +75,32 @@ def solver_ctmc_qrf_analyzer(sn, options):
     if np.any(np.isinf(njobs)):
         raise ValueError("QRF methods only support closed networks.")
 
-    # see _kb/06-solver-catalog.md (BA: QRF) -- qrf_noblo_* has no infinite-server notion
-    if np.any(np.isinf(S)):
+    # THE LOAD-DEPENDENT ARMS SERVE DELAY, MULTISERVER AND LOAD-DEPENDENT
+    # STATIONS; THE REST STILL CANNOT. alpha(i,n) multiplies every rate out of
+    # station i at population n, which IS the rate law of a delay (alpha = n),
+    # of a c-server station (alpha = min(n,c)) and of limited load dependence,
+    # so 'qrf.mmi.ld' and 'qrf.mmi.linear' answer the model's OWN chain on all
+    # three. sn_to_qrf_alpha derives alpha and owns the one restriction that
+    # survives: a station serving several jobs at once must be exponential,
+    # since the QRF local state carries one phase per station.
+    #
+    # Every other arm builds a population-free q, so it models each station as
+    # one server and a c>1 station solved as c=1 is not a bound in either
+    # direction (measured +200% at c=3,N=1 and -10% at c=3,N=3). They keep
+    # refusing, by naming the two arms that do serve the model.
+    # see _kb/06-solver-catalog.md (BA: QRF)
+    from ...sn.sn_to_qrf_alpha import sn_to_qrf_alpha
+    alpha_sn, alpha_msg, is_ld, qrf_peak = sn_to_qrf_alpha(sn)
+    _method_raw = options.method if hasattr(options, 'method') else 'qrf.mmi'
+    method_is_ld = _method_raw in ('qrf.mmi.ld', 'qrf.mmi.linear')
+    if is_ld and not method_is_ld:
         raise ValueError(
-            "QRF methods do not support infinite-server (Delay) stations: the "
-            "qrf_noblo_* formulation models every station as a single server. "
-            "Use a finite-server model, or SolverMVA/SolverNC for models with "
-            "think time.")
+            "the '%s' method models every station as a single server: its transition rates "
+            "carry no population index, so it has nowhere to put the rate of a delay, a "
+            "multiserver or a load-dependent station. Use 'qrf.mmi.ld' or 'qrf.mmi.linear', "
+            "which do." % _method_raw)
+    if alpha_msg:
+        raise ValueError("The '%s' method cannot be applied: %s" % (_method_raw, alpha_msg))
 
     # see _kb/06-solver-catalog.md (BA: QRF "Correction (2026-07-24): native
     # Python HAS ported the no-blocking QRF family") for the fix history
@@ -164,6 +147,7 @@ def solver_ctmc_qrf_analyzer(sn, options):
 
     method = options.method if hasattr(options, 'method') else 'qrf.mmi'
     config = options.config if hasattr(options, 'config') else {}
+    BN_qrf = None
 
     # Dispatch based on method
     if method == 'qrf.mmi':
@@ -175,29 +159,96 @@ def solver_ctmc_qrf_analyzer(sn, options):
         from ...mapqn.qrf_noblo_mem import qrf_noblo_mem
         UN_qrf, QN_qrf = qrf_noblo_mem(MAPs, N, rt)
 
+    elif method == 'qrf.bethe':
+        # Same polytope and same phase-1 start as 'qrf.mmi'; the objective is
+        # the tree-reweighted (Bethe) free entropy at the uniform spanning-tree
+        # weight lambda = 1/M, the largest uniform weight at which the program
+        # is convex.
+        from ...mapqn.qrf_noblo_bethe import qrf_noblo_bethe
+        MR = 1
+        UN_qrf, QN_qrf = qrf_noblo_bethe(M, MR, K_phases, N, mu, v, rt)
+
     elif method == 'qrf.mmi.ld':
         from ...mapqn.qrf_noblo_mmi_ld import qrf_noblo_mmi_ld
-        alpha = config.get('qrf_alpha', np.ones((M, N)))
-        UN_qrf, QN_qrf = qrf_noblo_mmi_ld(MAPs, N, rt, alpha)
+        # config['qrf_alpha'] overrides the derivation, as config['qrf_params']
+        # does for the blocking tables; absent it, alpha comes from the model.
+        alpha = config.get('qrf_alpha')
+        alpha = alpha_sn if alpha is None or not np.size(alpha) else alpha
+        UN_qrf, QN_qrf, BN_qrf = qrf_noblo_mmi_ld(MAPs, N, rt, alpha)
 
     elif method == 'qrf.mmi.linear':
         from ...mapqn.qrf_noblo_mmi_linear import qrf_noblo_mmi_linear
-        alpha = config.get('qrf_alpha', np.ones((M, N)))
-        UN_qrf, QN_qrf = qrf_noblo_mmi_linear(MAPs, N, rt, alpha)
+        alpha = config.get('qrf_alpha')
+        alpha = alpha_sn if alpha is None or not np.size(alpha) else alpha
+        UN_qrf, QN_qrf, BN_qrf = qrf_noblo_mmi_linear(MAPs, N, rt, alpha)
+
+    elif method in ('qrf.bas.mmi', 'qrf.bas.mem', 'qrf.bas.bethe'):
+        # Same BAS polytope as the LP method name below, so the same derivation
+        # serves it: the blocking tables are implied by the model.
+        from ...sn.qrf_blocking import sn_to_qrf_blocking
+        qp = config.get('qrf_params')
+        if not qp:
+            qp, blk_msg = sn_to_qrf_blocking(sn, options)
+            if blk_msg:
+                raise ValueError(
+                    "The '%s' method cannot be applied to this model: %s Supply "
+                    "options.config['qrf_params'] explicitly to override the derivation."
+                    % (method, blk_msg))
+        from ...mapqn.qrf_bas_nlp import (
+            qrf_bas_bethe, qrf_bas_mem, qrf_bas_mmi)
+        from ...mapqn.parameters import QRBoundsBasParameters
+        params = QRBoundsBasParameters(
+            _M=M, _N=N, MR=qp.get('MR', 1), f=qp.get('f', 1), K=K_phases,
+            F=np.array(qp.get('F', [N] * M)),
+            MM=np.array(qp.get('MM', np.zeros((1, 2)))),
+            MM1=np.array(qp.get('MM1', np.zeros((1, M)))),
+            ZZ=np.array(qp.get('ZZ', [0])),
+            BB=np.array(qp.get('BB', np.zeros((1, M)))),
+            mu=[mu[i, :K_phases[i], :K_phases[i]] for i in range(M)],
+            v=[v[i, :K_phases[i], :K_phases[i]] for i in range(M)],
+            r=rt,
+        )
+        if method == 'qrf.bas.mmi':
+            UN_qrf, QN_qrf = qrf_bas_mmi(params)
+        elif method == 'qrf.bas.bethe':
+            UN_qrf, QN_qrf = qrf_bas_bethe(params)
+        else:
+            UN_qrf, QN_qrf = qrf_bas_mem(params)
 
     elif method in ('qrf.bas', 'qrf.rsrd'):
-        # Delegate to existing LP bounds methods
+        from ...sn.qrf_blocking import sn_to_qrf_blocking, sn_to_qrf_capacity
+        # F is an OCCUPANCY BOUND, not a declared capacity, and both arms need
+        # it: sn_to_qrf_capacity decides binding through sn_get_buffer_size,
+        # which folds classcap and the reachable population in as raw sn.cap
+        # does not.
+        F_derived, _binding, cap_msg = sn_to_qrf_capacity(sn)
+        if cap_msg:
+            raise ValueError("The '%s' method cannot be applied: %s" % (method, cap_msg))
+        qp = config.get('qrf_params')
+
         if method == 'qrf.bas':
             from ...mapqn.qr_bounds_bas import mapqn_qr_bounds_bas
             from ...mapqn.parameters import QRBoundsBasParameters
-            qp = config.get('qrf_params', {})
+            if not qp:
+                # Derived rather than demanded. The refusal this replaces was
+                # right only while the alternative was to INVENT the tables:
+                # substituting no blocking (MR=1) measured 4.16667 from exact on
+                # sanity_CQN_rm_{fcfs,ps}_1class where real tables sit at
+                # 0.133333, i.e. 31x closer. The model fixes the tables, so they
+                # are built instead of guessed.
+                qp, blk_msg = sn_to_qrf_blocking(sn, options)
+                if blk_msg:
+                    raise ValueError(
+                        "The 'qrf.bas' method cannot be applied to this model: %s Supply "
+                        "options.config['qrf_params'] explicitly to override the derivation."
+                        % blk_msg)
             # NOTE: the dataclass fields are _M/_N (M/N are read-only
             # properties), so these must be passed positionally-named as _M/_N.
             params = QRBoundsBasParameters(
                 _M=M, _N=N, MR=qp.get('MR', 1),
                 f=qp.get('f', 1),
                 K=K_phases,
-                F=np.array(qp.get('F', [N] * M)),
+                F=np.array(qp.get('F', F_derived)),
                 MM=np.array(qp.get('MM', np.zeros((1, 2)))),
                 MM1=np.array(qp.get('MM1', np.zeros((1, M)))),
                 ZZ=np.array(qp.get('ZZ', [0])),
@@ -206,27 +257,43 @@ def solver_ctmc_qrf_analyzer(sn, options):
                 v=[v[i, :K_phases[i], :K_phases[i]] for i in range(M)],
                 r=rt,
             )
+            # queue 1, 'max': UPPER bound on utilization (relaxation-guaranteed direction); defaults ('U1min'/'min') are opposite face, read as zero throughput
             sol = mapqn_qr_bounds_bas(params, 1, 'max')
             UN_qrf = np.array([sol.get_utilization(i + 1) for i in range(M)])
             QN_qrf = _derive_qn_from_bounds(UN_qrf, M, N, S, MAPs, sn)
         else:
             from ...mapqn.qr_bounds_rsrd import mapqn_qr_bounds_rsrd
             from ...mapqn.parameters import QRBoundsRsrdParameters
+            # RS-RD carries NO blocking tables -- QRBoundsRsrdParameters has
+            # no f/MR/BB/MM/MM1/ZZ field at all -- so it never needed
+            # qrf_params, and demanding them refused a well-formed call. What it
+            # does need is a truthful F: its PBB constraint reads which queues
+            # can be FULL, and the F = N used here previously made every queue
+            # unblockable, i.e. answered the UNBLOCKED model.
             alpha_config = config.get('qrf_alpha', np.ones((M, N)))
+            F_rsrd = np.array(qp.get('F', F_derived)) if qp else F_derived
             params = QRBoundsRsrdParameters(
                 _M=M, _N=N,
                 K=K_phases,
-                F=np.full(M, N, dtype=int),
+                F=np.asarray(F_rsrd, dtype=int),
                 mu=[mu[i, :K_phases[i], :K_phases[i]] for i in range(M)],
                 v=[v[i, :K_phases[i], :K_phases[i]] for i in range(M)],
                 alpha=alpha_config,
                 r=rt,
             )
+            # same convention as qrf.bas above
             sol = mapqn_qr_bounds_rsrd(params, 1, 'max')
             UN_qrf = np.array([sol.get_utilization(i + 1) for i in range(M)])
             QN_qrf = _derive_qn_from_bounds(UN_qrf, M, N, S, MAPs, sn)
     else:
         raise ValueError(f"Unknown QRF method: {method}")
+
+    # The alpha-free arms return no BN because their alpha is identically 1,
+    # and there BN = P(n >= 1) = UN_qrf: a single server's departure rate is
+    # proportional to the probability that it is busy. Setting it here rather
+    # than in each arm keeps the readout below one formula.
+    if BN_qrf is None:
+        BN_qrf = UN_qrf
 
     # Normalize QN to population constraint
     if np.sum(QN_qrf) > 0:
@@ -249,16 +316,24 @@ def solver_ctmc_qrf_analyzer(sn, options):
     refstat = int(np.asarray(sn.refstat).flatten()[0])
 
     UN_qrf = np.asarray(UN_qrf, dtype=float).flatten()
+    BN_qrf = np.asarray(BN_qrf, dtype=float).flatten()
 
+    # System throughput from the ALPHA-WEIGHTED marginal mean BN, the mean
+    # number of jobs actually in service: E[min(n,c)] at a c-server station,
+    # E[n] at a delay, P(n >= 1) at a single server. That is what the departure
+    # rate is proportional to, so T_i = BN_i / stime_i holds exactly at the
+    # relaxed point and XN = T_i / V_i. The single-server case is the former
+    # UN_qrf[i]*S[i]/(V*stime) unchanged, S being 1 and BN being UN_qrf there,
+    # and a delay no longer needs the refstat fallback below: alpha = n makes
+    # BN = E[n] = QN, so the general formula already IS that fallback.
     stimes = np.array([_map_mean_from_ph(PH[i]) for i in range(M)])
     for i in range(M):
-        if not np.isinf(S[i]) and stimes[i] > 0 and V[i, 0] > 0 \
-                and UN_qrf[i] > 0:
-            XN[0, 0] = UN_qrf[i] * S[i] / (V[i, 0] * stimes[i])
+        if stimes[i] > 0 and V[i, 0] > 0 and BN_qrf[i] > 0:
+            XN[0, 0] = BN_qrf[i] / (V[i, 0] * stimes[i])
             break
     else:
-        # No finite-server station carries load: fall back to the reference
-        # station, where QN = X * V * stime holds exactly for a delay.
+        # No station carries load: fall back to the reference station, where
+        # QN = X * V * stime holds exactly for a delay.
         stime_ref = stimes[refstat]
         if stime_ref > 0 and V[refstat, 0] > 0:
             XN[0, 0] = QN[refstat, 0] / (V[refstat, 0] * stime_ref)
@@ -271,7 +346,12 @@ def solver_ctmc_qrf_analyzer(sn, options):
             if np.isinf(S[i]):
                 UN[i, 0] = QN[i, 0]
             else:
-                UN[i, 0] = UN_qrf[i]
+                # Busy fraction of the station's DECLARED peak capacity, BN
+                # being the mean number of jobs in service. The normalizer is
+                # nservers times the reachable lld peak, LINE's one
+                # U = T*S/peak convention (see sn_to_qrf_alpha); at peak 1 it
+                # is UN_qrf[i], what the alpha-free arms report directly.
+                UN[i, 0] = BN_qrf[i] / qrf_peak[i]
             if TN[i, 0] > 0:
                 RN[i, 0] = QN[i, 0] / TN[i, 0]
 

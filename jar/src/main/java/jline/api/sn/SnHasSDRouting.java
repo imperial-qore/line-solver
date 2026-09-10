@@ -24,7 +24,7 @@ public final class SnHasSDRouting {
      *
      * <p>Product-form requires state-independent (Markovian) routing.
      * PROB and RAND are product-form compatible.
-     * RROBIN, WRROBIN, JSQ, SQ, RL are state-dependent and violate product-form.
+     * RROBIN, WRROBIN, JSQ, SQ are state-dependent and violate product-form.
      *
      * @param sn NetworkStruct object for the queueing network model
      * @return true if the network has state-dependent routing, false otherwise
@@ -42,8 +42,7 @@ public final class SnHasSDRouting {
                     if (strategy == RoutingStrategy.RROBIN ||
                             strategy == RoutingStrategy.WRROBIN ||
                             strategy == RoutingStrategy.JSQ ||
-                            strategy == RoutingStrategy.SQ ||
-                            strategy == RoutingStrategy.RL) {
+                            strategy == RoutingStrategy.SQ) {
                         return true;
                     }
                 }

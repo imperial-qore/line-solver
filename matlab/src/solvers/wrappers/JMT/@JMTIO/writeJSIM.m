@@ -20,6 +20,10 @@ for i=1:numOfNodes
     currentNode = self.model.nodes{i,1};
     node = simXMLDoc.createElement('node');
     node.setAttribute('name', currentNode.name);
+    % Ahead of the sections, as SIMmodeldefinition.xsd sequences <node>: the
+    % due dates an EDD or EDF buffer is ordered by. A no-op at every other
+    % station.
+    [simXMLDoc, node] = saveClassSoftDeadlines(self, simXMLDoc, node, ind);
 
     nodeSections = getSections(currentNode);
     for j=1:length(nodeSections)
@@ -30,11 +34,19 @@ for i=1:numOfNodes
             % Override className for preemptive strategies - JMT requires PreemptiveServer
             if strcmp(sectionClassName, 'Server') && isa(currentNode, 'Queue')
                 sched = currentNode.schedStrategy;
+                % EDF is here and EDD is not because EDFStrategy implements
+                % jmt.engine.NetStrategies.QueuePutStrategies.PreemptiveStrategy
+                % and EDDStrategy does not: Queue.process casts the server
+                % section to PreemptiveServer for such a strategy, so an EDF
+                % station left on a plain Server aborts the run with
+                % "class jmt.engine.NodeSections.Server cannot be cast to class
+                % jmt.engine.NodeSections.PreemptiveServer" (Queue.java:560).
                 if sched == SchedStrategy.SRPT || sched == SchedStrategy.SRPTPRIO || ...
                    sched == SchedStrategy.LCFSPR || sched == SchedStrategy.LCFSPRPRIO || ...
                    sched == SchedStrategy.LCFSPI || sched == SchedStrategy.LCFSPIPRIO || ...
                    sched == SchedStrategy.FCFSPR || sched == SchedStrategy.FCFSPRPRIO || ...
-                   sched == SchedStrategy.FCFSPI || sched == SchedStrategy.FCFSPIPRIO
+                   sched == SchedStrategy.FCFSPI || sched == SchedStrategy.FCFSPIPRIO || ...
+                   sched == SchedStrategy.EDF
                     sectionClassName = 'PreemptiveServer';
                 end
             end
@@ -70,13 +82,17 @@ for i=1:numOfNodes
                 case 'Server'
                     [simXMLDoc, xml_section] = saveNumberOfServers(self, simXMLDoc, xml_section, ind);
                     [simXMLDoc, xml_section] = saveServerVisits(self, simXMLDoc, xml_section);
-                    % Heterogeneous server configuration
+                    [simXMLDoc, xml_section] = saveServiceStrategy(self, simXMLDoc, xml_section, ind);
+                    [simXMLDoc, xml_section] = saveDelayOffStrategy(self, simXMLDoc, xml_section, ind);
+                    % Job parallelism and heterogeneous pools. SimLoader picks the
+                    % Server constructor by the positional types of the parameters,
+                    % so these five must follow the service strategies as one block.
+                    [simXMLDoc, xml_section] = saveClassParallelism(self, simXMLDoc, xml_section, ind);
                     [simXMLDoc, xml_section] = saveServerTypeNames(self, simXMLDoc, xml_section, ind);
                     [simXMLDoc, xml_section] = saveServersPerType(self, simXMLDoc, xml_section, ind);
                     [simXMLDoc, xml_section] = saveServerCompatibilities(self, simXMLDoc, xml_section, ind);
                     [simXMLDoc, xml_section] = saveHeteroSchedPolicy(self, simXMLDoc, xml_section, ind);
-                    [simXMLDoc, xml_section] = saveServiceStrategy(self, simXMLDoc, xml_section, ind);
-                    [simXMLDoc, xml_section] = saveDelayOffStrategy(self, simXMLDoc, xml_section, ind);
+                    warnHeteroRates(self, ind);
                     % Note: SwitchoverStrategy is only supported by PollingServer in JMT
                     % Regular Server class does not support switchover times
                     if ~isempty(currentNode.switchoverTime)

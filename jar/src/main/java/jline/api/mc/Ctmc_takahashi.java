@@ -111,6 +111,13 @@ public final class Ctmc_takahashi {
                     if (g.flag == 0) {
                         x = g.x;
                         solved = true;
+                    } else {
+                        // Short-recurrence retry before the cubic factorization, as in Ctmc_solve.
+                        Ctmc_bicgstab.BicgstabResult bs = Ctmc_bicgstab.ctmc_bicgstab(A, b, 0.0, 0, null);
+                        if (bs.flag == 0) {
+                            x = bs.x;
+                            solved = true;
+                        }
                     }
                 }
                 if (!solved) {

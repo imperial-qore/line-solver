@@ -72,13 +72,71 @@ public class SnApiTest {
         assertFalse(SnHasDPS.snHasDPS(sn), "no DPS station");
         assertFalse(SnHasForkJoin.snHasForkJoin(sn), "no fork-join");
         assertFalse(SnHasClassSwitching.snHasClassSwitching(sn), "no class switching");
-        // The Delay (INF) station counts as a multiserver station:
-        // snHasMultiServer checks nservers.elementMax() > 1
-        assertTrue(SnHasMultiServer.snHasMultiServer(sn),
-                "Delay station has infinite servers");
+        // Infinite servers are delays, not multiserver queues: the predicate
+        // ranges over finite nservers only (as the Python sn_has_multi_server
+        // does)
+        assertFalse(SnHasMultiServer.snHasMultiServer(sn),
+                "Delay is INF, and the PS queue is single-server");
         assertFalse(SnHasPriorities.snHasPriorities(sn), "single class: no priorities");
         assertTrue(SnHasProductForm.snHasProductForm(sn),
                 "PS+Delay closed cycle is product form");
+    }
+
+    /** cqn_bas_blocking: BAS at Queue1, a one-job buffer at Queue2, two jobs circulating. */
+    private static Network basModel() {
+        Network model = new Network("sn_bas");
+        Queue q1 = new Queue(model, "Queue1", SchedStrategy.FCFS);
+        Queue q2 = new Queue(model, "Queue2", SchedStrategy.FCFS);
+        ClosedClass jobClass = new ClosedClass(model, "Class1", 2, q1, 0);
+        q1.setService(jobClass, new Exp(1.0));
+        q2.setService(jobClass, new Exp(0.8));
+        q2.setCap(1);
+        q1.setDropRule(jobClass, jline.lang.constant.DropStrategy.BlockingAfterService);
+        model.link(model.serialRouting(q1, q2));
+        return model;
+    }
+
+    /** Single-station M/M/1/K with tail drop, the one truncated shape that keeps product form. */
+    private static Network mm1kModel() {
+        Network model = new Network("sn_mm1k");
+        Source source = new Source(model, "Source");
+        Queue queue = new Queue(model, "Queue", SchedStrategy.FCFS);
+        queue.setNumberOfServers(1);
+        queue.setCapacity(3);
+        Sink sink = new Sink(model, "Sink");
+        OpenClass jobClass = new OpenClass(model, "Class1", 0);
+        source.setArrival(jobClass, new Exp(0.8));
+        queue.setService(jobClass, new Exp(1.0));
+        model.link(model.serialRouting(source, queue, sink));
+        return model;
+    }
+
+    @Test
+    public void bindingBufferExcludesProductForm() {
+        // Until 2026-08-16 no conjunct of snHasProductForm read sn.cap/sn.classcap/
+        // sn.droprule, so this model reported a product form its truncation does not have
+        NetworkStruct sn = basModel().getStruct(true);
+        assertTrue(SnHasBlocking.snHasBlocking(sn), "a one-job buffer holding two jobs binds");
+        assertFalse(SnHasProductForm.snHasProductForm(sn), "BAS blocking is not product form");
+    }
+
+    @Test
+    public void nonBindingCapacityKeepsProductForm() {
+        // capacity at least the reachable population can never refuse a job: setCap(N)
+        // on an N-job closed model is a no-op, and product form stays exact
+        Network model = closedModel();
+        ((Queue) model.getNodeByName("Queue")).setCap(3);
+        NetworkStruct sn = model.getStruct(true);
+        assertFalse(SnHasBlocking.snHasBlocking(sn), "capacity 3 with 3 jobs never binds");
+        assertTrue(SnHasProductForm.snHasProductForm(sn), "PS+Delay closed cycle stays product form");
+    }
+
+    @Test
+    public void singleStationLossSystemIsExempt() {
+        NetworkStruct sn = mm1kModel().getStruct(true);
+        assertTrue(SnIsMm1kLoss.snIsMm1kLoss(sn), "Source-Queue-Sink M/M/1/K with tail drop");
+        assertFalse(SnHasBlocking.snHasBlocking(sn), "its truncated geometric IS a product form");
+        assertTrue(SnHasProductForm.snHasProductForm(sn));
     }
 
     @Test

@@ -1,55 +1,21 @@
-function rates = ode_rates_closing(x, M, K, enabled, q_indices, Kic, nservers, w, sched_id, rateBase, eventIdx)
-% RATES = ODE_RATES_BOTTQ(X, M, K, Q_INDICES, KIC, NSERVERS, W, STRATEGY, RATEBASE, EVENTIDX)
+function rates = ode_rates_closing(x, M, K, enabled, q_indices, Kic, nservers, w, sched_id, rateBase, eventIdx, sigma2, lld, covblk)
+% RATES = ODE_RATES_BOTTQ(X, M, K, Q_INDICES, KIC, NSERVERS, W, STRATEGY, RATEBASE, EVENTIDX, SIGMA2, LLD, COVBLK)
 
-rates = x; % basic vector valid for INF and PS case min(ni,nservers(i))=ni
-for i = 1:M
-    switch sched_id(i) % source
-        case SchedStrategy.INF
-            % do nothing
-        case SchedStrategy.EXT  %EXT
-            % this is treated by a delay except that we require mass
-            % conservation in the local population
-            for k=1:K
-                idxIni = q_indices(i,k);
-                idxEnd = q_indices(i,k) + Kic(i,k) - 1;
-                if enabled(i,k)
-                    rates(idxIni) = 1-sum(x(idxIni+1:idxEnd)); % keep total mass 1 into the source for all classes at all times, not needed for idxIni+1:idxEnd as rates is initialized equal to x
-                end
-            end
-        case SchedStrategy.PS
-            idxIni = q_indices(i,1);
-            idxEnd = q_indices(i,K) + Kic(i,K) - 1;
-            ni = sum( x(idxIni:idxEnd) );
-            if ni > nservers(i) % case  min = ni handled by rates = x
-                rates(idxIni:idxEnd) = x(idxIni:idxEnd)/ni * nservers(i);
-            end
-        case SchedStrategy.FCFS
-            idxIni = q_indices(i,1);
-            idxEnd = q_indices(i,K) + Kic(i,K) - 1;
-            ni = sum( x(idxIni:idxEnd) );
-            if ni > nservers(i) % case  min = ni handled by rates = x
-                rates(idxIni:idxEnd) = x(idxIni:idxEnd)/ni * nservers(i);
-            end
-        case SchedStrategy.DPS %DPS
-            w(i,:) = w(i,:)/sum(w(i,:));
-            
-            ni = mean(w(i,:));
-            for k=1:K
-                idxIni = q_indices(i,k);
-                idxEnd = q_indices(i,k) + Kic(i,k) - 1;
-                if enabled(i,k)
-                    ni = ni + sum( w(i,k)*x(idxIni:idxEnd) );
-                end
-            end
-            for k=1:K
-                idxIni = q_indices(i,k);
-                idxEnd = q_indices(i,k) + Kic(i,k) - 1;
-                if enabled(i,k)
-                    rates(idxIni:idxEnd) = w(i,k)*x(idxIni:idxEnd)/ni * nservers(i); % not needed for idxIni+1:idxEnd as rates is initiliazed equal to x
-                end
-            end
-    end
+% sigma2(i) is the population variance at station i under the Gaussian
+% moment closure; omitted or zero reproduces the first-order closure exactly.
+% lld is sn.lldscaling; omitted or empty means no load dependence.
+% covblk{i} is the coordinate covariance block of station i, which closes the
+% DPS share ratio; omitted or empty keeps the plug-in share
+if nargin < 12
+    sigma2 = [];
 end
+if nargin < 13
+    lld = [];
+end
+if nargin < 14
+    covblk = {};
+end
+rates = ode_rates_closing_factors(x, M, K, enabled, q_indices, Kic, nservers, w, sched_id, sigma2, lld, covblk);
 rates = rates(eventIdx);
 rates = rateBase.*rates;
 end

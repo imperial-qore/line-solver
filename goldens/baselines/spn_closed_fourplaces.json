@@ -1,0 +1,50 @@
+{
+  "class": {
+    "JMT": "stochastic"
+  },
+  "example": "spn_closed_fourplaces",
+  "solvers": {
+    "JMT": [
+      {
+        "ArvR": 0.57461,
+        "JobClass": "Class1",
+        "QLen": 0.27748,
+        "ResidT": 0.48217,
+        "RespT": 0.48217,
+        "Station": "P1",
+        "Tput": 0.57432,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.57432,
+        "JobClass": "Class1",
+        "QLen": 0.77676,
+        "ResidT": 1.3441,
+        "RespT": 1.3441,
+        "Station": "P2",
+        "Tput": 0.57273,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.57273,
+        "JobClass": "Class1",
+        "QLen": 0.25164,
+        "ResidT": 0.43035,
+        "RespT": 0.43035,
+        "Station": "P3",
+        "Tput": 0.57294,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.57294,
+        "JobClass": "Class1",
+        "QLen": 0.69386,
+        "ResidT": 1.2301,
+        "RespT": 1.2301,
+        "Station": "P4",
+        "Tput": 0.5744,
+        "Util": 0.0
+      }
+    ]
+  }
+}

@@ -40,7 +40,17 @@
  % <tr><td>pi0<td>Per-item miss probability
  % </table>
 %}
-function [M,MU,MI,pi0,tout,pi0_t,MU_t,xtraj] = cache_miss_rmf(gamma, m, lambda, tspan, x0init, accost) %#ok<INUSL>
+function [M,MU,MI,pi0,tout,pi0_t,MU_t,xtraj,xss,Wcov] = cache_miss_rmf(gamma, m, lambda, tspan, x0init, accost) %#ok<INUSL>
+% XSS is the converged occupancy vector (model_dim x 1, item-major through
+% RMF_INDEX) and WCOV the stationary covariance of the SAME process under the
+% linear noise approximation, i.e. the solution of the Lyapunov equation
+% F'(pi) W + W F'(pi)' + Q(pi) = 0 that RMF_EXPANSION_STEADY_STATE already
+% solves on the way to the 1/N mean correction. It was discarded there; it is
+% the second moment of the cache occupancy and is what SolverFLD's moment
+% closure reports for a cache node. WCOV is empty when the refinement did not
+% run (a non-linear access graph has no 1/N path) or when its reduced linear
+% system was singular.
+%
 % Optional TSPAN = [t0, t1] and initial occupancy X0INIT request the
 % transient mean-field trajectory: integrating the same drift F(x) that
 % RMF_FIXED_POINT drives to steady state, over the finite window. Returns
@@ -94,6 +104,7 @@ end
 % (row 1+i) per item; the general drift honours it with the plain mean-field
 % fixed point, while the linear chain keeps the 1/N-refined path.
 G = rmf_build_item_graphs(accost, lambda, n_items, h);
+Wcov = [];
 if ~isempty(G)
     xss = rmf_fixed_point_graph(x0, p, G, m, n_items, h, model_dim);
 else
@@ -112,6 +123,14 @@ else
         end
     catch
         % Fall back to plain mean field
+    end
+    try
+        W = rmf_lna_covariance(xss, p, m, n_items, h, model_dim);
+        if all(all(isfinite(W)))
+            Wcov = W;
+        end
+    catch
+        % no stationary covariance at this fixed point; the mean stands
     end
     clear restoreWarn
 end
@@ -325,6 +344,82 @@ C((rk + 1):model_dim, :) = U(:, (rk + 1):model_dim)';
 Cinv = inv(C);
 end
 
+function W = rmf_lna_covariance(x, p, m, n_items, h, model_dim)
+% W = RMF_LNA_COVARIANCE(X, P, M, N_ITEMS, H, MODEL_DIM)
+%
+% Stationary covariance of the RANDOM(m) occupancy process under the linear
+% noise approximation: the solution of F'(x) W + W F'(x)' + Q(x) = 0 with the
+% same Jacobian RMF_JACOBIAN and the same noise matrix RMF_NOISE_MATRIX that
+% the 1/N correction is built from, so the mean and the covariance linearise
+% about the identical drift.
+%
+% THE SUBSPACE IS THE POINT. The Jacobian is singular twice over, because the
+% cache conserves two things: each item is in exactly one list
+% (sum_k x(i,k) = 1) and each list holds exactly its capacity
+% (sum_i x(i,k) = m(k)). The fluctuation therefore lives on the span of the
+% jump directions, and every jump is a SWAP,
+%   l(i,j,k) = (e_i - e_j) tensor (e_{k+1} - e_k),
+% so that span is the tensor product of the zero-sum item space with the
+% zero-sum list space -- the double-centred subspace, of dimension
+% (n_items-1)*h. Restricting to an orthonormal basis of it is an EXACT
+% reduction, and it is what makes the answer respect both conservation laws:
+% the covariance of a deterministic total must be zero, and on n=5, m=2 the
+% reduction used by RMF_EXPANSION_STEADY_STATE (which drops the last item's
+% rows and pads with SVD null vectors) returns sum(W(:)) = +0.47 for the miss
+% indicators where the exact chain gives 0.
+%
+% Parameters:
+%   x         - occupancy at which to linearise (model_dim x 1)
+%   p         - per-item request probabilities (1 x n_items)
+%   m         - list capacities (1 x h)
+%   n_items   - number of items
+%   h         - number of lists
+%   model_dim - n_items*(h+1)
+%
+% Returns:
+%   W - model_dim x model_dim covariance, item-major through RMF_INDEX
+%
+% See also CACHE_MISS_RMF, RMF_NOISE_MATRIX, FLUID_LYAPUNOV.
+
+Fp = rmf_jacobian(x, p, m, n_items, h, model_dim);
+Q = rmf_noise_matrix(x, p, m, n_items, h, model_dim);
+Q = (Q + Q') / 2;
+
+Ui = local_centered_basis(n_items);   % n_items x (n_items-1)
+Ul = local_centered_basis(h + 1);     % (h+1) x h
+V = kron(Ul, Ui);                     % item-major flat index i + k*n_items
+if isempty(V)
+    W = zeros(model_dim);
+    return
+end
+
+Ar = V' * Fp * V;
+Qr = V' * Q * V;
+Qr = (Qr + Qr') / 2;
+
+% the linear noise approximation has a stationary covariance only at an
+% exponentially stable fixed point
+if max(real(eig(Ar))) >= -sqrt(eps)
+    line_error(mfilename, ['The cache fluid fixed point is not exponentially stable on the ' ...
+        'reachable subspace, so the occupancy process has no stationary covariance.']);
+end
+
+Wr = lyap(Ar, Qr);
+Wr = (Wr + Wr') / 2;
+W = V * Wr * V';
+W = (W + W') / 2;
+end
+
+function U = local_centered_basis(n)
+% Orthonormal basis of {u in R^n : sum(u) = 0}, n-by-(n-1).
+if n <= 1
+    U = zeros(n, 0);
+    return
+end
+[U, ~] = qr(eye(n) - ones(n)/n, 0);
+U = U(:, 1:(n-1));
+end
+
 function [pi, V] = rmf_expansion_steady_state(x0, p, m, n_items, h, model_dim)
 % RMF_EXPANSION_STEADY_STATE Compute refined mean field steady-state expansion
 %
@@ -391,8 +486,13 @@ for a = 1:rk
 end
 V_r = -Fp_r \ (C_r / 2.0);
 
-% Expand back to full dimension
+% Expand back to full dimension. The dropped coordinates span the null
+% directions of the Jacobian, i.e. the per-item conservation sum_k x(i,k) = 1,
+% which carries no fluctuation, so the expansion of W is exact rather than a
+% truncation.
 V = Cinv(:, 1:rk) * V_r;
+W = Cinv(:, 1:rk) * W_r * Cinv(:, 1:rk)';
+W = (W + W') / 2;
 end
 
 function g = rmf_linear_graph(h)

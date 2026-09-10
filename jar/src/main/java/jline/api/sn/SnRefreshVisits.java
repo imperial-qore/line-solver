@@ -63,6 +63,7 @@ public final class SnRefreshVisits {
                 }
             }
 
+            // sparse storage: new Matrix(r,c) is CSC-backed and set(_,_,0) inserts nothing
             Matrix Pchain = new Matrix(cols.size(), cols.size());
             for (int row = 0; row < cols.size(); row++) {
                 for (int col = 0; col < cols.size(); col++) {
@@ -71,6 +72,28 @@ public final class SnRefreshVisits {
             }
 
             replaceNaNWithEqualProb(Pchain);
+
+            // the routing matrix carries a JMT-oriented uniform fill on DISABLED (node,class) pairs;
+            // a class with no service at a station cannot be there -- see _kb/06-solver-catalog.md
+            for (int ist = 0; ist < M; ist++) {
+                int sti = (int) sn.statefulToStation.get(ist);
+                if (sti < 0 || sti >= sn.nstations) continue;
+                // a Place, and a station declaring server types, carry NaN station rates by
+                // construction, so the test below cannot speak for them
+                NodeType sType = sn.nodetype.get((int) sn.stationToNode.get(sti));
+                if (sType == NodeType.Place || sType == NodeType.Transition) continue;
+                jline.lang.nodeparam.ServiceNodeParam svcParam =
+                        sn.getServiceParam(sn.stations.get(sti));
+                if (svcParam != null && svcParam.nservertypes > 0) continue;
+                for (int ik = 0; ik < inchain_c.size(); ik++) {
+                    if (!Double.isNaN(sn.rates.get(sti, inchain_c.get(ik)))) continue;
+                    int idx = ist * inchain_c.size() + ik;
+                    for (int col = 0; col < Pchain.getNumCols(); col++) {
+                        Pchain.set(idx, col, 0);
+                        Pchain.set(col, idx, 0);
+                    }
+                }
+            }
 
             double[] rowSums = new double[Pchain.getNumRows()];
             for (int i = 0; i < rowSums.length; i++) rowSums[i] = 1.0;
@@ -190,6 +213,7 @@ public final class SnRefreshVisits {
                 }
             }
 
+            // sparse storage, as for the station-level Pchain above
             Matrix nodes_Pchain = new Matrix(nodes_cols.size(), nodes_cols.size());
             for (int row = 0; row < nodes_cols.size(); row++) {
                 for (int col = 0; col < nodes_cols.size(); col++) {
@@ -198,6 +222,36 @@ public final class SnRefreshVisits {
             }
 
             replaceNaNWithEqualProb(nodes_Pchain);
+
+            // THE SAME DISABLED-PAIR MASK THE STATION BLOCK APPLIES ABOVE, and it
+            // matters more here: at station level a (station,class) the class cannot
+            // be served at is a dead end, while the node kernel keeps the class-switch
+            // nodes between the stations, so the disabled states close into a whole
+            // spurious CYCLE. A materialised LQN replica is exactly that -- replica 2's
+            // stations still carry replica 1's classes in rtnodes -- and the reducible
+            // solve then splits the mass between the real chain and the phantom one.
+            // Even where the phantom states stay transient, the limiting matrix leaves
+            // a residue on them (measured 1e-8 on a transient-class model), which is
+            // enough to make checkServiceReachable accuse an innocent station.
+            for (int ind = 0; ind < I; ind++) {
+                int sti = (int) sn.nodeToStation.get(ind);
+                if (sti < 0 || sti >= sn.nstations) continue;
+                // a Place, and a station declaring server types, carry NaN station rates by
+                // construction, so the test below cannot speak for them
+                NodeType ndType = sn.nodetype.get(ind);
+                if (ndType == NodeType.Place || ndType == NodeType.Transition) continue;
+                jline.lang.nodeparam.ServiceNodeParam ndSvcParam =
+                        sn.getServiceParam(sn.stations.get(sti));
+                if (ndSvcParam != null && ndSvcParam.nservertypes > 0) continue;
+                for (int ik = 0; ik < inchain_c.size(); ik++) {
+                    if (!Double.isNaN(sn.rates.get(sti, inchain_c.get(ik)))) continue;
+                    int idx = ind * inchain_c.size() + ik;
+                    for (int col = 0; col < nodes_Pchain.getNumCols(); col++) {
+                        nodes_Pchain.set(idx, col, 0);
+                        nodes_Pchain.set(col, idx, 0);
+                    }
+                }
+            }
 
             double[] nodesRowSums = new double[nodes_Pchain.getNumRows()];
             for (int i = 0; i < nodesRowSums.length; i++) nodesRowSums[i] = 1.0;

@@ -22,7 +22,7 @@ public final class BuildSA {
         Matrix A_jump = new Matrix(newdim, newdim);
 
         for (int row = 0; row < dim_C; row++) {
-            FjCodesUtilsKt.setSubMatrix(S, row * dim, row * dim, service_h.getS());
+            FjCodesUtils.setSubMatrix(S, row * dim, row * dim, service_h.getS());
         }
 
         Matrix A = new Matrix(m, m);
@@ -39,7 +39,7 @@ public final class BuildSA {
         Matrix S_Cminus1 = new Matrix(dim, dim);
 
         for (int row = 0; row < dim; row++) {
-            double[] countvect = FjCodesUtilsKt.getRowAsArray(service_h.getService_phases(), row);
+            double[] countvect = FjCodesUtils.getRowAsArray(service_h.getService_phases(), row);
 
             for (int i = 0; i < m; i++) {
                 if (countvect[i] > 0.0) {
@@ -48,7 +48,7 @@ public final class BuildSA {
                         tovect[i] = tovect[i] - 1.0;
                         tovect[j] = tovect[j] + 1.0;
 
-                        int col = FjCodesUtilsKt.vectmatch(tovect, service_h.getService_phases()) - 1;
+                        int col = FjCodesUtils.vectmatch(tovect, service_h.getService_phases()) - 1;
 
                         if (col >= 0) {
                             double currentVal = S_Cminus1.get(row, col);
@@ -62,13 +62,13 @@ public final class BuildSA {
         for (int c = C; c >= 1; c--) {
             int sourceRow = (C - c) * dim;
             int targetCol = (C - c + 1) * dim;
-            FjCodesUtilsKt.setSubMatrix(S, sourceRow, targetCol, S_Cminus1);
+            FjCodesUtils.setSubMatrix(S, sourceRow, targetCol, S_Cminus1);
         }
 
         Matrix A_Cplus1 = new Matrix(dim, dim);
 
         for (int row = 0; row < dim; row++) {
-            double[] countvect = FjCodesUtilsKt.getRowAsArray(service_h.getService_phases(), row);
+            double[] countvect = FjCodesUtils.getRowAsArray(service_h.getService_phases(), row);
 
             for (int i = m; i < 2 * m; i++) {
                 if (countvect[i] > 0.0) {
@@ -77,7 +77,7 @@ public final class BuildSA {
                         tovect[i] = tovect[i] - 1.0;
                         tovect[j] = tovect[j] + 1.0;
 
-                        int col = FjCodesUtilsKt.vectmatch(tovect, service_h.getService_phases()) - 1;
+                        int col = FjCodesUtils.vectmatch(tovect, service_h.getService_phases()) - 1;
 
                         if (col >= 0) {
                             double currentVal = A_Cplus1.get(row, col);
@@ -91,15 +91,15 @@ public final class BuildSA {
         for (int c = C - 1; c >= 1; c--) {
             int sourceRow = (C - c) * dim;
             int targetCol = (C - c - 1) * dim;
-            FjCodesUtilsKt.setSubMatrix(A_jump, sourceRow, targetCol, A_Cplus1);
+            FjCodesUtils.setSubMatrix(A_jump, sourceRow, targetCol, A_Cplus1);
         }
 
-        FjCodesUtilsKt.setSubMatrix(A_jump, 0, 0, A_Cplus1);
+        FjCodesUtils.setSubMatrix(A_jump, 0, 0, A_Cplus1);
 
         Matrix A_last = new Matrix(dim, dim);
 
         for (int row = 0; row < dim; row++) {
-            double[] countvect = FjCodesUtilsKt.getRowAsArray(service_h.getService_phases(), row);
+            double[] countvect = FjCodesUtils.getRowAsArray(service_h.getService_phases(), row);
 
             for (int k = 0; k <= 1; k++) {
                 int startIdx = k * m;
@@ -117,7 +117,7 @@ public final class BuildSA {
                             double[] temp_tovector = tovect.clone();
                             temp_tovector[m + j] = 1.0;
 
-                            int col = FjCodesUtilsKt.vectmatch(temp_tovector, service_h.getService_phases()) - 1;
+                            int col = FjCodesUtils.vectmatch(temp_tovector, service_h.getService_phases()) - 1;
 
                             if (col >= 0) {
                                 double currentVal = A_last.get(row, col);
@@ -129,7 +129,7 @@ public final class BuildSA {
             }
         }
 
-        FjCodesUtilsKt.setSubMatrix(A_jump, C * dim, (C - 1) * dim, A_last);
+        FjCodesUtils.setSubMatrix(A_jump, C * dim, (C - 1) * dim, A_last);
 
         return new SAResult(S, A_jump);
     }

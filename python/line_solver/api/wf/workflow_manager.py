@@ -8,7 +8,7 @@ LINE solver framework for complex system modeling and optimization.
 Based on WorkflowManager.kt from the MDN toolbox.
 
 References:
-    Original Kotlin: jar/src/main/kotlin/jline/api/wf/WorkflowManager.kt
+    Original JAR: jar/src/main/java/jline/api/wf/WorkflowManager.java
 """
 
 import numpy as np
@@ -412,7 +412,7 @@ class WorkflowManager:
         try:
             from ...solvers import (
                 SolverMVA, SolverCTMC, SolverFLD, SolverSSA, SolverJMT,
-                SolverNC, SolverMAM, SolverLDES, SolverAuto
+                SolverNC, SolverMAM, SolverLDES, SolverAUTO
             )
 
             solver_map = {
@@ -425,8 +425,8 @@ class WorkflowManager:
                 'nc': SolverNC,
                 'mam': SolverMAM,
                 'ldes': SolverLDES,
-                'auto': SolverAuto,
-                'line': SolverAuto,
+                'auto': SolverAUTO,
+                'line': SolverAUTO,
             }
 
             if name in solver_map:

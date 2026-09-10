@@ -122,11 +122,18 @@ class SolverFLDOptions:
         Larger values → sharper transitions, smaller values → smoother approximation.
         Recommended range: [1, 100]
 
-    hide_immediate : bool, default=False
+    hide_immediate : bool, default=True
+        True: a coordinate whose exit rate is ``GlobalConstants.Immediate`` is
+        LINE's stand-in for infinity, not a fast rate, and every fluid route
+        stochastic-complements it out of the event set rather than integrating
+        it (see ``immediate.ode_eliminate_immediate``, reached through
+        ``fluid_hide_immediate``). It read False while the stiff slot coped with
+        the mode; under LSODA a single LN task layer carrying one InfRate phase
+        took 70 s for the answer the reduced system returns in 0.5 s.
         Eliminate immediate transitions in network analysis.
         Disabled by default as stiff ODE solver handles immediate rates accurately.
 
-    verbose : bool, default=False
+    verbose : bool, default: the global level (True unless SILENT)
         Print detailed progress information during solution.
         Useful for debugging, includes method name and execution time.
 
@@ -180,9 +187,16 @@ class SolverFLDOptions:
     timespan: Tuple[float, float] = (0.0, float('inf'))
     timestep: Optional[float] = None
     odemaxstep: Optional[float] = None  # ODE solver max step size override (None = solver default, i.e. unbounded)
+    # Integrator override, the Python twin of assigning MATLAB's
+    # options.odesolvers.<slot>OdeSolver. None keeps the default choice (scipy
+    # BDF when stiff, RK45 otherwise, and scipy LSODA in the tbi/passage-time
+    # arms). Otherwise a scipy method name, one of the extra names in
+    # methods/closing.py _ODE_CLASSES ('LSODA_NATIVE', 'LSODA_NATIVE_STIFF',
+    # the in-tree line_solver.lib.lsoda), or an OdeSolver subclass.
+    odesolver: Optional[Any] = None
     pstar: Optional[float] = None
     softmin_alpha: float = 20.0
-    hide_immediate: bool = False
+    hide_immediate: bool = True
     aoi_preemption: Optional[float] = None
     verbose: bool = field(default_factory=default_verbose)
     # Method-specific configuration bag (mirrors MATLAB options.config). The tbi
@@ -195,7 +209,12 @@ class SolverFLDOptions:
     cutoff: Optional[int] = None  # State space cutoff (for compatibility)
     samples: Optional[int] = None  # Samples (for compatibility)
     timeout: float = float('inf')  # Wall-clock time budget in seconds (inf = no budget)
-    lang: str = field(default_factory=lambda: os.environ.get('LINE_SOLVER_LANG', 'python'))  # env LINE_SOLVER_LANG overrides; 'python' (native) or 'java' (delegate to jline.jar via JSON)
+    lang: str = field(default_factory=lambda: os.environ.get('LINE_SOLVER_LANG', 'python'))  # env LINE_SOLVER_LANG overrides; 'python' (native), 'java' (jline.jar via JSON) or 'cpp' (line-cli via JSON)
+    # Arithmetic backend, lang='cpp' ONLY: 'double' (default), 'exact' or
+    # 'real:<digits>'. Meaningless for the other langs, which are IEEE double
+    # throughout, so line-cli is invoked without --arith unless the caller sets it.
+    # The C++ fluid drift is integrated by LSODA, which is double by construction.
+    arith: Optional[str] = None
 
 
 @dataclass

@@ -55,7 +55,7 @@ mam_options.verbose=1;
 disp('This example shows the execution of the solver on a 2-class mixed model with 5 multi-server nodes.')
 % This part illustrates the execution of different solvers
 solver={};
-solver{end+1} = CTMC(model,options); % CTMC is infinite on this model
+solver{end+1} = CTMC(model, 'exact',options); % CTMC is infinite on this model
 solver{end+1} = JMT(model,'samples',1e5, 'seed', 23000);
 solver{end+1} = MVA(model,'exact');
 %solver{end+1} = NC(model,options);

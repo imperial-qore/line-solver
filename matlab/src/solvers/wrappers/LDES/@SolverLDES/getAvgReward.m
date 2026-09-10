@@ -47,8 +47,8 @@ end
 w = time(:) / sum(time);
 
 % Build index maps for RewardState (station-major aggregated layout)
-nodeToStationMap = containers.Map('KeyType', 'int32', 'ValueType', 'int32');
-classToIndexMap = containers.Map('KeyType', 'int32', 'ValueType', 'int32');
+nodeToStationMap = configureDictionary('int32', 'int32');
+classToIndexMap = configureDictionary('int32', 'int32');
 for ind = 1:sn.nnodes
     if sn.isstation(ind)
         nodeToStationMap(int32(ind)) = sn.nodeToStation(ind);

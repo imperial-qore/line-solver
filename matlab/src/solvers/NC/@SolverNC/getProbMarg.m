@@ -14,6 +14,7 @@ function [Pmarg, logPmarg] = getProbMarg(self, node)
 %   Pmarg    - Vector where Pmarg(n+1) = P(n total jobs at node)
 %   logPmarg - Log probabilities for numerical stability
 
+
 if GlobalConstants.DummyMode
     Pmarg = NaN;
     logPmarg = NaN;
@@ -22,6 +23,16 @@ end
 
 % Get network structure
 sn = self.getStruct;
+
+if isfield(self.options,'lang') && strcmp(self.options.lang,'cpp')
+    if isa(node, 'Node')
+        istCpp = sn.nodeToStation(node.index);
+    else
+        istCpp = node;
+    end
+    [Pmarg, logPmarg] = CPPLINE.probMarg(self.name, self.model, self.options, istCpp);
+    return
+end
 
 % Store original node parameter and convert to station index
 if isa(node, 'Node')

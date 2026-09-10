@@ -304,10 +304,9 @@ def solver_lqns(
     if not is_lqns_available():
         raise RuntimeError(
             "SolverLQNS requires the 'lqns' and 'lqsim' commands to be available in your system PATH.\n"
-            "You can install them from: http://www.sce.carleton.ca/rads/lqns/\n\n"
-            "Alternatively, use remote execution via Docker:\n"
-            "  1. Pull and run: docker run -d -p 8080:8080 imperialqore/line-lqns-rest:latest\n"
-            "  2. Configure remote execution:\n"
+            "Obtain them from their authors at: http://www.sce.carleton.ca/rads/lqns/\n"
+            "LINE ships no LQNS binary and does not redistribute one.\n\n"
+            "Alternatively, point LINE at a host that already runs LQNS:\n"
             "     options = SolverOptions()\n"
             "     options.config.remote = True\n"
             "     options.config.remote_url = 'http://localhost:8080'\n"

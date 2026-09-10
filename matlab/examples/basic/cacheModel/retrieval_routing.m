@@ -69,7 +69,7 @@ P{missClass, missClass}(cacheNode, sink)  = 1.0;
 model.link(P);
 
 % Simulation
-SSA(model, 'samples', 5000, 'method', 'serial', 'seed', 1).getAvgCacheTable
+SSA(model, 'samples', 100000, 'method', 'serial', 'seed', 1).getAvgCacheTable
 LDES(model, 'samples', 1e6, 'seed', 1).getAvgCacheTable
 
 % Analytical

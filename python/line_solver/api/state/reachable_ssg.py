@@ -56,34 +56,32 @@ class _NodeSpace:
 
 
 def _initial_raw_states(sn):
-    """Build the initial raw local state of every stateful node."""
-    from .marginal import fromMarginal
-    from ...lang.base import NodeType
+    """Build the initial raw local state of every stateful node.
 
+    `sn.state[isf]` ALREADY IS that raw row: `Network.init_default` builds it
+    through `initFromMarginal`, so the encoding of each node -- per-class counts
+    at a Delay, counts plus service positions at an FCFS station, the per-class
+    parent and buffered vectors at a Fork and a Join -- is the one the successor
+    functions expect. It is seeded verbatim, as MATLAB's
+    `State.reachableSpaceGenerator` does (`space{i} = sn.state{i}`).
+
+    Passing that row back through `fromMarginal` instead, as this did, treats it
+    as a per-class marginal. That is only the same vector at a node whose raw
+    encoding IS the marginal. At an FCFS station it is longer than the class
+    count, and `fromMarginal` then compares a state vector of one width against a
+    `classcap` row of another: `fj_tiny_closed` died there with "operands could
+    not be broadcast together with shapes (4,) (3,)".
+    """
     R = int(sn.nclasses)
     nstateful = int(sn.nstateful)
-    fork_val = int(NodeType.FORK.value) if hasattr(NodeType.FORK, 'value') else int(NodeType.FORK)
-    join_val = int(NodeType.JOIN.value) if hasattr(NodeType.JOIN, 'value') else int(NodeType.JOIN)
 
     init = [None] * nstateful
     for isf in range(nstateful):
-        ind = int(sn.statefulToNode[isf])
-        nt = int(sn.nodetype[ind].value) if hasattr(sn.nodetype[ind], 'value') else int(sn.nodetype[ind])
-        marg = np.asarray(sn.state[isf], dtype=float).ravel() if sn.state is not None and isf < len(sn.state) \
-            else np.zeros(R)
-        if len(marg) < R:
-            marg = np.concatenate([marg, np.zeros(R - len(marg))])
-        if nt == fork_val:
-            init[isf] = np.zeros(R)  # per-class parent count, empty at start
-        elif getattr(sn, 'isfjaugmented', False) and nt == join_val:
-            init[isf] = marg[:R].copy()  # per-class buffered count vector
+        if sn.state is not None and isf < len(sn.state) and sn.state[isf] is not None:
+            row = np.asarray(sn.state[isf], dtype=float).ravel()
         else:
-            sp = fromMarginal(sn, ind, marg)
-            sp = np.atleast_2d(sp)
-            if sp.size == 0:
-                init[isf] = marg[:R].copy()
-            else:
-                init[isf] = np.asarray(sp[0], dtype=float).ravel()
+            row = np.zeros(R)
+        init[isf] = row.copy()
     return init
 
 
@@ -152,7 +150,7 @@ def reachable_ssg(sn, options=None):
             isf_a = int(sn.nodeToStateful[node_a])
             is_local = (node_p >= nnodes)
 
-            out_a, rate_a, _ = after_event(sn, node_a, np.atleast_2d(glspace[isf_a]),
+            out_a, rate_a, _, _, _ = after_event(sn, node_a, np.atleast_2d(glspace[isf_a]),
                                            event_a, class_a)
             out_a = np.atleast_2d(out_a)
             if out_a.size == 0:
@@ -170,7 +168,7 @@ def reachable_ssg(sn, options=None):
                     continue
                 isf_p = int(sn.nodeToStateful[node_p])
                 state_p_row = new_a_row if node_p == node_a else glspace[isf_p]
-                out_p, rate_p, _ = after_event(sn, node_p, np.atleast_2d(state_p_row),
+                out_p, rate_p, _, _, _ = after_event(sn, node_p, np.atleast_2d(state_p_row),
                                                event_p, class_p)
                 out_p = np.atleast_2d(out_p)
                 if out_p.size == 0:

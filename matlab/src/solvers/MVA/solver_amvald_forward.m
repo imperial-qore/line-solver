@@ -1,9 +1,19 @@
-function [Wchain, STeff] = solver_amvald_forward(M, K, nservers, schedparam, lldscaling, cdscaling, jdscaling, sched, classprio, gamma, tau, Qchain_in, Xchain_in, Uchain_in, STchain_in, Vchain_in, Nchain_in, SCVchain_in, options)
+function [Wchain, STeff] = solver_amvald_forward(M, K, nservers, schedparam, lldscaling, cdscaling, jdscaling, sched, classprio, gamma, tau, Xchain_ref, Qchain_in, Xchain_in, Uchain_in, STchain_in, Vchain_in, Nchain_in, SCVchain_in, options)
+
+% Xchain_ref is the throughput vector the tau differences were taken against.
+% tau(s,r) = X_r(N-1_s) - Xchain_ref(r), so Xchain_ref(r) + tau(s,r) is an
+% arrival-instant throughput from one and the same sweep; adding tau to the
+% moving inner iterate instead mixes two sweeps and can exceed the service
+% capacity. Empty when no Linearizer recursion runs, i.e. when tau is zero.
 
 %Uhiprio = zeros(M,K); % utilization due to "permanent jobs" in DPS
 
 if isempty(gamma)
     gamma = zeros(M,K);
+end
+
+if isempty(Xchain_ref)
+    Xchain_ref = Xchain_in;
 end
 
 Nt = sum(Nchain_in(isfinite(Nchain_in)));
@@ -22,17 +32,20 @@ nnzclasses = find(Nchain_in>0);
 nnzclasses_eprio = cell(1,length(nnzclasses));
 nnzclasses_hprio = cell(1,length(nnzclasses));
 nnzclasses_ehprio = cell(1,length(nnzclasses));
+nnzclasses_lprio = cell(1,length(nnzclasses));
 if max(classprio) ~= min(classprio)
     for r = nnzclasses
         nnzclasses_eprio{r} = intersect(nnzclasses, find(classprio == classprio(r))); % equal prio
         nnzclasses_hprio{r} = intersect(nnzclasses, find(classprio < classprio(r))); % higher prio (lower value = higher priority)
         nnzclasses_ehprio{r} = intersect(nnzclasses, find(classprio <= classprio(r))); % equal or higher prio
+        nnzclasses_lprio{r} = intersect(nnzclasses, find(classprio > classprio(r))); % strictly lower prio
     end
 else
     for r = nnzclasses
     nnzclasses_eprio{r} = nnzclasses;
     nnzclasses_hprio{r} = [];
-    nnzclasses_ehprio{r} = [];
+    nnzclasses_ehprio{r} = nnzclasses; % all classes tie, so HOL degenerates to FCFS
+    nnzclasses_lprio{r} = [];
     end
 end
 
@@ -47,7 +60,7 @@ for k=1:M
     for r = nnzclasses
         selfArvlQlenSeenByClosed(k,r) = deltaclass(r) * Qchain_in(k,r); % qlen of same class as arriving one
         switch sched(k)
-            case {SchedStrategy.HOL}
+            case {SchedStrategy.HOL, SchedStrategy.FCFSPRPRIO}
                 totArvlQlenSeenByOpen(r,k) = sum(Qchain_in(k,nnzclasses_ehprio{r}));
                 totArvlQlenSeenByClosed(k,r) = deltaclass(r) * Qchain_in(k,r) + sum(Qchain_in(k,setdiff(nnzclasses_ehprio{r},r)));
             otherwise
@@ -112,33 +125,37 @@ switch options.method
         end
 end
 
-% joint-dependence term eta_i (non-product-form). Evaluated identically to
-% cdterm; kept in a separate field/term to preserve the product-form vs joint
-% distinction (see pfqn_jdfun). cd and jd are mutually exclusive per station,
-% so at most one of cdterm/jdterm differs from 1 at any station.
+% joint-dependence term eta_i (non-product-form). It is NOT evaluated like
+% cdterm, and cannot be: beta_{k,r} reads only its OWN marginal, so the phantom
+% +1 cdterm puts on the non-arriving classes is inert there, while eta reads the
+% WHOLE occupancy row and every coordinate of the evaluation point matters. The
+% arrival theorem gives the arriving class-r job ONE extra job of its own class
+% and leaves the others at their full mean, so the point is
+%   eta_k(Q_{k,1}, ..., 1 + delta_r Q_{k,r}, ..., Q_{k,R}),
+% with only coordinate r shifted. Incrementing every coordinate made the tagged
+% job count itself once per class and forced full support on a support-rank eta:
+% on the IS+2xOI order-independent model it inflated the OI-AMVA misplaced-jobs
+% error from 1.33% to 9.23% at N=(1,1) and from 0.35% to 5.92% at N=(3,3), the
+% latter worse than the class-dependent closure that joint dependence exists to
+% beat. Python had this right; MATLAB and the JAR did not. Only cd and jd are
+% mutually exclusive per station, so at most one of cdterm/jdterm differs from 1
+% at any station. See _kb/06-solver-catalog.md (joint-dependence section).
 jdterm = ones(M,K);
-switch options.method
-    case {'lin', 'qdlin'}
-        for r=nnzclasses
-            if ~isempty(jdscaling)
-                if isfinite(Nchain_in(r))
-                    gself = (Nchain_in(r) - 1) * reshape(gamma(r,:,r), M, 1);
-                    jdterm(:,r) = pfqn_jdfun(1 + selfArvlQlenSeenByClosed + gself, jdscaling, r);
-                else
-                    jdterm(:,r) = pfqn_jdfun(1 + stationaryQlen, jdscaling, r);
-                end
+if ~isempty(jdscaling)
+    for r=nnzclasses
+        jdarg = stationaryQlen; % every class s ~= r stays at its full mean Q_{k,s}
+        if isfinite(Nchain_in(r))
+            jdarg(:,r) = 1 + selfArvlQlenSeenByClosed(:,r);
+            switch options.method
+                case {'lin', 'qdlin'}
+                    % Linearizer self-fraction correction, on the tagged class only
+                    jdarg(:,r) = jdarg(:,r) + (Nchain_in(r) - 1) * reshape(gamma(r,:,r), M, 1);
             end
+        else
+            jdarg(:,r) = 1 + stationaryQlen(:,r);
         end
-    otherwise
-        for r=nnzclasses
-            if ~isempty(jdscaling)
-                if isfinite(Nchain_in(r))
-                    jdterm(:,r) = pfqn_jdfun(1 + selfArvlQlenSeenByClosed, jdscaling, r);
-                else
-                    jdterm(:,r) = pfqn_jdfun(1 + stationaryQlen, jdscaling, r);
-                end
-            end
-        end
+        jdterm(:,r) = pfqn_jdfun(jdarg, jdscaling, r);
+    end
 end
 
 switch options.config.multiserver
@@ -278,6 +295,31 @@ switch options.method
         end
 end
 
+%% interlocked flow (Franks 1999, Eq. 4.7)
+% A request cannot queue behind work that its own submission caused, so the
+% arrival-instant queue drops the interlocked share of every other chain. The
+% own-class term is never removed. IL is empty for every model but the layers
+% of SolverLN, where it is set from the interlock path tables.
+if isfield(options.config,'interlock_chain') && ~isempty(options.config.interlock_chain)
+    IL = options.config.interlock_chain;
+    if size(IL,1)~=K || size(IL,2)~=K
+        line_error(mfilename, sprintf('the interlock matrix is %dx%d but the model has %d chains.', size(IL,1), size(IL,2), K));
+    end
+    for k=1:M
+        for r = nnzclasses
+            ilqlen = 0;
+            for s = nnzclasses
+                if s ~= r
+                    ilqlen = ilqlen + IL(r,s) * Qchain_in(k,s);
+                end
+            end
+            if ilqlen > 0
+                totArvlQlenSeenByClosed(k,r) = max(selfArvlQlenSeenByClosed(k,r), totArvlQlenSeenByClosed(k,r) - ilqlen);
+            end
+        end
+    end
+end
+
 %% compute response times from current queue-lengths
 for ir=1:length(nnzclasses)
     r=nnzclasses(ir);
@@ -300,7 +342,7 @@ for ir=1:length(nnzclasses)
                                 if ismember(r,ocl)
                                     Wchain(k,r) = Wchain(k,r) + STeff(k,r) * (1 + totArvlQlenSeenByOpen(r,k));
                                 else
-                                    Wchain(k,r) = Wchain(k,r) + STeff(k,r) * (1 + interpTotArvlQlen(k) + Nchain_in(ccl)*permute(gamma(r,k,ccl),3:-1:1) - gamma(r,k,r));
+                                    Wchain(k,r) = Wchain(k,r) + STeff(k,r) * (1 + totArvlQlenSeenByClosed(k,r) + Nchain_in(ccl)*permute(gamma(r,k,ccl),3:-1:1) - gamma(r,k,r));
                                 end
                             case {'default','softmin'}
                                 if ismember(r,ocl)
@@ -308,9 +350,9 @@ for ir=1:length(nnzclasses)
                                 else
                                     switch options.method
                                         case {'lin', 'qdlin'} % Linearizer
-                                            Wchain(k,r) = Wchain(k,r) + STeff(k,r) * (1 + interpTotArvlQlen(k) + Nchain_in(ccl)*permute(gamma(r,k,ccl),3:-1:1) - gamma(r,k,r));
+                                            Wchain(k,r) = Wchain(k,r) + STeff(k,r) * (1 + totArvlQlenSeenByClosed(k,r) + Nchain_in(ccl)*permute(gamma(r,k,ccl),3:-1:1) - gamma(r,k,r));
                                         otherwise
-                                            Wchain(k,r) = STeff(k,r) * (1 + interpTotArvlQlen(k) + (Nt-1)*gamma(r,k));
+                                            Wchain(k,r) = STeff(k,r) * (1 + totArvlQlenSeenByClosed(k,r) + (Nt-1)*gamma(r,k));
                                     end
                                 end
                             case 'suri'
@@ -319,9 +361,9 @@ for ir=1:length(nnzclasses)
                                 else
                                     switch options.method
                                         case {'lin', 'qdlin'}
-                                            Wchain(k,r) = STeff(k,r) * (1 + (interpTotArvlQlen(k) + Nchain_in(ccl)*permute(gamma(r,k,ccl),3:-1:1) - gamma(r,k,r)) * suriFactor(k));
+                                            Wchain(k,r) = STeff(k,r) * (1 + (totArvlQlenSeenByClosed(k,r) + Nchain_in(ccl)*permute(gamma(r,k,ccl),3:-1:1) - gamma(r,k,r)) * suriFactor(k));
                                         otherwise
-                                            Wchain(k,r) = STeff(k,r) * (1 + (interpTotArvlQlen(k) + (Nt-1)*gamma(r,k)) * suriFactor(k));
+                                            Wchain(k,r) = STeff(k,r) * (1 + (totArvlQlenSeenByClosed(k,r) + (Nt-1)*gamma(r,k)) * suriFactor(k));
                                     end
                                 end
                         end
@@ -332,19 +374,19 @@ for ir=1:length(nnzclasses)
                                 if ismember(r,ocl)
                                     Wchain(k,r) = Wchain(k,r) + STeff(k,r) * (1 + totArvlQlenSeenByOpen(r,k));
                                 else
-                                    Wchain(k,r) = Wchain(k,r) + STeff(k,r) * (1 + totArvlQlenSeenByClosed(k) + (Nt-1)*gamma(r,k));
+                                    Wchain(k,r) = Wchain(k,r) + STeff(k,r) * (1 + totArvlQlenSeenByClosed(k,r) + (Nt-1)*gamma(r,k));
                                 end
                             case {'default','softmin'}
                                 if ismember(r,ocl)
                                     Wchain(k,r) = Wchain(k,r) + STeff(k,r) * (1 + totArvlQlenSeenByOpen(r,k));
                                 else
-                                    Wchain(k,r) = Wchain(k,r) + STeff(k,r) * (1 + totArvlQlenSeenByClosed(k) + (Nt-1)*gamma(r,k));
+                                    Wchain(k,r) = Wchain(k,r) + STeff(k,r) * (1 + totArvlQlenSeenByClosed(k,r) + (Nt-1)*gamma(r,k));
                                 end
                             case 'suri'
                                 if ismember(r,ocl)
                                     Wchain(k,r) = STeff(k,r) * (1 + totArvlQlenSeenByOpen(r,k) * suriFactor(k));
                                 else
-                                    Wchain(k,r) = STeff(k,r) * (1 + (totArvlQlenSeenByClosed(k) + (Nt-1)*gamma(r,k)) * suriFactor(k));
+                                    Wchain(k,r) = STeff(k,r) * (1 + (totArvlQlenSeenByClosed(k,r) + (Nt-1)*gamma(r,k)) * suriFactor(k));
                                 end
                         end
                 end
@@ -373,7 +415,7 @@ for ir=1:length(nnzclasses)
 
             case {SchedStrategy.FCFS, SchedStrategy.SIRO, SchedStrategy.LCFSPR}
                 if STeff(k,r) > 0
-                    Uchain_r = Uchain_in ./ repmat(Xchain_in,M,1) .* (repmat(Xchain_in,M,1) + repmat(tau(r,:),M,1));
+                    Uchain_r = Uchain_in ./ repmat(Xchain_in,M,1) .* repmat(Xchain_ref + tau(r,:),M,1); % utilization seen at arrival
 
                     if nservers(k)>1
                         deltaclass_r = ones(size(Xchain_in));
@@ -461,21 +503,67 @@ for ir=1:length(nnzclasses)
                     end
                 end
 
+            case {SchedStrategy.FCFSPRPRIO} % preemptive-resume priority (PRIOMVA)
+                % Chandy-Lakshmi [ChaL83] applied where it was derived: a job in
+                % service IS preempted by a higher-priority arrival. Two terms
+                % separate this arm from the HOL arm below.
+                %  (a) no non-preemptive residual -- the lower-priority job found
+                %      in service is preempted, so it delays nobody;
+                %  (b) the tagged job's OWN service is interrupted too, so it is
+                %      scaled by 1/(1-sigma_{k-1}) as well as the queued work.
+                % Together these give the classical preemptive-resume result
+                %      E[T_k] = E[S_k]/(1-sigma_{k-1}) + <queued>/(1-sigma_{k-1}).
+                %
+                % ACCURACY, measured 2026-08-19 against SolverCTMC on closed two-class
+                % networks (one FCFSPRPRIO station, one PS station):
+                %   N=[1 1]  1.8%% QLen / 2.6%% RespT      N=[2 2]  28.6%% / 44.1%%
+                %   N=[2 1]  7.5%% / 5.6%%                 N=[3 2]  59.9%% / 108%%
+                % The error grows with population and is dominated by prioScaling, not
+                % by the two terms above: LINE's existing HOL arm, measured the same way
+                % on the same models, is no better (7.5/9.5, 9.0/8.4, 32.1/54.0,
+                % 59.4/139.3). Treat both as indicative at high utilization; see [EagL88],
+                % which is a study of exactly this approximation's accuracy.
+                if STeff(k,r) > 0
+                    if nservers(k) > 1
+                        line_error(mfilename, sprintf(['Station %d uses FCFSPRPRIO with %d servers. The ' ...
+                            'preemptive-resume priority arm (priomva) is implemented for single-server ' ...
+                            'stations only; use SolverCTMC or SolverSSA for multiserver PRS.'], k, nservers(k)));
+                    end
+
+                    % higher-priority utilization seen at the arrival instant
+                    UHigherPrio = 0;
+                    for h = nnzclasses_hprio{r}
+                        UHigherPrio = UHigherPrio + Vchain_in(k,h)*STeff(k,h)*(Xchain_ref(h)+tau(r,h));
+                    end
+                    prioScaling = min([max([options.tol,1-UHigherPrio]),1-options.tol]);
+
+                    % work of EQUAL OR HIGHER priority already queued ahead
+                    sdprio = setdiff(nnzclasses_ehprio{r}, r);
+                    if any(ismember(ocl,r))
+                        queuedAhead = STeff(k,r) * stationaryQlen(k,r) + STeff(k,sdprio)*stationaryQlen(k,sdprio)';
+                    else
+                        queuedAhead = STeff(k,r) * selfArvlQlenSeenByClosed(k,r) + STeff(k,sdprio)*stationaryQlen(k,sdprio)';
+                    end
+
+                    Wchain(k,r) = (STeff(k,r) + queuedAhead) / prioScaling;
+                end
+
             case {SchedStrategy.HOL} % non-preemptive priority
                 if STeff(k,r) > 0
-                    Uchain_r = Uchain_in ./ repmat(Xchain_in,M,1) .* (repmat(Xchain_in,M,1) + repmat(tau(r,:),M,1));
+                    Uchain_r = Uchain_in ./ repmat(Xchain_in,M,1) .* repmat(Xchain_ref + tau(r,:),M,1); % utilization seen at arrival
 
                     switch options.config.np_priority
-                        case {'default','cl'} % Chandy-Lakshmi
+                        case {'default','cl'} % Chandy-Lakshmi [ChaL83], in the arrival-instant
+                                              % utilization form of Eager-Lipscomb [EagL88]
                             UHigherPrio=0;
                             for h=nnzclasses_hprio{r}
-                                UHigherPrio = UHigherPrio + Vchain_in(k,h)*STeff(k,h)*(Xchain_in(h)-Qchain_in(k,h)*tau(h));
+                                UHigherPrio = UHigherPrio + Vchain_in(k,h)*STeff(k,h)*(Xchain_ref(h)+tau(r,h));
                             end
                             prioScaling = min([max([options.tol,1-UHigherPrio]),1-options.tol]);
                         case 'shadow' % Sevcik's shadow server
                             UHigherPrio=0;
                             for h=nnzclasses_hprio{r}
-                                UHigherPrio = UHigherPrio + Vchain_in(k,h)*STeff(k,h)*Xchain_in(h);
+                                UHigherPrio = UHigherPrio + Vchain_in(k,h)*STeff(k,h)*Xchain_ref(h);
                             end
                             prioScaling = min([max([options.tol,1-UHigherPrio]),1-options.tol]);
                     end
@@ -504,67 +592,67 @@ for ir=1:length(nnzclasses)
                         Bk = ones(1,K);
                     end
 
+                    % Work of EQUAL OR HIGHER priority queued ahead of the arriving job. It is
+                    % disjoint from the 1/prioScaling inflation, which counts only the higher
+                    % priority work that overtakes the job while it waits; see _kb/06-solver-catalog.md
+                    sdprio = setdiff(nnzclasses_ehprio{r}, r);
+
+                    % Non-preemptive residual: the job found in service may have strictly
+                    % lower priority and is not preempted, so it is in neither of the above
+                    npResidual = 0;
+                    if ~strcmp(options.config.highvar,'hvmva') % hvmva already spans every class
+                        for l=nnzclasses_lprio{r}
+                            npResidual = npResidual + Vchain_in(k,l)*STeff(k,l)*(Xchain_ref(l)+tau(r,l)) * STeff(k,l) * Bk(l);
+                        end
+                    end
+
                     if nservers(k)==1 && (~isempty(lldscaling) || ~isempty(cdscaling) || ~isempty(jdscaling))
                         switch options.config.highvar % high SCV
                             case 'hvmva'
-                                Wchain(k,r) = (STeff(k,r) / prioScaling) * (1-sum(Uchain_r(k,ccl)));
+                                Wchain(k,r) = STeff(k,r) * (1-sum(Uchain_r(k,ccl)));
                                 for s=ccl
                                     UHigherPrio_s=0;
                                     for h=nnzclasses_hprio{s}
-                                        UHigherPrio_s = UHigherPrio_s + Vchain_in(k,h)*STeff(k,h)*(Xchain_in(h)-Qchain_in(k,h)*tau(h));
+                                        UHigherPrio_s = UHigherPrio_s + Vchain_in(k,h)*STeff(k,h)*(Xchain_ref(h)+tau(r,h));
                                     end
                                     prioScaling_s = min([max([options.tol,1-UHigherPrio_s]),1-options.tol]);
                                     Wchain(k,r) = Wchain(k,r) + (STeff(k,s) / prioScaling_s) * Uchain_r(k,s) * (1 + SCVchain_in(k,s))/2; % high SCV correction
                                 end
                             otherwise % default
-                                Wchain(k,r) = STeff(k,r) / prioScaling;
+                                Wchain(k,r) = STeff(k,r);
                         end
 
                         if any(ismember(ocl,r))
-                            Wchain(k,r) = Wchain(k,r) + (STeff(k,r) * stationaryQlen(k,r)) / prioScaling;
+                            Wchain(k,r) = Wchain(k,r) + (STeff(k,r) * stationaryQlen(k,r) + STeff(k,sdprio)*stationaryQlen(k,sdprio)' + npResidual) / prioScaling;
                         else
-                            %switch options.method
-                            %case {'default', 'amva.lin', 'lin', 'amva.qdlin','qdlin'} % Linearizer
-                            %    %Wchain(k,r) = Wchain(k,r) + (STeff(k,r) * selfArvlQlenSeenByClosed(k,r) + STeff(k,sdprio)*stationaryQlen(k,sdprio)') + (STeff(k,[r,sdprio]).*Nchain([r,sdprio])*permute(gamma(r,k,[r,sdprio]),3:-1:1) - STeff(k,r)*gamma(r,k,r));
-                            %    Wchain(k,r) = Wchain(k,r) + (STeff(k,r) * selfArvlQlenSeenByClosed(k,r) - STeff(k,r)*gamma(r,k,r)) / prioScaling;
-                            %    otherwise
-                            %Wchain(k,r) = Wchain(k,r) + (STeff(k,r) * selfArvlQlenSeenByClosed(k,r) + STeff(k,sdprio)*stationaryQlen(k,sdprio)');
-                            Wchain(k,r) = Wchain(k,r) + (STeff(k,r) * selfArvlQlenSeenByClosed(k,r)) / prioScaling;
-                            %end
+                            Wchain(k,r) = Wchain(k,r) + (STeff(k,r) * selfArvlQlenSeenByClosed(k,r) + STeff(k,sdprio)*stationaryQlen(k,sdprio)' + npResidual) / prioScaling;
                         end
                     else
                         switch options.config.multiserver
                             case 'softmin'
-                                Wchain(k,r) = STeff(k,r) / prioScaling; % high SCV
+                                Wchain(k,r) = STeff(k,r); % own service is not overtaken
                                 if any(ismember(ocl,r))
-                                    Wchain(k,r) = Wchain(k,r) + STeff(k,r) * stationaryQlen(k,r) * Bk(r) / prioScaling;
+                                    Wchain(k,r) = Wchain(k,r) + (STeff(k,r) * stationaryQlen(k,r) * Bk(r) + STeff(k,sdprio) * (stationaryQlen(k,sdprio) .* Bk(sdprio))' + npResidual) / prioScaling;
                                 else
                                     % FCFS approximation + reducing backlog proportionally to server utilizations; somewhat similar to
                                     % Rolia-Sevcik -  method of layers - Sec IV.
-                                    %switch options.method
-                                    %case {'default', 'amva.lin', 'lin', 'amva.qdlin','qdlin'} % Linearizer
-                                    %    %Wchain(k,r) = Wchain(k,r) + STeff(k,r) * selfArvlQlenSeenByClosed(k,r) * Bk(r) + STeff(k,sdprio) * (stationaryQlen(k,sdprio) .* Bk(sdprio))' + (STeff(k,[r,sdprio]).*Nchain([r,sdprio])*permute(gamma(r,k,[r,sdprio]),3:-1:1) - STeff(k,r)*gamma(r,k,r));
-                                    %    Wchain(k,r) = Wchain(k,r) + STeff(k,r) * selfArvlQlenSeenByClosed(k,r) * Bk(r) / prioScaling + (STeff(k,[r]).*Nchain([r])*permute(gamma(r,k,[r]),3:-1:1) - STeff(k,r)*gamma(r,k,r)) / prioScaling;
-                                    %    otherwise
-                                    %Wchain(k,r) = Wchain(k,r) + STeff(k,r) * selfArvlQlenSeenByClosed(k,r) * Bk(r) + STeff(k,sdprio) * (stationaryQlen(k,sdprio) .* Bk(sdprio))';
-                                    Wchain(k,r) = Wchain(k,r) + STeff(k,r) * selfArvlQlenSeenByClosed(k,r) * Bk(r) / prioScaling;
-                                    %end
+                                    Wchain(k,r) = Wchain(k,r) + (STeff(k,r) * selfArvlQlenSeenByClosed(k,r) * Bk(r) + STeff(k,sdprio) * (stationaryQlen(k,sdprio) .* Bk(sdprio))' + npResidual) / prioScaling;
                                 end
                             case {'default','seidmann'}
-                                Wchain(k,r) = STeff(k,r) * (nservers(k)-1)/prioScaling; % multi-server correction with serial think time, (1/nservers(k)) term already in STeff
-                                Wchain(k,r) = Wchain(k,r) + STeff(k,r)/prioScaling; % high SCV
+                                Wchain(k,r) = STeff(k,r) * (nservers(k)-1); % multi-server correction with serial think time, (1/nservers(k)) term already in STeff
+                                Wchain(k,r) = Wchain(k,r) + STeff(k,r); % own service is not overtaken
                                 if any(ismember(ocl,r))
-                                    Wchain(k,r) = Wchain(k,r) + (STeff(k,r) * stationaryQlen(k,r)*Bk(r))/prioScaling;
+                                    Wchain(k,r) = Wchain(k,r) + (STeff(k,r) * stationaryQlen(k,r)*Bk(r) + STeff(k,sdprio).*Bk(sdprio)*stationaryQlen(k,sdprio)' + npResidual)/prioScaling;
                                 else
-                                    Wchain(k,r) = Wchain(k,r) + STeff(k,r) * selfArvlQlenSeenByClosed(k,r)*Bk(r)/prioScaling;
+                                    Wchain(k,r) = Wchain(k,r) + (STeff(k,r) * selfArvlQlenSeenByClosed(k,r)*Bk(r) + STeff(k,sdprio).*Bk(sdprio)*stationaryQlen(k,sdprio)' + npResidual)/prioScaling;
                                 end
                             case 'suri'
-                                % Suri multiserver: W = S * (1 + L_m * suriFactor) / prioScaling
-                                Wchain(k,r) = STeff(k,r) / prioScaling;
+                                % Suri multiserver: W = S + (queued work) * suriFactor / prioScaling
+                                Wchain(k,r) = STeff(k,r);
                                 if any(ismember(ocl,r))
-                                    Wchain(k,r) = Wchain(k,r) + (STeff(k,r) * stationaryQlen(k,r) * suriFactor(k)) / prioScaling;
+                                    Wchain(k,r) = Wchain(k,r) + ((STeff(k,r) * stationaryQlen(k,r) + STeff(k,sdprio)*stationaryQlen(k,sdprio)') * suriFactor(k) + npResidual) / prioScaling;
                                 else
-                                    Wchain(k,r) = Wchain(k,r) + (STeff(k,r) * selfArvlQlenSeenByClosed(k,r) * suriFactor(k)) / prioScaling;
+                                    Wchain(k,r) = Wchain(k,r) + ((STeff(k,r) * selfArvlQlenSeenByClosed(k,r) + STeff(k,sdprio)*stationaryQlen(k,sdprio)') * suriFactor(k) + npResidual) / prioScaling;
                                 end
                         end
                     end

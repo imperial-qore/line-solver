@@ -1,4 +1,4 @@
-function [pi, outspace, depRates, sn] = solver_ssa_nrm_space(sn, options)
+function [pi, outspace, depRates, sn, StartN] = solver_ssa_nrm_space(sn, options)
 % SOLVER_SSA_NRM_SPACE   Steady‑state analysis via the Next‑Reaction Method (SSA)
 %
 %   [PI, SSQ, ARVRATES, DEPRATES, SN] = SOLVER_SSA_NRM_SPACE(SN, OPTIONS)
@@ -194,7 +194,7 @@ S(isinf(S))=0;
 % ---------------------------------------------------------------------
 if false %snIsClosedModel(sn)
     % mixed-radix hashing
-    reactCache = containers.Map('KeyType','uint64','ValueType','any');
+    reactCache = configureDictionary('uint64','cell');
     njobs = sn.njobs;
     mixedradix = [cumprod(repmat(1+njobs,1,I))];
     mixedradix = [1,mixedradix(1:end-1)];
@@ -203,10 +203,10 @@ else
     % buffer size unbounded so use string; the key combines the aggregate
     % state vector with the ordered contents of every node buffer, so that
     % FCFS/LCFS states differing only in queueing order remain distinct.
-    reactCache = containers.Map('KeyType','char','ValueType','any');
+    reactCache = configureDictionary('string','cell');
     hashfun = @(v, bufs) [mat2str(v(:)'), '|', bufferHashAll(bufs)];
 end
-[t, nvecsim, bufferStates, ~, ~] = next_reaction_method(S, D, a, nvec0, buffers0, samples, options, reactCache, hashfun, fromIR, mi, R, sn);
+[t, nvecsim, bufferStates, ~, ~, reactCache, startCount] = next_reaction_method(S, D, a, nvec0, buffers0, samples, options, reactCache, hashfun, fromIR, mi, R, sn);
 
 % ---------------------------------------------------------------------
 % Empirical state probabilities ----------------------------------------
@@ -231,9 +231,24 @@ numStates = size(outspace,1);
 depRates  = zeros(numStates, I*R);
 
 for st = 1:numStates
-    a_state = reactCache(hashfun(outspace(st,:)', outspaceBuffers{st}));
+    a_state = reactCache{hashfun(outspace(st,:)', outspaceBuffers{st})};
     for j = 1:length(fromIdx)
         depRates(st, fromIdx(j)) = depRates(st, fromIdx(j)) + a_state(j);
+    end
+end
+
+% Derived START rate per (station, class): events counted over the simulated
+% time. FCFS and LCFS are the only disciplines this variant admits and neither
+% preempts, so the PREEMPT rate it would report is identically zero and is left
+% to the caller to fill in as such.
+StartN = zeros(sn.nstations, R);
+Ttot = t(end) - t(1);
+if Ttot > 0
+    for ist = 1:sn.nstations
+        ind = sn.stationToNode(ist);
+        if ind <= size(startCount,1)
+            StartN(ist,:) = startCount(ind,:) / Ttot;
+        end
     end
 end
 end  % solver_ssa_nrm_space
@@ -241,10 +256,11 @@ end  % solver_ssa_nrm_space
 % ======================================================================
 % Next-Reaction Method core --------------------------------------------
 % ======================================================================
-function [t, nvec, bufferStates, kfires, rfires] = next_reaction_method(S, D, a, nvec0, buffers0, samples, options, reactcache, hashfun, fromIR, mi, R, sn)
+function [t, nvec, bufferStates, kfires, rfires, reactcache, startCount] = next_reaction_method(S, D, a, nvec0, buffers0, samples, options, reactcache, hashfun, fromIR, mi, R, sn)
 numReactions = size(S,2);
 rand_pool_size = 1e7;
 buffers = buffers0; % working copy of the per-node ordered buffers
+startCount = zeros(numel(buffers0), R); % derived START events per (node, class)
 
 % when a reaction fires, this matrix helps selecting the probability that a
 % particular routing or phase is selected as a result ------------------
@@ -268,7 +284,7 @@ for k=1:size(S,2)
 end
 nvec   = nvec0;
 key = hashfun(nvec, buffers);
-reactcache(key) = Ak;         % cache first state's propensities
+reactcache{key} = Ak;         % cache first state's propensities
 Pk  = -log(rand(1,numReactions));
 Tk  = zeros(1,numReactions);
 
@@ -309,7 +325,7 @@ while n <= samples
     end
 
     % maintain FCFS/LCFS buffers given the source/destination of this firing
-    buffers = updateBuffers(kfire, nvec, buffers, fromIR, destPos, mi, R, sn);
+    [buffers, startCount] = updateBuffers(kfire, nvec, buffers, fromIR, destPos, mi, R, sn, startCount);
 
     Tk = Tk + Ak * dt;
 
@@ -320,7 +336,7 @@ while n <= samples
 
     key = hashfun(nvec, buffers);
     if ~isKey(reactcache,key)
-        reactcache(key) = Ak; % store propensities of new state
+        reactcache{key} = Ak; % store propensities of new state
     end
 
     % maintain random number pool
@@ -341,28 +357,37 @@ while n <= samples
 
     % do not count immediate events
     n = n + 1;
-    print_progress(options, n);
+    print_progress(options, n, t);
 end
-% Print newline after progress counter
-if isfield(options,'verbose') && options.verbose
-    line_printf('\n');
-end
+% The counter row is closed here rather than newline-terminated:
+% line_printf already ends an open row, so an explicit newline was a
+% SECOND one and showed as a blank row before the completion banner.
+LineStatus.close();
 
 t = [0; tout];
 nvec = [nvec0, nvecout];
 
-    function print_progress(opt, samples_collected)
-        if ~isfield(opt,'verbose') || ~opt.verbose || batchStartupOptionUsed, return; end
-        if samples_collected == 1e3
-            line_printf('\nSSA samples: %8d', samples_collected);
-        elseif opt.verbose == 2
-            if samples_collected == 0
-                line_printf('\nSSA samples: %9d', samples_collected);
-            else
-                line_printf('\b\b\b\b\b\b\b\b\b%9d', samples_collected);
+    function print_progress(opt, samples_collected, tnow)
+        if LineConsole.isActive() % the console owns the line; see solver_ssa
+            every = max(1,round(opt.samples/20));
+            if mod(samples_collected, every) == 0
+                LineConsole.iter(samples_collected/every, ...
+                    'simulated %d of %g samples (%.0f%%), simulated time %.4g', ...
+                    samples_collected, opt.samples, ...
+                    100*samples_collected/opt.samples, tnow);
             end
-        elseif mod(samples_collected,1e3)==0 || opt.verbose == 2
-            line_printf('\b\b\b\b\b\b\b\b\b%9d', samples_collected);
+            return
+        end
+        if ~isfield(opt,'verbose') || ~opt.verbose || batchStartupOptionUsed, return; end
+        % ONE REWRITTEN FIELD, not a fixed-width one. LineStatus rewinds by
+        % the width it actually wrote, so a counter that only grows needs no
+        % padding at all and leaves no trailing blanks -- a fixed %-9d field
+        % showed its pad as "SSA samples: 100000   ". It also cannot desync
+        % the way a hardcoded run of backspaces does once the count outgrows
+        % the field. line_printf closes the row, so the completion banner
+        % terminates it without help.
+        if opt.verbose == 2 || (samples_collected > 0 && mod(samples_collected,1e3) == 0)
+            LineStatus.set('SSA samples: %d', samples_collected);
         end
     end
 end  % next_reaction_method
@@ -370,20 +395,27 @@ end  % next_reaction_method
 % ======================================================================
 % Buffer maintenance and hashing helpers for FCFS/LCFS nodes
 % ======================================================================
-function buffers = updateBuffers(kfire, nvec, buffers, fromIR, destPos, mi, R, sn)
+function [buffers, startCount] = updateBuffers(kfire, nvec, buffers, fromIR, destPos, mi, R, sn, startCount)
 % Maintain the ordered per-node buffers when reaction KFIRE fires. A
 % departure removes the head/tail job of the source buffer; an arrival at a
 % buffered destination whose servers are all busy joins the buffer head.
+% STARTCOUNT tallies the derived START events: the job the departure promotes
+% and the arrival that finds a free server. This variant admits only FCFS and
+% LCFS, neither of which preempts, so there is no PREEMPT tally to keep.
 ind = fromIR(kfire,1); % source node of the firing
 
 % Handle departure from FCFS/LCFS source node
 if isFCFS(ind, sn)
     if ~isempty(buffers{ind})
+        promoted = buffers{ind}(end);
         buffers{ind}(end) = []; % pollLast
+        startCount(ind, promoted) = startCount(ind, promoted) + 1;
     end
 elseif isLCFS(ind, sn)
     if ~isempty(buffers{ind})
+        promoted = buffers{ind}(1);
         buffers{ind}(1) = []; % pollFirst
+        startCount(ind, promoted) = startCount(ind, promoted) + 1;
     end
 end
 
@@ -396,8 +428,10 @@ if ~isempty(destPos) && destPos > 0
         if totalAtDest > mi(jnd)
             % All servers busy - arriving job joins back of buffer
             buffers{jnd} = [s, buffers{jnd}]; % addFirst
+        else
+            % Otherwise job went straight into service, buffer unchanged
+            startCount(jnd, s) = startCount(jnd, s) + 1;
         end
-        % Otherwise job went straight into service, buffer unchanged
     end
 end
 end

@@ -1,4 +1,10 @@
 function updateLayers(self, it)
+% Under a PH encoding the layer classes are one per caller task and their laws
+% are composed, not read off the update maps -- see _kb/06-solver-catalog.md
+if self.isPHEncoding()
+    updateLayersPH(self, it);
+    return
+end
 lqn = self.lqn;
 ensemble = self.ensemble;
 idxhash = self.idxhash;
@@ -74,6 +80,12 @@ for r=1:size(arvproc_classes_updmap,1)
     end
 end
 
+% Under flat layering the callee's station and its caller share one model, so
+% the phase-2 correction below would be applied twice; it belongs to the
+% multi-layer decomposition only -- see _kb/06-solver-catalog.md
+flatLayering = isfield(self.options.config,'layering') && ...
+    any(strcmpi(self.options.config.layering, {'flat','squashed'}));
+
 % reassign call service time / response time
 for c=1:size(call_classes_updmap,1)
     if  mod(it, 2)==1 % elevator
@@ -90,7 +102,15 @@ for c=1:size(call_classes_updmap,1)
         node.setService(class, callservtproc{cidx});
     else % server replica (any of them)
         eidx = lqn.callpair(cidx,2);
-        node.setService(class, servtproc{eidx});
+        if self.hasPhase2 && self.servt_ph2(eidx) > GlobalConstants.FineTol && ~flatLayering
+            % A phase-2 entry replies before phase 2 runs, so the caller is
+            % held for residt, not servt. Charging the caller servt here while
+            % its own layer charges residt makes the two layers settle at
+            % different rates and breaks flow conservation across the call.
+            node.setService(class, Exp.fitMean(self.residt(eidx)));
+        else
+            node.setService(class, servtproc{eidx});
+        end
     end
 end
 

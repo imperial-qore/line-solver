@@ -17,6 +17,10 @@ function [Xlo,Xhi] = pfqn_ssd(L,N,Z,nservers)
  %          X_l = N/(R_l+(N-1)Y_l) <= X(N) <= N/(R_u+(N-1)Y_u) = X_u,
  %        the upper bound taken jointly with the ABA bound min(N/R_l, C_b/L_b).
  %        O(K) cost, same order as BJB on single-server networks.
+ %        With Z>0 the queueing terms carry the terminal-workload correction of
+ %        Lazowska et al. 1984, Table 5.2: (N-1)Y_l/(1+Z/(N R_l)) on the lower
+ %        bound and (N-1)Y_u/(1+Z/R_u) on the upper. Adding Z without it does
+ %        not yield a bound.
  % @fn pfqn_ssd(L, N, Z, nservers)
  % @param L Service demand vector (M x 1).
  % @param N Population (scalar).
@@ -37,8 +41,8 @@ Rl = sum(L);        Yl = max(L./C);
 Ru = sum(L./C);     Yu = Ru/K;
 [~, b] = max(L./C);
 
-Xlo = N/(Rl + Z + (N-1)*Yl);
-Xhi = min([ N/(Ru + Z + (N-1)*Yu), ...     % Theorem 5 upper
+Xlo = N/(Rl + Z + (N-1)*Yl/(1 + Z/(N*Rl)));
+Xhi = min([ N/(Ru + Z + (N-1)*Yu/(1 + Z/Ru)), ...     % Theorem 5 upper
             C(b)/L(b), ...                 % ABA capacity bound (eq. 3)
             N/(Rl + Z) ]);                 % ABA population bound
 end

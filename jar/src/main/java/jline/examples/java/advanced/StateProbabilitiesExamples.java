@@ -10,8 +10,8 @@ import java.util.Scanner;
 /**
  * Examples demonstrating state probability computations in queueing networks.
  * 
- * This class provides Java implementations corresponding to the Kotlin notebooks
- * in jline.examples.kotlin.advanced.stateProbabilities package.
+ * This class provides Java implementations corresponding to the example notebooks
+ * in jline.examples.java.advanced.stateProbabilities package.
  */
 public class StateProbabilitiesExamples {
 
@@ -80,7 +80,13 @@ public class StateProbabilitiesExamples {
         NetworkSolver solver = new JMT(model, "seed", 12345);
         
         try {
-            SolverOptions options = JMT.defaultOptions();
+            // The solver's OWN options, not a fresh defaultOptions(): the latter
+            // draws a RANDOM seed in its constructor (SolverOptions ->
+            // RandomManager.generateRandomSeed), so replacing the object wholesale
+            // discards the seed passed to the constructor above and makes this
+            // example irreproducible -- which is what left the ld_multiserver_ps
+            // parity row disagreeing with its golden on a Monte-Carlo margin.
+            SolverOptions options = solver.getOptions();
             options.samples = 100000;
             ((JMT)solver).setOptions(options);
             
@@ -196,7 +202,13 @@ public class StateProbabilitiesExamples {
         NetworkSolver solver = new JMT(model, "seed", 12345);
         
         try {
-            SolverOptions options = JMT.defaultOptions();
+            // The solver's OWN options, not a fresh defaultOptions(): the latter
+            // draws a RANDOM seed in its constructor (SolverOptions ->
+            // RandomManager.generateRandomSeed), so replacing the object wholesale
+            // discards the seed passed to the constructor above and makes this
+            // example irreproducible -- which is what left the ld_multiserver_ps
+            // parity row disagreeing with its golden on a Monte-Carlo margin.
+            SolverOptions options = solver.getOptions();
             options.samples = 100000;
             ((JMT)solver).setOptions(options);
             

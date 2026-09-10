@@ -59,10 +59,18 @@ forkinfo = {}; % rows: {f, j, r, branchheads, branchsets, auxmatrix (BxT)}
 
 for f=forkIndexes
     j = find(sn.fj(f,:));
-    % tasks emitted per output link at each fork firing
+    % tasks emitted per output link at each fork firing. `w` is the node-wide
+    % count and `wlink` the per-destination one; they differ only when the fork
+    % declares a variable forking level, and sn_fj_validate has already refused
+    % the cases this construction cannot carry (a random degree, a non-integer
+    % count, an uncertain branch under a standard Join).
     w = 1;
     if isfield(sn.nodeparam{f},'fanOut') && ~isempty(sn.nodeparam{f}.fanOut)
         w = round(sn.nodeparam{f}.fanOut(1));
+    end
+    wlink = [];
+    if isfield(sn.nodeparam{f},'fanOutLink') && ~isempty(sn.nodeparam{f}.fanOutLink)
+        wlink = round(sn.nodeparam{f}.fanOutLink);
     end
     for r=find(Vnodes(f,:)>0)
         % branch heads: nodes receiving class r directly from the fork
@@ -168,7 +176,7 @@ for f=forkIndexes
                 end
             end
         end
-        forkinfo(end+1,:) = {f, j, r, branchheads, branchsets, auxmatrix, w}; %#ok<AGROW>
+        forkinfo(end+1,:) = {f, j, r, branchheads, branchsets, auxmatrix, w, wlink}; %#ok<AGROW>
     end
 end
 
@@ -236,7 +244,7 @@ end
 % auxiliary-class visits: engines use them only as a zero-versus-nonzero
 % capacity gate, so set 1 on the branch support set and 0 elsewhere
 for row=1:size(forkinfo,1)
-    [f, j, r, branchheads, branchsets, auxmatrix, w] = forkinfo{row,:};
+    [f, j, r, branchheads, branchsets, auxmatrix, w, wlink] = forkinfo{row,:};
     B = size(auxmatrix,1);
     T = size(auxmatrix,2);
     cnew = find(fjsn.chains(:,r), 1);
@@ -252,12 +260,20 @@ for row=1:size(forkinfo,1)
                     fjsn.visits{cnew}(fjsn.nodeToStateful(cn),a) = 1;
                 end
             end
-            % capacity: each auxiliary class holds at most tasksPerLink
-            % siblings network-wide (STD join, one tag at a time)
+            % Capacity: each auxiliary class holds at most the tasks THIS
+            % BRANCH is sent, network-wide (STD join, one tag at a time). It is
+            % the branch's own count and not the node-wide one, because a fork
+            % that sends 1 down one link and 3 down another would otherwise cap
+            % the second branch at the mean and deadlock the chain.
+            if isempty(wlink)
+                wb = w;
+            else
+                wb = wlink(branchheads(b), r);
+            end
             fjsn.classcap(:,a) = 0;
             for cn=support
                 if fjsn.isstation(cn)
-                    fjsn.classcap(fjsn.nodeToStation(cn),a) = w;
+                    fjsn.classcap(fjsn.nodeToStation(cn),a) = wb;
                 end
             end
         end
@@ -281,13 +297,36 @@ for row=1:size(forkinfo,1)
     end
     fjsn.nodeparam{j}.fj.origclasses(end+1) = r;
     fjsn.nodeparam{j}.fj.auxmatrix{r} = auxmatrix;
-    fjsn.nodeparam{j}.fj.required{r} = w*ones(B,1); % STD, tasksPerLink siblings per branch; slot for PARTIAL/fanIn
+    % Siblings of branch b a firing consumes. Under STD it is the tasks that
+    % branch was sent, which is the per-destination count when the fork declares
+    % one and the node-wide count otherwise. Under PARTIAL the Join's own fanIn
+    % is what it waits for, so the quorum lowers this count rather than
+    % replacing the mechanism.
+    reqb = w*ones(B,1);
+    if ~isempty(wlink)
+        for bb=1:B
+            reqb(bb) = wlink(branchheads(bb), r);
+        end
+    end
+    if isfield(sn.nodeparam{j},'joinStrategy') && length(sn.nodeparam{j}.joinStrategy) >= r && ...
+            ~isempty(sn.nodeparam{j}.joinStrategy{r}) && sn.nodeparam{j}.joinStrategy{r} == JoinStrategy.PARTIAL && ...
+            isfield(sn.nodeparam{j},'fanIn') && length(sn.nodeparam{j}.fanIn) >= r && ~isempty(sn.nodeparam{j}.fanIn{r})
+        fq = sn.nodeparam{j}.fanIn{r};
+        if isscalar(fq)
+            fq = fq*ones(B,1);
+        end
+        % both as COLUMNS: a Bx1 against a 1xB broadcasts to BxB in MATLAB,
+        % which is not a per-branch requirement but a matrix nothing can read
+        fq = fq(:);
+        reqb = min(reqb(:), fq(1:B));
+    end
+    fjsn.nodeparam{j}.fj.required{r} = reqb;
 end
 
 % fork firing synchronizations: one entry per (fork, class, tag)
 fjsn.fjsync = {};
 for row=1:size(forkinfo,1)
-    [f, j, r, branchheads, ~, auxmatrix, w] = forkinfo{row,:};
+    [f, j, r, branchheads, ~, auxmatrix, w, wlink] = forkinfo{row,:};
     T = size(auxmatrix,2);
     for t=1:T
         entry = struct();
@@ -299,8 +338,33 @@ for row=1:size(forkinfo,1)
         entry.branchheads = branchheads;
         entry.auxclasses = auxmatrix(:,t)';
         entry.auxall = auxmatrix; % B x T, for the tag-occupancy scan
-        entry.weight = w; % tasksPerLink: siblings emitted per branch
-        entry.prob = 1.0;
+        % Siblings emitted per branch, per destination when the fork sends
+        % different counts down different links. It stays the SCALAR whenever
+        % every branch agrees, so a plain fork takes exactly the code path it
+        % always took.
+        if isempty(wlink)
+            entry.weight = w;
+        else
+            wvec = arrayfun(@(bb) wlink(bb, r), branchheads(:)');
+            if all(wvec == wvec(1))
+                entry.weight = wvec(1);
+            else
+                entry.weight = wvec;
+            end
+        end
+        % branch activation probability, one per branch; all ones on a fork whose
+        % branches are certain, which is every fork the CTMC/SSA path accepts
+        % under a standard Join
+        if isfield(sn.nodeparam{f},'fanOutProb') && ~isempty(sn.nodeparam{f}.fanOutProb)
+            pvec = arrayfun(@(bb) sn.nodeparam{f}.fanOutProb(bb, r), branchheads(:)');
+            if all(pvec == 1)
+                entry.prob = 1.0;
+            else
+                entry.prob = pvec;
+            end
+        else
+            entry.prob = 1.0;
+        end
         fjsn.fjsync{end+1,1} = entry;
     end
 end

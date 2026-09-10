@@ -47,6 +47,7 @@ classdef SolverENV < EnsembleSolver
         resetFromMarginal;
         resetEnvRates; % function implementing the reset policy for environment rates
         stateDepMethod = ''; % state-dependent method configuration
+        horizonWarned = []; % stages whose unspecified horizon has been announced
         SMPMethod = false;  % Use DTMC-based computation for Semi-Markov Processes
         % Enhanced init properties (aligned with JAR)
         ServerNum;   % Cell array of server counts per class
@@ -127,12 +128,14 @@ classdef SolverENV < EnsembleSolver
                 end
             end
 
+            % The Markovian-arc rule used to be raised HERE, which made a
+            % semi-Markov environment fail to construct at all, so model.help
+            % (which builds a probe) could not even list the env family. It is
+            % now a rule of methodRefusal, asked by the gate and by init.
             for e=1:length(self.env)
                 for h=1:length(self.env)
                     if isa(self.env{e,h},'Disabled')
                         self.env{e,h} = Exp(0);
-                    elseif ~isa(self.env{e,h},'Markovian') && ~self.SMPMethod
-                        line_error(mfilename,sprintf('The distribution of the environment transition from stage %d to %d is not supported by the %s solver. Use method=''smp'' for non-Markovian distributions.',e,h,self.getName));
                     end
                 end
             end
@@ -203,12 +206,14 @@ classdef SolverENV < EnsembleSolver
                     q = 1.05 * max(max(abs(Q)));
                 case 'multi'
                     % Multi requires MSS (macro-macro-states), default to singletons
-                    nMacro = size(MS, 1);
+                    % numel, not size(MS,1): a row cell array of macro-states
+                    % has size(MS,1)==1 and would build one singleton here.
+                    nMacro = numel(MS);
                     MSS = cell(nMacro, 1);
                     for i = 1:nMacro
                         MSS{i} = i;
                     end
-                    [p, ~, ~, ~, eps, epsMax] = ctmc_multi(Q, MS, MSS);
+                    [p, ~, ~, eps, epsMax] = ctmc_multi(Q, MS, MSS);
                     q = 1.05 * max(max(abs(Q)));
                 otherwise
                     line_error(mfilename, sprintf('Unknown decomposition method: %s', method));
@@ -224,6 +229,8 @@ classdef SolverENV < EnsembleSolver
         function runAnalyzer(self)
             % RUNANALYZER()
             % Run the ensemble solver iteration
+            LineConsole.step('random environment with %d stages, method ''%s''', ...
+                self.getNumberOfModels, self.options.method);
             line_debug('ENV solver starting: nstages=%d, method=%s', self.getNumberOfModels, self.options.method);
 
             % Show library attribution if verbose and not yet shown
@@ -251,6 +258,16 @@ classdef SolverENV < EnsembleSolver
             % aligned with JAR SolverEnv implementation
             line_debug('ENV solver init: initializing environment data structures');
             options = self.options;
+            % The gate's own sentence before Environment.init can index a
+            % non-Markovian arc as a MAP or a stage can come back all zero.
+            method = 'default';
+            if isfield(options,'method') && ~isempty(options.method)
+                method = options.method;
+            end
+            [okm, whym] = self.methodRefusal(method);
+            if ~okm
+                line_error(mfilename, whym);
+            end
             if isfield(options,'seed')
                 Solver.resetRandomGeneratorSeed(options.seed);
             end
@@ -890,28 +907,151 @@ classdef SolverENV < EnsembleSolver
         end
 
         function varargout = getAvg(varargin)
-            % [QNCLASS, UNCLASS, TNCLASS] = GETAVG()
+            % [QNCLASS, UNCLASS, RNCLASS, TNCLASS, ANCLASS, WNCLASS] = GETAVG()
+            % Throughput is the FOURTH output, not the third: RNclass comes
+            % third and is always NaN because ENV computes no response time.
             [varargout{1:nargout}] = getEnsembleAvg( varargin{:} );
         end
 
         function [QNclass, UNclass, RNclass, TNclass, ANclass, WNclass] = getEnsembleAvg(self)
-            % [QNCLASS, UNCLASS, TNCLASS] = GETENSEMBLEAVG()
+            % [QNCLASS, UNCLASS, RNCLASS, TNCLASS, ANCLASS, WNCLASS] = GETENSEMBLEAVG()
+            % Solver console: SolverENV drives an ensemble of stage models and
+            % does not pass through runAnalyzerChecks, so it opens its own run
+            % here, at the entry point every caller goes through. The guard
+            % must live until this function returns.
+            consoleGuard = LineConsole.beginRun(self, self.options); %#ok<NASGU>
             RNclass=[];
             ANclass=[];
             WNclass=[];
+            % ANNOUNCE THE SOLVER, as every NetworkSolver does at
+            % NetworkSolver.setAvgResults: this ensemble is not one, so its
+            % result table used to arrive with NO banner and was read as a table
+            % belonging to nobody -- parity-static tags it UNKNOWN, keeps a
+            % golden under that name for want of anything better, and its
+            % agreement-gated generator drops it as a parsing artifact, so
+            % renv_threestages_repairmen could never earn a gated golden. The
+            % text is the one the JAR's SolverENV prints, so both spell the
+            % solver the same way. printBanner_ is called at each exit rather
+            % than through onCleanup: the cleanup object is destroyed after the
+            % method's own output assignment and its call was not reaching the
+            % console at all, so an explicit call is the one that prints.
+            envTstart = tic;
 
             if isfield(self.options,'lang') && strcmp(self.options.lang,'python')
-                [QNclass, UNclass, TNclass] = PYLINE.getEnvAvg(self.envObj, self.options);
+                % the stage solvers this ensemble was built with decide the
+                % bridge's stage-solver class AND its options; see
+                % PYLINE.getEnvAvg
+                % The forwarded horizon is the RESOLVED one, so the engine
+                % integrates the interval the native path does instead of
+                % dropping a non-finite value and falling back to its own
+                % default of 100. On renv_fourstages_repairmen that was 30
+                % against 100 -- a different question asked of each codebase,
+                % and most of what the example's parity slack used to measure.
+                % stageOptions is a struct COPY, so this states the horizon
+                % without leaving it on the stage solver.
+                self.assertOneStageHorizon_('python');
+                stageSolverName = '';
+                stageOptions = struct();
+                if ~isempty(self.solvers) && ~isempty(self.solvers{1})
+                    stageSolverName = class(self.solvers{1});
+                    if isprop(self.solvers{1}, 'options') && isstruct(self.solvers{1}.options)
+                        stageOptions = self.solvers{1}.options;
+                        stageTs = self.stageHorizon_(1);
+                        if numel(stageTs) >= 2
+                            stageOptions.timespan = stageTs;
+                        end
+                    end
+                end
+                [QNclass, UNclass, TNclass] = PYLINE.getEnvAvg(self.envObj, self.options, stageSolverName, stageOptions);
                 WNclass = QNclass ./ TNclass;
                 RNclass = NaN*WNclass;
                 ANclass = NaN*TNclass;
                 self.result.Avg.Q = QNclass;
                 self.result.Avg.U = UNclass;
                 self.result.Avg.T = TNclass;
+                self.printBanner_(toc(envTstart));
                 return
             end
 
-            if isempty(self.result) || (isfield(self.options,'force') && self.options.force)
+            if isfield(self.options,'lang') && strcmp(self.options.lang,'cpp')
+                % THE STAGE SOLVER IS NOT IN THE MODEL, which is the root of
+                % this: model.json carries the stage Networks and the transition
+                % process, and the ensemble's solver choice lives on this object.
+                % An engine that defaults to the fluid transient therefore
+                % answered a DIFFERENT model in silence -- on
+                % renv_threestages_repairmen, whose stages are SolverCTMC, that
+                % returned Queue1 throughput 1.5577 against the 1.3333 the CTMC
+                % stages give. line-cli now takes --stage-solver, and its
+                % mean-field coupling runs the enumerated CTMC as well as the
+                % fluid transient, so CPPLINE.getEnvAvg names the ensemble's own.
+                % A MIXED ensemble is still refused: one coupling runs one stage
+                % solver, so sending the first stage's name would answer for the
+                % rest under it.
+                self.assertOneStageHorizon_('cpp');
+                stageClass = '';
+                if ~isempty(self.solvers) && ~isempty(self.solvers{1})
+                    stageClass = class(self.solvers{1});
+                end
+                % isa, not strcmp: the example-facing aliases subclass the solver
+                % (classdef FLD < SolverFluid), so a name test refuses FLD too.
+                stageTok = '';
+                allSame = true;
+                for si = 1:numel(self.solvers)
+                    if isempty(self.solvers{si}), continue; end
+                    if isa(self.solvers{si},'SolverFluid')
+                        tok = 'fluid';
+                    elseif isa(self.solvers{si},'SolverCTMC')
+                        tok = 'ctmc';
+                    else
+                        tok = '';
+                    end
+                    if isempty(tok) || (~isempty(stageTok) && ~strcmp(tok, stageTok))
+                        allSame = false;
+                        break
+                    end
+                    stageTok = tok;
+                end
+                if ~allSame || isempty(stageTok)
+                    line_error(mfilename, sprintf(['SolverENV does not support ' ...
+                        'lang=''cpp'' with %s stages: the C++ ENV engine solves every ' ...
+                        'stage by the fluid transient or by the enumerated CTMC, and one ' ...
+                        'coupling runs one stage solver. Use lang=''matlab'' or ' ...
+                        'lang=''python'' for an ensemble built on another stage solver.'], ...
+                        stageClass));
+                end
+                % The horizon the STAGE transients are integrated over travels
+                % with the request, RESOLVED as in the python branch above; see
+                % CPPLINE.getEnvAvg.
+                cppOptions = self.options;
+                stageTs = self.stageHorizon_(1);
+                if numel(stageTs) >= 2
+                    cppOptions.stagetimespan = stageTs;
+                end
+                % WHICH SOLVER RUNS EACH STAGE, which model.json does not carry.
+                cppOptions.stagesolver = stageTok;
+                if strcmp(stageTok,'ctmc') && ~isempty(self.solvers{1}) && ...
+                        isfield(self.solvers{1}.options,'cutoff') && ...
+                        isfinite(self.solvers{1}.options.cutoff)
+                    cppOptions.stagecutoff = self.solvers{1}.options.cutoff;
+                end
+                [QNclass, UNclass, TNclass] = CPPLINE.getEnvAvg(self.envObj, self.ensemble{1}, cppOptions);
+                WNclass = QNclass ./ TNclass;
+                RNclass = NaN*WNclass;
+                ANclass = NaN*TNclass;
+                self.result.Avg.Q = QNclass;
+                self.result.Avg.U = UNclass;
+                self.result.Avg.T = TNclass;
+                self.printBanner_(toc(envTstart));
+                return
+            end
+
+            % A second getEnsembleAvg (getAvgTable calls it again) returns the
+            % cached result without solving, and must not re-announce: a
+            % NetworkSolver banners from setAvgResults, which a cached call
+            % never reaches. The bridges below are exempt because they re-solve
+            % on every call.
+            didSolve = isempty(self.result) || (isfield(self.options,'force') && self.options.force);
+            if didSolve
                 if isfield(self.options,'method') && any(strcmpi(self.options.method,{'avg','dec'}))
                     self.solveEnvLimit();
                 else
@@ -921,6 +1061,7 @@ classdef SolverENV < EnsembleSolver
                     QNclass=[];
                     UNclass=[];
                     TNclass=[];
+                    self.printBanner_(toc(envTstart));
                     return
                 end
             end
@@ -930,6 +1071,122 @@ classdef SolverENV < EnsembleSolver
             WNclass = QNclass ./ TNclass;
             RNclass = NaN*WNclass;
             ANclass = NaN*TNclass;
+            if didSolve
+                self.printBanner_(toc(envTstart));
+            end
+        end
+
+        function ts = stageHorizon_(self, e)
+            % TS = STAGEHORIZON_(E)  Stage e's transient horizon, resolved.
+            %
+            % A stage solver left at timespan(2)=Inf -- what an example writes
+            % when it has no particular horizon in mind -- was resolved inside
+            % NetworkSolver.getTranAvg, into a LOCAL copy of the options: the
+            % solver's own timespan stayed Inf, so the value was re-derived and
+            % re-announced on every iteration, the bridges never saw it, and
+            % cdfGrid_ (which returns empty for a non-finite horizon) left that
+            % stage out of the sojourn quadrature grid. The rule below is
+            % getTranAvg's, verbatim, so the horizon is the one that path would
+            % have picked.
+            %
+            % PURE ON PURPOSE. Writing it onto the stage solver would outlive
+            % the ENV solve, and a stage solver's own getters branch on whether
+            % a horizon is set: renv_fourstages_repairmen ends with
+            % getEnsembleAvgTables(), whose per-stage getAvgTable then took the
+            % TRANSIENT arm, which lang='python' does not bridge -- turning that
+            % row from a result into a refusal. Callers set it for the call that
+            % needs it and put it back (see setStageTimespan_).
+            ts = [];
+            if isempty(self.solvers{e}) || ~isprop(self.solvers{e},'options') ...
+                    || ~isfield(self.solvers{e}.options,'timespan')
+                return
+            end
+            ts = self.solvers{e}.options.timespan;
+            if numel(ts) < 2 || ~isinf(ts(2))
+                return
+            end
+            rates = self.sn{e}.rates;
+            minrate = min(rates(isfinite(rates)));
+            ts(2) = 30/minrate;
+            if isinf(ts(1))
+                ts(1) = 0;
+            end
+            if numel(self.horizonWarned) < e || ~self.horizonWarned(e)
+                self.horizonWarned(e) = true;
+                line_warning(mfilename, ...
+                    ['End time of transient analysis unspecified for stage %d, ' ...
+                    'setting its timespan option to [%g,%g]. Pass a stage solver ' ...
+                    'with ''timespan'',[0,T] to customize.\n'], e, ts(1), ts(2));
+            end
+        end
+
+        function setStageTimespan_(self, e, ts)
+            % SETSTAGETIMESPAN_(E, TS)  Put stage e's horizon back.
+            if ~isempty(self.solvers{e}) && isprop(self.solvers{e},'options')
+                self.solvers{e}.options.timespan = ts;
+            end
+        end
+
+        function assertOneStageHorizon_(self, lang)
+            % ASSERTONESTAGEHORIZON_(LANG)  One horizon crosses the wire.
+            %
+            % Both bridges send a SINGLE stage timespan, taken from solvers{1},
+            % because the ensemble is built from one solver factory. The
+            % resolved horizon is per stage (30/minrate of THAT stage's model),
+            % so stages whose slowest rate differs resolve differently and only
+            % the first would cross. Say so rather than let the remote engine
+            % integrate a horizon nobody chose for it.
+            ends = zeros(1, numel(self.solvers));
+            for e = 1:numel(self.solvers)
+                ts = self.stageHorizon_(e);
+                if numel(ts) < 2
+                    return
+                end
+                ends(e) = ts(2);
+            end
+            if numel(unique(ends)) > 1
+                line_warning(mfilename, ...
+                    ['Stage horizons differ (%s) but lang=''%s'' forwards only the ' ...
+                    'first: the remote engine will integrate every stage to %g. ' ...
+                    'Give the stage solvers one explicit ''timespan'' to remove ' ...
+                    'the ambiguity.\n'], mat2str(ends), lang, ends(1));
+            end
+        end
+
+        function printBanner_(self, runtime)
+            % PRINTBANNER_(RUNTIME)  The completion line for an environment solve.
+            %
+            % Called at every exit of getEnsembleAvg that actually solved --
+            % the native fixed point, the two bridges and the early return on
+            % an empty result all leave by different paths, and a banner
+            % printed on only some of them is worse than none: it labels some
+            % tables and leaves others anonymous.
+            if ~(isfield(self.options,'verbose') && self.options.verbose)
+                return
+            end
+            method = 'default';
+            if isfield(self.options,'method') && ~isempty(self.options.method)
+                method = char(self.options.method);
+            end
+            lang = 'matlab';
+            if isfield(self.options,'lang') && ~isempty(self.options.lang)
+                lang = char(self.options.lang);
+            end
+            iter = 0;
+            if ~isempty(self.results)
+                iter = size(self.results,1);
+            end
+            % line_printf, as NetworkSolver.setAvgResults does, so a session-wide
+            % SILENT silences this banner too. That is only safe because
+            % runAnalyzerChecks now scopes its write to GlobalConstants.Verbose
+            % to the analysis (GlobalConstants.pushVerbose): it used to leak,
+            % so a stage solver built with verbose=0 -- which
+            % renv_threestages_repairmen does -- left the whole session silent
+            % and would have suppressed the ensemble's own banner.
+            % with the console on this line is held until after DONE
+            LineConsole.deferPrint(['ENV analysis [method: %s; type: approximate, deterministic; ' ...
+                'lang: %s; env: %s] completed in %fs. Iterations: %d.\n'], ...
+                method, lang, version('-release'), runtime, iter);
         end
 
         function solveEnvLimit(self)
@@ -1052,9 +1309,20 @@ classdef SolverENV < EnsembleSolver
             avgModel.refreshStruct(true);
         end
 
-        function [AvgTable,QT,UT,TT] = getAvgTable(self,keepDisabled)
+        function varargout = getAvgTable(self, varargin)
             % [AVGTABLE,QT,UT,TT] = GETAVGTABLE(SELF,KEEPDISABLED)
             % Return table of average station metrics
+            % The result recorder captures the returned table together with the solver
+            % that produced it -- see LineResultRecorder. Recording an ensemble here
+            % rather than in the member solver it delegates to is what keeps an
+            % AUTO/LN/ENV/UQ answer from being filed under the member's name.
+            [scope, scopeGuard] = LineResultRecorder.enter(); %#ok<ASGLU>
+            [varargout{1:max(nargout,1)}] = self.getAvgTable_impl(varargin{:});
+            LineResultRecorder.capture(scope, self, 'avg', varargout{1});
+        end
+
+        function [AvgTable,QT,UT,TT] = getAvgTable_impl(self,keepDisabled)
+            % GETAVGTABLE_IMPL Implementation of GETAVGTABLE; see the wrapper above.
 
             if nargin<2 %if ~exist('keepDisabled','var')
                 keepDisabled = false;
@@ -1304,9 +1572,137 @@ classdef SolverENV < EnsembleSolver
         end
         function [allMethods] = listValidMethods(self)
             % allMethods = LISTVALIDMETHODS()
-            % List valid methods for this solver
-            sn = self.model.getStruct();
-            allMethods = {'default'};
+            % List valid methods for this solver.
+            %
+            % Every name here selects a COUPLING, i.e. what is carried across an
+            % environment switch, and each is dispatched somewhere in this class
+            % or its analyzers. The list used to name only 'default', which made
+            % the other six reachable only by knowing the source:
+            %   'default'/'meanfield'  the mean-field coupling: the marginal
+            %                          means cross a switch (analyzerMode
+            %                          'meanfield', solver_env_meanfield_analyzer)
+            %   'statevec'/'blend'     the state-vector coupling: the whole joint
+            %                          distribution crosses (analyzerMode
+            %                          'statevec', solver_env_statevec_analyzer)
+            %   'smp'                  accepted for a semi-Markov environment,
+            %                          but Environment.init still reads every
+            %                          arc as a (D0,D1) process, so it runs the
+            %                          mean-field coupling on Markovian arcs
+            %                          only (see methodRefusal)
+            %   'statedep'             the environment transition depends on the
+            %                          state it leaves (meanfield analyzer:264)
+            %   'avg'/'dec'            the closed-form fast/slow environment
+            %                          limits, which replace the fixed point
+            %                          rather than configure it (solveEnvLimit)
+            % No getStruct here: the model is an Environment, which has none,
+            % and the call made every probe of this family raise, so model.help
+            % on an Environment listed no env row at all.
+            allMethods = {'default','meanfield','smp','statedep','statevec','blend','avg','dec'};
+        end
+
+        function [bool, reason] = supportsModelMethod(self, method)
+            % [BOOL, REASON] = SUPPORTSMODELMETHOD(METHOD)
+            % The method-aware gate model.help and SolverAUTO ask; the rules
+            % and their second caller, init, are in METHODREFUSAL.
+            [bool, reason] = self.methodRefusal(method);
+        end
+
+        function [ok, reason] = methodRefusal(self, method)
+            % [OK, REASON] = METHODREFUSAL(METHOD)
+            % Whether METHOD can run on this environment with these stage
+            % solvers, as a predicate. ONE PREDICATE, TWO CALLERS: the gate
+            % above and INIT, which every native solve passes through, so the
+            % run raises the sentence the report showed rather than an index
+            % error inside Environment.init or a table of zeros.
+            %
+            % THE RULES. (1) Every arc is Markovian. Environment.init reads each
+            % transition as a (D0,D1) process to build the holding-time MMAPs
+            % and probEnv; a Det, Gamma or Uniform arc has no such form, its
+            % getProcess returns bare parameters, and init indexes them as a
+            % MAP (an index error for Det, garbage for the others). 'smp' used
+            % to lift only the constructor's check and reach that same init, so
+            % it is gated alike until a semi-Markov analyzer exists.
+            % (2) The mean-field family ('default', 'meanfield', 'smp',
+            % 'statedep') integrates each stage over its sojourn, so every
+            % stage solver must return transient averages: analyze_ swallows a
+            % stage whose getTranAvg fails and the table came back all zero.
+            % This is the rule mapEnvApprox applies to itself. (3) 'statevec'/
+            % 'blend' need each stage's enumerated generator: a SolverCTMC or
+            % SolverMAM stage solver with a finite timespan, and no
+            % LayeredNetwork stage (solver_env_statevec_analyzer). (4) 'avg'/
+            % 'dec' (solveEnvLimit) read the stations of the stage Networks, so
+            % a LayeredNetwork stage has no rate-averaged model there.
+            ok = true;
+            reason = '';
+            method = lower(char(method));
+            E = size(self.env, 1); % an E x E cell of arcs, as the constructor reads it
+            for e = 1:E
+                for h = 1:E
+                    arc = self.env{e,h};
+                    if isempty(arc) || isa(arc,'Disabled') || isa(arc,'Markovian')
+                        continue
+                    end
+                    ok = false;
+                    reason = sprintf(['The distribution of the environment transition from stage ' ...
+                        '%d to %d is a %s, which is not Markovian: Environment.init reads every ' ...
+                        'arc as a (D0,D1) process to build the holding-time laws, and no method ' ...
+                        'of %s analyses a semi-Markov environment yet, ''smp'' included. Fit the ' ...
+                        'arc to a phase-type law, e.g. APH.fitMeanAndSCV.'], e, h, class(arc), self.getName);
+                    return
+                end
+            end
+            nstages = numel(self.ensemble);
+            if any(strcmp(method, {'statevec','blend'}))
+                for e = 1:nstages
+                    if isa(self.ensemble{e}, 'LayeredNetwork')
+                        ok = false;
+                        reason = sprintf(['The state-vector (statevec) analyzer does not support ' ...
+                            'LayeredNetwork stages (stage %d): an LQN has no single stage generator. ' ...
+                            'Use the default mean-field analyzer (omit method=''statevec'').'], e);
+                        return
+                    end
+                    s = self.solvers{e};
+                    if ~(isa(s,'SolverCTMC') || isa(s,'SolverMAM'))
+                        ok = false;
+                        reason = sprintf(['The statevec analyzer requires a SolverCTMC or SolverMAM ' ...
+                            'inner solver, but environment stage %d uses %s.'], e, class(s));
+                        return
+                    end
+                    opts_e = s.getOptions;
+                    if ~isfield(opts_e,'timespan') || numel(opts_e.timespan) < 2 ...
+                            || ~isfinite(opts_e.timespan(2))
+                        ok = false;
+                        reason = sprintf(['The statevec analyzer requires a finite inner-solver ' ...
+                            'timespan for stage %d, e.g. CTMC(model,''timespan'',[0,T]).'], e);
+                        return
+                    end
+                end
+            elseif any(strcmp(method, {'avg','dec'}))
+                for e = 1:nstages
+                    if isa(self.ensemble{e}, 'LayeredNetwork')
+                        ok = false;
+                        reason = sprintf(['The ''%s'' environment limit reads the stations of the ' ...
+                            'stage models (solveEnvLimit), which a LayeredNetwork stage (stage %d) ' ...
+                            'does not carry. Use the mean-field coupling (method=''default'').'], method, e);
+                        return
+                    end
+                end
+            else
+                for e = 1:nstages
+                    s = self.solvers{e};
+                    if isa(self.ensemble{e}, 'LayeredNetwork') || isa(s, 'SolverLN')
+                        continue % SolverLN.getTranAvg couples the layers itself
+                    end
+                    if ~(ismethod(s,'supportsTransientAnalysis') && s.supportsTransientAnalysis())
+                        ok = false;
+                        reason = sprintf(['The mean-field environment coupling integrates each stage ' ...
+                            'over its sojourn, so it needs transient averages from the stage solver, ' ...
+                            'which %s (stage %d) does not produce. Use a SolverFLD, SolverCTMC, ' ...
+                            'SolverLDES or SolverJMT stage solver, or method=''dec'' or ''avg''.'], class(s), e);
+                        return
+                    end
+                end
+            end
         end
 
         function [stationLabels, classLabels] = aggregateStationClassNames(self, M, K)
@@ -1396,50 +1792,29 @@ classdef SolverENV < EnsembleSolver
 
         function [bool, featSupported] = supports(model)
             % [BOOL, FEATSUPPORTED] = SUPPORTS(MODEL)
-
-            featUsed = model.getUsedLangFeatures();
-
+            % Whether MODEL is an environment this solver can be built over: an
+            % Environment with at least one stage, each a Network or a
+            % LayeredNetwork. What a stage USES is the stage solver's to accept,
+            % and the constructor asks every stage solver so; the method-level
+            % rules (Markovian arcs, stage solvers that return transients or a
+            % generator) are METHODREFUSAL's, which needs the built solver.
+            %
+            % This used to compare model.getUsedLangFeatures() against a flat
+            % set of node and discipline names, but an Environment has no such
+            % method: the call raised, findSolver swallowed the error as "no
+            % claim, no gate", and every env row read as runnable. The flat set
+            % also named no Cache, which cache_mmap_rr_env solves through every
+            % method here, so it was not a description of the analyzers either.
             featSupported = SolverFeatureSet;
-
-            % Nodes
-            featSupported.setTrue('ClassSwitch');
-            featSupported.setTrue('Delay');
-            featSupported.setTrue('DelayStation');
-            featSupported.setTrue('Queue');
-            featSupported.setTrue('Sink');
-            featSupported.setTrue('Source');
-
-            % Distributions
-            featSupported.setTrue('Coxian');
-            featSupported.setTrue('Cox2');
-            featSupported.setTrue('Erlang');
-            featSupported.setTrue('Exp');
-            featSupported.setTrue('HyperExp');
-
-            % Sections
-            featSupported.setTrue('StatelessClassSwitcher'); % Section
-            featSupported.setTrue('InfiniteServer'); % Section
-            featSupported.setTrue('SharedServer'); % Section
-            featSupported.setTrue('Buffer'); % Section
-            featSupported.setTrue('Dispatcher'); % Section
-            featSupported.setTrue('Server'); % Section (Non-preemptive)
-            featSupported.setTrue('JobSink'); % Section
-            featSupported.setTrue('RandomSource'); % Section
-            featSupported.setTrue('ServiceTunnel'); % Section
-
-            % Scheduling strategy
-            featSupported.setTrue('SchedStrategy_INF');
-            featSupported.setTrue('SchedStrategy_PS');
-            featSupported.setTrue('SchedStrategy_FCFS');
-            featSupported.setTrue('RoutingStrategy_PROB');
-            featSupported.setTrue('RoutingStrategy_RAND');
-            featSupported.setTrue('RoutingStrategy_RROBIN'); % with SolverJMT
-
-            % Customer Classes
-            featSupported.setTrue('ClosedClass');
-            featSupported.setTrue('OpenClass');
-
-            bool = SolverFeatureSet.supports(featSupported, featUsed);
+            bool = isa(model, 'Environment');
+            if ~bool
+                return
+            end
+            stages = model.getEnsemble;
+            bool = ~isempty(stages);
+            for e = 1:numel(stages)
+                bool = bool && (isa(stages{e},'Network') || isa(stages{e},'LayeredNetwork'));
+            end
         end
     end
 

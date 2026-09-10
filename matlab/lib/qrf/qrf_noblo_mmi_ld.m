@@ -1,4 +1,4 @@
-function [UN,QN,p2opt]=qrf_noblo_mmi_ld(MAPs,N,rt,alpha) 
+function [UN,QN,BN,p2opt]=qrf_noblo_mmi_ld(MAPs,N,rt,alpha)
 %%%  PARAMETERS  %%%
 %  f; % finite capacity queue
 %  M, integer, > 0; % number of queues
@@ -20,6 +20,9 @@ function [UN,QN,p2opt]=qrf_noblo_mmi_ld(MAPs,N,rt,alpha)
 %var e {i = 1:M, k = 1:K(i)} >=0;
 
 M = length(MAPs);
+if nargin < 4 || isempty(alpha)
+    alpha = ones(M, N); % load independent, as the three ports already default it
+end
 MR = 1;
 MM = 0;
 F = repmat(N,M,1);
@@ -51,9 +54,9 @@ for i=1:M
     for h=1:size(MAPs{i}{1},1)
         for k=1:size(MAPs{i}{1},1)
             if h==k
-                v(i,k,h)=0; 
+                v(i,h,k)=0; 
             else
-                v(i,k,h)=MAPs{i}{1}(h,k);
+                v(i,h,k)=MAPs{i}{1}(h,k); % (from,to), as mu is: v(i,k,h) reverses an Erlang
             end
         end
     end
@@ -104,11 +107,17 @@ x = qrf_noblo_start(@(z) sub_qrfcon(z,q,M,MR,MM,MM1,ZZ,ZM,BB,F,N), n);
 for ti=1:M
     UN(ti) = 0;
     QN(ti) = 0;
+    BN(ti) = 0;
     for m=1:MR
         for ni=1+(1:F(ti))
             for ki=1:K(ti)
                 UN(ti) = UN(ti) + p2opt(ti,ni,ki,ti,ni,ki, m);
                 QN(ti) = QN(ti) + (ni-1)*p2opt(ti,ni,ki,ti,ni,ki, m); % rescaled back ni
+                % BN is the alpha-weighted marginal mean: E[min(n,c)] at a
+                % c-server station, E[n] at a delay, P(n>=1) where alpha is 1.
+                % It is what the departure rate is proportional to, so the
+                % station throughput is BN/stime exactly -- see sn_to_qrf_alpha.
+                BN(ti) = BN(ti) + alpha(ti,ni-1)*p2opt(ti,ni,ki,ti,ni,ki, m);
             end
         end
     end
@@ -130,8 +139,8 @@ end
                     for j = 1:M
                         if i~=j
                             for kj = 1:K(j)
-                                for ni = 1+(1:F(i))
-                                    for nj = 1+(1:F(j))
+                                for ni = 1+(0:F(i))
+                                    for nj = 1+(0:F(j))
                                          fobj = fobj + p2(i,ni,ki,j,nj,kj,m)*(log(1e-6+p2(i,ni,ki,j,nj,kj,m))-log(1e-6+p2(i,ni,ki,i,ni,ki,m))-log(1e-6+p2(j,nj,kj,j,nj,kj,m)));
                                     end
                                 end
@@ -146,13 +155,18 @@ end
     function fobj = mem(x)
         % MEM
         %maximize H: -sum {m in 1..MR} sum {i in 1..M} sum {k in 1..K[i]} sum {ni in 1..F[i]} p2[i,ni,k,i,ni,k,m]*log(1e-6+p2[i,ni,k,i,ni,k,m]);
+        %
+        % Returned NEGATED, i.e. as -H, because fmincon MINIMIZES and the AMPL
+        % objective above is a MAXIMIZE. Returning +H picks the minimum-entropy
+        % point of the polytope, the opposite face, under a method documented as
+        % maximum-entropy; that is what every port did until 2026-08-29.
         [p2,~] = sub_qrfvar(x);
         fobj = 0;
         for m = 1:MR
             for i = 1:M
                 for k = 1:K(i)
                     for ni = 1+(1:F(i))
-                        fobj = fobj - p2(i,ni,k,i,ni,k,m)*log(1e-6 + p2(i,ni,k,i,ni,k,m));
+                        fobj = fobj + p2(i,ni,k,i,ni,k,m)*log(1e-6 + p2(i,ni,k,i,ni,k,m));
                     end
                 end
             end

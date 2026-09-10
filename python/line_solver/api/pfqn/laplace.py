@@ -148,7 +148,8 @@ def pfqn_nrl(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
         L: Service demand matrix (M x R)
         N: Population vector (R,)
         Z: Think time vector (R,) - optional
-        alpha: Load-dependent rate matrix (M x Ntot) - optional
+        alpha: Load-dependent rate matrix (M x Ntot); omitted means the
+            load-independent mu_i(n) = 1 at every station
 
     Returns:
         lG: Logarithm of normalizing constant
@@ -171,9 +172,12 @@ def pfqn_nrl(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
     M, R = L.shape
     Nt = int(np.sum(N))
 
-    # Build alpha if not provided (default: identity service rates)
+    # An omitted rate matrix means a LOAD-INDEPENDENT queue, mu_i(n) = 1, which
+    # is the default pfqn_nre and the C++ twin already take. Defaulting to
+    # 1..Ntot instead made every station an infinite server and silently
+    # returned the wrong constant to pfqn_nc.
     if alpha is None:
-        alpha = np.tile(np.arange(1, Nt + 1), (M, 1))
+        alpha = np.ones((M, Nt))
 
     # Add think time as an extra station
     if Z is not None:
@@ -220,7 +224,8 @@ def pfqn_nrp(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
         L: Service demand matrix (M x R)
         N: Population vector (R,)
         Z: Think time vector (R,) - optional
-        alpha: Load-dependent rate matrix (M x Ntot) - optional
+        alpha: Load-dependent rate matrix (M x Ntot); omitted means the
+            load-independent mu_i(n) = 1 at every station
 
     Returns:
         lG: Logarithm of normalizing constant
@@ -243,9 +248,12 @@ def pfqn_nrp(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
     M, R = L.shape
     Nt = int(np.sum(N))
 
-    # Build alpha if not provided
+    # An omitted rate matrix means a LOAD-INDEPENDENT queue, mu_i(n) = 1, which
+    # is the default pfqn_nre and the C++ twin already take. Defaulting to
+    # 1..Ntot instead made every station an infinite server and silently
+    # returned the wrong constant to pfqn_nc.
     if alpha is None:
-        alpha = np.tile(np.arange(1, Nt + 1), (M, 1))
+        alpha = np.ones((M, Nt))
 
     # Add think time as an extra station
     if Z is not None:

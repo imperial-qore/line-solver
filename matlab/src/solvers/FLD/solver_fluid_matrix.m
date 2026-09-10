@@ -19,11 +19,15 @@ if isfield(sn,'procid')
                     PH{ist}{r} = {-lam, lam};
                     pie{ist}{r} = 1;
                 end
+            elseif sn.procid(ist,r) == ProcessType.MAPT || sn.procid(ist,r) == ProcessType.PHT
+                % see solver_fluid.m: the nominal preserves the phase count
+                [D0bar, D1bar] = sn_schedule_nominal(sn, ist, r);
+                PH{ist}{r} = {D0bar, D1bar};
+                pie{ist}{r} = map_pie({D0bar, D1bar});
             end
         end
     end
 end
-P_full = sn.rt;  % Full routing matrix (stateful nodes)
 NK = sn.njobs';  %initial population
 S = sn.nservers;
 infServers = isinf(S);
@@ -34,15 +38,9 @@ weights = ones(M,K);
 
 % Extract station-to-station routing matrix from stateful-to-stateful matrix
 % using stochastic complementation to resolve routing through non-station
-% stateful nodes (e.g., Router nodes)
-station_indices = [];
-for ist = 1:M
-    isf = sn.stationToStateful(ist);
-    for r = 1:K
-        station_indices = [station_indices, (isf-1)*K + r];
-    end
-end
-P = dtmc_stochcomp(P_full, station_indices);
+% stateful nodes (e.g., Router nodes). The closing family needs the same
+% reduction, so it lives in one place.
+P = sn_rt_stations(sn);
 
 % see _kb/06-solver-catalog.md for rationale
 for src_ist = 1:M
@@ -146,14 +144,11 @@ W = W(:,keep);
 Alambda = Alambda_full(keep);  % Also filter arrival vector
 
 % see _kb/06-solver-catalog.md for rationale
-if isfield(options.config, 'hide_immediate')
-    hide_imm_requested = options.config.hide_immediate;
-else
-    hide_imm_requested = false;
-end
+hide_imm_requested = fluid_hide_immediate(sn, options);
 
 % Eliminate immediate transitions if requested or auto-detected
 state_map_imm = [];
+npre_elim = [];
 W_pre_elim = [];
 Alambda_pre_elim = [];
 if hide_imm_requested
@@ -227,12 +222,37 @@ imm_states_in_keep = [];  % Indices of immediate states within keep-filtered spa
 if ~isempty(state_map_imm)
     % Identify eliminated (immediate) states
     imm_states_in_keep = setdiff(1:length(Qa), state_map_imm);
+    npre_elim = length(Qa);
 
     Qa = Qa(state_map_imm);
-    SQC = SQC(:, state_map_imm);
-    SUC = SUC(:, state_map_imm);
-    STC = STC(:, state_map_imm);
-    x0 = x0(state_map_imm);
+
+    % THE READ-OFF MATRICES ARE CORRECTED, NOT TRUNCATED. An eliminated
+    % coordinate holds O(1/InfRate) mass and yet carries a FINITE throughput,
+    % because the rate read off it is InfRate itself; dropping its column would
+    % silently delete every completion the instantaneous phase makes and the
+    % station's throughput would stop balancing against its neighbours. The mass
+    % it holds per unit mass of the timed states is x_I = x_T*Q_TI*(-Q_II)^-1,
+    % so folding that in is exact.
+    Gsoj = W_pre_elim(state_map_imm, imm_states_in_keep) / ...
+        (-W_pre_elim(imm_states_in_keep, imm_states_in_keep));
+    SQC = SQC(:, state_map_imm) + SQC(:, imm_states_in_keep) * Gsoj';
+    SUC = SUC(:, state_map_imm) + SUC(:, imm_states_in_keep) * Gsoj';
+    STC = STC(:, state_map_imm) + STC(:, imm_states_in_keep) * Gsoj';
+
+    % THE INITIAL POINT IS PROJECTED, NOT TRUNCATED. Dropping the rows would
+    % delete whatever mass the initial condition parked on an eliminated
+    % coordinate -- zero on a cold start, which puts every job in phase 1, but
+    % not on a warm start from an earlier LN iterate -- and those are jobs, so
+    % the chain would lose population before the first step. (-Q_II)\Q_IT is the
+    % absorption distribution of the immediate block, the same complement the
+    % arrival correction below uses.
+    if ~isempty(imm_states_in_keep) && any(x0(imm_states_in_keep) ~= 0)
+        Aimm = (-W_pre_elim(imm_states_in_keep, imm_states_in_keep)) \ ...
+            W_pre_elim(imm_states_in_keep, state_map_imm);
+        x0 = x0(state_map_imm) + Aimm' * x0(imm_states_in_keep);
+    else
+        x0 = x0(state_map_imm);
+    end
 
     % see _kb/06-solver-catalog.md for rationale
     lambda_T = Alambda_pre_elim(state_map_imm);
@@ -284,50 +304,43 @@ else
     trange = [timespan(1),min(timespan(2),abs(10*itermax/min(nonZeroRates)))];
 end
 
-% Check if p-norm smoothing should be used (pstar parameter)
-use_pnorm = isfield(options, 'pstar') && ~isempty(options.pstar) || ...
-            (isfield(options.config, 'pstar') && ~isempty(options.config.pstar));
+% Whether the p-norm smoothing is in force, and with which exponent. FLUID_PSTAR
+% is the single rule: options.config.pstar switches it on under any name, and the
+% method 'pnorm' defaults it to 20, as SolverFluid.java and the C++ FluidOptions
+% do. Selecting it on the option alone made 'pnorm' run the unsmoothed drift.
+[use_pnorm, pstar_val] = fluid_pstar(options.method, options, M);
 
 if use_pnorm
-    % Get pstar values - expand scalar to per-station array
-    if isfield(options, 'pstar') && ~isempty(options.pstar)
-        pstar_val = options.pstar;
-    else
-        pstar_val = options.config.pstar;
-    end
-    if isscalar(pstar_val)
-        pstar_val = pstar_val * ones(M, 1);
-    end
     % Create per-phase pstar array (pQa) using the filtered Qa mapping
     pQa = pstar_val(Qa(:));  % Use Qa which is already filtered by keep and state_map_imm
-    Sa_pnorm = S(Qa(:));  % Column vector for pnorm_ode
+    Sa_pnorm = S(Qa(:));  % Column vector for pnorm_theta
+    % An INF station has k = infinity, so its share is 1 with no min() to
+    % smooth; S holds sum(NK) there, which would smooth it as a k = N queue
+    isInfState = infServers(Qa(:));
+end
+
+% One theta for the drift and for the metrics: eq. (23) reads the utilization
+% off the SAME share the ODE integrated, so U and T must not revert to min()
+if use_pnorm
+    % p-norm smoothing as per Ruuskanen et al., PEVA 151 (2021), eq. (26)-(27)
+    % ghat = 1 / (1 + (x/c)^p)^(1/p) where x is queue length, c is servers, p is pstar
+    theta_func = @(x) pnorm_theta(x, SQ, Sa_pnorm, pQa, isSourceState, isInfState);
+else
+    % Standard matrix method without smoothing, eq. (12)
+    Sa_ode = S(Qa(:));  % Column vector for element-wise operations
+    theta_func = @(x) compute_theta(x, SQ, Sa_ode, isSourceState);
 end
 
 T0 = tic;
 iters = 1;
 ode_failed = false;
 try
-    if use_pnorm
-        % p-norm smoothing ODE as per Ruuskanen et al., PEVA 151 (2021)
-        % ghat = 1 / (1 + (x/c)^p)^(1/p) where x is queue length, c is servers, p is pstar
-        % dx/dt = W^T * θ̂(x,p) + Aλ  (Eq. 27 for mixed networks)
-        ode_pnorm_func = @(t,x) pnorm_ode(x, W, SQ, Sa_pnorm, pQa, Alambda, isSourceState);
-        if options.stiff
-            [t, xvec_t] = ode_solve_stiff(ode_pnorm_func, trange, x0, odeopt, options);
-        else
-            [t, xvec_t] = ode_solve(ode_pnorm_func, trange, x0, odeopt, options);
-        end
+    % dx/dt = W^T * theta(x) + A*lambda
+    ode_func = @(t,x) W'*theta_func(x) + Alambda;
+    if options.stiff
+        [t, xvec_t] = ode_solve_stiff(ode_func, trange, x0, odeopt, options);
     else
-        % Standard matrix method without smoothing
-        % dx/dt = W^T * θ(x) + Aλ  (Eq. 12 for mixed networks)
-        Sa_ode = S(Qa(:));  % Column vector for element-wise operations
-        % Define theta function with special handling for Source stations
-        theta_func = @(x) compute_theta(x, SQ, Sa_ode, isSourceState);
-        if options.stiff
-            [t, xvec_t] = ode_solve_stiff(@(t,x) W'*theta_func(x) + Alambda, trange, x0, odeopt, options);
-        else
-            [t, xvec_t] = ode_solve(@(t,x) W'*theta_func(x) + Alambda, trange, x0, odeopt, options);
-        end
+        [t, xvec_t] = ode_solve(ode_func, trange, x0, odeopt, options);
     end
 catch me
     if contains(me.identifier, 'lsoda')
@@ -372,12 +385,56 @@ if ode_failed
 end
 runtime = toc(T0);
 
+% DEGENERATE DRIFT: re-integrate with a closed saturation term, do not touch the
+% answer that came back. min(E[n],c) is FLAT above the server count, so a network
+% of saturated stations has a CONTINUUM of fixed points and this method returns
+% whichever one the integrator stopped at -- [9 1] against an exact [5 5] on two
+% identical saturated stations in a closed cycle, and [8 2] with two servers each.
+% The repair is applied to the DRIFT, not to the point: the same trajectory is
+% integrated again with E[min(n,c)] in place of min(E[n],c), which is strictly
+% increasing and so isolates one fixed point. A selection rule imposed after the
+% fact would not be a solution of anything.
+%
+% WHY A CLOSURE AND NOT A SMOOTHED min: any smoothing sharp enough to stay
+% faithful to min away from the kink is numerically FLAT far from it. The
+% Boltzmann softmin at alpha=20 carries a restoring force of exp(-160) at the
+% [9 1] point, and the p-norm trades the two off directly (pstar=2 recovers
+% [5 5], pstar=8 gives [7.64 2.36], pstar=128 gives [8.94 1.06]). The closure
+% escapes the trade-off because its slope comes from the VARIANCE of the
+% marginal rather than from a smoothing width.
+%
+% Only a model that is ACTUALLY degenerate pays for it: the test is a
+% null-direction probe at the returned point, so a well-posed model integrates
+% once and is unchanged. See BUGS.md and _kb/06-solver-catalog.md.
+if ~use_pnorm && ~ode_failed && ~isempty(xvec_t)
+    isInfState_ode = infServers(Qa(:));
+    if fluid_degenerate_fixed_point(xvec_t(end,:)', ode_func, SQC, K, ...
+            isSourceState, isInfState_ode, max(abs(W(:))))
+        theta_func = @(x) compute_theta_closed(x, SQ, Sa_ode, isSourceState, isInfState_ode);
+        ode_func_c = @(t,x) W'*theta_func(x) + Alambda;
+        try
+            if options.stiff
+                [t_c, xvec_c] = ode_solve_stiff(ode_func_c, trange, x0, odeopt, options);
+            else
+                [t_c, xvec_c] = ode_solve(ode_func_c, trange, x0, odeopt, options);
+            end
+            if ~isempty(xvec_c) && all(isfinite(xvec_c(end,:)))
+                t = t_c;
+                xvec_t = xvec_c;
+                line_printf('Fluid: the first-order fixed point is not isolated (two or more saturated stations), so the drift was re-integrated with a closed saturation term.\n');
+            end
+        catch
+            % A failed repair leaves the unrepaired answer standing rather than
+            % turning a wrong number into no number.
+        end
+    end
+end
+
 Tmax = size(xvec_t,1);
 QNtmp = cell(1,Tmax);
 UNtmp = cell(1,Tmax);
 RNtmp = cell(1,Tmax);
 TNtmp = cell(1,Tmax);
-Sa = S(Qa(:));  % Column vector for element-wise operations
 S = repmat(S,1,K)'; S=S(:);
 for j=1:Tmax
     x = xvec_t(j,:)';
@@ -387,8 +444,8 @@ for j=1:Tmax
     RNtmp{j} = zeros(K,M);
 
     QNtmp{j}(:) = SQC*x;
-    % Use compute_theta for consistent handling of Source stations
-    theta_j = compute_theta(x, SQ, Sa, isSourceState);
+    % The same share the drift used, smoothed or not
+    theta_j = theta_func(x);
     TNtmp{j}(:) = STC*theta_j;
     UNtmp{j}(:) = SUC*theta_j;
     % Little's law is invalid in transient so this vector is not returned
@@ -489,18 +546,32 @@ if ~isempty(imm_states_in_keep)
     end
 end
 
-xvec_it = {xvec_t(end,:)};
+% XVEC_IT IS HANDED BACK IN THE PRE-ELIMINATION LAYOUT. The caller stores it as
+% options.init_sol for the next FCFS iterate, which rebuilds the state over every
+% phase, so a vector shortened by the immediate elimination would run that iterate
+% off the end of init_sol. The eliminated coordinates come back empty, which is
+% what they hold.
+if ~isempty(state_map_imm) && numel(state_map_imm) == size(xvec_t,2)
+    xend = zeros(1, npre_elim);
+    xend(state_map_imm) = xvec_t(end,:);
+    xvec_it = {xend};
+else
+    xvec_it = {xvec_t(end,:)};
+end
 end
 
-function dxdt = pnorm_ode(x, W, SQ, Sa, pQa, Alambda, isSourceState)
-% PNORM_ODE - ODE derivative using p-norm smoothing
-% As per Ruuskanen et al., PEVA 151 (2021)
-% dxdt = W' * (x .* ghat) + Aλ  (Eq. 27)
-% where ghat = 1 / (1 + (sumXQa/Sa)^pQa)^(1/pQa)
+function theta = pnorm_theta(x, SQ, Sa, pQa, isSourceState, isInfState)
+% PNORM_THETA - Mass in service under p-norm smoothing
+% As per Ruuskanen et al., PEVA 151 (2021), eq. (26)-(27)
+% theta = x .* ghat, ghat = 1 / (1 + (sumXQa/Sa)^pQa)^(1/pQa)
+% An INF station carries no min() to smooth, so its share stays 1.
 
 sumXQa = GlobalConstants.FineTol + SQ * x;
-ghat = zeros(size(x));
+ghat = ones(size(x));
 for i = 1:length(x)
+    if isInfState(i)
+        continue
+    end
     xVal = sumXQa(i);
     cVal = Sa(i);
     pVal = pQa(i);
@@ -511,18 +582,115 @@ for i = 1:length(x)
         else
             ghat(i) = ghatVal;
         end
-    else
-        ghat(i) = 1;
     end
 end
 
-% Compute effective rate (x .* ghat), with special handling for Source stations
-theta_eff = x .* ghat;
+theta = x .* ghat;
 % For Source stations, override to 0.0 to bypass Source in dynamics
 % (matching ground truth where Source is excluded from state space)
-theta_eff(isSourceState) = 0.0;
+theta(isSourceState) = 0.0;
+end
 
-dxdt = W' * theta_eff + Alambda;
+function theta = compute_theta_closed(x, SQ, Sa, isSourceState, isInfState)
+% COMPUTE_THETA_CLOSED - Mass in service with a VARIANCE-CARRYING saturation term
+%
+% E[min(n,c)] under the station's equilibrium geometric marginal, rather than
+% min(E[n],c):
+%
+%   n ~ Geometric(mean m)  =>  E[min(n,c)] = sum_{k=1..c} p^k = m*(1 - p^c),
+%                              p = m/(1+m).
+%
+% It has the two properties the hard min lacks and the degeneracy repair needs:
+% strictly increasing in m everywhere (slope 1/(1+m)^2 at c=1, so still 1e-2 at
+% m=9, a restoring force the integrator can follow inside its horizon), and the
+% same asymptotes, -> c as m -> inf and -> m as m -> 0. It is the first-order
+% face of what the 'dae' rung does by seeding the variance positive, which is
+% why both isolate the same fixed point.
+
+sumXQa = GlobalConstants.FineTol + SQ * x;
+p = sumXQa ./ (1 + sumXQa);
+emin = sumXQa .* (1 - p .^ max(Sa, 0));
+emin(~isfinite(emin)) = 0;
+% An INF station has a server per job: there is no min() to close, and Sa holds
+% the whole population there, which the closure would read as a finite queue.
+emin(isInfState) = sumXQa(isInfState);
+emin = min(emin, sumXQa);
+theta = x ./ sumXQa .* emin;
+theta(isSourceState) = 0.0;
+end
+
+function tf = fluid_degenerate_fixed_point(x, ode_func, SQC, K, isSourceState, isInfState, rateScale)
+% FLUID_DEGENERATE_FIXED_POINT - Is the returned point one of a CONTINUUM?
+%
+% A station whose queue exceeds its server count has theta pinned at the server
+% count: min(S,sum_x) stops depending on sum_x, so the drift cannot tell one
+% split of the mass between two such stations from another. The test is direct:
+% move a little mass of ONE CLASS from one station to another along a
+% population-conserving direction and see whether the drift moves at all. Both
+% directions are tried, because the integrator typically stops on the BOUNDARY
+% of the degenerate set, where one of the two does change the drift.
+%
+% PER CLASS, NOT PER STATION. A direction that moves a station's mass across ALL
+% its classes is not one the model can take: a SelfLoopingClass is pinned at one
+% station and can never leave, so the direction is infeasible, the drift is
+% trivially unchanged along it, and a well-posed model reads as degenerate. That
+% is what it did to sanity_CQN_2q_psfcfs_1class_1slcateachqueue, whose two queues
+% each hold a self-looping job: RespT came back 1.4336 against a baseline of
+% 0.726303. Moving ONE class between two stations it occupies IS feasible, and a
+% self-looping class occupies exactly one station, so no pair exists for it.
+%
+% The DIRECTIONAL DERIVATIVE is the scale-free quantity to threshold: a live
+% direction moves the drift at the station's own service rate and a null one only
+% by the FineTol the share carries, four orders apart.
+
+tf = false;
+d0 = ode_func(0, x);
+if isempty(d0) || max(abs(d0)) > 1e-6 * max(1, max(abs(x)))
+    return
+end
+n = numel(x);
+M = size(SQC,1)/K;
+step = 1e-3 * max(1, max(abs(x)));
+rateScale = max(rateScale, 1e-12);
+for r = 1:K
+    groups = {};
+    for i = 1:M
+        members = find(SQC((i-1)*K+r,:) > 0);
+        % Source and INF states are dropped: a Source carries theta = 0 by
+        % construction and an INF station carries theta = x with no min() to pin.
+        members = members(~isSourceState(members) & ~isInfState(members));
+        if ~isempty(members)
+            groups{end+1} = members(:);
+        end
+    end
+    if numel(groups) < 2
+        continue
+    end
+    mass = cellfun(@(g) sum(x(g)), groups);
+    for a = 1:numel(groups)
+        if mass(a) <= step
+            continue
+        end
+        for b = 1:numel(groups)
+            if a == b
+                continue
+            end
+            ga = groups{a}; gb = groups{b};
+            d = zeros(n,1);
+            d(ga) = d(ga) - x(ga)/mass(a);          % take, proportionally
+            if mass(b) > 0
+                d(gb) = d(gb) + x(gb)/mass(b);      % give, proportionally
+            else
+                d(gb) = d(gb) + 1/numel(gb);
+            end
+            dd = ode_func(0, x + step*d) - d0;
+            if max(abs(dd))/step <= 1e-4 * rateScale
+                tf = true;
+                return
+            end
+        end
+    end
+end
 end
 
 function theta = compute_theta(x, SQ, Sa, isSourceState)

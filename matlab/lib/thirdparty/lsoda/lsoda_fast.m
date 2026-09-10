@@ -1,14 +1,13 @@
 function [T, Y] = lsoda_fast(odefun, tspan, y0, options)
-% LSODA_FAST  Fast LSODA variant with low-order Adams/BDF methods
+% LSODA_FAST  Fast LSODA variant, limited Adams/BDF order
 %
-%   Equivalent to JAR's fastOdeSolver: limited Adams order for speed.
-%   Uses MaxOrdNonStiff=3 to limit nonstiff method order (similar to
-%   DormandPrince54 used in JAR for non-stiff problems).
+%   The non-stiff fast slot of options.odesolvers, i.e. the LSODA counterpart
+%   of @ode23. Equivalent to the JAR's fastODESolver order budget: Adams and
+%   BDF order 3. Auto-switching is left on, as this slot is chosen where the
+%   caller has not asked for a stiff integrator.
 %
-%   See also: lsoda_solve, lsoda_accurate, lsoda_fast_stiff
+%   See also: lsoda_odesolve, lsoda_accurate, lsoda_fast_stiff
 
     if nargin < 4, options = struct(); end
-    if ~isfield(options, 'MaxOrdNonStiff'), options.MaxOrdNonStiff = 3; end
-    if ~isfield(options, 'MaxOrdStiff'), options.MaxOrdStiff = 3; end
-    [T, Y] = lsoda_solve(odefun, tspan, y0, options);
+    [T, Y] = lsoda_odesolve(odefun, tspan, y0, options, 3, 3, false);
 end

@@ -36,6 +36,16 @@ from line_solver import (Network, Source, Queue, Sink, OpenClass, Signal,
 MU = 1.0
 TOL = 1e-6
 
+# EVERY CUTOFF HERE IS THE SMALLEST ONE THAT IS CONVERGED, not a round number.
+# The queue length decays geometrically at the case's own rate, so the truncated
+# tail is what bounds the error, and each cutoff below is set where that tail
+# sits at least two orders of magnitude inside the assertion it has to satisfy:
+# 20 leaves 8.5e-9 on the rho = 0.357 cases against TOL, 30 leaves 5.0e-7 on the
+# batch case against its 1e-4. A LARGER CUTOFF IS NOT FREE ON A SIGNAL MODEL --
+# the space is linear in it only because a signal class is capped out of the
+# station buffer, and the C++ engine, which did not apply that cap, enumerated
+# the buffer orderings instead and was OOM-killed at 43.6 GB on cutoff 30.
+
 
 def _gnetwork1(sched, nservers, lambda_pos, mu, lambda_neg, signal_type,
                rem_dist=None, rem_policy=None):
@@ -72,7 +82,7 @@ def test_fcfs_exact():
     lambda_pos, lambda_neg = 0.5, 0.4
     model = _gnetwork1(SchedStrategy.FCFS, 1, lambda_pos, MU, lambda_neg,
                        SignalType.NEGATIVE)
-    solver = SolverCTMC(model, cutoff=30)
+    solver = SolverCTMC(model, cutoff=20)
     rho = lambda_pos / (MU + lambda_neg)
     assert solver.getAvgUtil()[1][0] == pytest.approx(rho, abs=TOL)
     assert solver.getAvgQLen()[1][0] == pytest.approx(rho / (1 - rho), abs=TOL)
@@ -87,7 +97,7 @@ def test_ps_exact():
     lambda_pos, lambda_neg = 0.5, 0.4
     model = _gnetwork1(SchedStrategy.PS, 1, lambda_pos, MU, lambda_neg,
                        SignalType.NEGATIVE)
-    solver = SolverCTMC(model, cutoff=30)
+    solver = SolverCTMC(model, cutoff=20)
     rho = lambda_pos / (MU + lambda_neg)
     assert solver.getAvgUtil()[1][0] == pytest.approx(rho, abs=TOL)
     assert solver.getAvgQLen()[1][0] == pytest.approx(rho / (1 - rho), abs=TOL)
@@ -99,7 +109,7 @@ def test_catastrophe_exact():
     lambda_pos, delta = 0.5, 0.4
     model = _gnetwork1(SchedStrategy.FCFS, 1, lambda_pos, MU, delta,
                        SignalType.CATASTROPHE)
-    solver = SolverCTMC(model, cutoff=40)
+    solver = SolverCTMC(model, cutoff=20)
     b = lambda_pos + MU + delta
     r = (b - math.sqrt(b * b - 4 * lambda_pos * MU)) / (2 * MU)
     assert solver.getAvgUtil()[1][0] == pytest.approx(r, abs=TOL)
@@ -197,7 +207,7 @@ def test_batch_removal():
     lambda_pos, lambda_neg = 0.8, 0.3
     model = _gnetwork1(SchedStrategy.FCFS, 1, lambda_pos, MU, lambda_neg,
                        SignalType.NEGATIVE, Geometric(0.5), RemovalPolicy.RANDOM)
-    solver = SolverCTMC(model, cutoff=35)
+    solver = SolverCTMC(model, cutoff=30)
     UN = solver.getAvgUtil()
     TN = solver.getAvgTput()
     assert UN[1][0] == pytest.approx(TN[1][0] / MU, abs=1e-8)

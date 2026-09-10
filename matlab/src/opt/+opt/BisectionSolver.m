@@ -34,16 +34,16 @@ classdef BisectionSolver < handle
             end
             obj.lo = round(loV); obj.hi = round(hiV);
 
-            obj.fixedValueDict = containers.Map('KeyType','char','ValueType','any');
+            obj.fixedValueDict = configureDictionary('string','cell');
             fixed = problem.getFixedVariables();
-            for k = 1:numel(fixed), obj.fixedValueDict(fixed{k}{1}.getName()) = fixed{k}{2}; end
+            for k = 1:numel(fixed), obj.fixedValueDict{fixed{k}{1}.getName()} = fixed{k}{2}; end
             obj.evaluators = {opt.LineEvaluator(problem.getModel(), vars, fixed)};
             scen = problem.getScenarios();
             for i = 1:numel(scen)
                 obj.evaluators{end+1} = opt.LineEvaluator(scen{i}{1}, vars, fixed); %#ok<AGROW>
             end
-            obj.violationsAt = containers.Map('KeyType','char','ValueType','double');
-            obj.probeCache = containers.Map('KeyType','double','ValueType','any');
+            obj.violationsAt = configureDictionary('string','double');
+            obj.probeCache = configureDictionary('double','cell');
         end
 
         function cons = allConstraints(obj)
@@ -55,20 +55,20 @@ classdef BisectionSolver < handle
 
         function feasible = probe(obj, value)
             if isKey(obj.probeCache, value)
-                c = obj.probeCache(value);
+                c = obj.probeCache{value};
                 obj.baseResultAt = c{2}; obj.violationsAt = c{3};
                 feasible = c{1}; return;
             end
-            values = containers.Map('KeyType','char','ValueType','any');
-            values(obj.variable.getName()) = value;
-            allValues = containers.Map('KeyType','char','ValueType','any');
+            values = configureDictionary('string','cell');
+            values{obj.variable.getName()} = value;
+            allValues = configureDictionary('string','cell');
             fk = keys(obj.fixedValueDict);
-            for i = 1:numel(fk), allValues(fk{i}) = obj.fixedValueDict(fk{i}); end
-            allValues(obj.variable.getName()) = value;
+            for i = 1:numel(fk), allValues{fk(i)} = obj.fixedValueDict{fk(i)}; end
+            allValues{obj.variable.getName()} = value;
             cons = obj.allConstraints();
 
             feasible = true;
-            violations = containers.Map('KeyType','char','ValueType','double');
+            violations = configureDictionary('string','double');
             baseResult = [];
             for e = 1:numel(obj.evaluators)
                 res = obj.evaluators{e}.evaluateValues(values);
@@ -86,7 +86,7 @@ classdef BisectionSolver < handle
             end
             obj.baseResultAt = baseResult;
             obj.violationsAt = violations;
-            obj.probeCache(value) = {feasible, baseResult, violations};
+            obj.probeCache{value} = {feasible, baseResult, violations};
         end
 
         function result = solve(obj)
@@ -112,10 +112,10 @@ classdef BisectionSolver < handle
             feasible = obj.probe(chosen);
 
             result = opt.OptimizationResult();
-            result.variableValues(obj.variable.getName()) = chosen;
+            result.variableValues{obj.variable.getName()} = chosen;
             result.feasible = feasible;
             vk = keys(obj.violationsAt);
-            for i = 1:numel(vk), result.constraintViolations(vk{i}) = obj.violationsAt(vk{i}); end
+            for i = 1:numel(vk), result.constraintViolations(vk(i)) = obj.violationsAt(vk(i)); end
             result.iterations = iterations;
             evals = 0;
             for e = 1:numel(obj.evaluators), evals = evals + obj.evaluators{e}.getEvaluationCount(); end
@@ -124,10 +124,10 @@ classdef BisectionSolver < handle
 
             objective = obj.problem.getObjective();
             if ~isempty(objective) && ~isempty(obj.baseResultAt)
-                allValues = containers.Map('KeyType','char','ValueType','any');
+                allValues = configureDictionary('string','cell');
                 fk = keys(obj.fixedValueDict);
-                for i = 1:numel(fk), allValues(fk{i}) = obj.fixedValueDict(fk{i}); end
-                allValues(obj.variable.getName()) = chosen;
+                for i = 1:numel(fk), allValues{fk(i)} = obj.fixedValueDict{fk(i)}; end
+                allValues{obj.variable.getName()} = chosen;
                 result.objectiveValue = objective.evaluate(obj.baseResultAt, allValues);
             end
             result.solveTime = toc(t0);

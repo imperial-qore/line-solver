@@ -25,36 +25,74 @@ public final class Cache_spm {
      * @return cacheSpm - the approximated normalizing constant (Z, and its logarithm lE) and the xi terms.
      */
     public static Ret.cacheSpm cache_spm(Matrix gamma, Matrix m) {
-        Matrix gammaLocal = gamma;
-        boolean[] rowsToKeep = new boolean[gammaLocal.getNumRows()];
-        boolean[] colsToKeep = new boolean[gammaLocal.getNumCols()];
-        for (int i = 0; i < gammaLocal.getNumCols(); i++) {
-            colsToKeep[i] = true;
+        int h = m.getNumElements();
+        int ncols = gamma.getNumCols();
+        boolean[] rowsToKeep = new boolean[gamma.getNumRows()];
+        boolean[] allCols = new boolean[ncols];
+        for (int i = 0; i < ncols; i++) {
+            allCols[i] = true;
         }
-        for (int i = 0; i < gammaLocal.getNumRows(); i++) {
-            if (gammaLocal.getRow(i).elementSum() > 0) {
-                rowsToKeep[i] = true;
-            } else {
-                rowsToKeep[i] = false;
+        int n = 0;
+        for (int i = 0; i < gamma.getNumRows(); i++) {
+            rowsToKeep[i] = gamma.getRow(i).elementSum() > 0;
+            if (rowsToKeep[i]) {
+                n++;
             }
         }
-        gammaLocal = gammaLocal.getSlice(rowsToKeep, colsToKeep);
-
-        int h = m.getNumElements();
-        int n = gammaLocal.getNumRows();
         double mt = m.elementSum();
 
         if ((double) n == mt) {
+            // Degenerate saddle: every item is cached, so the capacity equations force
+            // every multiplier to infinity and cache_xi_iter cannot converge. Take Z
+            // from the exact recursion and report the limit, rather than iterating.
             System.err.println("The number of items equals the cache capacity.");
+            double Zex = Cache_erec.cache_erec(gamma.getSlice(rowsToKeep, allCols), m).get(0);
+            Matrix xiInf = new Matrix(1, h);
+            for (int l = 0; l < h; l++) {
+                xiInf.set(0, l, Double.POSITIVE_INFINITY);
+            }
+            return new Ret.cacheSpm(Zex, FastMath.log(Zex), xiInf);
         }
 
-        Matrix xi = Cache_xi_iter.cache_xi_iter(gammaLocal, m);
+        // A list with no capacity has xi=0, which is a boundary of the Laplace integral
+        // rather than a direction of it, so it must leave the expansion: kept, its
+        // -sum_l log(sqrt(xi_l)) prefactor diverges and Z comes out far too large.
+        // Dropping it is exact, since setting z_l=0 in the generating function removes
+        // list l from E(m) and prod_l m_l! is unchanged because 0!=1.
+        boolean[] colsToKeep = new boolean[ncols];
+        int hk = 0;
+        for (int l = 0; l < ncols; l++) {
+            colsToKeep[l] = l < h && m.get(l) > 0;
+            if (colsToKeep[l]) {
+                hk++;
+            }
+        }
+        Matrix xi = new Matrix(1, h); // dropped lists keep xi = 0
+        if (hk == 0) {
+            return new Ret.cacheSpm(1.0, 0.0, xi); // E(0)=1 and prod_l m_l!=1
+        }
+
+        Matrix gammaLocal = gamma.getSlice(rowsToKeep, colsToKeep);
+        Matrix mk = new Matrix(1, hk);
+        int[] keep = new int[hk];
+        for (int l = 0, a = 0; l < ncols; l++) {
+            if (colsToKeep[l]) {
+                keep[a] = l;
+                mk.set(0, a, m.get(l));
+                a++;
+            }
+        }
+
+        Matrix xik = Cache_xi_iter.cache_xi_iter(gammaLocal, mk);
+        for (int a = 0; a < hk; a++) {
+            xi.set(0, keep[a], xik.get(a));
+        }
 
         Matrix S = new Matrix(n, 1);
         for (int k = 0; k < n; k++) {
             double Sk = 0.0;
-            for (int l = 0; l < h; l++) {
-                Sk += gammaLocal.get(k, l) * xi.get(l);
+            for (int l = 0; l < hk; l++) {
+                Sk += gammaLocal.get(k, l) * xik.get(l);
             }
             S.set(k, 0, Sk);
         }
@@ -64,13 +102,13 @@ public final class Cache_spm {
         for (int k = 0; k < n; k++) {
             phi += FastMath.log(1 + S.get(k));
         }
-        phi -= xi.copy().log().mult(m.copy().transpose()).elementSum();
+        phi -= xik.copy().log().mult(mk.copy().transpose()).elementSum();
 
         // A
-        Matrix delta = Matrix.eye(h);
-        Matrix C = new Matrix(h, h);
-        for (int j = 0; j < h; j++) {
-            for (int l = 0; l < h; l++) {
+        Matrix delta = Matrix.eye(hk);
+        Matrix C = new Matrix(hk, hk);
+        for (int j = 0; j < hk; j++) {
+            for (int l = 0; l < hk; l++) {
                 double C1 = 0.0;
                 for (int k = 0; k < n; k++) {
                     C1 += gammaLocal.get(k, j) / (1 + S.get(k));
@@ -79,15 +117,15 @@ public final class Cache_spm {
                 for (int k = 0; k < n; k++) {
                     C2 += gammaLocal.get(k, j) * gammaLocal.get(k, l) / FastMath.pow(1 + S.get(k), 2);
                 }
-                C.set(j, l, delta.get(j, l) * C1 - xi.get(j) * C2);
+                C.set(j, l, delta.get(j, l) * C1 - xik.get(j) * C2);
             }
         }
 
         // Z
-        double Z = FastMath.exp(phi) * FastMath.pow(Math.sqrt(2 * FastMath.PI), -h)
-                * m.fact().elementMult() / xi.sqrt().elementMult() / FastMath.sqrt(C.det());
-        double lZ = -h * FastMath.log(Math.sqrt(2 * FastMath.PI)) + phi
-                + m.factln().elementSum() - xi.sqrt().log().elementSum()
+        double Z = FastMath.exp(phi) * FastMath.pow(Math.sqrt(2 * FastMath.PI), -hk)
+                * mk.fact().elementMult() / xik.sqrt().elementMult() / FastMath.sqrt(C.det());
+        double lZ = -hk * FastMath.log(Math.sqrt(2 * FastMath.PI)) + phi
+                + mk.factln().elementSum() - xik.sqrt().log().elementSum()
                 - FastMath.log(Math.sqrt(C.det()));
 
         return new Ret.cacheSpm(Z, lZ, xi);

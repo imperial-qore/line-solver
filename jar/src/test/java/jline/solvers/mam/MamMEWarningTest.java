@@ -18,10 +18,11 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.logging.Handler;
-import java.util.logging.Level;
+import java.util.logging.Filter;
 import java.util.logging.LogRecord;
 import java.util.logging.Logger;
 
@@ -29,12 +30,20 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * A multiclass station whose service is matrix-exponential falls outside the
- * exact RAP/RAP/1 QBD and is answered by the phase-type approximation
- * MMAPPH1FCFS, which is not exact for a non-phase-type service. The user is
- * told so, and must be told so for every model concerned: this warning reports
- * a correctness limitation, so suppressing it as a repeat would let the second
- * and later models in a session read as clean.
+ * A station whose service is matrix-exponential and which no exact path can
+ * take is answered by the phase-type approximation MMAPPH1FCFS, which is not
+ * exact for a non-phase-type service. The user is told so, and must be told so
+ * for every model concerned: this warning reports a correctness limitation, so
+ * suppressing it as a repeat would let the second and later models in a session
+ * read as clean.
+ *
+ * WHICH STATIONS THOSE ARE CHANGED ON 2026-08-16. A MULTICLASS ME station at
+ * ONE server is now answered exactly by MMAP[K]/G[K]/1, whose analysis needs
+ * only the service transform, so for it the warning announces a fallback that
+ * no longer happens. What still warns is what that path cannot serve, a
+ * MULTISERVER ME station, which is the model used here. The suppression is
+ * itself asserted, since a warning that survives its own fix is the failure
+ * mode this file exists to catch.
  */
 public class MamMEWarningTest {
 
@@ -54,21 +63,21 @@ public class MamMEWarningTest {
         GlobalConstants.Verbose = savedVerbose;
     }
 
-    /** Collects the records emitted through InputOutput's logger. */
-    private static class CapturingHandler extends Handler {
+    /**
+     * Collects the records emitted through InputOutput's logger and stops them
+     * there. A capturing Handler would have left the record to travel on to the
+     * root console handler as well, so the suite printed every warning these
+     * tests deliberately provoke. A Filter returning false suppresses the record
+     * for all handlers, parent handlers included, which no per-logger handler
+     * arrangement can do.
+     */
+    private static class CapturingFilter implements Filter {
         final List<String> messages = new ArrayList<String>();
 
         @Override
-        public void publish(LogRecord record) {
+        public boolean isLoggable(LogRecord record) {
             messages.add(record.getMessage());
-        }
-
-        @Override
-        public void flush() {
-        }
-
-        @Override
-        public void close() {
+            return false;
         }
     }
 
@@ -89,7 +98,11 @@ public class MamMEWarningTest {
     }
 
     private static Network twoClassMeQueue() {
-        Network model = new Network("M/ME/1 two classes");
+        return twoClassMeQueue(2);
+    }
+
+    private static Network twoClassMeQueue(int nservers) {
+        Network model = new Network("M/ME/c two classes");
         Source source = new Source(model, "Source");
         Queue queue = new Queue(model, "Queue", SchedStrategy.FCFS);
         Sink sink = new Sink(model, "Sink");
@@ -99,6 +112,7 @@ public class MamMEWarningTest {
         source.setArrival(class2, Exp.fitRate(0.2));
         queue.setService(class1, nonPhaseTypeME());
         queue.setService(class2, nonPhaseTypeME());
+        queue.setNumberOfServers(nservers);
         RoutingMatrix rm = model.initRoutingMatrix();
         rm.addConnection(class1, class1, source, queue, 1.0);
         rm.addConnection(class1, class1, queue, sink, 1.0);
@@ -109,18 +123,30 @@ public class MamMEWarningTest {
     }
 
     private static List<String> solveCapturingWarnings(int numSolves) {
+        return solveCapturingWarnings(numSolves, 2);
+    }
+
+    private static List<String> solveCapturingWarnings(int numSolves, int nservers) {
         Logger logger = Logger.getLogger(FileUtils.class.getName());
-        CapturingHandler handler = new CapturingHandler();
-        handler.setLevel(Level.ALL);
-        logger.addHandler(handler);
+        CapturingFilter filter = new CapturingFilter();
+        Filter savedFilter = logger.getFilter();
+        logger.setFilter(filter);
+        // The solver prints its completion line to System.out under the same
+        // verbosity that gates the warning under test -- SolverMAM copies
+        // options.verbose into GlobalConstants.Verbose -- so it cannot be
+        // silenced by options without silencing the warning as well. Capture the
+        // stream instead.
+        PrintStream savedOut = System.out;
+        System.setOut(new PrintStream(new ByteArrayOutputStream()));
         try {
             for (int i = 0; i < numSolves; i++) {
-                new SolverMAM(twoClassMeQueue()).getAvgTable();
+                new SolverMAM(twoClassMeQueue(nservers)).getAvgTable();
             }
         } finally {
-            logger.removeHandler(handler);
+            System.setOut(savedOut);
+            logger.setFilter(savedFilter);
         }
-        return handler.messages;
+        return filter.messages;
     }
 
     private static int countMEWarnings(List<String> messages) {
@@ -153,7 +179,7 @@ public class MamMEWarningTest {
         // the same message read differently in each codebase.
         assertTrue(warning.contains("Station Queue has a matrix-exponential "
                 + "or rational service process"), warning);
-        assertTrue(warning.contains("here 2 classes, 1 servers"), warning);
+        assertTrue(warning.contains("here 2 classes, 2 servers"), warning);
         assertTrue(warning.contains("not exact for this service process"), warning);
     }
 
@@ -177,24 +203,37 @@ public class MamMEWarningTest {
     }
 
     /**
+     * The same model at ONE server, which MMAP[K]/G[K]/1 answers exactly off the
+     * service transform. The warning announces a fallback to MMAPPH1FCFS, so
+     * emitting it here would report a limitation that is not being hit. FCFS is
+     * class-blind and both classes share one law, so the total queue length is
+     * the Pollaczek-Khinchine value of the aggregate M/G/1, which this path
+     * reads to 5.5e-17.
+     */
+    @Test
+    public void testMEWarningSuppressedWhenTheExactPathTakesTheStation() {
+        assertEquals(0, countMEWarnings(solveCapturingWarnings(1, 1)));
+    }
+
+    /**
      * line_warning_always is exempt from the repeat suppression that
      * line_warning applies, but not from the verbosity gate.
      */
     @Test
     public void testLineWarningAlwaysDoesNotSuppressRepeats() {
         Logger logger = Logger.getLogger(FileUtils.class.getName());
-        CapturingHandler handler = new CapturingHandler();
-        handler.setLevel(Level.ALL);
-        logger.addHandler(handler);
+        CapturingFilter filter = new CapturingFilter();
+        Filter savedFilter = logger.getFilter();
+        logger.setFilter(filter);
         try {
             for (int i = 0; i < 3; i++) {
                 InputOutput.line_warning_always("MamMEWarningTest", "identical message %d", 7);
             }
         } finally {
-            logger.removeHandler(handler);
+            logger.setFilter(savedFilter);
         }
         int n = 0;
-        for (String m : handler.messages) {
+        for (String m : filter.messages) {
             if (m != null && m.equals("[MamMEWarningTest] identical message 7")) {
                 n++;
             }

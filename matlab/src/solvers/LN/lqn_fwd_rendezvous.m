@@ -1,19 +1,22 @@
 function lqn = lqn_fwd_rendezvous(lqn)
 % LQN = LQN_FWD_RENDEZVOUS(LQN)
-% Port of LQNS Phase::addForwardingRendezvous (phase.cc): replace each
-% forwarding chain reachable from a synchronous call by caller-side pseudo
-% rendezvous (SYNC) calls to the forwarding targets, with mean equal to the
-% original call mean times the product of the forwarding probabilities on
-% the path. After this transformation the forwarded workload is carried by
-% ordinary SYNC call classes, so layer construction, think times,
-% populations and the interlock analysis all see plain rendezvous arcs.
-% This matches LQNS, which drops FWD arcs from the interlock analysis
-% ("Drop forward -- keep rnv", interlock.cc) and accounts for forwarding
-% only through these pseudo arcs. FWD calls are kept in the struct but no
-% longer contribute blocking anywhere in SolverLN.
+% Forwarding transformation of Franks (1999), Sec. 3.3.1 and Fig. 3.8: each
+% forwarding chain reachable from a synchronous call is reconnected to the
+% client that issued the original rendezvous, as a pseudo rendezvous (SYNC)
+% call whose mean is the original call mean times the product of the
+% forwarding probabilities along the path. One level of servers disappears
+% from the layering, and the forwarded workload is then carried by ordinary
+% SYNC call classes, so layer construction, think times, populations and the
+% interlock analysis all see plain rendezvous arcs.
 %
-% Asynchronous calls into a forwarding chain are left untouched (LQNS
-% breaks the backward search at a send-no-reply, phase.cc).
+% As the thesis notes, the transformed model is not one in which the client
+% makes two remote procedure calls directly: the pseudo arcs are excluded
+% from the slice times and from the overtaking and interlock probabilities.
+% FWD calls are kept in the struct but no longer contribute blocking
+% anywhere in SolverLN.
+%
+% Asynchronous calls into a forwarding chain are left untouched, since a
+% send-no-reply terminates the chain of blocking.
 
 if ~any(lqn.calltype == CallType.FWD)
     return

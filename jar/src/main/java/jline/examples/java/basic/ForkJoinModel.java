@@ -9,11 +9,14 @@ import jline.lang.ClosedClass;
 import jline.lang.Network;
 import jline.lang.OpenClass;
 import jline.lang.RoutingMatrix;
+import jline.lang.constant.JoinStrategy;
 import jline.lang.constant.SchedStrategy;
 import jline.lang.nodes.*;
 import jline.lang.processes.Disabled;
+import jline.lang.processes.DiscreteSampler;
 import jline.lang.processes.Exp;
 import jline.lang.processes.Immediate;
+import jline.util.matrix.Matrix;
 import jline.solvers.wrappers.jmt.JMT;
 import jline.solvers.mva.MVA;
 
@@ -59,6 +62,74 @@ public class ForkJoinModel {
         P.set(jobclass1, jobclass1, queue1, join, 1);
         P.set(jobclass1, jobclass1, queue2, join, 1);
         P.set(jobclass1, jobclass1, join, sink, 1);
+
+        model.link(P);
+
+        return model;
+    }
+
+    /**
+     * Fork-join traversed by an open AND a closed class at once.
+     * <p>
+     * Features:
+     * - Open class (Poisson rate 0.1) and closed class (1 job, think time 1)
+     * - Both classes share PreFork -> Fork -> two branches -> Join -> PostJoin
+     * - Flat counterpart of LayeredModel.lqn_fork_open_arrival(), which SolverLN
+     *   refuses because the fork-join transform's Source collides with the
+     *   layer's open-stream Source
+     * <p>
+     * Reference (JMT, seed 23000, 2e5 samples): Branch1 open RespT 0.362, closed
+     * RespT 0.310, Join open RespT 0.215, closed throughput 0.540.
+     *
+     * @return configured mixed open/closed fork-join model
+     */
+    public static Network fj_mixed_openclosed() {
+        Network model = new Network("ForkJoinOpenClosed");
+
+        Source source = new Source(model, "Source");
+        Delay client = new Delay(model, "Client");
+        Queue prefork = new Queue(model, "PreFork", SchedStrategy.FCFS);
+        Queue branch1 = new Queue(model, "Branch1", SchedStrategy.FCFS);
+        Queue branch2 = new Queue(model, "Branch2", SchedStrategy.FCFS);
+        Queue postjoin = new Queue(model, "PostJoin", SchedStrategy.FCFS);
+        Fork fork = new Fork(model, "Fork");
+        Join join = new Join(model, "Join", fork);
+        Sink sink = new Sink(model, "Sink");
+
+        OpenClass oclass = new OpenClass(model, "Open");
+        ClosedClass cclass = new ClosedClass(model, "Closed", 1, client);
+
+        source.setArrival(oclass, new Exp(0.1));
+        client.setService(cclass, Exp.fitMean(1.0));
+        client.setService(oclass, Disabled.getInstance());
+        prefork.setService(oclass, Exp.fitMean(0.2));
+        prefork.setService(cclass, Exp.fitMean(0.2));
+        branch1.setService(oclass, Exp.fitMean(0.3));
+        branch1.setService(cclass, Exp.fitMean(0.3));
+        branch2.setService(oclass, Exp.fitMean(0.4));
+        branch2.setService(cclass, Exp.fitMean(0.4));
+        postjoin.setService(oclass, Exp.fitMean(0.1));
+        postjoin.setService(cclass, Exp.fitMean(0.1));
+
+        RoutingMatrix P = model.initRoutingMatrix();
+
+        P.set(oclass, oclass, source, prefork, 1);
+        P.set(oclass, oclass, prefork, fork, 1);
+        P.set(oclass, oclass, fork, branch1, 1);
+        P.set(oclass, oclass, fork, branch2, 1);
+        P.set(oclass, oclass, branch1, join, 1);
+        P.set(oclass, oclass, branch2, join, 1);
+        P.set(oclass, oclass, join, postjoin, 1);
+        P.set(oclass, oclass, postjoin, sink, 1);
+
+        P.set(cclass, cclass, client, prefork, 1);
+        P.set(cclass, cclass, prefork, fork, 1);
+        P.set(cclass, cclass, fork, branch1, 1);
+        P.set(cclass, cclass, fork, branch2, 1);
+        P.set(cclass, cclass, branch1, join, 1);
+        P.set(cclass, cclass, branch2, join, 1);
+        P.set(cclass, cclass, join, postjoin, 1);
+        P.set(cclass, cclass, postjoin, client, 1);
 
         model.link(P);
 
@@ -431,6 +502,65 @@ public class ForkJoinModel {
      *
      * @return configured simple closed fork-join model
      */
+    /**
+     * A fork whose degree is NOT one fixed number, in the four ways it can vary.
+     *
+     * <ul>
+     *   <li>"fixed"  the classic fork, one task on each of two links</li>
+     *   <li>"vector" three tasks towards Queue2 and one towards Queue1</li>
+     *   <li>"random" one or three tasks per link, each with probability 1/2</li>
+     *   <li>"prob"   the branch towards Queue2 fires only half the time</li>
+     * </ul>
+     *
+     * <p>Exact under SolverJMT and SolverLDES, which draw the degree at the fork
+     * epoch. SolverMVA's MMT method sees the EXPECTED degree. The exact CTMC/SSA
+     * path accepts "fixed" and "vector" and refuses the other two by name,
+     * because its tag construction fixes the sibling count when the state space
+     * is built.</p>
+     */
+    public static Network fj_variable_fanout(String mode) {
+        Network model = new Network("model");
+        Delay delay = new Delay(model, "Delay");
+        Queue queue1 = new Queue(model, "Queue1", SchedStrategy.PS);
+        Queue queue2 = new Queue(model, "Queue2", SchedStrategy.PS);
+        Fork fork = new Fork(model, "Fork");
+        Join join = new Join(model, "Join", fork);
+
+        ClosedClass jobclass1 = new ClosedClass(model, "class1", 4, delay);
+
+        delay.setService(jobclass1, new Exp(1.0));
+        queue1.setService(jobclass1, new Exp(2.0));
+        queue2.setService(jobclass1, new Exp(2.0));
+
+        if ("vector".equals(mode)) {
+            fork.setTasksPerLink(jobclass1, 3.0);
+        } else if ("random".equals(mode)) {
+            Matrix pmf = new Matrix(1, 2);
+            pmf.set(0, 0, 0.5);
+            pmf.set(0, 1, 0.5);
+            Matrix pts = new Matrix(1, 2);
+            pts.set(0, 0, 1.0);
+            pts.set(0, 1, 3.0);
+            fork.setTasksPerLinkDistribution(jobclass1, new DiscreteSampler(pmf, pts));
+        } else if ("prob".equals(mode)) {
+            // an uncertain branch needs a Join that does not wait for it
+            join.setStrategy(jobclass1, JoinStrategy.PARTIAL);
+            join.setRequired(jobclass1, 1);
+            fork.setBranchProbability(jobclass1, queue2, 0.5);
+        }
+
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
+        routingMatrix.set(jobclass1, jobclass1, delay, fork, 1.0);
+        routingMatrix.set(jobclass1, jobclass1, fork, queue1, 1.0);
+        routingMatrix.set(jobclass1, jobclass1, fork, queue2, 1.0);
+        routingMatrix.set(jobclass1, jobclass1, queue1, join, 1.0);
+        routingMatrix.set(jobclass1, jobclass1, queue2, join, 1.0);
+        routingMatrix.set(jobclass1, jobclass1, join, delay, 1.0);
+        model.link(routingMatrix);
+
+        return model;
+    }
+
     public static Network fj_basic_closed() {
         Network model = new Network("model");
         Delay delay = new Delay(model, "Delay");

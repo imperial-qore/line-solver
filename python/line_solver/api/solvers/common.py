@@ -108,6 +108,10 @@ def schmidt_binomial_prob_aggr(Q, N, nir, i):
     log_prob = 0.0
 
     for r in range(num_classes):
+        # An open class has no binomial: its term is the caller's product-form
+        # contribution, and int(inf) would raise here.
+        if not np.isfinite(N[r]):
+            continue
         N_r = int(N[r])
         n_r = int(nir[r])
 
@@ -203,14 +207,31 @@ def schmidt_binomial_prob_marg(Q, N, i, r):
 
 def schmidt_binomial_prob_sys(Q, N, state):
     """
-    Compute joint system state probability using binomial approximation.
+    Joint probability of a whole system state under the Schmidt approximation,
+    for the CLOSED classes of the model.
 
-    Assumes independence across stations (product form approximation).
+    A MULTINOMIAL OVER THE STATIONS, not a product of per-station binomials:
+
+        log P = sum_r log(N_r!) + sum_i sum_r [ n_ir log(Q_ir / N_r) - log(n_ir!) ]
+
+    which is `@SolverMVA/getProbSysAggr.m`, and it is what the JAR and the C++
+    port compute. The previous form here multiplied one independent binomial per
+    (station, class), i.e. it carried a (1 - Q_ir/N_r)^(N_r - n_ir) factor at
+    EVERY station for the same jobs, so a two-station closed model with N = 2
+    reported 0.1296 against MATLAB's 0.36. Per station the binomial IS the
+    reference's own approximation -- that is `schmidt_binomial_prob_aggr`, and it
+    is unchanged; only the joint law over all stations is multinomial, because the
+    N_r jobs of a class are distributed among the stations rather than drawn
+    independently at each.
+
+    Reference: Rainer Schmidt, "An approximate MVA algorithm for exponential,
+    class-dependent multiple servers", PEVA 29:245-254, 1997.
 
     Args:
         Q: Mean queue length matrix [stations x classes]
-        N: Population vector [classes]
-        state: State matrix [stations x classes] - number of jobs at each station/class
+        N: Population vector [classes]; a non-finite entry is an OPEN class and
+           is skipped, its terms being the caller's product-form business
+        state: State matrix [stations x classes] - jobs at each station/class
 
     Returns:
         (log_prob, prob): Log probability and probability
@@ -225,42 +246,34 @@ def schmidt_binomial_prob_sys(Q, N, state):
     if state.shape[1] != num_classes:
         raise ValueError(f"State has {state.shape[1]} classes but Q has {num_classes}")
 
+    closed = [r for r in range(num_classes) if np.isfinite(N[r])]
     log_prob = 0.0
+    for r in closed:
+        log_prob += factln(int(N[r]))
 
-    # For each station, compute the binomial probability
     for i in range(state.shape[0]):
-        for r in range(num_classes):
+        for r in closed:
             N_r = int(N[r])
             n_r = int(state[i, r])
-
-            # Check validity
             if n_r < 0 or n_r > N_r:
                 return -np.inf, 0.0
-
+            # A CLASS WITH NO POPULATION CONTRIBUTES NOTHING, and must not reach
+            # the division below. Under class switching N_r = 0 can coexist with
+            # a positive Q[i, r], because the jobs in that class arrived by
+            # switching; log(Q/0) is then +Inf while n_r is 0, and 0*Inf is nan,
+            # which propagates into exp() and makes the whole joint probability
+            # nan. schmidt_binomial_prob_aggr already skips this case.
             if N_r == 0:
-                if n_r == 0:
-                    continue
-                else:
-                    return -np.inf, 0.0
-
-            # Compute probability p = Q[i,r] / N[r]
-            p = Q[i, r] / N_r if N_r > 0 else 0.0
-            p = max(0.0, min(1.0, p))
-
-            # Compute log binomial probability
-            log_binom = nchoosekln(N_r, n_r)
-
-            if n_r > 0:
-                if p <= 0:
-                    return -np.inf, 0.0
-                log_binom += n_r * np.log(p)
-
-            if n_r < N_r:
-                if p >= 1:
-                    return -np.inf, 0.0
-                log_binom += (N_r - n_r) * np.log(1 - p)
-
-            log_prob += log_binom
+                continue
+            log_prob -= factln(n_r)
+            # A zero mean queue length contributes nothing when the state puts no
+            # job there, and makes the state impossible when it does. The
+            # reference guards with `if Q(ist,r)>0` and so leaves the first case
+            # alone; the second is log(0).
+            if Q[i, r] > 0:
+                log_prob += n_r * np.log(Q[i, r] / N_r)
+            elif n_r > 0:
+                return -np.inf, 0.0
 
     prob = exp_stable(log_prob)
     return log_prob, prob

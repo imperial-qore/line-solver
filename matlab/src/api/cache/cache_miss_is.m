@@ -36,8 +36,8 @@
  % <tr><td>lE<td>Log of normalizing constant
  % </table>
 %}
-function [M, MU, MI, pi0, lE] = cache_miss_is(gamma, m, lambda, samples)
-% [M, MU, MI, PI0, LE] = CACHE_MISS_IS(GAMMA, M, LAMBDA, SAMPLES)
+function [M, MU, MI, pi0, lE] = cache_miss_is(gamma, m, lambda, samples, sigma, k)
+% [M, MU, MI, PI0, LE] = CACHE_MISS_IS(GAMMA, M, LAMBDA, SAMPLES, SIGMA, K)
 %
 % Importance sampling estimation of cache miss rates.
 %
@@ -46,6 +46,8 @@ function [M, MU, MI, pi0, lE] = cache_miss_is(gamma, m, lambda, samples)
 %   m       - (1 x h) cache capacity vector
 %   lambda  - (u x n x h+1) arrival rates per user per item per level
 %   samples - (optional) number of Monte Carlo samples, default 1e5
+%   sigma   - (optional) (1 x n) item storage costs (sizes)
+%   k       - (optional) (1 x h) per-list storage cost caps
 %
 % Output:
 %   M   - global miss rate
@@ -57,14 +59,17 @@ function [M, MU, MI, pi0, lE] = cache_miss_is(gamma, m, lambda, samples)
 if nargin < 4 || isempty(samples)
     samples = 1e5;
 end
+if nargin < 6 || isempty(sigma) || isempty(k)
+    sigma = []; k = [];
+end
 
 [n, h] = size(gamma);
 
 % Compute normalizing constant via importance sampling
-[~, lE] = cache_is(gamma, m, samples);
+[~, lE] = cache_is(gamma, m, samples, sigma, k);
 
 % Compute hit probabilities via importance sampling
-pij = cache_prob_is(gamma, m, samples);
+pij = cache_prob_is(gamma, m, samples, sigma, k);
 
 % Extract miss probabilities (first column)
 pi0 = pij(:, 1)';

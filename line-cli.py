@@ -10,7 +10,7 @@ Usage:
     python line-cli.py info
     python line-cli.py list solvers
     python line-cli.py server -p 5863     # Start WebSocket server
-    python line-cli.py rest -p 8080       # Start REST API server
+    python line-cli.py rest -p 8080       # Same server, port 8080 (see cmd_rest)
 """
 
 import argparse
@@ -26,9 +26,9 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 
-__version__ = "3.0.6"
+__version__ = "3.0.7"
 
 # =============================================================================
 # Data Models
@@ -71,6 +71,28 @@ class SolveOptions:
     num_events: int = 1000
     percentiles: str = "50,90,95,99"
     reward_name: Optional[str] = None
+    # Numeric controls. NONE of these could be expressed through this wrapper,
+    # although the JAR has taken every one of them for as long as it has had an
+    # SSA branch: a simulation run from here always used the default 10000
+    # samples, a CTMC could not be given a cutoff, and a transient analysis
+    # answered over a horizon nobody chose.
+    samples: Optional[int] = None
+    cutoff: Optional[float] = None
+    timespan: Optional[str] = None
+    timestep: Optional[float] = None
+    method: Optional[str] = None
+    tol: Optional[float] = None
+    iter_tol: Optional[float] = None
+    iter_max: Optional[int] = None
+    multiserver: Optional[str] = None
+    warmupfrac: Optional[float] = None
+    stage_solver: Optional[str] = None
+    uq_solver: Optional[str] = None
+    busyperiod: Optional[str] = None
+    busyperiod_subnet: Optional[str] = None
+    sens_method: Optional[str] = None
+    sens_scheme: Optional[str] = None
+    sens_step: Optional[float] = None
 
 
 # =============================================================================
@@ -81,62 +103,101 @@ SOLVERS: Dict[str, Dict[str, Any]] = {
     "auto": {
         "name": "Automatic Solver Selection",
         "description": "Automatically selects the best solver for the model",
-        "formats": ["jsim", "jsimg", "jsimw", "lqnx", "xml"],
+        "formats": ["jsim", "jsimg", "jsimw", "lqnx", "xml", "json", "pnml"],
     },
     "ctmc": {
         "name": "Continuous-Time Markov Chain",
         "description": "Exact analysis using CTMC state space exploration",
-        "formats": ["jsim", "jsimg", "jsimw"],
+        "formats": ["jsim", "jsimg", "jsimw", "json", "pnml"],
     },
-    "des": {
-        "name": "Discrete Event Simulation",
-        "description": "Discrete event simulation using SSJ library",
-        "formats": ["jsim", "jsimg", "jsimw"],
+    # THE JAR'S TOKEN IS `ldes`. This entry used to be keyed `des` alone and
+    # the wrapper forwarded the key VERBATIM as `-s des`, which the JAR rejects
+    # -- so the SSJ engine was unreachable from this CLI by any spelling, while
+    # `list solvers` and CLI.md both advertised it. `des` survives as an alias.
+    "ldes": {
+        "name": "Discrete Event Simulation (LDES)",
+        "description": "Discrete event simulation using the SSJ-based LDES engine",
+        "formats": ["jsim", "jsimg", "jsimw", "json", "pnml"],
+    },
+    "ag": {
+        "name": "Agent-Based (RCAT/INAP)",
+        "description": "Product-form reversed-rate analysis of interacting agents",
+        "formats": ["jsim", "jsimg", "jsimw", "json"],
+    },
+    "ba": {
+        "name": "Bound Analysis",
+        "description": "Closed-form bounds on throughput and response time",
+        "formats": ["jsim", "jsimg", "jsimw", "json"],
+    },
+    "env": {
+        "name": "Random Environment",
+        "description": "Blended analysis of a model in a random environment",
+        "formats": ["json"],
+    },
+    "uq": {
+        "name": "Uncertainty Quantification",
+        "description": "Prior-weighted analysis over a design of models (needs --uq-solver)",
+        "formats": ["jsim", "jsimg", "jsimw", "json"],
     },
     "fld": {
         "name": "Fluid/Mean-Field ODE",
         "description": "Approximate analysis using fluid/ODE model",
-        "formats": ["jsim", "jsimg", "jsimw"],
+        "formats": ["jsim", "jsimg", "jsimw", "json"],
     },
     "jmt": {
         "name": "Java Modelling Tools",
         "description": "Discrete event simulation using JMT",
-        "formats": ["jsim", "jsimg", "jsimw"],
+        "formats": ["jsim", "jsimg", "jsimw", "json", "pnml"],
     },
     "ln": {
         "name": "Layered Network",
-        "description": "Solver for layered queueing networks",
-        "formats": ["lqnx", "xml"],
+        "description": "Solver for layered queueing networks (MVA layers)",
+        "formats": ["lqnx", "xml", "json"],
+    },
+    "ln.mva": {
+        "name": "Layered Network (MVA layers)",
+        "description": "Layered solver with the layer fixed point solved by MVA",
+        "formats": ["lqnx", "xml", "json"],
+    },
+    "ln.nc": {
+        "name": "Layered Network (NC layers)",
+        "description": "Layered solver with the layer fixed point solved by NC",
+        "formats": ["lqnx", "xml", "json"],
+    },
+    "ln.comom": {
+        "name": "Layered Network (CoMoM layers)",
+        "description": "Layered solver with NC/CoMoM layers",
+        "formats": ["lqnx", "xml", "json"],
     },
     "lqns": {
         "name": "LQN Solver",
         "description": "External LQNS solver integration",
-        "formats": ["lqnx", "xml"],
+        "formats": ["lqnx", "xml", "json"],
     },
     "mam": {
         "name": "Matrix Analytic Methods",
         "description": "Analysis using matrix analytic methods (supports Fork-Join percentiles)",
-        "formats": ["jsim", "jsimg", "jsimw"],
+        "formats": ["jsim", "jsimg", "jsimw", "json"],
     },
     "mva": {
         "name": "Mean Value Analysis",
         "description": "Analytical solver using Mean Value Analysis algorithm",
-        "formats": ["jsim", "jsimg", "jsimw"],
+        "formats": ["jsim", "jsimg", "jsimw", "json"],
     },
     "nc": {
         "name": "Normalizing Constant",
         "description": "Exact analysis using normalizing constant computation",
-        "formats": ["jsim", "jsimg", "jsimw"],
+        "formats": ["jsim", "jsimg", "jsimw", "json"],
     },
     "qns": {
         "name": "QNS",
         "description": "External QNSolver integration",
-        "formats": ["jsim", "jsimg", "jsimw"],
+        "formats": ["jsim", "jsimg", "jsimw", "json"],
     },
     "ssa": {
         "name": "Stochastic Simulation Algorithm",
         "description": "Stochastic simulation of the model",
-        "formats": ["jsim", "jsimg", "jsimw"],
+        "formats": ["jsim", "jsimg", "jsimw", "json", "pnml"],
     },
 }
 
@@ -144,6 +205,10 @@ SOLVERS: Dict[str, Dict[str, Any]] = {
 SOLVER_ALIASES: Dict[str, str] = {
     "fluid": "fld",
     "qnsolver": "qns",
+    # `des` was this wrapper's ONLY spelling of the LDES engine and was
+    # forwarded verbatim to a JAR that knows it as `ldes`. Kept as an alias so
+    # existing command lines still parse, now resolving to a token that works.
+    "des": "ldes",
 }
 
 
@@ -152,7 +217,7 @@ def resolve_solver(solver: str) -> str:
     return SOLVER_ALIASES.get(solver.lower(), solver.lower())
 
 
-def auto_select_solver(input_format: str) -> str:
+def auto_select_solver(input_format: str, model_file: Optional[str] = None) -> str:
     """Select an appropriate solver based on input format when 'auto' is specified.
 
     Returns a concrete solver name since the JAR doesn't support 'auto'.
@@ -160,7 +225,24 @@ def auto_select_solver(input_format: str) -> str:
     # For LQN models, use the layered network solver
     if input_format in ("lqnx", "xml"):
         return "ln"
-    # For JMT formats, use MVA as the default analytical solver
+    # A place/transition net needs a solver whose feature set declares
+    # Transition; MVA cannot answer for one, so `auto` must not resolve there.
+    if input_format == "pnml":
+        return "ctmc"
+    # A portable JSON model carries a Network, a LayeredNetwork or an
+    # Environment; peek at the declared model type so each is routed to the
+    # solver that reads it. An Environment accepts `env` and nothing else.
+    if input_format == "json" and model_file is not None:
+        try:
+            with open(model_file, "r") as fh:
+                model_type = (json.load(fh).get("model") or {}).get("type")
+            if model_type == "LayeredNetwork":
+                return "ln"
+            if model_type == "Environment":
+                return "env"
+        except (OSError, ValueError):
+            pass
+    # For JMT formats and Network JSON, use MVA as the default analytical solver
     return "mva"
 
 
@@ -189,6 +271,19 @@ INPUT_FORMATS: Dict[str, Dict[str, Any]] = {
         "name": "XML",
         "description": "Generic XML model format",
         "extensions": [".xml"],
+    },
+    "json": {
+        "name": "JSON",
+        "description": "LINE portable model format (line-model.schema.json)",
+        "extensions": [".json"],
+    },
+    # The JAR has read PNML since the place/transition import landed; this
+    # wrapper simply never listed it, so a .pnml path could not be auto-detected
+    # and `-i pnml` was not offered.
+    "pnml": {
+        "name": "PNML",
+        "description": "Place/transition net (ISO/IEC 15909-2)",
+        "extensions": [".pnml"],
     },
 }
 
@@ -220,6 +315,18 @@ ANALYSIS_TYPES: Dict[str, str] = {
     "chain": "Chain-level averages",
     "node": "Node-level averages",
     "nodechain": "Node-chain level averages",
+    # Cache and the other station-class tables the JAR publishes beside the
+    # AvgTable. All were reachable from the JAR and absent from this table, so
+    # the wrapper refused analyses its own back end serves.
+    "cache": "Cache hit/miss metrics",
+    "item": "Per-item cache metrics",
+    "orbit": "Retrial orbit metrics",
+    "loss": "Class-level loss metrics",
+    "region-loss": "Finite-capacity region loss metrics",
+    "deadline": "Deadline-miss metrics (EDD/EDF)",
+    "normconst": "Log normalizing constant (nc, mva)",
+    "busyperiod": "Subnetwork busy period (nc, ldes; see --busyperiod*)",
+    "sens": "Sensitivity of the means to the service demands",
     # Distribution
     "cdf-respt": "Response time CDF",
     "cdf-passt": "Passage time CDF",
@@ -234,6 +341,7 @@ ANALYSIS_TYPES: Dict[str, str] = {
     "prob-marg": "Marginal state probability (requires --node, --class-idx)",
     "prob-sys": "System state probability",
     "prob-sys-aggr": "Aggregated system state probability",
+    "prob-sys-marg": "System marginal probability (requires --state)",
     # Sampling (SSA only)
     "sample": "Sample node state trajectory (requires --node)",
     "sample-aggr": "Sample aggregated node state (requires --node)",
@@ -243,9 +351,17 @@ ANALYSIS_TYPES: Dict[str, str] = {
     "reward": "Compute reward metrics",
     "reward-steady": "Steady-state reward",
     "reward-value": "Reward value function (requires --reward-name)",
+    # Solver-internal structures
+    "generator": "CTMC infinitesimal generator and state space",
+    "statevec": "Fluid ODE state vector",
+    "moments": "Second-order moment-closure report (fld)",
+    "interval": "Design-point envelope (uq)",
 }
 
 # Analysis types that require specific solvers
+# KEPT IN STEP WITH `LineCLI.ANALYSIS_SOLVER_COMPAT`. A narrower gate here is
+# not a conservative one -- it refuses, before the JAR is even started, a solve
+# the JAR performs.
 ANALYSIS_SOLVER_COMPAT: Dict[str, List[str]] = {
     "sample": ["ssa"],
     "sample-aggr": ["ssa"],
@@ -256,10 +372,17 @@ ANALYSIS_SOLVER_COMPAT: Dict[str, List[str]] = {
     "reward-value": ["ctmc"],
     "perct-respt": ["mam"],
     "prob": ["ctmc", "ssa"],
-    "prob-aggr": ["ctmc", "ssa"],
-    "prob-marg": ["ctmc", "ssa"],
+    "prob-aggr": ["ctmc", "ssa", "fld"],
+    "prob-marg": ["ctmc", "ssa", "mva", "nc", "mam"],
     "prob-sys": ["ctmc", "ssa"],
     "prob-sys-aggr": ["ctmc", "ssa"],
+    "prob-sys-marg": ["ctmc", "ssa", "mva", "nc", "mam"],
+    "normconst": ["nc", "mva"],
+    "busyperiod": ["nc", "ldes"],
+    "generator": ["ctmc"],
+    "statevec": ["fld"],
+    "moments": ["fld"],
+    "interval": ["uq"],
 }
 
 # Analysis types that require node index
@@ -277,6 +400,8 @@ FORMAT_EXTENSIONS: Dict[str, str] = {
     ".jsim": "jsim",
     ".lqnx": "lqnx",
     ".xml": "xml",
+    ".json": "json",
+    ".pnml": "pnml",
 }
 
 # =============================================================================
@@ -434,39 +559,35 @@ def _parse_avg_table(lines: List[str]) -> List[MetricRow]:
     if header_line is None:
         return result
 
-    header_pattern = re.compile(r'(\S+)')
-    headers = header_pattern.findall(header_line)
+    body_lines = []
+    for line in lines[header_idx + 1:]:
+        if not line.strip() or line.strip().startswith("==="):
+            break
+        if re.match(r'^[\-=]+$', line.strip()):
+            continue
+        body_lines.append(line)
+
+    bounds = _column_bounds([header_line] + body_lines)
+    headers = [header_line[a:b].strip() for a, b in bounds]
 
     if len(headers) < 3:
         return result
 
     metric_names = headers[2:]
 
-    col_positions = []
-    pos = 0
-    for header in headers:
-        idx = header_line.find(header, pos)
-        col_positions.append(idx)
-        pos = idx + len(header)
-
-    for line in lines[header_idx + 1:]:
-        if re.match(r'^[\-=]+$', line.strip()):
-            continue
-        if not line.strip():
-            continue
-
-        parts = _parse_fixed_width_line(line, col_positions, len(headers))
+    for line in body_lines:
+        parts = [line[a:b].strip() for a, b in bounds]
 
         if len(parts) >= 3:
-            station = parts[0].strip()
-            job_class = parts[1].strip()
+            station = parts[0]
+            job_class = parts[1]
 
             if station.lower() == "station" or not station:
                 continue
 
             for i, metric_name in enumerate(metric_names):
                 if i + 2 < len(parts):
-                    value_str = parts[i + 2].strip()
+                    value_str = parts[i + 2]
                     try:
                         value = _parse_float(value_str)
                         result.append(MetricRow(
@@ -480,6 +601,38 @@ def _parse_avg_table(lines: List[str]) -> List[MetricRow]:
                         continue
 
     return result
+
+
+def _column_bounds(lines: List[str]) -> List[Tuple[int, int]]:
+    """Column spans of a whitespace-aligned table.
+
+    The JAR pads every column to a common width and right-aligns the numeric
+    ones, header included, so a numeric value can start left of its header.
+    Taking the spans from the header text alone therefore cuts values in half;
+    the separators are the runs of at least two positions that are blank in
+    every line of the table.
+    """
+    width = max(len(line) for line in lines) if lines else 0
+    padded = [line.ljust(width) for line in lines]
+    blank = [all(line[i] == ' ' for line in padded) for i in range(width)]
+
+    bounds: List[Tuple[int, int]] = []
+    start = 0
+    i = 0
+    while i < width:
+        if not blank[i]:
+            i += 1
+            continue
+        run = i
+        while run < width and blank[run]:
+            run += 1
+        if run - i >= 2 and i > start:
+            bounds.append((start, i))
+            start = run
+        i = run
+    if start < width:
+        bounds.append((start, width))
+    return bounds
 
 
 def _parse_sys_table(lines: List[str]) -> List[MetricRow]:
@@ -764,6 +917,30 @@ class JarRunner:
         if options.reward_name is not None:
             cmd.extend(["--reward-name", options.reward_name])
 
+        # Straight pass-through: the flag names are the JAR's own, so this table
+        # is the whole of the mapping and a flag added there needs one row here.
+        for _flag, _value in (
+            ("--samples", options.samples),
+            ("--cutoff", options.cutoff),
+            ("--timespan", options.timespan),
+            ("--timestep", options.timestep),
+            ("--method", options.method),
+            ("--tol", options.tol),
+            ("--iter_tol", options.iter_tol),
+            ("--iter_max", options.iter_max),
+            ("--multiserver", options.multiserver),
+            ("--warmupfrac", options.warmupfrac),
+            ("--stage-solver", options.stage_solver),
+            ("--uq-solver", options.uq_solver),
+            ("--busyperiod", options.busyperiod),
+            ("--busyperiod-subnet", options.busyperiod_subnet),
+            ("--sens-method", options.sens_method),
+            ("--sens-scheme", options.sens_scheme),
+            ("--sens-step", options.sens_step),
+        ):
+            if _value is not None:
+                cmd.extend([_flag, str(_value)])
+
         return cmd
 
     def solve(self, model_path: Path, options: SolveOptions) -> SolveResult:
@@ -886,6 +1063,30 @@ class JarRunner:
         if options.reward_name is not None:
             cmd.extend(["--reward-name", options.reward_name])
 
+        # Straight pass-through: the flag names are the JAR's own, so this table
+        # is the whole of the mapping and a flag added there needs one row here.
+        for _flag, _value in (
+            ("--samples", options.samples),
+            ("--cutoff", options.cutoff),
+            ("--timespan", options.timespan),
+            ("--timestep", options.timestep),
+            ("--method", options.method),
+            ("--tol", options.tol),
+            ("--iter_tol", options.iter_tol),
+            ("--iter_max", options.iter_max),
+            ("--multiserver", options.multiserver),
+            ("--warmupfrac", options.warmupfrac),
+            ("--stage-solver", options.stage_solver),
+            ("--uq-solver", options.uq_solver),
+            ("--busyperiod", options.busyperiod),
+            ("--busyperiod-subnet", options.busyperiod_subnet),
+            ("--sens-method", options.sens_method),
+            ("--sens-scheme", options.sens_scheme),
+            ("--sens-step", options.sens_step),
+        ):
+            if _value is not None:
+                cmd.extend([_flag, str(_value)])
+
         # Warn user if JMT solver may need to download JMT.jar
         if options.solver == "jmt":
             jmt_paths = [
@@ -958,9 +1159,10 @@ class JarRunner:
         )
 
     def start_rest_server(self, port: int = 8080) -> subprocess.Popen:
-        """Start LINE in REST API server mode.
+        """Start the WebSocket server behind the 'rest' subcommand.
 
-        Note: The JAR uses WebSocket server mode (-p) for both WebSocket and REST.
+        The JAR has no HTTP mode, so this is start_server under another name; the
+        HTTP API is the separate rest-api module (jline.rest.LineRestServer).
         """
         self._validate_jar()
         self._validate_java()
@@ -1045,6 +1247,8 @@ def display_results(result: SolveResult, show_avg: bool = True, show_sys: bool =
         print(f"Error: {result.error_message or 'Unknown error'}", file=sys.stderr)
         return
 
+    printed = False
+
     if show_avg and result.avg_table:
         headers = ["Station", "Class", "Metric", "Value", "Unit"]
         rows = []
@@ -1052,6 +1256,7 @@ def display_results(result: SolveResult, show_avg: bool = True, show_sys: bool =
             value_str = f"{row.value:.6g}" if isinstance(row.value, float) else str(row.value)
             rows.append([row.station, row.job_class, row.metric, value_str, row.unit])
         print_table("Average Metrics", headers, rows)
+        printed = True
 
     if show_sys and result.sys_table:
         headers = ["Station", "Class", "Metric", "Value", "Unit"]
@@ -1060,6 +1265,25 @@ def display_results(result: SolveResult, show_avg: bool = True, show_sys: bool =
             value_str = f"{row.value:.6g}" if isinstance(row.value, float) else str(row.value)
             rows.append([row.station, row.job_class, row.metric, value_str, row.unit])
         print_table("System Metrics", headers, rows)
+        printed = True
+
+    # AN ANALYSIS THIS FORMATTER CANNOT RE-PARSE MUST STILL BE SHOWN. The two
+    # parsers above know the AvgTable and AvgSysTable layouts and nothing else,
+    # so every other analysis -- `cache`, `item`, `orbit`, `normconst`,
+    # `busyperiod`, `sens`, the probability and reward families -- rendered as an
+    # empty screen while `-o raw` showed the JAR had answered in full. Echoing
+    # the solver's own text is the honest fallback: the wrapper does not
+    # understand the section, so it does not reformat it.
+    #
+    # THE CONDITION IS "NOTHING WAS PRINTED", not "the tables are empty". Those
+    # are different: `-a sens` produces a table whose header carries Station and
+    # JobClass, so `_parse_avg_table` claims it, while `show_avg` is false for
+    # any analysis that is not avg/sys/all -- so the rows were parsed, then
+    # suppressed, and an emptiness test on the tables would have stayed silent.
+    if not printed and result.raw_output:
+        text = result.raw_output.strip()
+        if text:
+            print(text)
 
     if result.execution_time > 0:
         print(f"\nExecution time: {result.execution_time:.3f}s")
@@ -1154,7 +1378,7 @@ def cmd_solve(args: argparse.Namespace) -> int:
             # Default to mva for unknown formats
             solver = "mva"
         else:
-            solver = auto_select_solver(input_format)
+            solver = auto_select_solver(input_format, args.model_file)
 
     # Validate analysis types
     try:
@@ -1195,6 +1419,23 @@ def cmd_solve(args: argparse.Namespace) -> int:
             num_events=args.events,
             percentiles=args.percentiles,
             reward_name=args.reward_name,
+            samples=args.samples,
+            cutoff=args.cutoff,
+            timespan=args.timespan,
+            timestep=args.timestep,
+            method=args.method,
+            tol=args.tol,
+            iter_tol=args.iter_tol,
+            iter_max=args.iter_max,
+            multiserver=args.multiserver,
+            warmupfrac=args.warmupfrac,
+            stage_solver=args.stage_solver,
+            uq_solver=args.uq_solver,
+            busyperiod=args.busyperiod,
+            busyperiod_subnet=args.busyperiod_subnet,
+            sens_method=args.sens_method,
+            sens_scheme=args.sens_scheme,
+            sens_step=args.sens_step,
         )
 
         if not args.quiet:
@@ -1237,6 +1478,23 @@ def cmd_solve(args: argparse.Namespace) -> int:
             num_events=args.events,
             percentiles=args.percentiles,
             reward_name=args.reward_name,
+            samples=args.samples,
+            cutoff=args.cutoff,
+            timespan=args.timespan,
+            timestep=args.timestep,
+            method=args.method,
+            tol=args.tol,
+            iter_tol=args.iter_tol,
+            iter_max=args.iter_max,
+            multiserver=args.multiserver,
+            warmupfrac=args.warmupfrac,
+            stage_solver=args.stage_solver,
+            uq_solver=args.uq_solver,
+            busyperiod=args.busyperiod,
+            busyperiod_subnet=args.busyperiod_subnet,
+            sens_method=args.sens_method,
+            sens_scheme=args.sens_scheme,
+            sens_step=args.sens_step,
         )
 
         if not args.quiet:
@@ -1284,6 +1542,18 @@ def cmd_solve(args: argparse.Namespace) -> int:
                 }
                 for r in result.sys_table
             ]
+        # An analysis with no avg/sys table of its own -- `cache`, `sens`,
+        # `busyperiod`, the probability and reward families -- would otherwise
+        # be reported as a bare {"success": true} envelope with the answer
+        # discarded. The JAR was already asked for -o json, so its own document
+        # IS the result and rides under `solver`.
+        if "avgTable" not in output_data and "sysTable" not in output_data:
+            raw = (result.raw_output or "").strip()
+            if raw:
+                try:
+                    output_data["solver"] = json.loads(raw[raw.index("{"):])
+                except (ValueError, json.JSONDecodeError):
+                    output_data["solverOutput"] = raw
         output_content = json.dumps(output_data, indent=2)
 
     elif args.output_format == "csv":
@@ -1532,7 +1802,7 @@ def cmd_server(args: argparse.Namespace) -> int:
 
 
 def cmd_rest(args: argparse.Namespace) -> int:
-    """Execute the rest command to start REST API server."""
+    """Start the WebSocket server on port 8080; the HTTP API is the rest-api module."""
     config = load_config()
 
     try:
@@ -1541,7 +1811,7 @@ def cmd_rest(args: argparse.Namespace) -> int:
         print(f"Error: {e}", file=sys.stderr)
         return 1
 
-    print(f"Starting LINE REST API server...")
+    print(f"Starting LINE WebSocket server...")
     print(f"  Port: {args.port}")
     print()
 
@@ -1551,17 +1821,19 @@ def cmd_rest(args: argparse.Namespace) -> int:
         print(f"Error: {e}", file=sys.stderr)
         return 1
 
-    print(f"REST API server started on http://localhost:{args.port}")
+    print(f"WebSocket server started on ws://localhost:{args.port}")
     print("Press Ctrl+C to stop the server")
     print()
-    print("Available endpoints:")
-    print(f"  POST http://localhost:{args.port}/solve  - Solve a model")
-    print(f"  GET  http://localhost:{args.port}/health - Health check")
+    print("This subcommand is an alias of 'server'; it does not serve HTTP.")
+    print("For the HTTP API, build and run the rest-api module:")
+    print("  cd io/rest-api && mvn clean package")
+    print("  java -cp target/line-rest.jar:common/jline.jar \\")
+    print(f"       jline.rest.LineRestServer --port {args.port}")
     print()
 
     def signal_handler(sig, frame):
         print()
-        print("Shutting down REST API server...")
+        print("Shutting down WebSocket server...")
         process.terminate()
         try:
             process.wait(timeout=5)
@@ -1584,7 +1856,7 @@ def cmd_rest(args: argparse.Namespace) -> int:
         returncode = process.returncode
         if returncode != 0:
             stderr = process.stderr.read() if process.stderr else ""
-            print(f"Error: REST API server exited with code {returncode}", file=sys.stderr)
+            print(f"Error: WebSocket server exited with code {returncode}", file=sys.stderr)
             if stderr:
                 print(stderr, file=sys.stderr)
             return returncode
@@ -1685,6 +1957,39 @@ def main() -> int:
         action="store_true",
         help="Enable verbose output",
     )
+    # ---- Numeric controls, forwarded verbatim to the JAR -----------------
+    solve_parser.add_argument("--samples", type=int,
+        help="Simulation samples / Monte Carlo draws (ssa, ldes, jmt, uq)")
+    solve_parser.add_argument("--cutoff", type=float,
+        help="State-space cutoff per open class (ctmc, ssa)")
+    solve_parser.add_argument("--timespan", "--tspan", dest="timespan", type=str,
+        help="Time span of the transient analyses, e.g. --timespan 0,100")
+    solve_parser.add_argument("--timestep", type=float,
+        help="Fixed transient output step (default: the adaptive ODE grid)")
+    solve_parser.add_argument("--method", type=str,
+        help="Algorithm within the chosen solver")
+    solve_parser.add_argument("--tol", type=float, help="General solver tolerance")
+    solve_parser.add_argument("--iter_tol", type=float,
+        help="Iteration convergence tolerance")
+    solve_parser.add_argument("--iter_max", type=int, help="Maximum iterations")
+    solve_parser.add_argument("--multiserver", type=str,
+        help="AMVA multiserver rule (seidmann, softmin, ...)")
+    solve_parser.add_argument("--warmupfrac", type=float,
+        help="Leading fraction of a simulated path discarded before the means")
+    solve_parser.add_argument("--stage-solver", type=str,
+        help="Solver run at each stage of an Environment ('fluid' or 'ctmc')")
+    solve_parser.add_argument("--uq-solver", type=str,
+        help="Engine SolverUQ runs at each design point; required by -s uq")
+    solve_parser.add_argument("--busyperiod", type=str, metavar="N[,N...]",
+        help="Orders of -a busyperiod (default: 1)")
+    solve_parser.add_argument("--busyperiod-subnet", type=str, metavar="I[,I...]",
+        help="0-based stations forming the -a busyperiod subnetwork (required)")
+    solve_parser.add_argument("--sens-method", type=str,
+        help="Differentiation of -a sens")
+    solve_parser.add_argument("--sens-scheme", type=str,
+        help="Finite-difference scheme of -a sens")
+    solve_parser.add_argument("--sens-step", type=float,
+        help="Finite-difference step of -a sens")
     solve_parser.add_argument(
         "-q", "--quiet",
         action="store_true",
@@ -1720,13 +2025,16 @@ def main() -> int:
         help="Host address to bind (default: localhost)",
     )
 
-    # REST API command
-    rest_parser = subparsers.add_parser("rest", help="Start LINE REST API server")
+    # REST command (alias of server; the HTTP API lives in io/rest-api/)
+    rest_parser = subparsers.add_parser(
+        "rest",
+        help="Start the WebSocket server on port 8080 (alias of server)",
+    )
     rest_parser.add_argument(
         "-p", "--port",
         type=int,
         default=8080,
-        help="REST API port to listen on (default: 8080)",
+        help="WebSocket port to listen on (default: 8080)",
     )
 
     args = parser.parse_args()

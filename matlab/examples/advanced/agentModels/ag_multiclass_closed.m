@@ -1,7 +1,7 @@
-%% Multiclass Closed Network with MAM
+%% Multiclass Closed Network with AG
 %
-% This example demonstrates MAM with RCAT methods on a multiclass closed queueing
-% network. The RCAT algorithm handles multiple job classes by creating
+% This example demonstrates SolverAG, the agent-based solver, on a multiclass closed queueing
+% network. The solver handles multiple job classes by creating
 % separate processes for each (station, class) pair.
 %
 % Copyright (c) 2012-2025, Imperial College London
@@ -37,8 +37,8 @@ P{1,1} = Network.serialRouting({queue1, queue2});
 P{2,2} = Network.serialRouting({queue1, queue2});
 model.link(P);
 
-%% Solve with MAM using INAP method (default)
-solverINAP = MAM(model, 'method', 'inap');
+%% Solve with AG using INAP method (default)
+solverINAP = AG(model, 'method', 'inap');
 avgTableINAP = solverINAP.getAvgTable()
 
 %% Solve with MVA for comparison

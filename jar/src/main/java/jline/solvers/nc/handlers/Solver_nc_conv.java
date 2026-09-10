@@ -9,6 +9,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import jline.io.Ret;
+import jline.api.sn.SnDeaggregateChainResults;
+import jline.api.sn.SnGetDemandsChain;
 import jline.util.SerializableFunction;
 import jline.api.pfqn.ld.CdPeakScaling;
 import jline.api.pfqn.ld.Pfqn_conv;
@@ -37,41 +40,24 @@ public final class Solver_nc_conv {
         final int iter = 1;
 
         int M = sn.nstations;
-        int K = sn.nclasses;
         Matrix nservers = sn.nservers;
 
-        // Compute V = cellsum(sn.visits)
-        Matrix V = null;
-        for (int i = 0; i < sn.visits.size(); i++) {
-            Matrix vi = sn.visits.get(i);
-            if (vi != null) {
-                if (V == null) {
-                    V = vi.copy();
-                } else {
-                    V = V.add(1.0, vi);
-                }
-            }
-        }
-        if (V == null) {
-            V = new Matrix(M, K);
-        }
-
-        // ST = 1 / rates
-        Matrix ST = new Matrix(M, K);
-        for (int i = 0; i < M; i++) {
-            for (int k = 0; k < K; k++) {
-                double rate = sn.rates.get(i, k);
-                ST.set(i, k, (Double.isNaN(rate) || rate == 0.0) ? 0.0 : 1.0 / rate);
-            }
-        }
-
-        // Demands
-        Matrix Ldemand = new Matrix(M, K);
-        for (int i = 0; i < M; i++) {
-            for (int k = 0; k < K; k++) {
-                Ldemand.set(i, k, V.get(i, k) * ST.get(i, k));
-            }
-        }
+        // The convolution runs on CHAINS, not classes: a class-switching model
+        // splits one circulating population across several classes, so sn.njobs
+        // has zeros in the classes that hold no reference jobs and the
+        // class-level recursion charges those stations nothing at all. Every
+        // other closed NC and MVA path aggregates the same way and deaggregates
+        // at the end.
+        Ret.snGetDemands chainReturn = SnGetDemandsChain.snGetDemandsChain(sn);
+        Matrix Lchain = chainReturn.Dchain;
+        Matrix STchain = chainReturn.STchain;
+        Matrix Vchain = chainReturn.Vchain;
+        Matrix alpha = chainReturn.alpha;
+        Matrix Nchain = chainReturn.Nchain;
+        int K = sn.nchains;
+        Matrix V = Vchain;
+        Matrix ST = STchain;
+        Matrix Ldemand = Lchain;
 
         // Separate delay and queue stations
         boolean[] isDelay = new boolean[M];
@@ -105,10 +91,10 @@ public final class Solver_nc_conv {
             }
         }
 
-        // NK: population vector
+        // NK: population vector, per chain
         int[] NK = new int[K];
         for (int k = 0; k < K; k++) {
-            NK[k] = (int) sn.njobs.get(0, k);
+            NK[k] = (int) Math.round(Nchain.get(k));
         }
         // Class-dependence functions beta_{i,r}(n) for the queue stations. Each
         // takes the per-class population vector at its station and returns either
@@ -270,7 +256,9 @@ public final class Solver_nc_conv {
             }
         }
 
-        // Remaining metrics
+        // Remaining metrics. RN is the PER-VISIT response time Qchain/Tchain: the
+        // deaggregation below multiplies the visit ratio back in, so dividing by
+        // Xchain would count it twice
         Matrix RN = new Matrix(M, K);
         for (int i = 0; i < M; i++) {
             for (int k = 0; k < K; k++) {
@@ -308,28 +296,42 @@ public final class Solver_nc_conv {
                 // peaks declared at the station (a missing one contributes 1).
                 Matrix cdPeakVec = (hasCd && sn.cdscalingpeak != null) ? sn.cdscalingpeak.get(st) : null;
                 Matrix jdPeakVec = (hasJd && sn.jdscalingpeak != null) ? sn.jdscalingpeak.get(st) : null;
-                for (int k = 0; k < K; k++) {
+                for (int c = 0; c < K; c++) {
+                    // The peaks are declared per class, so the chain takes the
+                    // largest peak among its classes: utilization is a
+                    // per-station quantity with one normalizer.
                     double bmax = 1.0;
-                    if (cdPeakVec != null) bmax *= cdPeakVec.get(0, k);
-                    if (jdPeakVec != null) bmax *= jdPeakVec.get(0, k);
+                    if (cdPeakVec != null) bmax *= chainPeak(cdPeakVec, sn.chains, c);
+                    if (jdPeakVec != null) bmax *= chainPeak(jdPeakVec, sn.chains, c);
                     if (bmax > 0) {
-                        UN.set(ist, k, UN.get(ist, k) / bmax);
+                        UN.set(ist, c, UN.get(ist, c) / bmax);
                     }
                 }
             }
         }
 
-        Matrix X = new Matrix(1, K);
-        for (int k = 0; k < K; k++) X.set(0, k, XN[k]);
+        Matrix Xchain = new Matrix(1, K);
+        for (int k = 0; k < K; k++) Xchain.set(0, k, XN[k]);
 
-        Matrix CN = new Matrix(1, K);
-        for (int k = 0; k < K; k++) {
-            CN.set(0, k, (XN[k] != 0.0) ? (double) NK[k] / XN[k] : 0.0);
-        }
+        // Deaggregate the chain solution onto the classes
+        Ret.snDeaggregateChainResults deagg = SnDeaggregateChainResults.snDeaggregateChainResults(
+                sn, Lchain, null, STchain, Vchain, alpha, null, UN, RN, TN, null, Xchain);
 
         double runtime = (System.nanoTime() - startTime) / 1e9;
 
-        return new SolverNC.SolverNCLDReturn(QN, UN, RN, TN, CN, X, lG, runtime, iter, method);
+        return new SolverNC.SolverNCLDReturn(deagg.Q, deagg.U, deagg.R, deagg.T, deagg.C, deagg.X,
+                lG, runtime, iter, method);
+    }
+
+    /** Largest declared peak among the classes of chain c, the station's single normalizer. */
+    private static double chainPeak(Matrix peakPerClass, Matrix chains, int c) {
+        double bmax = 0.0;
+        for (int r = 0; r < chains.getNumCols(); r++) {
+            if (chains.get(c, r) > 0) {
+                bmax = Math.max(bmax, peakPerClass.get(0, r));
+            }
+        }
+        return bmax > 0 ? bmax : 1.0;
     }
 
     // The class-dependence lattice peak now lives in

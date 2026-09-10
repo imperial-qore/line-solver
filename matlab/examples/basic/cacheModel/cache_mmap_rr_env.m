@@ -58,7 +58,7 @@ hitLDES = cacheTrue.getHitRatio;
 
 %% (2) CTMC - exact solution of the true system
 trueModel.reset;
-solver{2} = CTMC(trueModel, 'keep', false, 'cutoff', 1);
+solver{2} = CTMC(trueModel, 'exact', 'keep', false, 'cutoff', 1);
 AvgTable{2} = solver{2}.getAvgNodeTable; AvgTable{2}
 hitCTMC = cacheTrue.getHitRatio;
 
@@ -74,7 +74,7 @@ env.addTransition('Phase2', 'Phase1', Exp(-D0(2,2) - (D11(2,2)+D12(2,2)))); % 0.
 env.init();
 env.getStageTable()
 
-solverFactory = @(mdl) CTMC(mdl, 'keep', false, 'cutoff', 1);
+solverFactory = @(mdl) CTMC(mdl, 'exact', 'keep', false, 'cutoff', 1);
 
 % (3a) ENV method 'avg' - fast-environment limit (rate-averaged single model)
 optAvg = Solver.defaultOptions; optAvg.method = 'avg'; optAvg.verbose = false;
@@ -91,7 +91,7 @@ hitDEC = solver{4}.ensemble{1}.getNodeByName('Cache').getHitRatio;
 % (3c) ENV method 'blend' - state-vector coupling: carries the cache-state
 % distribution across phase switches and averages each phase's sojourn-weighted
 % distribution. Needs a finite-timespan CTMC inner solver.
-blendFactory = @(mdl) CTMC(mdl, 'keep', false, 'cutoff', 1, 'timespan', [0, 1e3]);
+blendFactory = @(mdl) CTMC(mdl, 'exact', 'keep', false, 'cutoff', 1, 'timespan', [0, 1e3]);
 optBlend = Solver.defaultOptions; optBlend.method = 'blend'; optBlend.verbose = false;
 optBlend.iter_max = 100; optBlend.iter_tol = 1e-4;
 solver{5} = ENV(env, blendFactory, optBlend);

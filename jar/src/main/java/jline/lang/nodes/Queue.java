@@ -57,13 +57,13 @@ import static jline.util.Utils.isInf;
 public class Queue extends ServiceStation implements Serializable {
 
     /**
-     * Setup time distributions for function tasks (cold start time).
+     * Per-class setup time distributions (server activation time).
      * Maps job classes to their setup time distributions.
      */
     protected Map<JobClass, Distribution> setupTimes;
     
     /**
-     * Delay-off time distributions for function tasks (teardown time).
+     * Per-class delay-off time distributions (idle time before power-off).
      * Maps job classes to their delay-off time distributions.
      */
     protected Map<JobClass, Distribution> delayOffTimes;
@@ -91,6 +91,12 @@ public class Queue extends ServiceStation implements Serializable {
      * Maps ServerType -> JobClass -> Distribution.
      */
     private Map<ServerType, Map<JobClass, Distribution>> heteroServiceDistributions;
+
+    /**
+     * Number of servers a job seizes for the whole of its service, per class.
+     * An absent entry means one server, the homogeneous default.
+     */
+    private Map<JobClass, Integer> serverParallelism = new HashMap<JobClass, Integer>();
 
     /**
      * Set of class indices with immediate feedback enabled.
@@ -303,7 +309,10 @@ public class Queue extends ServiceStation implements Serializable {
         if (this.schedStrategy != SchedStrategy.PAS && this.schedStrategy != SchedStrategy.OI) {
             throw new RuntimeException("setServiceRateFunction is only applicable to PAS (pass-and-swap) and OI (order-independent) queues.");
         }
+        // svcRateFun is copied into QueueNodeParam by refreshLocalVars, so a cached
+        // struct would keep the previous mu(c).
         this.svcRateFun = muFun;
+        invalidateStruct();
         List<JobClass> classes = this.model.getClasses();
         for (int r = 0; r < classes.size(); r++) {
             Matrix single = new Matrix(1, 1);
@@ -431,6 +440,148 @@ public class Queue extends ServiceStation implements Serializable {
         return res;
     }
 
+    /** Result of {@link #checkRateMonotonicity}. */
+    public static class MonoCheckResult {
+        public boolean ok = true;
+        public int[] badc = null;
+        public int badr = -1;
+        public boolean partial = false;
+    }
+
+    /**
+     * Checks the order-independence (OI) condition (1) on the service rate
+     * mu(c): the per-job rates must be non-negative, mu(c[:j]) &gt;= mu(c[:j-1])
+     * for every microstate and position j.
+     *
+     * <p>A rate can be permutation-invariant and still fail to parameterize an
+     * OI queue. Single-server processor sharing with class-dependent rates,
+     * mu(c) = (sum_j mu_{c_j}) / n, is the standard trap: it is flatly
+     * invariant under permutations, yet as soon as two classes have different
+     * rates its prefix increments go negative -- with mu_hit = 3.0 and
+     * mu_miss = 0.7, mu(Hit) = 3.0 while mu(Hit,Miss) = 1.85, so the second job
+     * would be served at -1.15.
+     *
+     * <p>Run this AFTER {@link #checkPermInvariance}: permutation invariance is
+     * what makes mu a function of the count vector, and the increments to test
+     * are then just mu(n + e_r) - mu(n) over count vectors n and classes r, with
+     * no permutation enumeration. Prefixes are non-empty, so mu is never
+     * evaluated on an empty microstate, and an increment of exactly zero is
+     * accepted -- that is how a class which does not visit this station is
+     * expressed. Enumerates the reachable count vectors when small, otherwise
+     * samples and sets partial=true.
+     */
+    public MonoCheckResult checkRateMonotonicity(double[] Nvec, double cap) {
+        MonoCheckResult res = new MonoCheckResult();
+        final SerializableFunction<Matrix, Double> mu = this.svcRateFun;
+        if (mu == null) {
+            return res;
+        }
+        int K = Nvec.length;
+        double tol = 1e-9;
+        int LATTICE_BUDGET = 4096;
+        int MAXEVAL = 50000;
+        boolean hasOpen = false;
+        double sumFinite = 0;
+        for (int r = 0; r < K; r++) {
+            if (Double.isInfinite(Nvec[r])) {
+                hasOpen = true;
+            } else {
+                sumFinite += Nvec[r];
+            }
+        }
+        double Lmaxd = (Double.isFinite(cap) && cap >= 0 && cap < 1e18) ? cap : sumFinite;
+        int[] ub = new int[K];
+        for (int r = 0; r < K; r++) {
+            double u = Double.isFinite(Nvec[r]) ? Nvec[r] : Math.min(Lmaxd, 6.0);
+            ub[r] = (int) Math.min(u, Lmaxd);
+        }
+        if (!(Lmaxd >= 2) || !Double.isFinite(Lmaxd)) {
+            return res;
+        }
+        int Lmax = (int) Lmaxd;
+        long lat = 1;
+        for (int r = 0; r < K; r++) {
+            lat *= (ub[r] + 1L);
+        }
+        boolean exhaustive = !hasOpen && lat <= LATTICE_BUDGET;
+        java.util.Random rng = new java.util.Random(0);
+        int[] neval = {0};
+        if (exhaustive) {
+            int[] n = new int[K];
+            while (true) {
+                int sum = 0;
+                for (int r = 0; r < K; r++) sum += n[r];
+                if (sum >= 1 && sum <= Lmax - 1) {
+                    stepPrefix(n, ub, K, mu, tol, neval, res);
+                    if (!res.ok) break;
+                    if (neval[0] >= MAXEVAL) {
+                        res.partial = true;
+                        break;
+                    }
+                }
+                int d = 0;
+                while (d < K) {
+                    n[d]++;
+                    if (n[d] <= ub[d]) break;
+                    n[d] = 0;
+                    d++;
+                }
+                if (d >= K) break;
+            }
+        } else {
+            res.partial = true;
+            for (int trial = 0; trial < 400; trial++) {
+                int len = 1 + rng.nextInt(Math.max(1, Math.min(Lmax, 6)));
+                int[] n = new int[K];
+                for (int j = 0; j < len; j++) {
+                    int r = rng.nextInt(K);
+                    if (n[r] < ub[r]) n[r]++;
+                }
+                int sum = 0;
+                for (int r = 0; r < K; r++) sum += n[r];
+                if (sum >= 1 && sum <= Lmax - 1) {
+                    stepPrefix(n, ub, K, mu, tol, neval, res);
+                    if (!res.ok || neval[0] >= MAXEVAL) break;
+                }
+            }
+        }
+        return res;
+    }
+
+    /** No one-job extension of the prefix n may lower the total rate. */
+    private static void stepPrefix(int[] n, int[] ub, int K,
+            SerializableFunction<Matrix, Double> mu, double tol, int[] neval,
+            MonoCheckResult res) {
+        double base = mu.apply(rowMatrix(microstate(n, K)));
+        neval[0]++;
+        for (int r = 0; r < K; r++) {
+            if (n[r] >= ub[r]) continue;
+            n[r]++;
+            int[] cx = microstate(n, K);
+            double v = mu.apply(rowMatrix(cx));
+            neval[0]++;
+            n[r]--;
+            if (v - base < -tol * Math.max(1.0, Math.abs(base))) {
+                res.ok = false;
+                res.badc = cx;
+                res.badr = r;
+                return;
+            }
+        }
+    }
+
+    /** Canonical microstate of a count vector: classes in index order. */
+    private static int[] microstate(int[] n, int K) {
+        int len = 0;
+        for (int r = 0; r < K; r++) len += n[r];
+        int[] c = new int[len];
+        int col = 0;
+        for (int r = 0; r < K; r++) {
+            for (int t = 0; t < n[r]; t++) c[col++] = r;
+        }
+        return c;
+    }
+
     private static void testMultiset(int[] n, int K, SerializableFunction<Matrix, Double> mu,
             double tol, int PERM_ENUM, int PERM_SAMPLE, java.util.Random rng, int[] neval,
             PermCheckResult res) {
@@ -548,7 +699,9 @@ public class Queue extends ServiceStation implements Serializable {
         if (graph.getNumRows() != K || graph.getNumCols() != K) {
             throw new RuntimeException("Swap graph must be a " + K + "x" + K + " matrix (nclasses x nclasses).");
         }
+        // swapGraph is copied into QueueNodeParam by refreshLocalVars.
         this.swapGraph = graph;
+        invalidateStruct();
     }
 
     /**
@@ -747,6 +900,13 @@ public class Queue extends ServiceStation implements Serializable {
         }
         if (this.schedStrategy != SchedStrategy.INF) {
             this.numberOfServers = numberOfServers;
+            // Station.setNumberOfServers invalidates here and this override did not, so a
+            // server count changed after anything had built the struct (a gate call, a
+            // getStruct, a solve) left sn.nservers at the OLD value: the model disagreed
+            // with itself, the feature recorder reading the node objects and seeing the new
+            // count while every sn-based structural predicate saw the old one. Same defect
+            // fixed in MATLAB Queue.setNumServers on 2026-09-05.
+            invalidateStruct();
         }
     }
 
@@ -792,6 +952,9 @@ public class Queue extends ServiceStation implements Serializable {
         this.breakdownRepair = repairDistribution;
         this.breakdownDownService.clear();
         this.breakdownDownServiceAll = downServiceDistribution;
+        // refreshBreakdown derives sn.hasbreakdown, breakdownMu, repairMu and
+        // downServiceRates from these, so a cached struct would answer the unbroken model.
+        invalidateStruct();
     }
 
     /**
@@ -814,6 +977,8 @@ public class Queue extends ServiceStation implements Serializable {
      */
     public void setDownService(JobClass jobClass, Distribution downServiceDistribution) {
         this.breakdownDownService.put(jobClass, downServiceDistribution);
+        // read back by refreshBreakdown into sn.downServiceRates
+        invalidateStruct();
     }
 
     /**
@@ -880,8 +1045,10 @@ public class Queue extends ServiceStation implements Serializable {
         if (this.schedStrategy != SchedStrategy.LPS) {
             throw new RuntimeException("setLimit() can only be called on queues with LPS scheduling strategy");
         }
-        // Store limit as station-wide parameter for LPS
+        // Store limit as station-wide parameter for LPS. getSchedStrategyPar returns it
+        // for LPS and refreshScheduling folds it into sn.schedparam.
         this.lpsLimit = (double) limit;
+        invalidateStruct();
     }
 
     /**
@@ -1017,6 +1184,10 @@ public class Queue extends ServiceStation implements Serializable {
         
         // Store in general switchover time storage for all scheduling strategies
         this.setSwitchoverTime(fromClass, toClass, switchoverTime);
+        // The POLLING arm above wrote the PollingServer, whose switchover times
+        // refreshLocalVars copies into QueueNodeParam; the two-argument setSwitchover
+        // already invalidates for exactly that reason.
+        invalidateStruct();
     }
 
     /**
@@ -1068,21 +1239,13 @@ public class Queue extends ServiceStation implements Serializable {
             throw new IllegalArgumentException("jobClass is not part of this network");
         }
         
-        // Store the setup and delay-off times
+        // The values live on the node; refreshing the struct here would sanitize a
+        // model that is still being built, e.g. while LineModelIO loads it. Dropping a
+        // stale one is not refreshing it: invalidateStruct never calls getStruct, and
+        // refreshLocalVars copies these into QueueNodeParam.setupTime/delayoffTime.
         this.setupTimes.put(jobClass, setupTime);
         this.delayOffTimes.put(jobClass, delayoffTime);
-        
-        // Update NodeParam if network is available
-        if (this.model != null) {
-            NetworkStruct sn = this.model.getStruct();
-            if (sn != null && sn.nodeparam != null) {
-                NodeParam param = sn.nodeparam.get(this);
-                if (param != null) {
-                    // Placeholder: delay-off values are kept on the node itself.
-                    // In a full implementation, NodeParam might need dedicated fields.
-                }
-            }
-        }
+        invalidateStruct();
     }
     
     /**
@@ -1148,6 +1311,9 @@ public class Queue extends ServiceStation implements Serializable {
 
         // Update total number of servers
         updateTotalServerCount();
+        // This moves numberOfServers as well as the hetero server tables that
+        // refreshHeterogeneousServers reads, so any cached struct is stale.
+        invalidateStruct();
     }
 
     /**
@@ -1171,6 +1337,57 @@ public class Queue extends ServiceStation implements Serializable {
      */
     public List<ServerType> getServerTypes() {
         return new ArrayList<ServerType>(this.serverTypes);
+    }
+
+    /**
+     * Sets the number of servers that a job of the given class seizes for the whole
+     * of its service, JMT's job parallelism ({@code Server.serverNumRequired}).
+     * <p>
+     * A job waits until n servers are simultaneously free and holds all of them
+     * until it completes, so the station serves at most floor(c/n) such jobs at a
+     * time. The default is 1.
+     *
+     * @param jobClass the job class
+     * @param n the number of servers required, an integer in [1, c]
+     * @throws IllegalArgumentException if n is below 1 or above the server count
+     */
+    public void setServerParallelism(JobClass jobClass, int n) {
+        if (n < 1) {
+            throw new IllegalArgumentException("Server parallelism must be a positive integer.");
+        }
+        if (n > this.numberOfServers) {
+            throw new IllegalArgumentException(String.format(
+                    "Server parallelism (%d) exceeds the %d servers of station %s, so a job of class %s could never enter service.",
+                    n, this.numberOfServers, this.getName(), jobClass.getName()));
+        }
+        this.serverParallelism.put(jobClass, n);
+        // read back by refreshHeterogeneousServers into the struct's parallelism vector
+        invalidateStruct();
+    }
+
+    /**
+     * Gets the number of servers seized by a job of the given class.
+     *
+     * @param jobClass the job class
+     * @return the number of servers required, 1 if unset
+     */
+    public int getServerParallelism(JobClass jobClass) {
+        Integer n = this.serverParallelism.get(jobClass);
+        return n == null ? 1 : n;
+    }
+
+    /**
+     * Checks whether some class seizes more than one server.
+     *
+     * @return true if job parallelism is declared for at least one class
+     */
+    public boolean hasServerParallelism() {
+        for (Integer n : this.serverParallelism.values()) {
+            if (n != null && n > 1) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -1205,6 +1422,8 @@ public class Queue extends ServiceStation implements Serializable {
             throw new IllegalArgumentException("Heterogeneous scheduling policy cannot be null");
         }
         this.heteroSchedPolicy = policy;
+        // read back by refreshHeterogeneousServers into snp.heteroschedpolicy
+        invalidateStruct();
     }
 
     /**
@@ -1254,6 +1473,10 @@ public class Queue extends ServiceStation implements Serializable {
         if (!serverType.isCompatible(jobClass)) {
             serverType.addCompatibleClass(jobClass);
         }
+        // Unlike the homogeneous ServiceStation.setService, which the in-place
+        // refreshRates path maintains, the hetero tables are only read by
+        // refreshHeterogeneousServers when the whole struct is rebuilt.
+        invalidateStruct();
     }
 
     /**
@@ -1350,6 +1573,8 @@ public class Queue extends ServiceStation implements Serializable {
         if (!enabled) {
             this.immediateFeedbackClasses.clear();
         }
+        // refreshStruct folds hasImmediateFeedback(c) into sn.immfeed
+        invalidateStruct();
     }
 
     /**
@@ -1360,6 +1585,8 @@ public class Queue extends ServiceStation implements Serializable {
     public void setImmediateFeedback(JobClass jobClass) {
         if (jobClass != null) {
             this.immediateFeedbackClasses.add(jobClass.getIndex());
+            // refreshStruct folds hasImmediateFeedback(c) into sn.immfeed
+            invalidateStruct();
         }
     }
 
@@ -1375,6 +1602,8 @@ public class Queue extends ServiceStation implements Serializable {
                     this.immediateFeedbackClasses.add(jc.getIndex());
                 }
             }
+            // refreshStruct folds hasImmediateFeedback(c) into sn.immfeed
+            invalidateStruct();
         }
     }
 

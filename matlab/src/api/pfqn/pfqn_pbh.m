@@ -52,10 +52,22 @@ K = numel(L);
 [~, b] = max(L);
 level = min(level, N);
 n0 = N - level;
-switch side
-    case 'opt',  Rk = ones(K,1) * max(n0*L(b) - Z, sum(L))/K;  % eq (7), ABA opt
-    case 'pess', Rk = zeros(K,1); Rk(b) = n0;             % eq (13), ABA pess
+if strcmp(side,'pess')
+    % Pessimistic start, carried in QUEUE LENGTHS: all n0 customers at the
+    % bottleneck (eq 13). Seeding a residence instead makes the assumed
+    % population n0*Rb/(Z+Rtot) < n0 once Z > 0, so the pessimism is diluted
+    % and the resulting Xlo stops being a bound (violated exact on 14% of
+    % random delay models, worst 43%).
+    Q = zeros(K,1);
+    Q(b) = n0;
+    Rk = L .* (1 + Q);
+    for n = n0+1:N
+        Rk = L .* (1 + Q);                               % eq (5), MVA step
+        Q = (n / (Z + sum(Rk))) * Rk;
+    end
+    return
 end
+Rk = ones(K,1) * max(n0*L(b) - Z, sum(L))/K;              % eq (7), ABA opt
 if n0 == 0
     Rk = zeros(K,1);                                      % exact empty base
 end

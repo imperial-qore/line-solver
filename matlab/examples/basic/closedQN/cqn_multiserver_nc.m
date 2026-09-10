@@ -21,7 +21,7 @@ P = model.initRoutingMatrix;
 P{1} = [0,1.0;1.0,0];
 model.link(P);
 
-solver{1} = CTMC(model);
+solver{1} = CTMC(model,'exact');
 solver{end+1} = MVA(model);
 solver{end+1} = NC(model,'exact');
 

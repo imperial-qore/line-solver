@@ -28,7 +28,7 @@ P{2} = Network.serialRouting(node);
 
 model.link(P);
 
-% solver{1} = CTMC(model,'keep',true);
+% solver{1} = CTMC(model, 'exact','keep',true);
 % solver{end+1} = JMT(model,'seed',23000,'verbose',true,'keep',true);
 % solver{end+1} = LDES(model,'seed',23000,'verbose',true,'samples',5e3);
 % solver{end+1} = SSA(model,'seed',23000,'verbose',true,'samples',5e3);

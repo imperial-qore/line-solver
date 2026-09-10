@@ -140,6 +140,51 @@ def multichoose(r: int, n: int) -> np.ndarray:
     return np.array(result, dtype=int)
 
 
+def multichoosecon(n: np.ndarray, S: int) -> np.ndarray:
+    """
+    Pick vectors of S elements from the available units in vector n.
+
+    Twin of MATLAB multichoosecon.m. Unlike multichoose, the count drawn from
+    category i is capped by n[i], so the enumeration never proposes a job of a
+    class the station does not hold.
+
+    Args:
+        n: Per-category availability
+        S: Number of units to draw
+
+    Returns:
+        Matrix (C x len(n)) of draws, one per row; empty when S exceeds sum(n)
+    """
+    n = np.asarray(n, dtype=int).ravel()
+    R = n.size
+    if S < 0 or R == 0:
+        return np.zeros((0, R), dtype=int)
+    if S == 0:
+        return np.zeros((1, R), dtype=int)
+
+    if S == 1:
+        rows = []
+        for i in range(R):
+            if n[i] > 0:
+                row = np.zeros(R, dtype=int)
+                row[i] = 1
+                rows.append(row)
+        return np.vstack(rows) if rows else np.zeros((0, R), dtype=int)
+
+    out = []
+    for i in range(R):
+        if n[i] > 0:
+            n_1 = n.copy()
+            n_1[i] -= 1
+            T = multichoosecon(n_1, S - 1)
+            if T.shape[0] == 0:
+                continue
+            y = np.zeros((T.shape[0], R), dtype=int)
+            y[:, i] = 1
+            out.append(y + T)
+    return np.vstack(out) if out else np.zeros((0, R), dtype=int)
+
+
 def matchrow(matrix: np.ndarray, row: np.ndarray) -> int:
     """
     Find the index of a row in a matrix.
@@ -447,18 +492,20 @@ def pfqn_cdfun(nvec: np.ndarray, cdscaling: Optional[List] = None,
     if cdscaling is not None and len(cdscaling) > 0:
         for i in range(M):
             if i < len(cdscaling) and cdscaling[i] is not None:
-                try:
-                    val = cdscaling[i](nvec[i, :])
-                    val_arr = np.atleast_1d(np.asarray(val, dtype=float))
-                    if val_arr.size > 1:
-                        # per-class beta_{i,r}: select the requested class
-                        scale_val = float(val_arr[class_idx])
-                    else:
-                        scale_val = float(val_arr[0])
-                    if scale_val > 0 and np.isfinite(scale_val):
-                        r[i] = 1.0 / scale_val
-                except Exception:
-                    pass
+                # A handle that raises is NOT caught here. Swallowing it left the
+                # station at the neutral scaling 1, i.e. the load-INDEPENDENT
+                # answer, reported as though the declared dependence had been
+                # applied: ld_joint_dependence indexed the per-class vector as a
+                # matrix and its eta was silently dropped in every native solve.
+                val = cdscaling[i](nvec[i, :])
+                val_arr = np.atleast_1d(np.asarray(val, dtype=float))
+                if val_arr.size > 1:
+                    # per-class beta_{i,r}: select the requested class
+                    scale_val = float(val_arr[class_idx])
+                else:
+                    scale_val = float(val_arr[0])
+                if scale_val > 0 and np.isfinite(scale_val):
+                    r[i] = 1.0 / scale_val
 
     return r
 
@@ -502,6 +549,35 @@ def pfqn_jdfun(nvec: np.ndarray, jdscaling: Optional[List] = None,
         Scaling factor vector (M,)
     """
     return pfqn_cdfun(nvec, jdscaling, class_idx)
+
+
+def _amva_is_fcfs(sched_val) -> bool:
+    """True when a per-station scheduling token names FCFS, whatever its type."""
+    from ...lang.base import SchedStrategy
+    if isinstance(sched_val, int):
+        return sched_val == SchedStrategy.FCFS
+    if hasattr(sched_val, 'name'):
+        return sched_val.name == 'FCFS'
+    if isinstance(sched_val, str):
+        return sched_val.upper() == 'FCFS'
+    return False
+
+
+def _amva_prep(L, N, Z):
+    """Normalize (L, N, Z) to float arrays of shape (M,R), (R,), (R,)."""
+    L = np.asarray(L, dtype=np.float64)
+    N = np.asarray(N, dtype=np.float64).flatten()
+    R = len(N)
+    if L.ndim == 1:
+        L = L.reshape(-1, 1) if R == 1 else L.reshape(1, -1)
+    if Z is None:
+        Z = np.zeros(R)
+    else:
+        Z = np.asarray(Z, dtype=np.float64)
+        if Z.ndim > 1:
+            Z = Z.sum(axis=0)
+        Z = Z.flatten()
+    return L, N, Z, L.shape[0], R
 
 
 __all__ = [

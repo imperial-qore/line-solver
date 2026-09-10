@@ -16,7 +16,7 @@ import java.util.List;
  * node and read class (List=0) plus, where available and the cache has more than
  * one list, one row per cache list (level). Columns: List, ListCap, Items,
  * HitProb, DelayedHitProb, MissProb, HitRate, DelayedHitRate, MissRate, ArvR,
- * ResidT. Port of matlab/src/solvers/@NetworkSolver/getAvgCacheTable.m.
+ * ResidT, ListCost. Port of matlab/src/solvers/@NetworkSolver/getAvgCacheTable.m.
  */
 public class NetworkAvgCacheTable extends AvgTable {
     List<String> nodeNames;
@@ -25,9 +25,9 @@ public class NetworkAvgCacheTable extends AvgTable {
     public NetworkAvgCacheTable(List<Double> List_, List<Double> ListCap, List<Double> Items,
                                 List<Double> HitProb, List<Double> DelayedHitProb, List<Double> MissProb,
                                 List<Double> HitRate, List<Double> DelayedHitRate, List<Double> MissRate,
-                                List<Double> ArvR, List<Double> ResidT) {
+                                List<Double> ArvR, List<Double> ResidT, List<Double> ListCost) {
         super(new ArrayList<>(Arrays.asList(List_, ListCap, Items, HitProb, DelayedHitProb, MissProb,
-                HitRate, DelayedHitRate, MissRate, ArvR, ResidT)));
+                HitRate, DelayedHitRate, MissRate, ArvR, ResidT, ListCost)));
     }
 
     public List<Double> get(int col) { return this.T.getColumn(col).toList1D(); }
@@ -42,6 +42,7 @@ public class NetworkAvgCacheTable extends AvgTable {
     public List<Double> getMissRate() { return get(8); }
     public List<Double> getArvR() { return get(9); }
     public List<Double> getResidT() { return get(10); }
+    public List<Double> getListCost() { return get(11); }
 
     public List<String> getNodeNames() { return nodeNames; }
     public void setNodeNames(List<String> nodeNames) { this.nodeNames = nodeNames; }
@@ -56,11 +57,12 @@ public class NetworkAvgCacheTable extends AvgTable {
         if (options != null && options.verbose == VerboseLevel.SILENT) return;
         if (nodeNames == null || nodeNames.isEmpty()) return;
         String[] headers = {"Node", "JobClass", "List", "ListCap", "Items", "HitProb",
-                "DelayedHitProb", "MissProb", "HitRate", "DelayedHitRate", "MissRate", "ArvR", "ResidT"};
+                "DelayedHitProb", "MissProb", "HitRate", "DelayedHitRate", "MissRate", "ArvR", "ResidT",
+                "ListCost"};
         List<String[]> rows = new ArrayList<>();
         List<Double> li = getList(), lc = getListCap(), it = getItems(), hp = getHitProb(),
                 dhp = getDelayedHitProb(), mp = getMissProb(), hr = getHitRate(), dhr = getDelayedHitRate(),
-                mr = getMissRate(), ar = getArvR(), lat = getResidT();
+                mr = getMissRate(), ar = getArvR(), lat = getResidT(), cost = getListCost();
         for (int i = 0; i < nodeNames.size(); i++) {
             rows.add(new String[]{
                     nodeNames.get(i), classNames.get(i),
@@ -69,7 +71,7 @@ public class NetworkAvgCacheTable extends AvgTable {
                     Integer.toString((int) Math.round(it.get(i))),
                     fmtValue(hp.get(i), 5), fmtValue(dhp.get(i), 5), fmtValue(mp.get(i), 5),
                     fmtValue(hr.get(i), 5), fmtValue(dhr.get(i), 5), fmtValue(mr.get(i), 5),
-                    fmtValue(ar.get(i), 5), fmtValue(lat.get(i), 5)});
+                    fmtValue(ar.get(i), 5), fmtValue(lat.get(i), 5), fmtValue(cost.get(i), 5)});
         }
         printFormattedTable(headers, rows);
     }

@@ -81,6 +81,19 @@ class SchedStrategy(IntEnum):
     FSP = 36      # Fair Sojourn Protocol (virtual-PS finish time ranking)
     PAS = 37      # Pass-and-swap (order-independent queue with class swap graph)
     OI = 38       # Order-independent (pass-and-swap specialization with empty/zero swap graph)
+    # The size-based disciplines were missing HERE while constants.SchedStrategy
+    # carried them, so _normalize_sched_strategy -- which maps BY NAME -- refused
+    # a PSJF/FB/LRPT model outright. Appended at free ids rather than at the
+    # constants values 36/37/38/39, which are already FSP/PAS/OI here: the two
+    # enums are reconciled by NAME, never by value, and nothing indexes this one
+    # positionally.
+    PSJF = 39     # Preemptive Shortest Job First
+    FB = 40       # Foreground-Background
+    LAS = 41      # Least Attained Service (the FB alias)
+    LRPT = 42     # Longest Remaining Processing Time
+    # appended, not slotted next to FCFSPR: 43 is the first id free in all
+    # three Python SchedStrategy enums, and constants.toID is positional
+    FCFSPI = 43   # FCFS Preemptive Identical
 
     @staticmethod
     def to_feature(strategy: 'SchedStrategy') -> str:
@@ -96,6 +109,38 @@ def _strategy_name(strategy) -> str:
         name = str(strategy).split('.')[-1]
     return name
 
+
+# The preempt family, whose station buffer holds [class, phase] pairs rather
+# than bare class tags. It factors as {FCFS,LCFS} x {PR,PI} x {plain,PRIO}, and
+# the subsets below are those factors. Any site that enumerates the family must
+# cover all eight: listing only some is how the PI disciplines were left without
+# a departure arm (MATLAB State.toMarginal:193, fromMarginal:245 list all).
+SCHED_PREEMPT_LCFS = (SchedStrategy.LCFSPR, SchedStrategy.LCFSPRPRIO,
+                      SchedStrategy.LCFSPI, SchedStrategy.LCFSPIPRIO)
+SCHED_PREEMPT_FCFS = (SchedStrategy.FCFSPR, SchedStrategy.FCFSPRPRIO,
+                      SchedStrategy.FCFSPI, SchedStrategy.FCFSPIPRIO)
+SCHED_PREEMPT_PRIO = (SchedStrategy.LCFSPRPRIO, SchedStrategy.LCFSPIPRIO,
+                      SchedStrategy.FCFSPRPRIO, SchedStrategy.FCFSPIPRIO)
+# PR resumes at the stored phase, PI discards it and restarts from pie
+SCHED_PREEMPT_RESUME = (SchedStrategy.LCFSPR, SchedStrategy.LCFSPRPRIO,
+                        SchedStrategy.FCFSPR, SchedStrategy.FCFSPRPRIO)
+SCHED_PREEMPT = SCHED_PREEMPT_LCFS + SCHED_PREEMPT_FCFS
+
+# Buffer ENCODING groups, the counterpart of the C++ state_detail::buffer_is_*
+# predicates. Every encode and decode of a station's local state must branch on
+# these rather than on an inline list: five functions in api/state/marginal.py
+# each repeated their own list, and all five had drifted to the same omissions,
+# so LCFSPRIO, SRPT and SRPTPRIO were counted server-only.
+# POLLING is deliberately ABSENT. It carries a per-class count in most callers
+# but has its own branch in fromMarginal and none at all in
+# fromMarginalAndRunning, so folding it in here would silently change what that
+# function does. It stays named explicitly at the sites that already handle it.
+SCHED_BUFFER_CLASS_TAG = (SchedStrategy.FCFS, SchedStrategy.FCFSPRIO,
+                          SchedStrategy.HOL, SchedStrategy.LCFS,
+                          SchedStrategy.LCFSPRIO)
+SCHED_BUFFER_PER_CLASS_COUNT = (SchedStrategy.SIRO, SchedStrategy.SEPT,
+                                SchedStrategy.LEPT, SchedStrategy.SRPT,
+                                SchedStrategy.SRPTPRIO)
 
 # see _kb/01-model-classes.md (Enumerations) for rationale
 _SCHED_FEATURE_BY_NAME = {
@@ -160,7 +205,7 @@ class RoutingStrategy(IntEnum):
     JSQ = 4       # Join-Shortest-Queue
     FIRING = 5    # Firing (for Petri nets)
     SQ = 6  # K-choices policy
-    RL = 7        # Reinforcement learning
+    SDR = 7       # Krzesinski (1987) product-form state-dependent routing
     DISABLED = -1 # Disabled routing
 
     @staticmethod
@@ -178,7 +223,7 @@ _ROUTING_FEATURE_BY_NAME = {
     'WRROBIN': 'RoutingStrategy_WRROBIN',
     'JSQ': 'RoutingStrategy_JSQ',
     'SQ': 'RoutingStrategy_SQ',
-    'RL': 'RoutingStrategy_RL',
+    'SDR': 'RoutingStrategy_SDR',
 }
 
 
@@ -415,9 +460,28 @@ class HeteroSchedPolicy(IntEnum):
         """Convert HeteroSchedPolicy constant to text."""
         return self.name
 
+    def to_jmt_text(self) -> str:
+        """Convert to JMT's descriptive identifier.
+
+        JMT's CommonConstants.STATION_SCHEDULING_POLICY_* expects the long
+        human-readable form, which the bare names do not match, so JSIM XML must
+        be written with this method (mirrors MATLAB HeteroSchedPolicy.toJMTText).
+        """
+        mapping = {
+            HeteroSchedPolicy.ORDER: 'Order (Assign according to order below)',
+            HeteroSchedPolicy.ALIS: 'ALIS (Assign Longest Idle Server)',
+            HeteroSchedPolicy.ALFS: 'ALFS (Assign Least Flexible Server)',
+            HeteroSchedPolicy.FAIRNESS: 'Fairness (Move back server type when used)',
+            HeteroSchedPolicy.FSF: 'FSF (Fastest Servers First)',
+            HeteroSchedPolicy.RAIS: 'RAIS (Random Assignment to Idle Servers)',
+        }
+        return mapping.get(self, 'Order (Assign according to order below)')
+
     # Aliases for from_text
     from_string = from_text
     fromString = from_text
+    toText = to_text
+    toJMTText = to_jmt_text
 
 
 class Element(ABC):
@@ -471,6 +535,17 @@ class Element(ABC):
     def _set_index(self, idx: int) -> None:
         """Set 0-based index (internal use only)."""
         self._index = idx
+
+    def _invalidate_struct(self) -> None:
+        """Discard the model's cached NetworkStruct after a rate-scaling change.
+
+        Without this a setter called AFTER the first getStruct() is silently
+        dropped: the solver reads the stale sn and solves the model unscaled,
+        with no error. Twin of MATLAB Station.invalidateStruct.
+        """
+        model = getattr(self, '_model', None)
+        if model is not None and hasattr(model, 'reset_struct'):
+            model.reset_struct()
 
     def _invalidate_java(self) -> None:
         """Invalidate cached object."""
@@ -562,6 +637,10 @@ class JobClass(NetworkElement):
     def jobclass_type(self) -> JobClassType:
         """Get the job class type."""
         return self._jobclass_type
+
+    def summary(self) -> None:
+        """Print the one-line class summary, twin of MATLAB JobClass.summary."""
+        print(f"Class ({self._jobclass_type.name}): {self.name}")
 
     def __index__(self) -> int:
         """Return zero-based index for Python array indexing."""
@@ -969,9 +1048,18 @@ class Node(NetworkElement):
                     return True
             return False
 
+        def _holds_class_seq(value) -> bool:
+            return any(isinstance(element, JobClass) for element in value)
+
         state = vars(self)
         for attr, value in list(state.items()):
             if isinstance(value, dict) and value and _holds_class(value):
+                state[attr] = _remap(value)
+            elif isinstance(value, (list, tuple)) and value and _holds_class_seq(value):
+                # Per-class SEQUENCES are orphaned by a deep copy exactly like
+                # per-class dictionaries: Source._marked_classes is a list, and
+                # leaving it keyed on the original classes makes the copy's
+                # markidx refresh fail to find them.
                 state[attr] = _remap(value)
 
     remapJobClasses = remap_job_classes
@@ -983,6 +1071,19 @@ class Node(NetworkElement):
     def is_station(self) -> bool:
         """Check if node is a station (can serve jobs)."""
         return False
+
+    def has_class_switching(self) -> bool:
+        """Check if this node switches the class of the jobs traversing it.
+
+        Twin of the MATLAB Node.hasClassSwitching, which tests whether the
+        service section is a ClassSwitcher; ClassSwitch and Cache nodes are the
+        two that carry one.
+        """
+        return False
+
+    def summary(self) -> None:
+        """Print the one-line node summary, twin of MATLAB Node.summary."""
+        print(f"\nNode: {self.name}")
 
     def link(self, node_to) -> None:
         """
@@ -1032,6 +1133,59 @@ class Node(NetworkElement):
                 self._routing_params[jobclass] = params
         self._invalidate_java()
 
+    def set_state_dep_routing(self, jobclass, departure, branches, level, C, d) -> None:
+        """Declare this node the entry center of a Krzesinski SDR subnetwork.
+
+        Krzesinski, A. E., "Multiclass Queueing Networks with State-Dependent
+        Routing", Performance Evaluation 7(2):125-143, 1987.
+
+        departure is the departure center d of Q(V,V), which may be this node
+        itself in a central server model. branches follows the paper's own
+        indexing: branches[0] must be empty because branch index 1 denotes the
+        complement M-V, and branches[b] lists the nodes of branch b with its
+        entry center first and its departure center last. level[b] is the index
+        t of the subnetwork with B_b in V_t - V_{t+1}. C is the length-T list of
+        coefficients C_t and d the T x B matrix of coefficients d_tb, read for
+        1 <= t <= level[b] and b >= 1 in 0-based terms.
+
+        Negative C_t and positive d_tb make the routing prefer the least
+        congested branches and impose the population bounds
+        m_b <= d_tb/(-C_t) and v_t <= D_tt/(-C_t).
+        """
+        import numpy as _np
+        if not branches or branches[0]:
+            raise ValueError('branches[0] must be empty: branch index 1 denotes '
+                             'the complement M-V')
+        B = len(branches)
+        T = len(C)
+        if len(level) != B:
+            raise ValueError('level must have one entry per branch index, '
+                             'including the unused index 0')
+        dm = _np.atleast_2d(_np.asarray(d, dtype=float))
+        if dm.shape[0] < T or dm.shape[1] < B:
+            raise ValueError('d must be at least %dx%d' % (T, B))
+        branch, entry_of, departure_of = [None] * B, [None] * B, [None] * B
+        for b in range(1, B):
+            bn = branches[b]
+            if not isinstance(bn, (list, tuple)):
+                bn = [bn]
+            if not bn:
+                raise ValueError('branch %d is empty' % (b + 1))
+            branch[b] = list(bn)
+            entry_of[b] = bn[0]
+            departure_of[b] = bn[-1]
+        self._routing_strategies[jobclass] = RoutingStrategy.SDR
+        self._routing_params[jobclass] = ({
+            'departure': departure,
+            'branch': branch,
+            'entryOf': entry_of,
+            'departureOf': departure_of,
+            'level': list(level),
+            'C': list(C),
+            'd': dm,
+        },)
+        self._invalidate_java()
+
     def get_routing(self, jobclass: JobClass) -> Tuple[RoutingStrategy, tuple]:
         """
         Get routing strategy for a job class.
@@ -1079,6 +1233,7 @@ class Node(NetworkElement):
     getModel = get_model
     isStateful = is_stateful
     isStation = is_station
+    hasClassSwitching = has_class_switching
     setRouting = set_routing
     getRouting = get_routing
     setProbRouting = set_prob_routing
@@ -1263,7 +1418,13 @@ class Station(StatefulNode):
         self._number_of_servers = 1
         self._capacity = np.inf
         self._class_capacity = {}  # Dict[JobClass, capacity]
-        self._drop_rule = DropStrategy.DROP
+        # UNSET, not DROP. MATLAB leaves Station.dropRule empty and the JAR
+        # returns null from getDropRule; both derive the rule from the final
+        # capacity and class type in refreshCapacity. Presetting DROP here made
+        # the matching derivation in Network._refresh_capacity dead code for
+        # every station nobody configured, so sn.droprule read DROP where the
+        # other two codebases read WAITQ.
+        self._drop_rule = None
         self._load_depend_scaling = None
         self._class_depend_scaling = None
         self._class_depend_scaling_peak = None
@@ -1288,6 +1449,7 @@ class Station(StatefulNode):
             raise ValueError(f"[{self.name}] Number of servers must be >= 1, got {value}")
         self._number_of_servers = value
         self._invalidate_java()
+        self._invalidate_struct()
 
     @property
     def capacity(self) -> float:
@@ -1306,6 +1468,14 @@ class Station(StatefulNode):
             raise ValueError(f"[{self.name}] Capacity must be > 0, got {value}")
         self._capacity = value
         self._invalidate_java()
+        # sn.cap/sn.classcap are DERIVED (refresh_capacity folds this value
+        # together with the per-class caps and the chain population), so a
+        # cached struct does not see the new buffer. Without this a
+        # set_capacity called after the first getStruct() was silently dropped
+        # and every sn-reading solver answered the UNBOUNDED model -- SolverCTMC
+        # returned 1.1475 jobs for a buffer of 1. Twin of MATLAB
+        # Station.setCapacity.
+        self._invalidate_struct()
 
     def set_capacity(self, capacity: float) -> None:
         """Set total capacity (MATLAB compatibility)."""
@@ -1346,6 +1516,7 @@ class Station(StatefulNode):
             raise ValueError(f"[{self.name}] Class capacity must be > 0, got {capacity}")
         self._class_capacity[jobclass] = capacity
         self._invalidate_java()
+        self._invalidate_struct()
 
     def get_class_capacity(self, jobclass: JobClass) -> float:
         """Get per-class capacity limit."""
@@ -1360,6 +1531,7 @@ class Station(StatefulNode):
         """
         self._load_depend_scaling = np.array(alpha)
         self._invalidate_java()
+        self._invalidate_struct()
 
     def get_load_dependence(self) -> Optional[np.ndarray]:
         """Get load-dependent scaling."""
@@ -1396,6 +1568,7 @@ class Station(StatefulNode):
         self._class_depend_scaling = beta
         self._class_depend_scaling_peak = peak
         self._invalidate_java()
+        self._invalidate_struct()
 
     def get_class_dependence(self):
         """Get class-dependent scaling."""
@@ -1438,6 +1611,7 @@ class Station(StatefulNode):
         self._joint_depend_scaling = eta
         self._joint_depend_scaling_peak = peak
         self._invalidate_java()
+        self._invalidate_struct()
 
     def get_joint_dependence(self):
         """Get joint-dependent scaling."""
@@ -1451,7 +1625,7 @@ class Station(StatefulNode):
         """
         Set drop strategy for finite capacity.
 
-        Two forms are supported, mirroring the MATLAB/Java/Kotlin API:
+        Two forms are supported, mirroring the MATLAB/Java API:
 
         - ``set_drop_rule(rule)``: set the same drop strategy for all classes.
         - ``set_drop_rule(jobclass, rule)``: set the drop strategy for a single
@@ -1467,23 +1641,35 @@ class Station(StatefulNode):
         elif len(args) == 2:
             jobclass, rule = args
             if not isinstance(self._drop_rule, dict):
+                # a station-level rule already set is the DEFAULT for the other
+                # classes, so seed the dict with it rather than discarding it
+                previous = self._drop_rule
                 self._drop_rule = {}
+                if previous is not None and self._model is not None:
+                    for k in getattr(self._model, '_classes', []):
+                        self._drop_rule[k] = previous
             self._drop_rule[jobclass] = rule
         else:
             raise TypeError(
                 "set_drop_rule expects (rule) or (jobclass, rule), "
                 "got %d arguments" % len(args))
         self._invalidate_java()
+        self._invalidate_struct()
 
-    def get_drop_rule(self, jobclass=None) -> DropStrategy:
-        """Get drop strategy.
+    def get_drop_rule(self, jobclass=None) -> Optional[DropStrategy]:
+        """Get drop strategy, or None when the station has none set.
 
         With no argument returns the station-level drop rule (or the dict of
         per-class rules). With a ``jobclass`` argument returns the rule for
         that class, falling back to the station-level rule.
+
+        None is the unset state, matching MATLAB's empty ``dropRule`` and the
+        JAR's null: the effective rule is then derived from the capacity and
+        the class type when the struct is refreshed, so a caller that needs the
+        effective one must read ``sn.droprule`` rather than defaulting here.
         """
         if jobclass is not None and isinstance(self._drop_rule, dict):
-            return self._drop_rule.get(jobclass, DropStrategy.DROP)
+            return self._drop_rule.get(jobclass, None)
         return self._drop_rule
 
     def is_station(self) -> bool:

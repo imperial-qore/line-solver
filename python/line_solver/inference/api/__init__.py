@@ -9,4 +9,5 @@ from line_solver.inference.api.infer_get_qlen_arrival import infer_get_qlen_arri
 from line_solver.inference.api.infer_fluid_ps_rt_likelihood import infer_fluid_ps_rt_likelihood
 from line_solver.inference.api.infer_minps_setup import infer_minps_setup
 from line_solver.inference.api.infer_quick_model import infer_quick_model
-from line_solver.inference.api.infer_quick_model_rnn import infer_quick_model_rnn
+from line_solver.inference.api.infer_variational import (VariationalSpec, VariationalOptions,
+                                                          VariationalResult, infer_variational)

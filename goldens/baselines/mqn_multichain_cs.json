@@ -1,0 +1,160 @@
+{
+  "class": {
+    "MVA": "deterministic"
+  },
+  "example": "mqn_multichain_cs",
+  "solvers": {
+    "MVA": [
+      {
+        "ArvR": 0.71688,
+        "JobClass": "Chain1",
+        "QLen": 1.2904,
+        "ResidT": 1.8,
+        "RespT": 1.8,
+        "Station": "ThinkingTime",
+        "Tput": 0.71688,
+        "Util": 1.2904
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "Chain2",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "ThinkingTime",
+        "Tput": 0.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "Chain3",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "ThinkingTime",
+        "Tput": 0.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.71688,
+        "JobClass": "Chain1",
+        "QLen": 0.47863,
+        "ResidT": 0.66765,
+        "RespT": 0.66765,
+        "Station": "WebServer",
+        "Tput": 0.71688,
+        "Util": 0.32977
+      },
+      {
+        "ArvR": 0.15,
+        "JobClass": "Chain2",
+        "QLen": 0.085252,
+        "ResidT": 0.56835,
+        "RespT": 0.56835,
+        "Station": "WebServer",
+        "Tput": 0.15,
+        "Util": 0.0475
+      },
+      {
+        "ArvR": 0.05,
+        "JobClass": "Chain3",
+        "QLen": 0.022584,
+        "ResidT": 0.45168,
+        "RespT": 0.45168,
+        "Station": "WebServer",
+        "Tput": 0.05,
+        "Util": 0.01
+      },
+      {
+        "ArvR": 0.71688,
+        "JobClass": "Chain1",
+        "QLen": 1.9763,
+        "ResidT": 2.7568,
+        "RespT": 2.7568,
+        "Station": "AppServer",
+        "Tput": 0.71688,
+        "Util": 0.65953
+      },
+      {
+        "ArvR": 0.15,
+        "JobClass": "Chain2",
+        "QLen": 0.3307,
+        "ResidT": 2.2047,
+        "RespT": 2.2047,
+        "Station": "AppServer",
+        "Tput": 0.15,
+        "Util": 0.0975
+      },
+      {
+        "ArvR": 0.05,
+        "JobClass": "Chain3",
+        "QLen": 0.084796,
+        "ResidT": 1.6959,
+        "RespT": 1.6959,
+        "Station": "AppServer",
+        "Tput": 0.05,
+        "Util": 0.025
+      },
+      {
+        "ArvR": 0.71688,
+        "JobClass": "Chain1",
+        "QLen": 1.2546,
+        "ResidT": 1.7501,
+        "RespT": 1.7501,
+        "Station": "DataServer",
+        "Tput": 0.71688,
+        "Util": 0.40145
+      },
+      {
+        "ArvR": 0.15,
+        "JobClass": "Chain2",
+        "QLen": 0.4021,
+        "ResidT": 2.6807,
+        "RespT": 2.6807,
+        "Station": "DataServer",
+        "Tput": 0.15,
+        "Util": 0.2025
+      },
+      {
+        "ArvR": 0.05,
+        "JobClass": "Chain3",
+        "QLen": 0.10653,
+        "ResidT": 2.1307,
+        "RespT": 2.1307,
+        "Station": "DataServer",
+        "Tput": 0.05,
+        "Util": 0.04
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "Chain1",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.0,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "Chain2",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.15,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.0,
+        "JobClass": "Chain3",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.05,
+        "Util": 0.0
+      }
+    ]
+  }
+}

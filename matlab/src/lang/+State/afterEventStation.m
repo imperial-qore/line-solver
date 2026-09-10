@@ -1,4 +1,4 @@
-function [outspace, outrate, outprob, eventCache] = afterEventStation(sn, ind, inspace, event, class, isSimulation, eventCache, ...
+function [outspace, outrate, outprob, eventCache, outstart, outpreempt] = afterEventStation(sn, ind, inspace, event, class, isSimulation, eventCache, ...
     M, R, S, phasessz, phaseshift, pie, isf, ismkvmod, ismkvmodclass, lldscaling, lldlimit, cdscaling, ...
     hasOnlyExp, ist, K, Ks, mu, phi, proc, capacity, classcap, V, space_buf, space_srv, space_var, key, noPromote)
 % NOPROMOTE (optional, default false): when true, a DEP at an FCFS-family
@@ -19,10 +19,18 @@ isRetrialStation = isfield(sn,'retrialProc') && ~isempty(sn.retrialProc) ...
 outspace = [];
 outrate = [];
 outprob = 1;
+% START/PREEMPT annotations, one row per successor and one column per class.
+% They are instantaneous tags on the arcs built below, never events in their
+% own right: nothing here reads them back, so no rate, probability or state
+% depends on them. Sites that start or preempt a job write their rows with
+% State.tagArc; every other arc stays a zero row, filled in by State.tagPad
+% in the caller once the successor list is final.
+outstart = [];
+outpreempt = [];
 % Pass-and-swap / order-independent stations use a dedicated ordered-list
 % representation and rate function mu(c); handle them separately.
 if sn.sched(ist) == SchedStrategy.PAS
-    [outspace, outrate, outprob, eventCache] = State.afterEventStationPAS(sn, ind, ist, inspace, event, class, isSimulation, eventCache, R, V, key);
+    [outspace, outrate, outprob, eventCache, outstart, outpreempt] = State.afterEventStationPAS(sn, ind, ist, inspace, event, class, isSimulation, eventCache, R, V, key);
     return;
 end
 % Server breakdown. The status is the trailing local-variable column (0 = down,
@@ -116,18 +124,19 @@ switch event
                     && sn.signaltype{class} == SignalType.REPLY
                 rinfoR = State.replyBlockInfo(sn, ind);
                 if rinfoR.width > 0
-                    [outspace, outrate, outprob] = State.afterEventStationReply(sn, ind, ist, class, K, Ks, S, pie, space_buf, space_srv, space_var);
+                    [outspace, outrate, outprob, outstart] = State.afterEventStationReply(sn, ind, ist, class, K, Ks, S, pie, space_buf, space_srv, space_var);
                     if isSimulation && size(outprob,1) > 1
                         cum_prob = cumsum(outprob) / sum(outprob);
                         firing_ctr = 1 + max([0,find( rand > cum_prob' )]);
                         outspace = outspace(firing_ctr,:);
                         outrate = outrate(firing_ctr,:);
+                        outstart = outstart(firing_ctr,:);
                         outprob = 1;
                     end
                     return
                 end
             else
-            [outspace, outrate, outprob] = State.afterEventStationSignal(sn, ind, ist, inspace, class, K, Ks, S, pie, space_buf, space_srv, space_var);
+            [outspace, outrate, outprob, outstart] = State.afterEventStationSignal(sn, ind, ist, inspace, class, K, Ks, S, pie, space_buf, space_srv, space_var);
             % Which job a signal removes is in general a random choice, so the
             % generator needs every destination and its probability. A simulation
             % instead walks one sample path, so it draws a single successor from
@@ -136,6 +145,7 @@ switch event
                 cum_prob = cumsum(outprob) / sum(outprob);
                 firing_ctr = 1 + max([0,find( rand > cum_prob' )]); % select action
                 outspace = outspace(firing_ctr,:);
+                outstart = outstart(firing_ctr,:);
                 outrate = -1;
                 outprob = 1;
             end
@@ -179,6 +189,12 @@ switch event
             space_var_k = space_var;
             space_srv_k = space_srv;
             space_buf_k = space_buf;
+            % Per-row tag of the arrival arc: the class that takes a server in
+            % this row (start_k) and the class it displaces (preempt_k), 0 for
+            % neither. They follow every row selection applied below, so that
+            % they can be filtered with en_o at the single append site.
+            start_k = zeros(size(space_srv_k,1),1);
+            preempt_k = zeros(size(space_srv_k,1),1);
             switch sn.sched(ist)
                 case SchedStrategy.EXT % source, can receive any "virtual" arrival from the sink as long as it is from an open class
                     if isinf(sn.njobs(class))
@@ -191,6 +207,7 @@ switch event
                     % job enters service immediately
                     if space_srv_k(:,Ks(class)+kentry) < classcap(ist,class)
                         space_srv_k(:,Ks(class)+kentry) = space_srv_k(:,Ks(class)+kentry) + 1;
+                        start_k(:) = class;
                         outprob_k = pentry(kentry)*ones(size(space_srv_k,1));
                     else
                         outprob_k = pentry(kentry)*zeros(size(space_srv_k,1));
@@ -203,6 +220,7 @@ switch event
                     % (mirrors the FCFS case below).
                     if sum(space_srv_k,2)<S(ist)
                         space_srv_k(:,Ks(class)+kentry) = space_srv_k(:,Ks(class)+kentry) + 1;
+                        start_k(:) = class;
                         outprob_k = pentry(kentry)*ones(size(space_srv_k,1));
                     else
                         space_buf_k(:,class) = space_buf_k(:,class) + 1;
@@ -235,6 +253,7 @@ switch event
                         nbufA(class) = nbufA(class) + 1;
                         [qA, ~, budgetA] = State.pollingNext(pinfoA, posA, nbufA, R, true);
                         space_srv_k(:,Ks(class)+kentry) = space_srv_k(:,Ks(class)+kentry) + 1;
+                        start_k(:) = class;
                         space_var_k = State.pollingSet(pinfoA, space_var_k, qA, 0, budgetA);
                     else
                         space_buf_k(:,class) = space_buf_k(:,class) + 1;
@@ -261,6 +280,7 @@ switch event
                         % find and modify states with an idle server
                         idle_srv = sum(space_srv_k,2) < SeffA;
                         space_srv_k(idle_srv, end-sum(K)+Ks(class)+kentry) = space_srv_k(idle_srv,end-sum(K)+Ks(class)+kentry) + 1; % job enters service
+                        start_k(idle_srv) = class;
 
                         % this section dynamically grows the number of
                         % elements in the buffer
@@ -319,6 +339,8 @@ switch event
                             space_srv_k = space_srv_k(wbuf_empty,:);
                             space_buf_k = space_buf_k(wbuf_empty,:);
                             space_var_k = space_var_k(wbuf_empty,:);
+                            start_k = start_k(wbuf_empty);
+                            preempt_k = preempt_k(wbuf_empty);
                             empty_slots = empty_slots(wbuf_empty);
                             space_buf_k(sub2ind(size(space_buf_k),1:size(space_buf_k,1),empty_slots')) = class;
                             %outspace(all_busy_srv(wbuf_empty),:) = [space_buf, space_srv, space_var];
@@ -337,6 +359,8 @@ switch event
                             space_srv_k = space_srv_k(idle_srv,:);
                             space_buf_k = space_buf_k(idle_srv,:);
                             space_var_k = space_var_k(idle_srv,:);
+                            start_k = start_k(idle_srv);
+                            preempt_k = preempt_k(idle_srv);
                         end
                         outprob_k = pentry(kentry)*ones(size(space_srv_k,1),1);
                     else
@@ -353,10 +377,13 @@ switch event
                     space_buf_k_reord = space_buf_k(idle_srv,:);
                     space_srv_k_reord = space_srv_k(idle_srv,:);
                     space_var_k_reord = space_var_k(idle_srv,:);
+                    start_k_reord = start_k(idle_srv);
+                    preempt_k_reord = preempt_k(idle_srv);
 
                     % if idle, the job enters service in phase kentry
                     if any(idle_srv)
                         space_srv_k_reord(:, end-sum(K)+Ks(class)+kentry) = space_srv_k_reord(:,end-sum(K)+Ks(class)+kentry) + 1;
+                        start_k_reord(:) = class;
                         outprob_k = pentry(kentry);
                     else
                         % if all busy, expand output states for all possible choices of job class to preempt
@@ -441,6 +468,11 @@ switch event
                                     space_srv_k_reord = [space_srv_k_reord; space_srv_k_preempt];
                                     space_buf_k_reord = [space_buf_k_reord; space_buf_k_preempt];
                                     space_var_k_reord = [space_var_k_reord; space_var_k_preempt];
+                                    % the displaced job leaves the server and the
+                                    % arriving one takes it, on the same arc
+                                    nprm = size(space_srv_k_preempt,1);
+                                    preempt_k_reord = [preempt_k_reord; classpreempt*ones(nprm,1)];
+                                    start_k_reord = [start_k_reord; class*ones(nprm,1)];
                                 end
                             end
                         end
@@ -473,6 +505,21 @@ switch event
                                 space_srv_k_wait = space_srv_k(waitRows,:);
                                 space_buf_k_wait = space_buf_k(waitRows,:);
                                 space_var_k_wait = space_var_k(waitRows,:);
+                                % Grow the buffer in simulation, exactly as the preemption branch
+                                % above does. The SSA state vector starts ONE (class,phase) pair
+                                % wide and only ever widens at these two sites, so without this a
+                                % WAITING arrival was dropped as soon as that pair was taken: the
+                                % arrival transition vanished, the station saturated at S+1 jobs
+                                % and the queue length fell well below the exact answer. It bit
+                                % FCFSPIPRIO hardest, the one preempt-family discipline whose
+                                % arrivals both wait and cannot preempt (LCFSPI/FCFSPI preempt
+                                % unconditionally and LCFSPIPRIO on equal priority, so all three
+                                % reach the preemption grow instead). Measured on a Delay+Queue
+                                % closed model, 3+1 jobs: QLen 0.4902 against the exact 0.8028.
+                                if isSimulation && ~any(space_buf_k_wait(:)==0) ...
+                                        && ni(1) < capacity(ist) && nir(1,class) < classcap(ist,class)
+                                    space_buf_k_wait = [zeros(size(space_buf_k_wait,1),2), space_buf_k_wait];
+                                end
                                 % rightmost empty (class,phase) pair, matching the preemption store
                                 empty_wait = -1*ones(sum(waitRows),1);
                                 if size(space_buf_k_wait,2) > 0
@@ -491,6 +538,9 @@ switch event
                                     space_srv_k_reord = [space_srv_k_reord; space_srv_k_wait];
                                     space_buf_k_reord = [space_buf_k_reord; space_buf_k_wait];
                                     space_var_k_reord = [space_var_k_reord; space_var_k_wait];
+                                    % the arrival preempts nothing and waits: no tag
+                                    start_k_reord = [start_k_reord; zeros(nw,1)];
+                                    preempt_k_reord = [preempt_k_reord; zeros(nw,1)];
                                 end
                             end
                         end
@@ -499,6 +549,8 @@ switch event
                     space_buf_k = space_buf_k_reord; % save reordered output states
                     space_srv_k = space_srv_k_reord; % save reordered output states
                     space_var_k = space_var_k_reord; % save reordered output states
+                    start_k = start_k_reord; % tags follow the same reordering
+                    preempt_k = preempt_k_reord;
             end
             % form the new state
             outspace_k = [space_buf_k, space_srv_k, space_var_k];
@@ -515,6 +567,16 @@ switch event
             end
             outrate = [outrate; -1*ones(size(outspace_k(en_o,:),1),1)]; % passive action, rate is unspecified
             outprob = [outprob; outprob_k(en_o,:)];
+            % tag the arcs just appended; en_o drops the rows the capacity
+            % filter deleted, so the tags stay aligned with outspace
+            nblk_a = size(outspace_k(en_o,:),1);
+            if numel(start_k) ~= size(outspace_k,1)
+                line_error(mfilename, sprintf(['Arrival tag vector holds %d rows against %d successor rows at station ''%s'': ' ...
+                    'a scheduling branch reselected rows without carrying start_k/preempt_k with them.'], ...
+                    numel(start_k), size(outspace_k,1), sn.nodenames{ind}));
+            end
+            outstart = State.tagArc(outstart, size(outspace,1), nblk_a, R, start_k(en_o));
+            outpreempt = State.tagArc(outpreempt, size(outspace,1), nblk_a, R, preempt_k(en_o));
         end
         % Balking (QUEUE_LENGTH strategy): with probability balkProb the
         % arriving class-r job refuses to join, based on the pre-arrival total
@@ -552,7 +614,11 @@ switch event
             if size(outprob,1) > 1
                 cum_prob = cumsum(outprob) / sum(outprob);
                 firing_ctr = 1 + max([0,find( rand > cum_prob' )]); % select action
+                outstart = State.tagPad(outstart, size(outspace,1), R);
+                outpreempt = State.tagPad(outpreempt, size(outspace,1), R);
                 outspace = outspace(firing_ctr,:);
+                outstart = outstart(firing_ctr,:); % the tags of the sampled arc
+                outpreempt = outpreempt(firing_ctr,:);
                 outrate = -1;
                 outprob = 1;
             end
@@ -878,6 +944,10 @@ switch event
                                             for kentry = kentry_range
                                                 space_srv(en_wbuf,Ks(start_svc_class)+kentry) = space_srv(en_wbuf,Ks(start_svc_class)+kentry) + 1;
                                                 outspace = [outspace; space_buf_kd(en,:), space_srv(en,:), space_var_kd(en,:)];
+                                                % the head of the buffer takes the vacated server
+                                                cls_d = zeros(sum(en),1);
+                                                cls_d(en_wbuf(en)) = start_svc_class;
+                                                outstart = State.tagArc(outstart, size(outspace,1), sum(en), R, cls_d);
                                                 rate_k = rate_kd;
                                                 rate_k(en_wbuf,:) = rate_kd(en_wbuf,:)*pentry_svc_class(kentry);
                                                 if isinf(ni) % use limited load-dependence at the latest user-provided level
@@ -938,6 +1008,7 @@ switch event
                                         end
                                         % if state is unchanged, still add with rate 0
                                         outspace = [outspace; space_buf_k(en_wbuf,:), space_srv_k(en_wbuf,:), space_var(en_wbuf,:)];
+                                        outstart = State.tagArc(outstart, size(outspace,1), sum(en_wbuf), R, start_svc_class(:));
                                         rate_k = rate;
                                         rate_k(en_wbuf,:) = rate(en_wbuf,:) * pentry_svc_class(kentry);
                                         if isinf(ni) % hit limited load-dependence
@@ -982,6 +1053,7 @@ switch event
                                         end
                                         % if state is unchanged, still add with rate 0
                                         outspace = [outspace; space_buf_k(en_wbuf,:), space_srv_k(en_wbuf,:), space_var(en_wbuf,:)];
+                                        outstart = State.tagArc(outstart, size(outspace,1), sum(en_wbuf), R, start_svc_class(:));
                                         rate_k = rate;
                                         rate_k(en_wbuf,:) = rate_k(en_wbuf,:)*pentry_svc_class(kentry);
                                         if isinf(ni) % hit limited load-dependence
@@ -1021,7 +1093,7 @@ switch event
                                     end
                                     outprob = [outprob; ones(size(rate(en,:),1),1)];
                                     if isSimulation && nargin>=7 && isobject(eventCache)
-                                        eventCache(key) = {outprob, outspace,outrate};
+                                        eventCache{key} = {outprob, outspace, outrate, outstart, outpreempt};
                                     end
                                     return
                                 end
@@ -1030,6 +1102,9 @@ switch event
                                     space_srv(en_wbuf,Ks(start_svc_class)+kentry) = space_srv(en_wbuf,Ks(start_svc_class)+kentry) + 1;
                                     % if state is unchanged, still add with rate 0
                                     outspace = [outspace; space_buf(en,:), space_srv(en,:), space_var(en,:)];
+                                    cls_d = zeros(sum(en),1);
+                                    cls_d(en_wbuf(en)) = start_svc_class;
+                                    outstart = State.tagArc(outstart, size(outspace,1), sum(en), R, cls_d);
                                     rate_k = rate;
                                     rate_k(en_wbuf,:) = rate(en_wbuf,:)*pentry_svc_class(kentry);
                                     if isinf(ni) % hit limited load-dependence
@@ -1063,13 +1138,17 @@ switch event
                                     end
                                     outprob = [outprob; ones(size(rate(en,:),1),1)];
                                     if isSimulation && nargin>=7 && isobject(eventCache)
-                                        eventCache(key) = {outprob, outspace,outrate};
+                                        eventCache{key} = {outprob, outspace, outrate, outstart, outpreempt};
                                     end
                                     return
                                 end
                                 space_srv(en_wbuf,Ks(start_svc_class)+kentry) = space_srv(en_wbuf,Ks(start_svc_class)+kentry) + 1;
                                 % if state is unchanged, still add with rate 0
                                 outspace = [outspace; space_buf(en,:), space_srv(en,:), space_var(en,:)];
+                                % the most recently preempted job resumes on the freed server
+                                cls_d = zeros(sum(en),1);
+                                cls_d(en_wbuf(en)) = start_svc_class;
+                                outstart = State.tagArc(outstart, size(outspace,1), sum(en), R, cls_d);
                                 if isinf(ni) % hit limited load-dependence
                                     outrate = [outrate; State.cdclassfactor(cdscaling{ist},nir,en,class).*lldscaling(ist,end).*rate(en,:)];
                                 else
@@ -1093,7 +1172,7 @@ switch event
                                     end
                                     outprob = [outprob; ones(size(rate(en,:),1),1)];
                                     if isSimulation && nargin>=7 && isobject(eventCache)
-                                        eventCache(key) = {outprob, outspace,outrate};
+                                        eventCache{key} = {outprob, outspace, outrate, outstart, outpreempt};
                                     end
                                     return
                                 end
@@ -1104,6 +1183,9 @@ switch event
                                     space_srv_k(en_wbuf,Ks(start_svc_class)+kentry) = space_srv_k(en_wbuf,Ks(start_svc_class)+kentry) + 1;
                                     % if state is unchanged, still add with rate 0
                                     outspace = [outspace; space_buf(en,:), space_srv_k(en,:), space_var(en,:)];
+                                    cls_d = zeros(sum(en),1);
+                                    cls_d(en_wbuf(en)) = start_svc_class;
+                                    outstart = State.tagArc(outstart, size(outspace,1), sum(en), R, cls_d);
                                     rate_k = rate;
                                     rate_k(en_wbuf,:) = rate_k(en_wbuf,:) * pentry_svc_class(kentry);
                                     if isinf(ni) % hit limited load-dependence
@@ -1122,8 +1204,18 @@ switch event
                                 colLastNnz = size(space_buf,2) - colLastNnz; % convert to actual position (odd index for class)
                                 start_svc_class = space_buf(en_wbuf, colLastNnz); % job entering service
                                 kentry = space_buf(en_wbuf, colLastNnz+1); % entry phase of job resuming service
-                                space_buf(en_wbuf, colLastNnz) = 0; % zero popped job
-                                space_buf(en_wbuf, colLastNnz+1) = 0; % zero popped phase
+                                % The (class,phase) buffer is RIGHT-aligned, so removing the oldest
+                                % pair -- which sits at the right -- must pad a whole empty PAIR on
+                                % the left rather than leave a hole in place. A hole is a layout
+                                % fromMarginal never enumerates, so the successor was unreachable and
+                                % every full-buffer state came out absorbing (ctmc_solve then reported
+                                % "no recurrent state"). Same rule as the LCFSPRPRIO arm below.
+                                jbuf = 0;
+                                for j = find(en_wbuf)'
+                                    jbuf = jbuf + 1;
+                                    cpop = colLastNnz(jbuf);
+                                    space_buf(j,:) = [0, 0, space_buf(j,1:cpop-1), space_buf(j,(cpop+2):end)];
+                                end
                                 if isempty(start_svc_class)
                                     outspace = [outspace; space_buf(en,:), space_srv(en,:), space_var(en,:)];
                                     if isinf(ni)
@@ -1133,12 +1225,16 @@ switch event
                                     end
                                     outprob = [outprob; ones(size(rate(en,:),1),1)];
                                     if isSimulation && nargin>=7 && isobject(eventCache)
-                                        eventCache(key) = {outprob, outspace, outrate};
+                                        eventCache{key} = {outprob, outspace, outrate, outstart, outpreempt};
                                     end
                                     return
                                 end
                                 space_srv(en_wbuf, Ks(start_svc_class)+kentry) = space_srv(en_wbuf, Ks(start_svc_class)+kentry) + 1;
                                 outspace = [outspace; space_buf(en,:), space_srv(en,:), space_var(en,:)];
+                                % the longest-waiting preempted job resumes on the freed server
+                                cls_d = zeros(sum(en),1);
+                                cls_d(en_wbuf(en)) = start_svc_class;
+                                outstart = State.tagArc(outstart, size(outspace,1), sum(en), R, cls_d);
                                 if isinf(ni)
                                     outrate = [outrate; State.cdclassfactor(cdscaling{ist},nir,en,class).*lldscaling(ist,end).*rate(en,:)];
                                 else
@@ -1153,8 +1249,18 @@ switch event
                                 [~, colLastNnz] = max(fliplr(space_buf(en_wbuf,:) ~= 0), [], 2);
                                 colLastNnz = size(space_buf,2) - colLastNnz; % convert to actual position (odd index for class)
                                 start_svc_class = space_buf(en_wbuf, colLastNnz); % job entering service
-                                space_buf(en_wbuf, colLastNnz) = 0; % zero popped job
-                                space_buf(en_wbuf, colLastNnz+1) = 0; % zero popped phase (ignored for FCFSPI)
+                                % The (class,phase) buffer is RIGHT-aligned, so removing the oldest
+                                % pair -- which sits at the right -- must pad a whole empty PAIR on
+                                % the left rather than leave a hole in place. A hole is a layout
+                                % fromMarginal never enumerates, so the successor was unreachable and
+                                % every full-buffer state came out absorbing (ctmc_solve then reported
+                                % "no recurrent state"). Same rule as the LCFSPRPRIO arm below.
+                                jbuf = 0;
+                                for j = find(en_wbuf)'
+                                    jbuf = jbuf + 1;
+                                    cpop = colLastNnz(jbuf);
+                                    space_buf(j,:) = [0, 0, space_buf(j,1:cpop-1), space_buf(j,(cpop+2):end)];
+                                end
                                 if isempty(start_svc_class)
                                     outspace = [outspace; space_buf(en,:), space_srv(en,:), space_var(en,:)];
                                     if isinf(ni)
@@ -1164,7 +1270,7 @@ switch event
                                     end
                                     outprob = [outprob; ones(size(rate(en,:),1),1)];
                                     if isSimulation && nargin>=7 && isobject(eventCache)
-                                        eventCache(key) = {outprob, outspace, outrate};
+                                        eventCache{key} = {outprob, outspace, outrate, outstart, outpreempt};
                                     end
                                     return
                                 end
@@ -1174,6 +1280,9 @@ switch event
                                     space_srv_k = space_srv;
                                     space_srv_k(en_wbuf, Ks(start_svc_class)+kentry) = space_srv_k(en_wbuf, Ks(start_svc_class)+kentry) + 1;
                                     outspace = [outspace; space_buf(en,:), space_srv_k(en,:), space_var(en,:)];
+                                    cls_d = zeros(sum(en),1);
+                                    cls_d(en_wbuf(en)) = start_svc_class;
+                                    outstart = State.tagArc(outstart, size(outspace,1), sum(en), R, cls_d);
                                     rate_k = rate;
                                     rate_k(en_wbuf,:) = rate_k(en_wbuf,:) * pentry_svc_class(kentry);
                                     if isinf(ni)
@@ -1219,9 +1328,10 @@ switch event
                                     space_srv_k(en_wbuf,Ks(start_svc_class)+kentry) = space_srv_k(en_wbuf,Ks(start_svc_class)+kentry) + 1;
                                     for j=find(en_wbuf)'
                                         % Remove both class and phase from rightmost position (preempt-resume)
-                                        space_buf_k(j,:) = [0, space_buf_k(j,1:rightmostMaxPos(j)-1), space_buf_k(j,(rightmostMaxPos(j)+2):end), 0];
+                                        space_buf_k(j,:) = [0, 0, space_buf_k(j,1:rightmostMaxPos(j)-1), space_buf_k(j,(rightmostMaxPos(j)+2):end)];
                                     end
                                     outspace = [outspace; space_buf_k(en_wbuf,:), space_srv_k(en_wbuf,:), space_var(en_wbuf,:)];
+                                    outstart = State.tagArc(outstart, size(outspace,1), sum(en_wbuf), R, start_svc_class(:));
                                     if isinf(ni)
                                         outrate = [outrate; State.cdclassfactor(cdscaling{ist},nir,en_wbuf,class).*lldscaling(ist,end).*rate(en_wbuf,:)];
                                     else
@@ -1274,6 +1384,7 @@ switch event
                                         space_buf_k(j,:) = [0, 0, space_buf_k(j,1:leftmostMaxPos(j)-1), space_buf_k(j,(leftmostMaxPos(j)+2):end)];
                                     end
                                     outspace = [outspace; space_buf_k(en_wbuf,:), space_srv_k(en_wbuf,:), space_var(en_wbuf,:)];
+                                    outstart = State.tagArc(outstart, size(outspace,1), sum(en_wbuf), R, start_svc_class(:));
                                     if isinf(ni)
                                         outrate = [outrate; State.cdclassfactor(cdscaling{ist},nir,en_wbuf,class).*lldscaling(ist,end).*rate(en_wbuf,:)];
                                     else
@@ -1287,12 +1398,23 @@ switch event
                                 en_wbuf = en & ni>S(ist); %states with jobs in buffer
                                 en_wobuf = ~en_wbuf;
                                 priogroup = [Inf,sn.classprio]; % Inf for empty positions (lower value = higher priority)
-                                space_buf_groupg = arrayfun(@(x) priogroup(1+x), space_buf);
-                                start_classprio = min(space_buf_groupg(en_wbuf,:),[],2); % min finds highest priority
-                                isrowmax = space_buf_groupg == repmat(start_classprio, 1, size(space_buf_groupg,2));
-                                % FCFS: Find rightmost (last) position for highest priority class
-                                [~,rightmostMaxPos]=max(fliplr(isrowmax),[],2);
-                                rightmostMaxPos = size(space_buf_groupg,2) - rightmostMaxPos + 1;
+                                % Buffer stores [class,phase,class,phase,...] pairs;
+                                % only inspect class columns (odd: 1,3,5,...) for priority.
+                                % Scanning every column instead mapped a PHASE index p
+                                % through priogroup(1+p), so a phase masqueraded as class p
+                                % and could win the min: the promoted job was then read off
+                                % a phase column, i.e. a class with nothing waiting, and the
+                                % pair removal straddled two entries. The PR-PRIO arms above
+                                % already restrict to class_cols for this reason.
+                                class_cols = 1:2:size(space_buf,2);
+                                space_buf_class = space_buf(:, class_cols);
+                                space_buf_class_groupg = arrayfun(@(x) priogroup(1+x), space_buf_class);
+                                start_classprio = min(space_buf_class_groupg(en_wbuf,:),[],2); % min finds highest priority
+                                isrowmax = space_buf_class_groupg == repmat(start_classprio, 1, size(space_buf_class_groupg,2));
+                                % FCFS: Find rightmost (last) class position for highest priority class
+                                [~,rightmostClassPos]=max(fliplr(isrowmax),[],2);
+                                rightmostClassPos = size(space_buf_class_groupg,2) - rightmostClassPos + 1;
+                                rightmostMaxPos = 2*rightmostClassPos - 1; % convert to buffer column index
                                 start_svc_class = space_buf(en_wbuf, rightmostMaxPos); % job entering service
 
                                 % Handle states without buffer jobs
@@ -1314,9 +1436,10 @@ switch event
                                         space_srv_k(en_wbuf,Ks(start_svc_class)+kentry) = space_srv_k(en_wbuf,Ks(start_svc_class)+kentry) + 1;
                                         for j=find(en_wbuf)'
                                             % Remove both class and phase from rightmost position (preempt-independent ignores stored phase)
-                                            space_buf_k(j,:) = [0, space_buf_k(j,1:rightmostMaxPos(j)-1), space_buf_k(j,(rightmostMaxPos(j)+2):end), 0];
+                                            space_buf_k(j,:) = [0, 0, space_buf_k(j,1:rightmostMaxPos(j)-1), space_buf_k(j,(rightmostMaxPos(j)+2):end)];
                                         end
                                         outspace = [outspace; space_buf_k(en_wbuf,:), space_srv_k(en_wbuf,:), space_var(en_wbuf,:)];
+                                        outstart = State.tagArc(outstart, size(outspace,1), sum(en_wbuf), R, start_svc_class(:));
                                         rate_k = rate;
                                         rate_k(en_wbuf,:) = rate_k(en_wbuf,:) * pentry_svc_class(kentry);
                                         if isinf(ni)
@@ -1333,11 +1456,22 @@ switch event
                                 en_wbuf = en & ni>S(ist); %states with jobs in buffer
                                 en_wobuf = ~en_wbuf;
                                 priogroup = [Inf,sn.classprio]; % Inf for empty positions (lower value = higher priority)
-                                space_buf_groupg = arrayfun(@(x) priogroup(1+x), space_buf);
-                                start_classprio = min(space_buf_groupg(en_wbuf,:),[],2); % min finds highest priority
-                                isrowmax = space_buf_groupg == repmat(start_classprio, 1, size(space_buf_groupg,2));
-                                % LCFS: Find leftmost (first) position for highest priority class
-                                [~,leftmostMaxPos]=max(isrowmax,[],2);
+                                % Buffer stores [class,phase,class,phase,...] pairs;
+                                % only inspect class columns (odd: 1,3,5,...) for priority.
+                                % Scanning every column instead mapped a PHASE index p
+                                % through priogroup(1+p), so a phase masqueraded as class p
+                                % and could win the min: the promoted job was then read off
+                                % a phase column, i.e. a class with nothing waiting, and the
+                                % pair removal straddled two entries. The PR-PRIO arms above
+                                % already restrict to class_cols for this reason.
+                                class_cols = 1:2:size(space_buf,2);
+                                space_buf_class = space_buf(:, class_cols);
+                                space_buf_class_groupg = arrayfun(@(x) priogroup(1+x), space_buf_class);
+                                start_classprio = min(space_buf_class_groupg(en_wbuf,:),[],2); % min finds highest priority
+                                isrowmax = space_buf_class_groupg == repmat(start_classprio, 1, size(space_buf_class_groupg,2));
+                                % LCFS: Find leftmost (first) class position for highest priority class
+                                [~,leftmostClassPos]=max(isrowmax,[],2);
+                                leftmostMaxPos = 2*leftmostClassPos - 1; % convert to buffer column index
                                 start_svc_class = space_buf(en_wbuf, leftmostMaxPos); % job entering service
                                 
                                 % Handle states without buffer jobs
@@ -1369,6 +1503,7 @@ switch event
                                         space_buf_k(j,:) = [0, 0, space_buf_k(j,1:leftmostMaxPos(j)-1), space_buf_k(j,(leftmostMaxPos(j)+2):end)];
                                         end
                                         outspace = [outspace; space_buf_k(en_wbuf,:), space_srv_k(en_wbuf,:), space_var(en_wbuf,:)];
+                                        outstart = State.tagArc(outstart, size(outspace,1), sum(en_wbuf), R, start_svc_class(:));
                                         rate_k = rate;
                                         rate_k(en_wbuf,:) = rate_k(en_wbuf,:) * pentry_svc_class(kentry);
                                         if isinf(ni)
@@ -1412,6 +1547,7 @@ switch event
                                     for kentry=1:K(r)
                                         space_srv_r(en_wbuf,Ks(r)+kentry) = space_srv_r(en_wbuf,Ks(r)+kentry) + 1; % bring job in service
                                         outspace = [outspace; space_buf(en_wbuf,:), space_srv_r(en_wbuf,:), space_var(en_wbuf,:)];
+                                        outstart = State.tagArc(outstart, size(outspace,1), sum(en_wbuf), R, r);
                                         rate_k = rate_r;
                                         rate_k(en_wbuf,:) = rate_k(en_wbuf,:) * pentry_svc_class(kentry);
                                         if isinf(ni) % hit limited load-dependence
@@ -1473,6 +1609,11 @@ switch event
                                         bufD, srvD, space_var(rowD,:), K, Ks, pie{ist}, R);
                                     for jD = 1:size(rowsD,1)
                                         outspace = [outspace; rowsD(jD,:)];
+                                        % mode 1 pulls a waiting class-qD job into the server;
+                                        % a switchover (2) or a park (0) starts nobody
+                                        if modeD == 1
+                                            outstart = State.tagArc(outstart, size(outspace,1), 1, R, qD);
+                                        end
                                         if isinf(ni) % hit limited load-dependence
                                             outrate = [outrate; State.cdclassfactor(cdscaling{ist},nir,rowD,class).*lldscaling(ist,end).*rateD.*probsD(jD)];
                                         else
@@ -1509,9 +1650,12 @@ switch event
                                 pentry = pie{ist}{sept_class};
                                 for kentry=1:K(sept_class)
                                     space_srv(en_wbuf,Ks(sept_class)+kentry) = space_srv(en_wbuf,Ks(sept_class)+kentry) + 1; % bring job in service
+                                    cls_d = zeros(sum(en),1);
+                                    cls_d(en_wbuf(en)) = sept_class;
                                     if isSimulation
                                         % break the tie
                                         outspace = [outspace; space_buf(en,:), space_srv(en,:), space_var(en,:)];
+                                        outstart = State.tagArc(outstart, size(outspace,1), sum(en), R, cls_d);
                                         rate_k = rate;
                                         rate_k(en,:) = rate_k(en,:) * pentry(kentry);
                                         if isinf(ni) % hit limited load-dependence
@@ -1522,6 +1666,7 @@ switch event
                                         outprob = [outprob; ones(size(rate(en,:),1),1)];
                                     else
                                         outspace = [outspace; space_buf(en,:), space_srv(en,:), space_var(en,:)];
+                                        outstart = State.tagArc(outstart, size(outspace,1), sum(en), R, cls_d);
                                         rate_k = rate;
                                         rate_k(en,:) = rate_k(en,:) * pentry(kentry);
                                         if isinf(ni) % hit limited load-dependence
@@ -1539,8 +1684,10 @@ switch event
                     end
                 end
                 if isSimulation
+                    outstart = State.tagPad(outstart, size(outspace,1), R);
+                    outpreempt = State.tagPad(outpreempt, size(outspace,1), R);
                     if nargin>=7 && isobject(eventCache)
-                        eventCache(key) = {outprob, outspace,outrate};
+                        eventCache{key} = {outprob, outspace, outrate, outstart, outpreempt};
                     end
 
                     if size(outspace,1) > 1
@@ -1548,6 +1695,8 @@ switch event
                         cum_rate = cumsum(outrate) / tot_rate;
                         firing_ctr = 1 + max([0,find( rand > cum_rate' )]); % select action
                         outspace = outspace(firing_ctr,:);
+                        outstart = outstart(firing_ctr,:); % the tags of the sampled arc
+                        outpreempt = outpreempt(firing_ctr,:);
                         outrate = sum(outrate);
                         outprob = outprob(firing_ctr,:);
                     end
@@ -1626,7 +1775,18 @@ switch event
                                 w_i = sn.schedparam(ist,:); w_i = w_i / sum(w_i);
                                 rate = proc{ist}{class}{1}(k,kdest)*kir(:,class,k)/nir(class)*w_i(class)/(w_i*cir(:)); % assume active
 
-                            case {SchedStrategy.FCFS, SchedStrategy.HOL, SchedStrategy.LCFS, SchedStrategy.LCFSPR, SchedStrategy.LCFSPI, SchedStrategy.LCFSPRIO, SchedStrategy.SIRO, SchedStrategy.SEPT, SchedStrategy.LEPT, SchedStrategy.POLLING}
+                            % 2026-07-29: the preempt family completed here. Only
+                            % LCFSPR/LCFSPI were listed, so a job in service at
+                            % FCFSPR, FCFSPI and PRIO variants could never advance its service
+                            % phase: no PHASE transition was emitted, the states
+                            % with a busy server were unreachable, and the
+                            % generator collapsed onto an absorbing state
+                            % ("no recurrent state" from ctmc_solve). Buffered
+                            % jobs are frozen under both PR and PI, so the rate
+                            % is the same one every non-sharing discipline uses.
+                            case {SchedStrategy.FCFS, SchedStrategy.HOL, SchedStrategy.LCFS, SchedStrategy.LCFSPRIO, SchedStrategy.SIRO, SchedStrategy.SEPT, SchedStrategy.LEPT, SchedStrategy.POLLING, ...
+                                    SchedStrategy.LCFSPR, SchedStrategy.LCFSPI, SchedStrategy.LCFSPRPRIO, SchedStrategy.LCFSPIPRIO, ...
+                                    SchedStrategy.FCFSPR, SchedStrategy.FCFSPI, SchedStrategy.FCFSPRPRIO, SchedStrategy.FCFSPIPRIO}
                                 rate = proc{ist}{class}{1}(k,kdest)*kir(:,class,k); % assume active
                         end
                         % if the class cannot be served locally,
@@ -1643,7 +1803,7 @@ switch event
             end
             if isSimulation
                 if nargin>=7 && isobject(eventCache)
-                    eventCache(key) = {outprob, outspace,outrate};
+                    eventCache{key} = {outprob, outspace, outrate, outstart, outpreempt};
                 end
 
                 if size(outspace,1) > 1
@@ -1710,6 +1870,15 @@ switch event
                 outspace = [outspace; rowsS(jS,:)];
                 outrate = [outrate; rateS*probsS(jS)];
                 outprob = [outprob; 1];
+                % A completed switchover that opens a visit (mode 1) pulls a
+                % waiting class-qS job into the server, so it starts service
+                % just as an ARV or a DEP promotion does. This is the one
+                % service start a polling station reaches through neither, and
+                % leaving it untagged would break startRate == TN + preemptRate
+                % there for no reason other than the name of the carrier event.
+                if modeS == 1
+                    outstart = State.tagArc(outstart, size(outspace,1), 1, R, qS);
+                end
             end
         end
     case EventType.RENEGE
@@ -1778,11 +1947,19 @@ switch event
                     outspace = [outspace; space_buf_k, space_srv_k, space_var];
                     outrate  = [outrate; retrialRate * pentry(kentry)];
                     outprob  = [outprob; 1];
+                    % A successful retry is the only way into the server at a
+                    % retrial station (a DEP there never promotes from the
+                    % orbit), so it carries the START the invariant needs.
+                    outstart = State.tagArc(outstart, size(outspace,1), 1, R, class);
                 end
                 if isSimulation && size(outspace,1) > 1
                     cr = cumsum(outrate) / sum(outrate);
                     fc = 1 + max([0, find(rand > cr')]);
+                    outstart = State.tagPad(outstart, size(outspace,1), R);
+                    outpreempt = State.tagPad(outpreempt, size(outspace,1), R);
                     outspace = outspace(fc,:);
+                    outstart = outstart(fc,:);
+                    outpreempt = outpreempt(fc,:);
                     outrate = sum(outrate);
                     outprob = 1;
                 end

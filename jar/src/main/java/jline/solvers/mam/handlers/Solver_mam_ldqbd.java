@@ -4,230 +4,107 @@
  */
 package jline.solvers.mam.handlers;
 
-import java.util.ArrayList;
-import java.util.List;
-
 import jline.api.mam.Ldqbd;
+import jline.api.mam.Qbd_setupdelayoff_closed;
 import jline.api.mam.LdqbdOptions;
 import jline.api.mam.LdqbdResult;
-import jline.api.mam.Map_mean;
-import jline.api.mam.Map_pie;
-import jline.io.InputOutput;
 import jline.lang.NetworkStruct;
-import jline.lang.constant.SchedStrategy;
-import jline.lang.JobClass;
-import jline.lang.nodes.Station;
 import jline.solvers.SolverOptions;
 import jline.solvers.mam.MAMResult;
 import jline.util.matrix.Matrix;
-import jline.util.matrix.MatrixCell;
 
 /**
- * Solver for single-class closed queueing networks using Level-Dependent QBD.
+ * Solver for single-class two-station queueing networks using a Level-Dependent QBD.
  *
- * Uses Level-Dependent Quasi-Birth-Death (LD-QBD) process to compute
- * performance metrics for single-class closed queueing networks
- * consisting of a Delay (infinite server) and a Queue (FCFS).
+ * <p>Two regimes share one block-tridiagonal generator, differing only in the
+ * per-level arrival rate and the top level:
+ * <ul>
+ *   <li>CLOSED: one Delay (INF) + one Queue (FCFS), finite population N. Level n
+ *       is the number of jobs at the queue, and the arrival rate out of level n
+ *       is the finite-source rate (N-n)*lambda_eff, which vanishes at n = N and
+ *       closes the chain by itself.</li>
+ *   <li>OPEN: one Source (EXT) + one Queue, Poisson arrivals at a constant
+ *       lambda_eff, truncated at options.cutoff or at a level where the tail
+ *       probability is negligible.</li>
+ * </ul>
  *
- * Exactness: exact for exponential service at any number of servers, and for
- * PH service at a single server. For PH service with c &gt; 1 servers it is an
- * approximation: the c parallel PH servers are collapsed into one PH process
- * scaled by min(n,c), which ignores the phase of each individual busy server
- * (the exact chain tracks the multiset of the min(n,c) in-service phases).
+ * <p>Exactness: exact for exponential service at any number of servers, and for
+ * PH service at any number of servers. The multiserver PH chain carries the
+ * MULTISET of the phases the min(n,c) busy servers sit in; the collapsed
+ * single-phase approximation this solver used until 2026-08-18 is gone.
  *
- * The LD-QBD approach models the system where:
- *   - Level n = number of jobs at the queue (0 &lt;= n &lt;= N)
- *   - Jobs at delay = N - n
- *   - Transition rates depend on the current level
- *
- * Supports PH-type service distributions (Exp, Erlang, HyperExp, etc.)
+ * <p>The blocks come from {@link Solver_mam_ldqbd_statevec#solver_mam_ldqbd_ld},
+ * the one construction shared with the SolverENV state-vector analyzer. This
+ * class kept a second, closed-only copy until 2026-08-18, which silently ignored
+ * sn.lldscaling (though the featset declared LoadDependence for this method) and
+ * refused the open regime that MATLAB, Python and C++ all served.
  */
 public final class Solver_mam_ldqbd {
     private Solver_mam_ldqbd() {}
 
-    private static final String MFILENAME = "solver_mam_ldqbd";
-
     public static MAMResult solver_mam_ldqbd(NetworkStruct sn, SolverOptions options) {
-        int M = sn.nstations;
-        int K = sn.nclasses;
+        final int M = sn.nstations;
+        final int K = sn.nclasses;
 
-        // Check: single-class closed network
-        if (K != 1) {
-            InputOutput.line_error(MFILENAME, "LDQBD method requires a single-class model.");
-            return createEmptyResult(M, K);
-        }
+        // Shape validation, the service process, the per-level arrival rate and the
+        // per-level service factor all live in the shared builder.
+        Solver_mam_ldqbd_statevec.Ld ld = Solver_mam_ldqbd_statevec.solver_mam_ldqbd_ld(sn, options);
 
-        int N = (int) sn.njobs.get(0, 0);
-        if (!Double.isFinite((double) N) || N <= 0) {
-            InputOutput.line_error(MFILENAME, "LDQBD method requires a closed model with finite population.");
-            return createEmptyResult(M, K);
-        }
-
-        // Check: must have exactly one delay and one queue
-        int nDelay = 0;
-        int nQueue = 0;
-        int delayIdx = -1;
-        int queueIdx = -1;
-
-        for (int i = 0; i < M; i++) {
-            SchedStrategy sched = sn.sched.get(sn.stations.get(i));
-            if (sched == SchedStrategy.INF) {
-                nDelay++;
-                delayIdx = i;
-            } else if (sched == SchedStrategy.FCFS) {
-                nQueue++;
-                queueIdx = i;
-            }
-        }
-
-        if (nDelay != 1 || nQueue != 1 || M != 2) {
-            InputOutput.line_error(MFILENAME, "LDQBD method requires exactly one Delay and one Queue station.");
-            return createEmptyResult(M, K);
-        }
-
-        // Get service parameters
-        Matrix rates = sn.rates;
-        Matrix nservers = sn.nservers;
-
-        // see _kb/06-solver-catalog.md for rationale
-        double lambda_d = rates.get(delayIdx, 0);
-        double lambda_eff = lambda_d * sn.rt.get(delayIdx, queueIdx);
-
-        // Get station and job class objects for proc access
-        Station queueStation = sn.stations.get(queueIdx);
-        JobClass jobClass = sn.jobclasses.get(0);
-
-        // Queue service process
-        if (sn.proc == null || sn.proc.get(queueStation) == null
-                || sn.proc.get(queueStation).get(jobClass) == null) {
-            throw new RuntimeException("No service process for queue station");
-        }
-        MatrixCell PH_queue = sn.proc.get(queueStation).get(jobClass);
-        int nServers = (int) nservers.get(queueIdx, 0);
-
-        // Check if queue service is exponential (1x1 matrix) or PH
-        if (PH_queue.get(0) == null) {
-            throw new RuntimeException("No D0 matrix in service process");
-        }
-        Matrix D0 = PH_queue.get(0);
-        boolean isExponential = D0.getNumRows() == 1 && D0.getNumCols() == 1;
-        double mu;
-        int nPhases;
-
-        if (isExponential) {
-            mu = -D0.get(0, 0);
-            nPhases = 1;
+        final int Nlev = ld.Nlev;
+        Matrix pi_ldqbd = null;
+        double mean_queue;
+        double x_setup = 0.0;
+        if (ld.hasSetup) {
+            // SETUP AND DELAY-OFF, the closed vacation queue. The level-dependent
+            // chain this needs is the one the builder assembled with two extra
+            // phase families -- the setup above level 0 and the delay-off at
+            // level 0 -- and Qbd_setupdelayoff_closed builds and solves exactly
+            // that, so it is called rather than duplicated. Without it the blocks
+            // describe a server that is ALWAYS warm and the answer is
+            // byte-identical across any setup mean (BUG-78).
+            Qbd_setupdelayoff_closed.Result cr =
+                    Qbd_setupdelayoff_closed.qbd_setupdelayoff_closed(
+                            ld.N, 1.0 / ld.lambda_eff, ld.mu, ld.alpharate, ld.alphascv,
+                            ld.betarate, ld.betascv);
+            mean_queue = cr.QN;
+            x_setup = cr.XN;
         } else {
-            nPhases = D0.getNumRows();
-            mu = 1.0 / Map_mean.map_mean(PH_queue);
+            LdqbdOptions ldqbdOptions = new LdqbdOptions(options.tol, options.iter_max, false);
+            LdqbdResult ldqbdResult = Ldqbd.ldqbd(ld.Q0, ld.Q1, ld.Q2, ldqbdOptions);
+            pi_ldqbd = ldqbdResult.getPi();   // per-level, already summed over phases
+
+            mean_queue = 0.0;
+            for (int n = 0; n <= Nlev; n++) {
+                mean_queue += n * pi_ldqbd.get(0, n);
+            }
         }
 
-        // Build LD-QBD matrices
-        List<Matrix> Q0 = new ArrayList<Matrix>();
-        List<Matrix> Q1 = new ArrayList<Matrix>();
-        List<Matrix> Q2 = new ArrayList<Matrix>();
-
-        if (isExponential) {
-            // Exponential service case (scalar matrices)
-            for (int n = 0; n < N; n++) {
-                Matrix arrRate = new Matrix(1, 1);
-                arrRate.set(0, 0, (N - n) * lambda_eff);
-                Q0.add(arrRate);
-            }
-
-            for (int n = 0; n <= N; n++) {
-                double arrivalRate = (N - n) * lambda_eff;
-                double departureRate = (n > 0) ? Math.min(n, nServers) * mu : 0.0;
-                Matrix local = new Matrix(1, 1);
-                local.set(0, 0, -(arrivalRate + departureRate));
-                Q1.add(local);
-            }
-
-            for (int n = 1; n <= N; n++) {
-                Matrix depRate = new Matrix(1, 1);
-                depRate.set(0, 0, Math.min(n, nServers) * mu);
-                Q2.add(depRate);
-            }
+        // Utilization is the fraction of the station's PEAK capacity in use,
+        // sum_n pi(n)*sf(n)/utilPeak, which is the work-based convention CTMC,
+        // MVA, NC and serial SSA all report; utilPeak = max(c, max(alpha)) is
+        // CTMC's own normalizer. Already per-server: do not rescale by c again.
+        //
+        // Without load dependence sf(n) = min(n,c) and utilPeak = c, giving the
+        // mean fraction of the c servers in use, and at c = 1 that is sf(n) = 1
+        // for every n >= 1, so the sum collapses to 1 - pi(0). It used to report
+        // 1 - pi(0) under load dependence, i.e. P(busy), which reads a station
+        // running alpha(n) times faster as no busier than one at its nominal
+        // rate: 0.9587 against CTMC's 0.6612 on a 4-job closed model with
+        // alpha = [1 1.5 2 2.5].
+        double util_queue = 0.0;
+        if (ld.hasSetup) {
+            // With a setup the server is DELIVERING work only in the busy phase,
+            // so the level occupancy over-counts it: a level is occupied during
+            // the setup too. The utilization law gives the same work-based number
+            // without the per-phase vector, X*E[S]/peak, which is what the level
+            // sum reduces to without a setup.
+            util_queue = x_setup * ld.mean_service / ld.utilPeak;
         } else {
-            // PH-type service case (matrix-valued)
-            if (PH_queue.get(1) == null) {
-                throw new RuntimeException("No D1 matrix in PH service process");
-            }
-            Matrix D1 = PH_queue.get(1);
-            Matrix alpha = Map_pie.map_pie(PH_queue);
-
-            // Level 0 -> 1: arrival starts service in some phase
-            Q0.add(alpha.scale(N * lambda_eff));
-
-            // Level n -> n+1 (n >= 1): arrival, preserve phase
-            for (int n = 1; n < N; n++) {
-                Q0.add(Matrix.eye(nPhases).scale((N - n) * lambda_eff));
-            }
-
-            // Level 0: 1x1 (no service, only arrivals)
-            Matrix Q1_0 = new Matrix(1, 1);
-            Q1_0.set(0, 0, -(N * lambda_eff));
-            Q1.add(Q1_0);
-
-            // Level n >= 1: phase transitions within level
-            for (int n = 1; n <= N; n++) {
-                double arrivalRate = (N - n) * lambda_eff;
-                int c_n = Math.min(n, nServers);
-                Matrix local = D0.scale((double) c_n).sub(Matrix.eye(nPhases).scale(arrivalRate));
-                Q1.add(local);
-            }
-
-            // Level 1 -> 0: service completion, go to empty state
-            int c_1 = Math.min(1, nServers);
-            Matrix Q2_1 = D1.scale((double) c_1).mult(Matrix.ones(nPhases, 1));
-            Q2.add(Q2_1);
-
-            // Level n -> n-1 (n >= 2): service completion, next job starts
-            for (int n = 2; n <= N; n++) {
-                int c_n = Math.min(n, nServers);
-                Q2.add(D1.scale((double) c_n));
+            for (int n = 1; n <= Nlev; n++) {
+                util_queue += (ld.sf[n - 1] / ld.utilPeak) * pi_ldqbd.get(0, n);
             }
         }
 
-        // Solve LD-QBD
-        LdqbdOptions ldqbdOptions = new LdqbdOptions(options.tol, options.iter_max, false);
-
-        LdqbdResult ldqbdResult = Ldqbd.ldqbd(Q0, Q1, Q2, ldqbdOptions);
-        Matrix pi_ldqbd = ldqbdResult.getPi();
-
-        // Compute performance metrics from steady-state distribution
-        double mean_queue = 0.0;
-        for (int n = 0; n <= N; n++) {
-            mean_queue += n * pi_ldqbd.get(0, n);
-        }
-
-        double mean_delay = N - mean_queue;
-
-        // Queue flow X = mean_delay * lambda_eff (flow balance into the queue)
-        double X = mean_delay * lambda_eff;
-
-        // Mean service time at queue
-        double mean_service = isExponential ? 1.0 / mu : Map_mean.map_mean(PH_queue);
-
-        // see _kb/06-solver-catalog.md for rationale
-        double util_queue;
-        if (nServers == 1) {
-            util_queue = 1.0 - pi_ldqbd.get(0, 0);
-        } else {
-            double u = 0.0;
-            for (int n = 1; n <= N; n++) {
-                u += ((double) Math.min(n, nServers) / nServers) * pi_ldqbd.get(0, n);
-            }
-            util_queue = u;
-        }
-
-        // Response time at queue (using Little's law: R = Q/X)
-        double R_queue = (X > 0) ? mean_queue / X : 0.0;
-
-        // Response time at delay (constant for infinite server)
-        double R_delay = 1.0 / lambda_d;
-
-        // Populate output matrices
         MAMResult result = new MAMResult();
         result.QN = new Matrix(M, K);
         result.UN = new Matrix(M, K);
@@ -236,37 +113,41 @@ public final class Solver_mam_ldqbd {
         result.CN = new Matrix(1, K);
         result.XN = new Matrix(1, K);
 
-        // see _kb/06-solver-catalog.md for rationale
-        result.QN.set(delayIdx, 0, mean_delay);
-        result.UN.set(delayIdx, 0, mean_delay);
-        result.RN.set(delayIdx, 0, R_delay);
-        result.TN.set(delayIdx, 0, mean_delay * lambda_d);
+        final int qi = ld.queueIdx;
+        final int ri = ld.refIdx;
+        if (ld.isOpen) {
+            // Served throughput = arrival rate less the truncation blocking.
+            double X = ld.lambda_eff * (1.0 - pi_ldqbd.get(0, Nlev));
+            double R_queue = (X > 0) ? mean_queue / X : 0.0;
+            // Source station: pass-through, no queueing.
+            result.TN.set(ri, 0, X);
+            result.QN.set(qi, 0, mean_queue);
+            result.UN.set(qi, 0, util_queue);
+            result.RN.set(qi, 0, R_queue);
+            result.TN.set(qi, 0, X);
+            result.XN.set(0, 0, X);
+            result.CN.set(0, 0, R_queue);
+        } else {
+            double mean_delay = ld.N - mean_queue;
+            double X = mean_delay * ld.lambda_eff;
+            double R_queue = (X > 0) ? mean_queue / X : 0.0;
+            double R_delay = 1.0 / ld.delayRate;
+            // see _kb/06-solver-catalog.md for rationale: the delay completes at
+            // mean_delay*lambda_d, of which only the rt(delay,queue) fraction
+            // proceeds to the queue, so its throughput is NOT the queue flow X.
+            result.QN.set(ri, 0, mean_delay);
+            result.UN.set(ri, 0, mean_delay);   // infinite server: U = Q
+            result.RN.set(ri, 0, R_delay);
+            result.TN.set(ri, 0, mean_delay * ld.delayRate);
+            result.QN.set(qi, 0, mean_queue);
+            result.UN.set(qi, 0, util_queue);
+            result.RN.set(qi, 0, R_queue);
+            result.TN.set(qi, 0, X);
+            result.XN.set(0, 0, X);
+            result.CN.set(0, 0, R_delay + R_queue);
+        }
 
-        // Queue station metrics
-        result.QN.set(queueIdx, 0, mean_queue);
-        result.UN.set(queueIdx, 0, util_queue);
-        result.RN.set(queueIdx, 0, R_queue);
-        result.TN.set(queueIdx, 0, X);
-
-        // System-level metrics
-        result.XN.set(0, 0, X);
-        result.CN.set(0, 0, R_delay + R_queue);
-
-        result.iter = 1;
-        result.method = "ldqbd";
-
-        return result;
-    }
-
-    private static MAMResult createEmptyResult(int M, int K) {
-        MAMResult result = new MAMResult();
-        result.QN = new Matrix(M, K);
-        result.UN = new Matrix(M, K);
-        result.RN = new Matrix(M, K);
-        result.TN = new Matrix(M, K);
-        result.CN = new Matrix(1, K);
-        result.XN = new Matrix(1, K);
-        result.iter = 0;
+        result.iter = 1;   // LDQBD is a direct method
         result.method = "ldqbd";
         return result;
     }

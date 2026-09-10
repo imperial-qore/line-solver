@@ -46,11 +46,13 @@ public final class Pfqn_ls {
 
         if (L_new.isEmpty() || N.isEmpty() || N.elementSum() == 0.0
                 || L_new.elementSum() < GlobalConstants.CoarseTol) {
-            Matrix tmp = new Matrix(1, Z.getNumCols());
-            for (int i = 0; i < tmp.length(); i++) {
-                tmp.set(i, FastMath.log(Z.sumCols(i)));
+            // Z can be empty here, and an empty class contributes 0, not 0*log(0).
+            lGn = -Matrix.factln(N).elementSum();
+            for (int r = 0; r < N.length(); r++) {
+                if (N.get(r) > 0) {
+                    lGn += N.get(r) * FastMath.log(Z.isEmpty() ? 0.0 : Z.sumCols(r));
+                }
             }
-            lGn = (-Matrix.factln(N).elementSum() + N.elementMult(tmp, null).elementSum());
         } else if (Z.isEmpty()) {
             Ret.pfqnLeFpi ret = Pfqn_le_fpi.pfqn_le_fpi(L_new, N);
             Matrix umax = ret.u;

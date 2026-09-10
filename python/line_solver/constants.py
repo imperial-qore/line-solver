@@ -163,6 +163,14 @@ class EventType(Enum):
     SWITCH = auto()  # the server of a polling station advances its switchover timer
     FAILURE = auto()  # the server of a station breaks down (goes from up to down)
     REPAIR = auto()   # the server of a station is repaired (goes from down to up)
+    # START and PREEMPT are instantaneous tags on the arc of the ARV or DEP
+    # transition that causes them, never the active half of an sn.sync entry:
+    # they carry no clock, add no state and change no numerical result.
+    # PREEMPT is spelled in full because PRE already names the Petri-net
+    # pre-arc. REPAIR emits no START: the supported breakdown model resumes the
+    # held job rather than restarting it.
+    START = auto()    # a job begins or resumes holding a server
+    PREEMPT = auto()  # a job holding a server is pushed back into the buffer
 
 
 class JobClassType(Enum):
@@ -305,6 +313,8 @@ class ProcessType(Enum):
     DMAP = auto()
     EMPIRICALCDF = auto()
     NHPP = auto()
+    MAPT = auto()
+    PHT = auto()
 
     @staticmethod
     def isMarkovian(t):
@@ -362,6 +372,8 @@ class ProcessType(Enum):
             "Poisson": ProcessType.POISSON,
             "Binomial": ProcessType.BINOMIAL,
             "NHPP": ProcessType.NHPP,
+            "MAPt": ProcessType.MAPT,
+            "PHt": ProcessType.PHT,
             "MarkedMAP": ProcessType.MMAP,
             "MarkedMMPP": ProcessType.MMAP,
             "MMAP": ProcessType.MMAP,
@@ -399,7 +411,7 @@ class RoutingStrategy(Enum):
     JSQ = 4
     FIRING = 5
     SQ = 6  # KCHOICES is now SQ: shortest queue of d, SQ(d)
-    RL = 7
+    SDR = 7  # Krzesinski (1987) product-form state-dependent routing
     DISABLED = -1
 
 
@@ -452,6 +464,9 @@ class SchedStrategy(Enum):
     FSP = 40       # Fair Sojourn Protocol (virtual-PS finish time ranking)
     PAS = 41       # Pass-and-swap (order-independent queue with class swap graph)
     OI = 42        # Order-independent (pass-and-swap specialization with empty/zero swap graph)
+    # appended, not slotted next to FCFSPR: 43 is the first id free in all
+    # three Python SchedStrategy enums, and toID below is positional
+    FCFSPI = 43    # FCFS Preemptive Identical
 
     @staticmethod
     def fromString(obj):
@@ -507,12 +522,12 @@ class SolverType(Enum):
     SSA = auto()
 
 
-class TimingStrategy(Enum):
-    """
-    Timing strategies for transitions in Petri nets.
-    """
-    TIMED = auto()
-    IMMEDIATE = auto()
+# TimingStrategy is NOT defined here. It lives in line_solver.lang.nodes, whose
+# values (TIMED = 0, IMMEDIATE = 1) are the ones MATLAB and the JAR use and the
+# ones every mode comparison in the model layer is written against. A second enum
+# here declared TIMED = 1, IMMEDIATE = 2 through auto(), so a transition set from
+# it never compared equal to an immediate mode and was silently served as timed.
+# Import it from line_solver.lang.nodes (or from the package root).
 
 
 class VerboseLevel(Enum):
@@ -561,6 +576,10 @@ class GlobalConstants:
     Global constants and configuration for the LINE solver.
     """
     Zero = 1e-14
+    # Magnitude above which an off-diagonal generator entry counts as an arc.
+    # Sign is NOT a criterion: an ME generator embeds genuinely negative
+    # off-diagonal entries -- see _kb/11-conventions-and-gotchas.md
+    ArcTol = 1e-12
     CoarseTol = 1e-3  # Match MATLAB/JAR default (1.0e-03)
     FineTol = 1e-8  # Match MATLAB's default
     Immediate = 1e8  # 1/FineTol - large but finite rate for immediate service (matches MATLAB)
@@ -618,6 +637,7 @@ class GlobalConstants:
         """Get a dictionary of all global constants."""
         return {
             'Zero': cls.Zero,
+            'ArcTol': cls.ArcTol,
             'CoarseTol': cls.CoarseTol,
             'FineTol': cls.FineTol,
             'Immediate': cls.Immediate,

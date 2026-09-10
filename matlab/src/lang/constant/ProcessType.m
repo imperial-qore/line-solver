@@ -39,6 +39,8 @@ classdef (Sealed) ProcessType
         MMAP = 31;
         EMPIRICALCDF = 32;
         NHPP = 33;
+        MAPT = 34;
+        PHT = 35;
     end
     
     methods (Static)
@@ -153,6 +155,10 @@ classdef (Sealed) ProcessType
                     t = ProcessType.DMAP;
                 case 'NHPP'
                     t = ProcessType.NHPP;
+                case 'MAPt'
+                    t = ProcessType.MAPT;
+                case 'PHt'
+                    t = ProcessType.PHT;
                 case 'EmpiricalCDF'
                     % Class name, as passed by refreshProcessTypes. Without this
                     % case an EmpiricalCDF service aborts fromText during
@@ -231,6 +237,10 @@ classdef (Sealed) ProcessType
                     text = 'DMAP';
                 case ProcessType.NHPP
                     text = 'NHPP';
+                case ProcessType.MAPT
+                    text = 'MAPt';
+                case ProcessType.PHT
+                    text = 'PHt';
                 case ProcessType.MMAP
                     text = 'MMAP';
                 case ProcessType.EMPIRICALCDF

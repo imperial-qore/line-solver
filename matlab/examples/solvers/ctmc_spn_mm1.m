@@ -105,7 +105,7 @@ model.link(R);
 fprintf('\nSolving with CTMC solver...\n');
 fprintf('(Note: open network with CTMC uses state space truncation)\n\n');
 
-solver = CTMC(model);
+solver = CTMC(model,'exact');
 avg_table = solver.getAvgTable();
 
 fprintf('CTMC Results for SPN M/M/1:\n');

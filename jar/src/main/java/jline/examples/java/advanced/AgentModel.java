@@ -10,12 +10,14 @@ import jline.lang.constant.SignalType;
 import jline.lang.nodes.Queue;
 import jline.lang.nodes.Sink;
 import jline.lang.nodes.Source;
+import jline.lang.processes.Erlang;
 import jline.lang.processes.Exp;
+import jline.lang.processes.HyperExp;
 
 /**
- * Model factory for MAM (RCAT/INAP method) examples.
+ * Model factory for AG, the agent-based solver, examples.
  *
- * These models demonstrate the capabilities of the RCAT algorithm for
+ * These models demonstrate the capabilities of the agent-based solver for
  * analyzing queueing networks through agent decomposition.
  */
 public class AgentModel {
@@ -44,6 +46,41 @@ public class AgentModel {
         source.setArrival(oclass, new Exp(0.5));
         queue1.setService(oclass, new Exp(1.0));
         queue2.setService(oclass, new Exp(1.5));
+
+        model.link(Network.serialRouting(source, queue1, queue2, sink));
+
+        return model;
+    }
+
+    /**
+     * Creates an open tandem queue whose service laws are PHASE-TYPE.
+     *
+     * Network structure: Source -> Queue1 -> Queue2 -> Sink
+     *
+     * Both stations carry the SAME mean service time and differ only in
+     * variability (Queue1 an Erlang-2 of SCV 0.5, Queue2 a HyperExp of SCV 4),
+     * which is exactly what a mean-rate reading of the service process cannot
+     * see. The agent-based methods represent them exactly: each agent is a QBD over
+     * (queue length, phase).
+     *
+     * Parameters:
+     * - Arrival rate: 0.5
+     * - Mean service time at both queues: 1.0
+     *
+     * @return the network model
+     */
+    public static Network tandemPhaseType() {
+        Network model = new Network("Tandem-MPH1");
+
+        Source source = new Source(model, "Source");
+        Queue queue1 = new Queue(model, "Queue1", SchedStrategy.FCFS);
+        Queue queue2 = new Queue(model, "Queue2", SchedStrategy.FCFS);
+        Sink sink = new Sink(model, "Sink");
+
+        OpenClass oclass = new OpenClass(model, "Class1");
+        source.setArrival(oclass, new Exp(0.5));
+        queue1.setService(oclass, Erlang.fitMeanAndSCV(1.0, 0.5));
+        queue2.setService(oclass, HyperExp.fitMeanAndSCV(1.0, 4.0));
 
         model.link(Network.serialRouting(source, queue1, queue2, sink));
 

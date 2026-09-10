@@ -15,7 +15,7 @@ import jline.solvers.NetworkSolver;
 import jline.solvers.SolverOptions;
 import jline.solvers.ctmc.SolverCTMC;
 import jline.solvers.env.SolverENV;
-import jline.solvers.fluid.SolverFluid;
+import jline.solvers.fluid.SolverFLD;
 import jline.util.Maths;
 import jline.util.matrix.Matrix;
 import jline.lang.constant.SolverType;
@@ -70,14 +70,14 @@ public class RandomEnvExamplesTest {
             options.verbose = VerboseLevel.SILENT;
             
             SolverOptions fluidOptions = new SolverOptions(SolverType.FLUID);
+            // Same fluid configuration as renv_twostages_repairmen.m: FLD defaults
+            // (stiff, no step cap) over [0, 1e3]
             fluidOptions.timespan[1] = 1000;
-            fluidOptions.stiff = false;
-            fluidOptions.setODEMaxStep(0.25);
             
             // Create solvers for each stage
             NetworkSolver[] solvers = new NetworkSolver[E];
             for (int e = 0; e < E; e++) {
-                solvers[e] = new SolverFluid(envModel.getModel(e));
+                solvers[e] = new SolverFLD(envModel.getModel(e));
                 solvers[e].options = fluidOptions;
             }
             
@@ -89,15 +89,24 @@ public class RandomEnvExamplesTest {
         // Check if results are computed
         assertNotNull(avgTable);
         
-        // Expected values updated after ENV solver fixes (probOrig conditional, ODEMaxStep=0.25, QEntry normalization)
-        // New values are closer to MATLAB ground truth: QLen=[0.559, 0.441]
+        // Re-recorded 2026-08-11, after the ENV exit average became a converged
+        // quadrature on the stage ODE grid rather than a right-endpoint sum
+        // (f08f6b8d7); every renv row moved in all four codebases. Current
+        // MATLAB ground truth, re-measured 2026-08-11 on this tree, is
+        // QLen=[0.55549349, 0.44450651], Util the same,
+        // RespT=[0.80361862, 0.64288334], Tput=[0.69124019, 0.69142640].
+        // Re-recorded against it 2026-08-11, after the stage handoff started
+        // weighting the exit average by the stage SOJOURN rather than the e->h
+        // arc clock: the two throughputs, which a closed cycle admits only one
+        // of, closed from 1.4% apart to 1.3e-4, and QLen[0] from 0.59% off
+        // MATLAB to 0.0057%.
         // Order: Queue1(Class1), Queue2(Class1)
-        double[] expectedQLen = {0.5569970698530251, 0.44300293014697495};
-        double[] expectedUtil = {0.5569970698530251, 0.44300293014697495};
-        double[] expectedRespT = {0.8108196883676689, 0.6489639902619199};
+        double[] expectedQLen = {0.55552531791372340, 0.44447468208627583};
+        double[] expectedUtil = {0.55552531791372340, 0.44447468208627583};
+        double[] expectedRespT = {0.80359532011849380, 0.64287063057591070};
         double[] expectedResidT = {0.0, 0.0};
         double[] expectedArvR = {0.0, 0.0};
-        double[] expectedTput = {0.6869555313516917, 0.6826309884592832};
+        double[] expectedTput = {0.69129984210436750, 0.69139055502986140};
         
         // Verify table size
         assertEquals(2, avgTable.getQLen().size(), 
@@ -266,15 +275,15 @@ public class RandomEnvExamplesTest {
             options.timespan[0] = 0;
             options.verbose = VerboseLevel.SILENT;
             
+            // Same fluid configuration as renv_fourstages_repairmen.m: FLD defaults
+            // (stiff, no step cap) over [0, Inf]
             SolverOptions fluidOptions = new SolverOptions(SolverType.FLUID);
-            fluidOptions.stiff = false;
-            fluidOptions.setODEMaxStep(0.25);
             fluidOptions.verbose = VerboseLevel.SILENT;
             
             // Create solvers for each stage
             NetworkSolver[] solvers = new NetworkSolver[E];
             for (int e = 0; e < E; e++) {
-                solvers[e] = new SolverFluid(envModel.getModel(e));
+                solvers[e] = new SolverFLD(envModel.getModel(e));
                 solvers[e].options = fluidOptions;
             }
             
@@ -286,15 +295,22 @@ public class RandomEnvExamplesTest {
         // Check if results are computed
         assertNotNull(avgTable);
         
-        // Expected values updated after ENV solver fixes (probOrig conditional, ODEMaxStep=0.25, QEntry normalization)
-        // New values are closer to MATLAB ground truth: QLen=[0.445, 29.555]
+        // Re-recorded 2026-08-11, after the ENV exit average became a converged
+        // quadrature on the stage ODE grid rather than a right-endpoint sum
+        // (f08f6b8d7); every renv row moved in all four codebases. Current
+        // MATLAB ground truth, re-measured 2026-08-11 on this tree, is
+        // QLen=[0.43985144, 29.56014856], Util=[0.43985144, 1],
+        // RespT=[0.45267701, 29.56014856], Tput=[0.97166727, 1].
+        // Re-recorded against it 2026-08-11, with the sojourn-weighted stage
+        // handoff: QLen[0] is now 0.0076% off MATLAB, where the golden it
+        // replaces was 0.28% off.
         // Order: Queue1(Class1), Queue2(Class1)
-        double[] expectedQLen = {0.4449058417680881, 29.555094158231913};
-        double[] expectedUtil = {0.4449058417680881, 1.0000000096616304};
-        double[] expectedRespT = {0.4572591104329129, 29.55509387268152};
+        double[] expectedQLen = {0.43981813634160316, 29.560181863658520};
+        double[] expectedUtil = {0.43981813634160316, 1.0};
+        double[] expectedRespT = {0.45265641920570404, 29.560181863658520};
         double[] expectedResidT = {0.0, 0.0};
         double[] expectedArvR = {0.0, 0.0};
-        double[] expectedTput = {0.9729840950503331, 1.0000000096616304};
+        double[] expectedTput = {0.97163790831326600, 1.0};
         
         // Verify table size
         assertEquals(2, avgTable.getQLen().size(), 

@@ -138,7 +138,7 @@ if any(sn.fj(:))
     end
 end
 
-% see _kb/04-networkstruct.md (api/sn/*.m derived-field helpers) for rationale
+% see _kb/04-networkstruct.md (api/sn derived-field helpers) for rationale
 if ~isempty(AN) && any(sn.nodetype == NodeType.Place)
     [x, ~, produced, placeNodes] = sn_pn_firing_rates(sn, TN, true);
     if ~isempty(x)

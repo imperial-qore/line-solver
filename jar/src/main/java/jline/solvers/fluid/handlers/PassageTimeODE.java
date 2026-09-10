@@ -9,8 +9,10 @@ package jline.solvers.fluid.handlers;
 import jline.GlobalConstants;
 import jline.lang.JobClass;
 import jline.lang.NetworkStruct;
+import jline.lang.constant.SchedStrategy;
 import jline.lang.nodes.Station;
 import jline.solvers.SolverOptions;
+import jline.solvers.fluid.moments.FluidRateFactors;
 import jline.util.matrix.Matrix;
 import jline.util.matrix.MatrixCell;
 import org.apache.commons.math3.exception.DimensionMismatchException;
@@ -24,6 +26,7 @@ import static jline.api.mam.Map_pie.map_pie;
 import static jline.io.InputOutput.line_error;
 import static jline.io.InputOutput.mfilename;
 import static jline.lang.constant.SchedStrategy.DPS;
+import static jline.lang.constant.SchedStrategy.GPS;
 import static jline.util.Maths.softmin;
 import static org.apache.commons.math3.util.FastMath.min;
 
@@ -45,6 +48,24 @@ public class PassageTimeODE implements FirstOrderDifferentialEquations {
     private final Matrix cachedW;
     // Precomputed for the default (closing) method only
     private final Matrix cachedAllJumps;
+    /**
+     * Projector onto the coordinates that survive the immediate elimination, null when nothing was
+     * eliminated. The caller must apply it to the initial point: mass parked on an eliminated
+     * coordinate has no event left to move it.
+     */
+    private final Matrix immediateAbsorb;
+    /**
+     * [nEventsReduced x nEventsOriginal] expected firings of each ORIGINAL event per firing of each
+     * reduced one, the identity when nothing was eliminated. A caller that classifies events -- which
+     * (station,class) each is a completion of -- keeps that classification on the original indexing
+     * and maps it here, which is what lets the moment closure read throughputs off a reduced event
+     * set. See ImmediateElimination.
+     */
+    private final Matrix immediateEmap;
+    /** Source coordinate of each ORIGINAL event, before any elimination. */
+    private final Matrix originalEventIdx;
+    /** Number of leading events of the ORIGINAL list that are service completions. */
+    private int originalDepartureCount;
     private final Matrix cachedRateBase;
     private final Matrix cachedEventIdx;
     /**
@@ -53,6 +74,11 @@ public class PassageTimeODE implements FirstOrderDifferentialEquations {
      * numerically identical to the legacy autonomous form.
      */
     private final FluidRateMultiplier cachedRateMult;
+    /**
+     * Per-coordinate service shares of the closing drift, shared with the
+     * moment-closure Jacobian so the two can never disagree.
+     */
+    private final FluidRateFactors cachedFactors;
 
     public PassageTimeODE(
             NetworkStruct sn,
@@ -111,7 +137,7 @@ public class PassageTimeODE implements FirstOrderDifferentialEquations {
                 cumSum += numPhases;
             }
 
-            if (sn.sched.get(station) == DPS) {
+            if (sn.sched.get(station) == DPS || sn.sched.get(station) == GPS) {
                 for (int k = 0; k < K; k++) {
                     cachedW.set(i, k, sn.schedparam.get(i, k));
                 }
@@ -124,6 +150,13 @@ public class PassageTimeODE implements FirstOrderDifferentialEquations {
             }
         }
 
+        SchedStrategy[] schedArray = new SchedStrategy[M];
+        for (int i = 0; i < M; i++) {
+            schedArray[i] = sn.sched.get(sn.stations.get(i));
+        }
+        this.cachedFactors = new FluidRateFactors(M, K, this.cachedEnabled, this.cachedQIndices,
+                this.cachedKic, S, this.cachedW, schedArray, sn.lldscaling);
+
         // Precompute allJumps, rateBase, eventIdx for the default (closing) method
         if (!Objects.equals(options.method, "statedep") && !Objects.equals(options.method, "softmin")) {
             Matrix tmpAllJumps = calculateJumps(cachedEnabled, cachedQIndices, cachedKic);
@@ -131,17 +164,24 @@ public class PassageTimeODE implements FirstOrderDifferentialEquations {
             Matrix tmpEventIdx = new Matrix(tmpAllJumps.getNumCols(), 1);
             calculateRateBaseAndEventIdxs(cachedEnabled, cachedQIndices, cachedKic, tmpRateBase, tmpEventIdx);
 
-            // Apply immediate elimination if configured (matching MATLAB solver_fluid_odes.m)
-            if (options.config != null && options.config.hide_immediate) {
+            // Stochastic-complement the instantaneous coordinates out of the event set, so no
+            // integrator has to step through an InfRate mode (matching MATLAB solver_fluid_odes.m).
+            if (FluidHideImmediate.resolve(sn, options)) {
                 ImmediateElimination.EliminationResult result =
                         ImmediateElimination.eliminateImmediate(tmpAllJumps, tmpRateBase, tmpEventIdx, sn, options);
                 this.cachedAllJumps = result.allJumpsReduced;
                 this.cachedRateBase = result.rateBaseReduced;
                 this.cachedEventIdx = result.eventIdxReduced;
+                this.immediateAbsorb = result.absorb;
+                this.immediateEmap = result.Emap;
+                this.originalEventIdx = tmpEventIdx;
             } else {
                 this.cachedAllJumps = tmpAllJumps;
                 this.cachedRateBase = tmpRateBase;
                 this.cachedEventIdx = tmpEventIdx;
+                this.immediateAbsorb = null;
+                this.immediateEmap = null;
+                this.originalEventIdx = tmpEventIdx;
             }
 
             // Optional time-varying event-rate multiplier m(t), making the
@@ -157,6 +197,9 @@ public class PassageTimeODE implements FirstOrderDifferentialEquations {
             this.cachedRateBase = null;
             this.cachedEventIdx = null;
             this.cachedRateMult = null;
+            this.immediateAbsorb = null;
+            this.immediateEmap = null;
+            this.originalEventIdx = null;
         }
     }
 
@@ -203,7 +246,10 @@ public class PassageTimeODE implements FirstOrderDifferentialEquations {
             for (int c = 0; c < K; c++) {
                 if (enabled[i][c]) {
                     int xic = (int) qIndices.get(i, c);
-                    for (int ki = 0; ki < Kic.get(i, c) - 1; ki++) {
+                    // every source phase, the last included: bounding ki at Kic-1 is valid
+                    // only for an acyclic PH and drops the last row of D0 for a general MAP
+                    // or MMPP2, whose D0 is cyclic
+                    for (int ki = 0; ki < Kic.get(i, c); ki++) {
                         for (int kip = 0; kip < Kic.get(i, c); kip++) {
                             if (ki != kip) {
                                 setNextJump(jumps, xic + ki, xic + kip);
@@ -265,11 +311,17 @@ public class PassageTimeODE implements FirstOrderDifferentialEquations {
             }
         }
 
+        // Everything emitted so far is a service COMPLETION; what follows is an
+        // intra-PH phase change. The boundary is what lets a caller say which
+        // (station,class) an event is a completion of.
+        this.originalDepartureCount = rateIdx;
+
         // State changes from "next service phase" transition in phases 2...
         for (int i = 0; i < M; i++) {
             for (int c = 0; c < K; c++) {
                 if (enabled[i][c]) {
-                    for (int kicIdx = 0; kicIdx < Kic.get(i, c) - 1; kicIdx++) {
+                    // must match the ki range of calculateJumps event for event
+                    for (int kicIdx = 0; kicIdx < Kic.get(i, c); kicIdx++) {
                         for (int kicp = 0; kicp < Kic.get(i, c); kicp++) {
                             if (kicp != kicIdx) {
                                 rateBase.set(
@@ -318,6 +370,18 @@ public class PassageTimeODE implements FirstOrderDifferentialEquations {
      * m(t), if one is configured. A no-op otherwise, which keeps the legacy
      * autonomous closure numerically unchanged.
      */
+    /**
+     * Whether the drift is AUTONOMOUS, i.e. depends on the state alone.
+     *
+     * <p>A rate schedule (NHPP, MAPt, PHt) makes the right-hand side a function of
+     * t as well, and then a zero residual at one instant says nothing about the
+     * next segment. The fixed-point short circuit in
+     * ClosingAndStateDepMethodsAnalyzer is armed only when this is true.</p>
+     */
+    public boolean isAutonomous() {
+        return cachedRateMult == null;
+    }
+
     private void applyRateMultiplier(double t, Matrix newRates) {
         if (cachedRateMult == null) {
             return;
@@ -363,6 +427,49 @@ public class PassageTimeODE implements FirstOrderDifferentialEquations {
      * @param x full fluid state (length equal to getDimension())
      * @return column vector of event rates (numEvents x 1)
      */
+    /**
+     * Projector onto the coordinates that survive the immediate elimination, null when nothing was
+     * eliminated. Applied to the initial point by the analyzer: once the instantaneous coordinates
+     * are complemented away no event moves them any more, so whatever mass the initial condition
+     * parked there -- a cold start puts everything in phase 1, but a warm start from an earlier LN
+     * iterate does not -- would be frozen for the whole integration and lost from its chain.
+     *
+     * @return the [nStates x nStates] projector, or null
+     */
+    public Matrix getImmediateAbsorb() {
+        return immediateAbsorb;
+    }
+
+    /**
+     * Expected firings of each ORIGINAL event per firing of each reduced one, null when nothing was
+     * eliminated (which the caller reads as the identity).
+     *
+     * @return the [nEventsReduced x nEventsOriginal] map, or null
+     */
+    public Matrix getImmediateEmap() {
+        return immediateEmap;
+    }
+
+    /**
+     * Source coordinate of each event BEFORE the immediate elimination. Event attributes are
+     * classified on this indexing and mapped onto the reduced events through getImmediateEmap.
+     *
+     * @return the original [nEventsOriginal x 1] event index vector
+     */
+    public Matrix getOriginalEventIdx() {
+        return originalEventIdx;
+    }
+
+    /**
+     * Number of leading events of the ORIGINAL event list that are service completions, the rest
+     * being intra-PH phase changes.
+     *
+     * @return the departure-event count
+     */
+    public int getOriginalDepartureCount() {
+        return originalDepartureCount;
+    }
+
     public Matrix calculateRatesClosing(double t, double[] x) {
         Matrix newRates = calculateRatesClosing(x);
         applyRateMultiplier(t, newRates);
@@ -389,6 +496,15 @@ public class PassageTimeODE implements FirstOrderDifferentialEquations {
         return cachedEnabled;
     }
 
+    /**
+     * Per-coordinate service shares of the closing drift, delegated to
+     * {@link FluidRateFactors} so that the ODE the solver integrates and the
+     * Jacobian the moment-closure covariance equation reads are literally the
+     * same expression. The moment closure enters through
+     * {@code options.config.moment_sigma2} and {@code options.config.moment_cov};
+     * with both absent the shares are the first-order (plug-in) ones and the
+     * legacy code path is bit-identical.
+     */
     private Matrix computeClosingRatesVector(
             double[] x,
             Matrix w,
@@ -396,89 +512,36 @@ public class PassageTimeODE implements FirstOrderDifferentialEquations {
             Matrix qIndices,
             Matrix Kic) {
 
-        int M = sn.nstations; // Number of stations
-        int K = mu.get(sn.stations.get(0)).size(); // Number of classes
-
-        // Basic vector valid for INF and PS case min(ni, nservers(i)) = ni
-        Matrix rates = new Matrix(x.length, 1);
-        for (int i = 0; i < x.length; i++) {
-            rates.set(i, 0, x[i]);
-        }
-
-        // Declare variables outside switch to avoid scope issues
-        int idxIni, idxEnd;
-        double ni;
-
-        for (int i = 0; i < M; i++) {
-            switch (sn.sched.get(sn.stations.get(i))) {
-                case INF:
-                    break;
-                case EXT:
-                    // This is treated by a delay except that we require mass conservation in the local
-                    // population
-                    for (int k = 0; k < K; k++) {
-                        idxIni = (int) qIndices.get(i, k);
-                        idxEnd = (int) qIndices.get(i, k) + (int) Kic.get(i, k);
-                        if (enabled[i][k]) {
-                            // Keep total mass 1 into the source for all classes at all
-                            // times, not needed for idxIni+1:idxEnd as rates is initialized equal to x
-                            double tmpSum = 0;
-                            for (int idx = idxIni + 1; idx < idxEnd; idx++) {
-                                tmpSum += x[idx];
-                            }
-                            rates.set(idxIni, 0, 1 - tmpSum);
-                        }
-                    }
-                    break;
-                case PS:
-                case FCFS:
-                    idxIni = (int) qIndices.get(i, 0);
-                    idxEnd = (int) qIndices.get(i, K - 1) + (int) Kic.get(i, K - 1);
-                    ni = 0;
-                    for (int idx = idxIni; idx < idxEnd; idx++) {
-                        ni += x[idx];
-                    }
-                    if (ni > nservers.get(i, 0)) { // case min = ni handled by rates = x
-                        for (int idx = idxIni; idx < idxEnd; idx++) {
-                            rates.set(idx, 0, x[idx] / ni * nservers.get(i, 0));
-                        }
-                    }
-                    break;
-                case DPS:
-                    double sumWI = w.sumRows(i);
-                    for (int col = 0; col < K; col++) {
-                        w.set(i, col, w.get(i, col) / sumWI);
-                    }
-                    sumWI = w.sumRows(i);
-                    ni = sumWI / K;
-
-                    for (int k = 0; k < K; k++) {
-                        idxIni = (int) qIndices.get(i, k);
-                        idxEnd = (int) qIndices.get(i, k) + (int) Kic.get(i, k);
-                        if (enabled[i][k]) {
-                            double tmpSum = 0;
-                            for (int idx = idxIni; idx < idxEnd; idx++) {
-                                tmpSum += x[idx] * w.get(i, k);
-                            }
-                            ni += tmpSum;
-                        }
-                    }
-
-                    for (int k = 0; k < K; k++) {
-                        idxIni = (int) qIndices.get(i, k);
-                        idxEnd = (int) qIndices.get(i, k) + (int) Kic.get(i, k);
-                        if (enabled[i][k]) {
-                            for (int idx = idxIni; idx < idxEnd; idx++) {
-                                // Not needed for idxIni+1:idxEnd as rates is initialised equal to x
-                                rates.set(idx, 0, w.get(i, k) * x[idx] / ni * nservers.get(i, 0));
-                            }
-                        }
-                    }
-            }
-        }
-
-        return rates;
+        double[] sigma2 = (options.config == null) ? null : options.config.moment_sigma2;
+        Matrix[] covblk = (options.config == null) ? null : options.config.moment_cov;
+        return cachedFactors.factors(x, sigma2, covblk);
     }
+
+    /** Per-coordinate service shares evaluated at an explicit closure variance. */
+    public Matrix calculateFactors(double[] x, double[] sigma2, Matrix[] covblk) {
+        return cachedFactors.factors(x, sigma2, covblk);
+    }
+
+    /** Analytic Jacobian of the per-coordinate service shares. */
+    public Matrix calculateFactorsJacobian(double[] x, double[] sigma2, Matrix[] covblk) {
+        return cachedFactors.jacobian(x, sigma2, covblk);
+    }
+
+    /** Precomputed per-event constant rate factor of the closing method. */
+    public Matrix getRateBase() {
+        return cachedRateBase;
+    }
+
+    /** Precomputed per-event source state coordinate of the closing method. */
+    public Matrix getEventIdx() {
+        return cachedEventIdx;
+    }
+
+    /** Shared per-coordinate service share evaluator of the closing method. */
+    public FluidRateFactors getRateFactors() {
+        return cachedFactors;
+    }
+
 
     private Matrix calculatedxdtStateDepMethod(
             double[] x, boolean[][] enabled, Matrix qIndices, Matrix Kic, Matrix w) {
@@ -919,18 +982,25 @@ public class PassageTimeODE implements FirstOrderDifferentialEquations {
                                                         .get(sn.jobclasses.get(c))
                                                         .get(0)
                                                         .get(kicIdx, kic_p);
-                                        // Use softmin instead of min for smooth approximation
-                                        double softminFactor = softmin(ni, sn.nservers.get(i, 0), alpha) / ni;
-                                        if (ni > 0) {
-                                            dxdt.set(
-                                                    xic + kicIdx,
-                                                    0,
-                                                    dxdt.get(xic + kicIdx, 0) - (x[xic + kicIdx] * rate * softminFactor));
-                                            dxdt.set(
-                                                    xic + kic_p,
-                                                    0,
-                                                    dxdt.get(xic + kic_p, 0) + (x[xic + kicIdx] * rate * softminFactor));
-                                        }
+                                        // THE PS BRANCH TAKES THE HARD SHARE, NOT THE
+                                        // SMOOTH ONE. ode_softmin.m:71-77 keeps the same
+                                        // `if ni > nservers` scaling ode_statedep uses here
+                                        // and applies softmin only in the FCFS and DPS
+                                        // branches below, where the division is by wni,
+                                        // which is seeded with FineTol and can never be
+                                        // zero. Dividing by ni here instead produced NaN at
+                                        // t = 0 on any model whose queue starts empty, and
+                                        // the integrator failed on the first step.
+                                        double psFactor = (ni > sn.nservers.get(i, 0))
+                                                ? sn.nservers.get(i, 0) / ni : 1.0;
+                                        dxdt.set(
+                                                xic + kicIdx,
+                                                0,
+                                                dxdt.get(xic + kicIdx, 0) - (x[xic + kicIdx] * rate * psFactor));
+                                        dxdt.set(
+                                                xic + kic_p,
+                                                0,
+                                                dxdt.get(xic + kic_p, 0) + (x[xic + kicIdx] * rate * psFactor));
                                     }
                                 }
                             }
@@ -958,8 +1028,11 @@ public class PassageTimeODE implements FirstOrderDifferentialEquations {
                                                                     .get(kicIdx, 0)
                                                                     * rt.get(i * K + c, j * K + l)
                                                                     * pie.get(0, kjl);
-                                                    // Use softmin instead of min for capacity constraint
-                                                    rate *= softmin(ni, sn.nservers.get(i, 0), alpha) / ni;
+                                                    // The hard PS share, as ode_softmin.m:95-97
+                                                    // takes it; see the phase-change site above.
+                                                    if (ni > sn.nservers.get(i, 0)) {
+                                                        rate = rate * sn.nservers.get(i, 0) / ni;
+                                                    }
                                                     dxdt.set(
                                                             xic + kicIdx,
                                                             0,
@@ -1154,12 +1227,11 @@ public class PassageTimeODE implements FirstOrderDifferentialEquations {
     public void computeDerivatives(double t, double[] x, double[] dxdt)
             throws MaxCountExceededException, DimensionMismatchException {
 
-        // see _kb/06-solver-catalog.md (JAR-only implementation notes: PassageTimeODE state clamp (ode15s NonNegative))
-        for (int idx = 0; idx < x.length; idx++) {
-            if (x[idx] < 0) {
-                x[idx] = 0;
-            }
-        }
+        // The drift is evaluated at the integrator's own state, as MATLAB
+        // solver_fluid_iteration does: odeset('NonNegative') projects the ACCEPTED
+        // step, it does not project the argument of the right-hand side. Clamping
+        // here instead makes the drift discontinuous at x=0, which collapses the
+        // step size (see _kb/06-solver-catalog.md, PassageTimeODE nonnegativity).
 
         // Use precomputed structures (w is copied since some methods modify it in-place)
         Matrix w = cachedW.copy();
@@ -1190,7 +1262,13 @@ public class PassageTimeODE implements FirstOrderDifferentialEquations {
 
         int jumpsCols = jumps.getNumCols();
         jumps.expandMatrix(jumps.getNumRows(), jumpsCols + 1, jumps.getNumElements() + 2);
-        jumps.set(completionIdx, jumpsCols, -1); // type c in stat i completes service
-        jumps.set(startIdx, jumpsCols, 1); // type c job starts in stat j
+        // ACCUMULATED, not assigned: a self-transition has both ends on one
+        // coordinate and must net to zero, so a station with a routing self-loop
+        // would otherwise create population out of nothing. Mirrors MATLAB
+        // ode_jumps_new.
+        jumps.set(completionIdx, jumpsCols,
+                jumps.get(completionIdx, jumpsCols) - 1); // type c in stat i completes service
+        jumps.set(startIdx, jumpsCols,
+                jumps.get(startIdx, jumpsCols) + 1); // type c job starts in stat j
     }
 }

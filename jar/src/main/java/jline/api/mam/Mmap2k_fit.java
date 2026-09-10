@@ -16,7 +16,7 @@
  *    cost does not grow with K and no quadratic program is involved.
  *
  * The inverse was derived symbolically in SageMath, see
- * sage/proofs/mmap2k_marking_inverse.py. It is singular exactly on the six
+ * io/sage/proofs/mmap2k_marking_inverse.py. It is singular exactly on the six
  * degenerate loci r1 in {0,1}, r2 in {0,1}, h1-h2+h2*r1 = 0 and, per form,
  * h1*r2-h2 = 0 or h1*r1*r2-h1*r1+h1-h2 = 0, which are the branches
  * Mamap2m_fit_fb_multiclass handles; there, and whenever the closed form leaves

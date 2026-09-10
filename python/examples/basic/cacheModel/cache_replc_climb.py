@@ -6,12 +6,6 @@ Exact in CTMC, simulated in SSA/LDES. Not product-form, so MVA/NC/FLD reject
 it (use CTMC/SSA/LDES).
 """
 
-import sys
-import os
-_native_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
-if _native_path not in sys.path:
-    sys.path.insert(0, _native_path)
-
 from line_solver import *
 import numpy as np
 
@@ -44,4 +38,4 @@ def cache_replc_climb():
 
 if __name__ == "__main__":
     model, cache_node = cache_replc_climb()
-    print(SolverCTMC(model, keep=False).get_avg_node_table())
+    print(SolverCTMC(model, 'exact', keep=False).get_avg_node_table())

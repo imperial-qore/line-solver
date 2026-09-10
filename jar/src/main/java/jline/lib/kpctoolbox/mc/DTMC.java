@@ -275,7 +275,7 @@ public final class DTMC {
         private CTMCBridge() {}
 
         static double[] ctmc_solve(Matrix Q) {
-            // Mirror Kotlin call jline.lib.kpctoolbox.mc.ctmc_solve(Matrix)
+            // Mirror Java call jline.lib.kpctoolbox.mc.ctmc_solve(Matrix)
             try {
                 Class<?> cls = Class.forName("jline.lib.kpctoolbox.mc.CTMC");
                 java.lang.reflect.Method m = cls.getMethod("ctmc_solve", Matrix.class);

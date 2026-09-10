@@ -11,7 +11,11 @@ Mu = sn.mu;
 Phi = sn.phi;
 PH = sn.proc;
 sched = sn.sched;
-rt = sn.rt;
+% sn.rt is indexed by STATEFUL NODE; the drift below indexes it by STATION.
+% The two coincide unless the model has a stateful non-station node (Cache,
+% Router, Logger), where reading it station-major returns another node pair's
+% routing. See SN_RT_STATIONS.
+rt = sn_rt_stations(sn);
 S = sn.nservers;
 NK = sn.njobs';  %initial population
 
@@ -24,6 +28,12 @@ if isfield(sn,'procid')
                 lam = Mu{ist}{k}(1);
                 PH{ist}{k} = {-lam, lam};
                 Phi{ist}{k} = 1;
+            elseif (sn.procid(ist,k) == ProcessType.MAPT || sn.procid(ist,k) == ProcessType.PHT) ...
+                    && ~isempty(Mu{ist}{k}) && ~any(isnan(Mu{ist}{k}))
+                % the time-averaged nominal carries the phase structure that the
+                % schedule modulates; sn.proc holds the segments, not a pair
+                [D0bar, D1bar] = sn_schedule_nominal(sn, ist, k);
+                PH{ist}{k} = {D0bar, D1bar};
             end
         end
     end

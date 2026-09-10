@@ -1,0 +1,73 @@
+{
+  "class": {
+    "AG": "deterministic",
+    "MVA": "deterministic"
+  },
+  "example": "ag_tandem_open",
+  "solvers": {
+    "AG": [
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class1",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.5,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.5,
+        "JobClass": "Class1",
+        "QLen": 1.0,
+        "ResidT": 2.0,
+        "RespT": 2.0,
+        "Station": "Queue1",
+        "Tput": 0.5,
+        "Util": 0.5
+      },
+      {
+        "ArvR": 0.5,
+        "JobClass": "Class1",
+        "QLen": 0.5,
+        "ResidT": 1.0,
+        "RespT": 1.0,
+        "Station": "Queue2",
+        "Tput": 0.5,
+        "Util": 0.33333
+      }
+    ],
+    "MVA": [
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class1",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.5,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.5,
+        "JobClass": "Class1",
+        "QLen": 1.0,
+        "ResidT": 2.0,
+        "RespT": 2.0,
+        "Station": "Queue1",
+        "Tput": 0.5,
+        "Util": 0.5
+      },
+      {
+        "ArvR": 0.5,
+        "JobClass": "Class1",
+        "QLen": 0.5,
+        "ResidT": 1.0,
+        "RespT": 1.0,
+        "Station": "Queue2",
+        "Tput": 0.5,
+        "Util": 0.33333
+      }
+    ]
+  }
+}

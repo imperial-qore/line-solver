@@ -34,7 +34,7 @@ classdef ModelAdapter < Copyable
 
         % ========== Fork-Join Methods (formerly from api/fj/) ==========
         ri = findPaths(sn, P, start, endNode, r, toMerge, QN, TN, currentTime, fjclassmap, fjforkmap, nonfjmodel);
-        ri = findPathsCS(sn, P, curNode, endNode, curClass, toMerge, QN, TN, currentTime, fjclassmap, fjforkmap, nonfjmodel);        
+        ri = findPathsCS(sn, P, curNode, endNode, curClass, toMerge, QN, TN, currentTime, fjclassmap, fjforkmap, nonfjmodel, visited);        
         ri = paths(sn, P, start, endNode, toMerge, QN, TN, currentTime);
         [ri, stat, RN] = pathsCS(sn, orignodes, P, f, joinIdx, r, RN, currentTime, toMerge);
         [forks, parents] = sortForks(sn, nonfjstruct, fjforkmap, fjclassmap, nonfjmodel);

@@ -3,6 +3,7 @@ package jline.solvers.wrappers.qns.analyzers;
 import java.io.File;
 
 import jline.api.sn.SnGetArvRFromTput;
+import jline.api.sn.SnGetResidTFromRespT;
 import jline.lang.NetworkStruct;
 import jline.solvers.AvgHandle;
 import jline.solvers.SolverOptions;
@@ -22,9 +23,9 @@ public class Solver_qns_analyzer {
     }
 
     /**
-     * Check if the external qnsolver tool is available.
+     * Check if a native {@code qnsolver} binary is available on the PATH.
      */
-    public static boolean isQNSolverAvailable() {
+    public static boolean hasNativeQNSolver() {
         try {
             File devNull = new File(System.getProperty("os.name").toLowerCase().contains("win") ? "NUL" : "/dev/null");
             ProcessBuilder pb = new ProcessBuilder("qnsolver", "--help");
@@ -36,6 +37,15 @@ public class Solver_qns_analyzer {
         } catch (Exception e) {
             return false;
         }
+    }
+
+    /**
+     * Check if qnsolver can be run: a native binary on the PATH. LINE never runs
+     * it from a container image, since qnsolver ships with LQNS and that licence
+     * forbids redistribution.
+     */
+    public static boolean isQNSolverAvailable() {
+        return hasNativeQNSolver();
     }
 
     /**
@@ -72,6 +82,12 @@ public class Solver_qns_analyzer {
 
         AvgHandle T = solver.getAvgTputHandles();
         Matrix AN = SnGetArvRFromTput.snGetArvRFromTput(sn, result.TN, T);
+        // The residence time is the response time TIMES THE VISITS. The handler
+        // returns RN in both slots, and copying it through reported ResidT ==
+        // RespT at every station visited more than once per system passage.
+        // MATLAB leaves WN empty here and lets getAvg derive it the same way.
+        Matrix WN = SnGetResidTFromRespT.snGetResidTFromRespT(sn, result.RN,
+                solver.getAvgResidTHandles());
 
         long endTime = System.nanoTime();
         double runtime = (endTime - startTime) / 1e9;
@@ -89,7 +105,7 @@ public class Solver_qns_analyzer {
                 result.RN,
                 result.TN,
                 AN,
-                result.WN,
+                WN,
                 result.CN,
                 result.XN,
                 runtime,

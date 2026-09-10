@@ -442,7 +442,7 @@ public class MEDistributionTest {
                 tMin = t;
             }
         }
-        assertEquals(1.2, tMin, 5e-3);
+        assertEquals(1.2, tMin, 1e-9);
         assertTrue(fMin < 1e-5, "density minimum should be zero, got " + fMin);
         // The zero is a genuine interior dip, not a flat tail: the density is
         // two orders of magnitude larger on either side of t0.

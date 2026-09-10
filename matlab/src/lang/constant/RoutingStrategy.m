@@ -12,7 +12,7 @@ classdef (Sealed) RoutingStrategy
     % - Probabilistic: RAND, PROB (random and probability-based routing)
     % - Load balancing: JSQ, SQ (queue length-based decisions)
     % - Round-robin: RROBIN, WRROBIN (cyclic and weighted distribution)
-    % - Advanced: RL, FIRING (learning and event-based routing)
+    % - Advanced: FIRING (event-based routing)
     % - Control: DISABLED (no routing for specific classes)
     %
     % Common routing strategies:
@@ -21,6 +21,7 @@ classdef (Sealed) RoutingStrategy
     % - RROBIN: Round-robin (cyclic distribution)
     % - JSQ: Join Shortest Queue (dynamic load balancing)
     % - SQ: Shortest queue of d, SQ(d) (formerly KCHOICES)
+    % - SDR: Krzesinski product-form state-dependent routing
     % - DISABLED: No routing (class blocked at this node)
     %
     % RoutingStrategy is used in:
@@ -48,7 +49,7 @@ classdef (Sealed) RoutingStrategy
         JSQ       = 4;
         FIRING    = 5;
         SQ        = 6;  % KCHOICES is now SQ: shortest queue of d, SQ(d)
-        RL        = 7;
+        SDR       = 7;  % Krzesinski (1987) product-form state-dependent routing
         DISABLED  = -1;
     end
 
@@ -71,8 +72,8 @@ classdef (Sealed) RoutingStrategy
                     type = RoutingStrategy.FIRING;
                 case 'ShortestQueueOfD'
                     type = RoutingStrategy.SQ;
-                case 'ReinforcementLearning'
-                    type = RoutingStrategy.RL;
+                case 'StateDependent'
+                    type = RoutingStrategy.SDR;
                 case 'Disabled'
                     type = RoutingStrategy.DISABLED;
                 otherwise
@@ -97,8 +98,8 @@ classdef (Sealed) RoutingStrategy
                     id = RoutingStrategy.JSQ;
                 case RoutingStrategy.SQ
                     id = RoutingStrategy.SQ;
-                case RoutingStrategy.RL
-                    id = RoutingStrategy.RL;
+                case RoutingStrategy.SDR
+                    id = RoutingStrategy.SDR;
                 case RoutingStrategy.DISABLED
                     id = RoutingStrategy.DISABLED;
                 otherwise
@@ -141,8 +142,8 @@ classdef (Sealed) RoutingStrategy
                     feature = 'RoutingStrategy_JSQ';
                 case RoutingStrategy.SQ
                     feature = 'RoutingStrategy_SQ';
-                case RoutingStrategy.RL
-                    feature = 'RoutingStrategy_RL';
+                case RoutingStrategy.SDR
+                    feature = 'RoutingStrategy_SDR';
                 case RoutingStrategy.DISABLED
                     feature = '';
                 otherwise
@@ -167,8 +168,8 @@ classdef (Sealed) RoutingStrategy
                     text = 'JoinShortestQueue';
                 case RoutingStrategy.SQ
                     text = 'ShortestQueueOfD';
-                case RoutingStrategy.RL
-                    text = 'ReinforcementLearning';
+                case RoutingStrategy.SDR
+                    text = 'StateDependent';
                 case RoutingStrategy.DISABLED
                     text = 'Disabled';
                 otherwise

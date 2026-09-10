@@ -29,6 +29,17 @@ if isempty(oi_list)
         'OI solver requires at least one order-independent station');
 end
 
+% ---- reject class switching (OI rank rates are per raw class) --------------
+% The recursion is driven by the per-class population vector sn.njobs, which
+% class switching makes meaningless: a class that only ever appears mid-chain
+% carries njobs = 0, so the OI station would be analyzed as if empty. Refuse it
+% the way SOLVER_NC_OI_ANALYZER does rather than return that silently.
+for c = 1:sn.nchains
+    if numel(sn.inchain{c}) > 1
+        line_error(mfilename, 'solver_mva_oi requires one class per chain (no class switching).');
+    end
+end
+
 M = sn.nstations;
 R = sn.nclasses;
 N = round(sn.njobs(:)');

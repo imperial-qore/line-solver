@@ -1,0 +1,4 @@
+interface:
+  display_name: "Port Audit"
+  short_description: "Audit and port cross-language API gaps"
+  default_prompt: "Use $port-audit to audit and port the named API family."

@@ -57,7 +57,7 @@ for r = 1:R
 end
 model.link(P);
 
-T = CTMC(model, 'cutoff', sum(K)).getAvgTable;
+T = CTMC(model, 'exact', 'cutoff', sum(K)).getAvgTable;
 disp(T);
 
 % ---- (3) compare ------------------------------------------------------
@@ -103,7 +103,7 @@ assert(errX <= tol && errQ <= tol, ...
 fprintf('PASS: CTMC matches brute-force product form within %.1e.\n', tol);
 
 % ---- (4) LDES discrete-event simulation (matches within sim noise) ----
-% The same closed PAS network solved by the LINE Discrete Event Simulator.
+% The same closed PAS network solved by LDES.
 % LDES is a stochastic simulator, so agreement is expected only to within
 % simulation noise (Monte-Carlo confidence interval), not to machine eps.
 Tl = LDES(model, 'samples', 2e5, 'seed', 23000, 'verbose', false).getAvgTable;

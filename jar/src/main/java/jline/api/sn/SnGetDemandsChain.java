@@ -31,7 +31,16 @@ public final class SnGetDemandsChain {
         Matrix Vchain = new Matrix(M, C);
         for (int c = 0; c < C; c++) {
             Matrix inchain = sn.inchain.get(Integer.valueOf(c));
+            // a ref class that never visits the ref station gives a zero denominator,
+            // which turns every Vchain into Inf and then into 0 below
+            boolean useRefClass = false;
             if (sn.refclass.get(0, c) > -1) {
+                Matrix visitsC = sn.visits.get(Integer.valueOf(c));
+                double refVisits = visitsC.get((int) sn.stationToStateful.get((int) sn.refstat.get((int) inchain.value(), 0)),
+                        (int) sn.refclass.get(0, c));
+                useRefClass = refVisits > GlobalConstants.Zero;
+            }
+            if (useRefClass) {
                 for (int i = 0; i < M; i++) {
                     Matrix visits = sn.visits.get(Integer.valueOf(c));
                     double res = 0.0;

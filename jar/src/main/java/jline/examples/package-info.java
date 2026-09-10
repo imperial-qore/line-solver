@@ -13,7 +13,7 @@
  * <h2>Sub-packages</h2>
  * <ul>
  * <li><strong>{@link jline.examples.java}</strong> - Java implementation examples</li>
- * <li><strong>kotlin</strong> - Kotlin implementation examples (development versions)</li>
+ *
  * </ul>
  *
  * <h2>Example Categories</h2>

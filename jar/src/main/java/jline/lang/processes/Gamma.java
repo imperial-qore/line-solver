@@ -65,6 +65,21 @@ public class Gamma extends ContinuousDistribution implements Serializable {
         return FastMath.pow((1.0 / scale) / (s + 1.0 / scale), shape);
     }
 
+    /**
+     * The transform at a COMPLEX argument, (beta/(s+beta))^shape, exact where
+     * the generic CDF sum of {@link Distribution} would only approximate it.
+     */
+    @Override
+    public org.apache.commons.math3.complex.Complex evalLST(
+            org.apache.commons.math3.complex.Complex s) {
+        final double shape = (double) this.getParam(1).getValue();
+        final double scale = (double) this.getParam(2).getValue();
+        final double beta = 1.0 / scale;
+        return new org.apache.commons.math3.complex.Complex(beta, 0.0)
+                .divide(s.add(beta))
+                .pow(shape);
+    }
+
     @Override
     public double getMean() {
         double shape = (double) this.getParam(1).getValue();
@@ -123,45 +138,45 @@ public class Gamma extends ContinuousDistribution implements Serializable {
         return representation;
     }
 
-    // =================== KOTLIN-STYLE PROPERTY ALIASES ===================
+    // =================== PROPERTY ALIASES ===================
     
     /**
-     * Kotlin-style property alias for getProcess()
+     * Property alias for getProcess
      */
     public MatrixCell process() {
         return getProcess();
     }
     
     /**
-     * Kotlin-style property alias for getMean()
+     * Property alias for getMean
      */
     public double mean() {
         return getMean();
     }
     
     /**
-     * Kotlin-style property alias for getRate()
+     * Property alias for getRate
      */
     public double rate() {
         return getRate();
     }
     
     /**
-     * Kotlin-style property alias for getSCV()
+     * Property alias for getSCV
      */
     public double scv() {
         return getSCV();
     }
     
     /**
-     * Kotlin-style property alias for getSkewness()
+     * Property alias for getSkewness
      */
     public double skewness() {
         return getSkewness();
     }
     
     /**
-     * Kotlin-style property alias for getVar()
+     * Property alias for getVar
      */
     public double var() {
         return getVar();

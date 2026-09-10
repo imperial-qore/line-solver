@@ -78,6 +78,22 @@ public class Det extends Distribution implements Serializable {
     }
 
     /**
+     * The transform at a COMPLEX argument, exp(-s d), exact and analytic. The
+     * CDF sum of {@link Distribution#evalLST(org.apache.commons.math3.complex.Complex)}
+     * cannot see this law at all: its measure is a single atom, which no grid of
+     * increments resolves.
+     */
+    @Override
+    public org.apache.commons.math3.complex.Complex evalLST(
+            org.apache.commons.math3.complex.Complex s) {
+        final double d = (double) this.getParam(1).getValue();
+        final double mag = FastMath.exp(-s.getReal() * d);
+        return new org.apache.commons.math3.complex.Complex(
+                mag * FastMath.cos(s.getImaginary() * d),
+                -mag * FastMath.sin(s.getImaginary() * d));
+    }
+
+    /**
      * Gets the mean of this deterministic distribution.
      * 
      * @return the constant value of the distribution
@@ -220,59 +236,59 @@ public class Det extends Distribution implements Serializable {
 //        throw new RuntimeException("Not implemented");
     }
 
-    // =================== KOTLIN-STYLE PROPERTY ALIASES ===================
+    // =================== PROPERTY ALIASES ===================
     
     /**
-     * Kotlin-style property alias for getMu()
+     * Property alias for getMu
      */
     public double mu() {
         return getMu();
     }
     
     /**
-     * Kotlin-style property alias for getPhi()
+     * Property alias for getPhi
      */
     public double phi() {
         return getPhi();
     }
     
     /**
-     * Kotlin-style property alias for getProcess()
+     * Property alias for getProcess
      */
     public Map<Integer, Matrix> process() {
         return getProcess();
     }
     
     /**
-     * Kotlin-style property alias for getMean()
+     * Property alias for getMean
      */
     public double mean() {
         return getMean();
     }
     
     /**
-     * Kotlin-style property alias for getRate()
+     * Property alias for getRate
      */
     public double rate() {
         return getRate();
     }
     
     /**
-     * Kotlin-style property alias for getSCV()
+     * Property alias for getSCV
      */
     public double scv() {
         return getSCV();
     }
     
     /**
-     * Kotlin-style property alias for getSkewness()
+     * Property alias for getSkewness
      */
     public double skewness() {
         return getSkewness();
     }
     
     /**
-     * Kotlin-style property alias for getVar()
+     * Property alias for getVar
      */
     public double var() {
         return getVar();

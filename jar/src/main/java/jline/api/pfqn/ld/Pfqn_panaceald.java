@@ -33,7 +33,7 @@ public final class Pfqn_panaceald {
         }
         int M = L.getNumRows();
         int R = L.getNumCols();
-        String method = "panaceald";
+        String method = "panald";
         int Ntot = (int) FastMath.round(N.elementSum());
         if (Ntot == 0) {
             return new Ret.pfqnNc(1.0, 0.0, method);

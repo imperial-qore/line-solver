@@ -34,15 +34,21 @@
  %         prob(i,1+j) = hit probability for item i at level j
  % </table>
 %}
-function prob = cache_prob_is(gamma, m, samples)
-% PROB = CACHE_PROB_IS(GAMMA, M, SAMPLES)
+function prob = cache_prob_is(gamma, m, samples, sigma, k)
+% PROB = CACHE_PROB_IS(GAMMA, M, SAMPLES, SIGMA, K)
 %
 % Importance sampling estimation of cache hit probabilities.
+%
+% With item sizes SIGMA and per-list storage cost caps K the sampler
+% discards states that violate a cap, which is the feasibility indicator
+% I{S in O} of Casale-Gast (IEEE/ACM ToN, 2021), Sec. IX-B.
 %
 % Input:
 %   gamma   - (n x h) item popularity probabilities at each cache level
 %   m       - (1 x h) cache capacity vector
 %   samples - (optional) number of Monte Carlo samples, default 1e5
+%   sigma   - (optional) (1 x n) item storage costs (sizes)
+%   k       - (optional) (1 x h) per-list storage cost caps
 %
 % Output:
 %   prob    - (n x h+1) hit probability matrix
@@ -51,6 +57,11 @@ function prob = cache_prob_is(gamma, m, samples)
 
 if nargin < 3 || isempty(samples)
     samples = 1e5;
+end
+if nargin < 5 || isempty(sigma) || isempty(k)
+    sigma = []; k = [];
+else
+    sigma = sigma(:).'; k = k(:).';
 end
 
 [n, h] = size(gamma);
@@ -73,7 +84,7 @@ end
 
 if n == mt
     % All items must be in cache - use exact method
-    prob = cache_prob_erec(gamma, m);
+    prob = cache_prob_erec(gamma, m, sigma, k);
     return
 end
 
@@ -95,12 +106,20 @@ for s = 1:samples
 
     % Compute unnormalized state probability
     log_state_prob = log_m_fact;
+    feasible = true;
     for j = 1:h
         items_in_level = assignment{j};
+        if ~isempty(sigma) && sum(sigma(items_in_level)) > k(j)
+            feasible = false;
+            break
+        end
         for idx = 1:length(items_in_level)
             i = items_in_level(idx);
             log_state_prob = log_state_prob + log_gamma(i, j);
         end
+    end
+    if ~feasible
+        continue % I{S_v in O} = 0
     end
 
     % Compute proposal probability

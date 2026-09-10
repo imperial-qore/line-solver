@@ -48,6 +48,66 @@ class QNSResult:
     iter: int = 0
 
 
+def qns_immfeed_refusal(sn) -> str:
+    """Why SolverQNS cannot serve a model with immediate feedback, or '' when
+    the model has none.
+
+    Immediate feedback (sn.immfeed) keeps a self-looping job on its server
+    instead of re-queueing it, and neither path of SolverQNS can state that: the
+    JMVA document qnsolver reads carries a mean demand and a visit count per
+    chain, and the LQN QN2LQN writes turns the routing into OR-fork precedences
+    of pseudo-activities on the reference task, where a repeated visit is a new
+    call. Either would answer for re-queueing under this solver's name.
+
+    ONE PREDICATE, TWO CALLERS: SolverQNS.supportsModelMethod (the gate, hence
+    model.help and SolverAUTO) and SolverQNS.runAnalyzer (the run, for a caller
+    with enableChecks off). SolverJMT keeps its own wording in
+    jmt_method_refusal. Mirrors
+    matlab/src/solvers/wrappers/QNS/qns_immfeed_refusal.m.
+    """
+    immfeed = getattr(sn, 'immfeed', None) if sn is not None else None
+    if immfeed is None:
+        return ''
+    arr = np.asarray(immfeed)
+    if arr.size == 0 or not np.any(arr):
+        return ''
+    return ('SolverQNS does not support immediate feedback (sn.immfeed): neither the JMVA '
+            'document qnsolver reads nor the LQN QN2LQN writes can keep a self-looping job on '
+            'its server. Use SolverCTMC or SolverSSA, whose state space carries the self-loop.')
+
+
+def qns_multiserver_refusal(sn, method) -> str:
+    """Whether qnsolver's own -m switch offers this multiserver approximation.
+
+    THE RULE IS INSIDE THE MULTISERVER BRANCH, and that is not a detail. Without
+    a multiserver station the reference emits no -m at all and answers under the
+    caller's method name, so refusing 'suri' there would refuse a model this
+    solver does solve.
+
+    'qnsolver -m' accepts conway, reiser, rolia and zhou. 'suri' and 'schmidt'
+    are LQNS approximations, reachable only on the non-product-form closed
+    SolverLQNS branch, and qnsolver has no flag for either. Mirrors
+    matlab/src/solvers/wrappers/QNS/qns_multiserver_refusal.m and the C++
+    is_qnsolver_multiserver.
+    """
+    if sn is None or not method:
+        return ''
+    nservers = getattr(sn, 'nservers', None)
+    if nservers is None:
+        return ''
+    c = np.asarray(nservers, dtype=float).flatten()
+    if not np.any((c > 1) & np.isfinite(c)):
+        # No multiserver station, so no -m flag is emitted and every method name
+        # is served by the plain invocation.
+        return ''
+    ms = str(method).lower()
+    if ms in ('default', 'conway', 'reiser', 'rolia', 'zhou'):
+        return ''
+    return (f"SolverQNS: the multiserver approximation '{ms}' is one LQNS offers and qnsolver "
+            "does not: 'qnsolver -m' accepts conway, reiser, rolia and zhou only; suri and "
+            "schmidt are available only on the non-product-form closed SolverLQNS branch.")
+
+
 class SolverQNS(NetworkSolver):
     """
     Native Python QNS solver using external qnsolver tool.
@@ -104,18 +164,19 @@ class SolverQNS(NetworkSolver):
 
         self._result: Optional[QNSResult] = None
 
-        # Map method to multiserver config
+        # Map method to multiserver config, as @SolverQNS/runAnalyzer.m does.
+        # 'default' MUST resolve to rolia here: leaving it at 'default' reached
+        # the `ms in ('default', 'conway')` arm of _build_command and emitted
+        # -mconway, so a multiserver model solved under the default method
+        # returned Conway numbers where MATLAB and the JAR return Rolia ones.
         if self.options.method in ('conway', 'rolia', 'zhou', 'suri', 'reiser', 'schmidt'):
             self.options.multiserver = self.options.method
+        elif self.options.method == 'default':
+            self.options.multiserver = 'rolia'
 
     @staticmethod
-    def isAvailable() -> bool:
-        """
-        Check if qnsolver is available in the system PATH.
-
-        Returns:
-            True if qnsolver is available, False otherwise
-        """
+    def _has_native_qnsolver() -> bool:
+        """Check if a native qnsolver binary is available in the system PATH."""
         try:
             if platform.system() == 'Windows':
                 result = subprocess.run(
@@ -144,6 +205,20 @@ class SolverQNS(NetworkSolver):
             return False
 
     @staticmethod
+    def isAvailable() -> bool:
+        """
+        Check if qnsolver can be run: a native binary is on the PATH.
+
+        qnsolver ships with LQNS, whose licence forbids redistribution, so LINE
+        never runs it from a container image; run-tests.sh --lqns-docker puts a
+        shim on the PATH when a containerised build is what should be exercised.
+
+        Returns:
+            True if a native qnsolver binary is available, False otherwise
+        """
+        return SolverQNS._has_native_qnsolver()
+
+    @staticmethod
     def listValidMethods() -> List[str]:
         """List valid methods for the QNS solver."""
         return ['default', 'conway', 'rolia', 'zhou', 'suri', 'reiser', 'schmidt']
@@ -167,6 +242,11 @@ class SolverQNS(NetworkSolver):
             RuntimeError: If qnsolver is not available or fails
         """
         import time
+        # The gate's own sentence for a caller running with enableChecks off:
+        # neither path can keep a self-looping job on its server.
+        immfeed_reason = qns_immfeed_refusal(self.sn)
+        if immfeed_reason:
+            raise RuntimeError(immfeed_reason)
         line_ack('QNS', self.options.verbose)
         start_time = time.time()
 
@@ -229,8 +309,15 @@ class SolverQNS(NetworkSolver):
         CN = np.zeros((1, C))
         XN = np.zeros((1, C))
 
-        # Create temporary directory
-        temp_dir = tempfile.mkdtemp(prefix='qns_')
+        # LINE_WORKSPACE_ROOT relocates the staging dir; run-tests.sh sets it when
+        # a solver is wrapped in a container, so the path is bind-mountable.
+        workspace_root = os.environ.get('LINE_WORKSPACE_ROOT', '').strip()
+        if workspace_root:
+            base = os.path.join(workspace_root, 'line_workspace', 'qns')
+            os.makedirs(base, exist_ok=True)
+            temp_dir = tempfile.mkdtemp(prefix='qns_', dir=base)
+        else:
+            temp_dir = tempfile.mkdtemp(prefix='qns_')
 
         try:
             # Write model to JMVA format
@@ -276,7 +363,7 @@ class SolverQNS(NetworkSolver):
                 )
 
             # Parse results
-            Uchain, Qchain, Wchain, Tchain = self._parse_results(result_file, C)
+            Uchain, Qchain, Wchain, Tchain = self._parse_results(result_file, C, log_file)
 
             # Get demands per chain
             Lchain, STchain, Vchain, Nchain, alpha = self._get_demands_chain()
@@ -285,9 +372,22 @@ class SolverQNS(NetworkSolver):
             Xchain = np.zeros((1, C))
             refstat = self.sn.refstat.flatten() if self.sn.refstat is not None else np.zeros(K, dtype=int)
             for c in range(C):
-                ref_idx = int(refstat[c]) if c < len(refstat) else 0
+                # sn.refstat is indexed by CLASS, so the chain's reference station is read
+                # through the chain's first class. Indexing it with the chain number lands
+                # on an unrelated class once class switching makes the two spaces differ.
+                inchain = np.flatnonzero(self.sn.chains[c, :]) if self.sn.chains is not None else np.array([c])
+                first_class = int(inchain[0]) if inchain.size else c
+                ref_idx = int(refstat[first_class]) if first_class < len(refstat) else 0
                 if ref_idx < Tchain.shape[0]:
                     Xchain[0, c] = Tchain[ref_idx, c]
+                if Xchain[0, c] == 0.0:
+                    # An open chain's reference station is the Source, which the JMVA
+                    # document does not carry, so its row is zero; recover X from any
+                    # station whose visit count is known, as MATLAB and the JAR do.
+                    for i in range(M):
+                        if Vchain[i, c] > 0 and Tchain[i, c] > 0:
+                            Xchain[0, c] = Tchain[i, c] / Vchain[i, c]
+                            break
 
             # Response times per chain
             Rchain = np.nan_to_num(Wchain, nan=0.0)
@@ -302,16 +402,26 @@ class SolverQNS(NetworkSolver):
 
             # Deaggregate chain results to station-class results
             from ....api.sn.deaggregate import sn_deaggregate_chain_results
+            # Qchain and Uchain are the columns qnsolver PARSED and must be passed:
+            # with None there the deaggregation derives Q from Rchain assuming it is
+            # a per-visit response time, and qnsolver's $R is the RESIDENCE time, so
+            # every station with visits != 1 reported Q = T * ResidT and the closed
+            # population stopped being conserved. MATLAB and the JAR pass both.
             deagg = sn_deaggregate_chain_results(
                 self.sn, Lchain, None, STchain, Vchain, alpha,
-                None, None, Rchain, Tchain, None, Xchain
+                Qchain, Uchain, Rchain, Tchain, None, Xchain
             )
 
             QN[:, :] = deagg.Q[:M, :K]
             UN[:, :] = deagg.U[:M, :K]
             RN[:, :] = deagg.R[:M, :K]
             TN[:, :] = deagg.T[:M, :K]
-            WN[:, :] = deagg.R[:M, :K]
+            # The residence time is the response time TIMES THE VISITS, not the
+            # response time: MATLAB leaves WN empty and getAvg derives it this way.
+            # Copying RN here reported ResidT == RespT at every station visited
+            # more than once per system passage.
+            from ....api.sn.transforms import sn_get_residt_from_respt
+            WN[:, :] = sn_get_residt_from_respt(self.sn, RN)[:M, :K]
             CN = deagg.C
             XN = deagg.X
 
@@ -368,7 +478,12 @@ class SolverQNS(NetworkSolver):
                 if t < nrows:
                     QN[i, r] = avg_table.iloc[t]['QLen']
                     # see _kb/06-solver-catalog.md (Wrappers: "QNS wrapper: utilization passthrough")
-                    UN[i, r] = avg_table.iloc[t]['Util']
+                    # lqns sums the utilization over the host's servers, a Network station reports it per server
+                    util = avg_table.iloc[t]['Util']
+                    servers = self.sn.nservers[i] if i < len(self.sn.nservers) else 1
+                    if not np.isinf(servers) and servers > 0:
+                        util = util / servers
+                    UN[i, r] = util
                     RN[i, r] = avg_table.iloc[t]['RespT']
                     WN[i, r] = avg_table.iloc[t]['ResidT'] if not np.isnan(avg_table.iloc[t]['ResidT']) else avg_table.iloc[t]['RespT']
                     TN[i, r] = avg_table.iloc[t]['Tput']
@@ -378,6 +493,7 @@ class SolverQNS(NetworkSolver):
         XN = np.zeros((1, C))
 
         return QN, UN, RN, TN, AN, WN, CN, XN, actual_method
+
 
     def _build_command(self, model_file: str, result_file: str, log_file: str) -> str:
         """Build the qnsolver command line."""
@@ -417,7 +533,8 @@ class SolverQNS(NetworkSolver):
                 return True
         return False
 
-    def _parse_results(self, result_file: str, nchains: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    def _parse_results(self, result_file: str, nchains: int,
+                       log_file: str = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
         Parse qnsolver output file.
 
@@ -431,7 +548,15 @@ class SolverQNS(NetworkSolver):
         Tchain = np.zeros((M, nchains))
 
         if not os.path.exists(result_file):
-            raise RuntimeError(f"QNS result file not found: {result_file}")
+            # qnsolver exits 0 on a parse error, so the exit-code branch never fires and its
+            # own message is the only evidence of what it rejected. Carry it here or a build
+            # that cannot read an <ldstation> reads as an unexplained missing file.
+            log_content = ''
+            if log_file and os.path.exists(log_file):
+                with open(log_file, 'r') as f:
+                    log_content = f.read().strip()
+            raise RuntimeError(f"QNS result file not found: {result_file}"
+                               + (f"\nqnsolver said: {log_content}" if log_content else ""))
 
         with open(result_file, 'r') as f:
             for line in f:
@@ -630,7 +755,7 @@ class SolverQNS(NetworkSolver):
             pandas.DataFrame with columns: Station, JobClass, QLen, Util, RespT, ResidT, ArvR, Tput
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         result = self._result
         M = result.QN.shape[0]
@@ -688,38 +813,38 @@ class SolverQNS(NetworkSolver):
             Tuple of (Q, U, R, T, A, W)
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         r = self._result
         return r.QN.copy(), r.UN.copy(), r.RN.copy(), r.TN.copy(), r.AN.copy(), r.WN.copy()
 
     def getAvgQLen(self) -> np.ndarray:
         """Get average queue lengths (M x K)."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         return self._result.QN.copy()
 
     def getAvgUtil(self) -> np.ndarray:
         """Get average utilizations (M x K)."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         return self._result.UN.copy()
 
     def getAvgRespT(self) -> np.ndarray:
         """Get average response times (M x K)."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         return self._result.RN.copy()
 
     def getAvgResidT(self) -> np.ndarray:
         """Get average residence times (M x K)."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         return self._result.WN.copy()
 
     def getAvgWaitT(self) -> np.ndarray:
         """Get average waiting times (M x K)."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         R = self._result.RN.copy()
         if hasattr(self.sn, 'rates') and self.sn.rates is not None:
             rates = np.asarray(self.sn.rates)
@@ -734,13 +859,13 @@ class SolverQNS(NetworkSolver):
     def getAvgTput(self) -> np.ndarray:
         """Get average throughputs (M x K)."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         return self._result.TN.copy()
 
     def getAvgArvR(self) -> np.ndarray:
         """Get average arrival rates (M x K)."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         return self._result.AN.copy()
 
     # =========================================================================
@@ -750,13 +875,13 @@ class SolverQNS(NetworkSolver):
     def getAvgSysRespT(self) -> np.ndarray:
         """Get system response times (1 x C)."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         return self._result.CN.flatten().copy()
 
     def getAvgSysTput(self) -> np.ndarray:
         """Get system throughputs (1 x C)."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         return self._result.XN.flatten().copy()
 
     def getAvgSys(self):
@@ -891,7 +1016,9 @@ class SolverQNS(NetworkSolver):
                     'ArvR': AN[i, c],
                     'Tput': TN[i, c],
                 })
-        return pd.DataFrame(rows)
+        # five SIGNIFICANT digits like MATLAB's table, not pandas' five decimals
+        from line_solver.indexed_table import IndexedTable
+        return IndexedTable(pd.DataFrame(rows))
 
     # =========================================================================
     # Node-Level Methods
@@ -904,7 +1031,7 @@ class SolverQNS(NetworkSolver):
             Tuple of (QNn, UNn, RNn, WNn, ANn, TNn) - node-level metrics
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         sn = self.sn
         I = sn.nnodes
@@ -1025,6 +1152,12 @@ class SolverQNS(NetworkSolver):
             'RoutingStrategy_RROBIN', 'RoutingStrategy_WRROBIN', 'RoutingStrategy_SQ',
             'SchedStrategy_EXT',
             'ClosedClass', 'OpenClass',
+            # c-server stations: the JMVA document carries the count as an
+            # <ldstation> and the LQN as a host multiplicity; 'suri' and
+            # 'schmidt' refuse one on the qnsolver path, which stays a condition
+            # on the OPTIONS rather than a gate. FiniteCapacity is NOT declared:
+            # neither document has a buffer (supportsModelMethod).
+            'MultiServer',
         }
 
     @staticmethod
@@ -1037,6 +1170,72 @@ class SolverQNS(NetworkSolver):
         """
         from ...base import supports_via_featureset
         return supports_via_featureset(SolverQNS, model)
+
+    def getMethodFeatureSet(self, method):
+        """The QNS feature envelope, per method (it does not vary by method).
+
+        Defining this is what lets NetworkSolver.supportsModelMethod NAME the
+        offending features. With no method feature set the base falls back to the
+        coarse supports(model), which returns an empty reason, so the gate could
+        only answer False with nothing said: a caller asking why QNS refused a
+        capped model got ''. Mirrors @SolverQNS/getMethodFeatureSet in MATLAB,
+        which exists for exactly this reason.
+
+        A non-Network model (a LayeredNetwork, say) has no used-feature record,
+        so it keeps the coarse path and any structural checks that operate on
+        such models.
+        """
+        model = getattr(self, 'model', None)
+        if model is None or not hasattr(model, 'get_used_lang_features'):
+            return None
+        return SolverQNS.getFeatureSet()
+
+    def supportsModelMethod(self, method):
+        """Structural finite-capacity gate.
+
+        NOTHING under the QNS tree reads sn.cap or sn.classcap -- the model is
+        written out for qnsolver, whose MVA-family algorithms have no
+        representation of a finite buffer -- so a capped station was solved as an
+        unbounded one and the table reported the unconstrained answer under this
+        solver's name. There is no registry feature name for plain capacity,
+        hence the structural test; SolverMVA, SolverNC, SolverAG and SolverFLD
+        gate the same way through the same helper.
+
+        Without it SolverAUTO.listValidMethods offered all eight 'qns' method names on
+        the BAS-blocking model of cqn_bas_blocking. Mirrors
+        @SolverQNS/supportsModelMethod in MATLAB and the JAR.
+        """
+        from ...base import NetworkSolver as _NetworkSolver
+        # STRUCTURAL PREDICATE FIRST, as SolverBA does and for the same reason:
+        # it names the station, the cap and the way out, where the feature
+        # envelope can only say "(feature: FiniteCapacity)". Once FiniteCapacity
+        # became a registry name on 2026-09-05 the base gate started answering
+        # first and the useful sentence became unreachable.
+        model = getattr(self, 'model', None)
+        if model is not None and hasattr(model, 'get_used_lang_features'):
+            ok, reason = _NetworkSolver.checkBindingCapacity(model, 'SolverQNS')
+            if not ok:
+                return ok, reason
+        ok, reason = super().supportsModelMethod(method)
+        if not ok or model is None or not hasattr(model, 'get_used_lang_features'):
+            return ok, reason
+        sn = self.sn if getattr(self, 'sn', None) is not None else model.get_struct()
+        immfeed = qns_immfeed_refusal(sn)
+        if immfeed:
+            return False, immfeed
+        from ....api.sn.predicates import sn_has_product_form
+        has_open = model.has_open_classes() if hasattr(model, 'has_open_classes') else False
+        if sn_has_product_form(sn) or has_open:
+            ms = qns_multiserver_refusal(sn, method)
+            if ms:
+                return False, ms
+            from ..solver_jmt.solver_jmt import jmt_method_refusal
+            jmva = jmt_method_refusal(sn, method, self.options)
+            if jmva:
+                return False, jmva
+        return True, ''
+
+    supports_model_method = supportsModelMethod
 
     @staticmethod
     def defaultOptions():

@@ -1,0 +1,49 @@
+{
+  "class": {
+    "FLD": "deterministic",
+    "MVA": "deterministic"
+  },
+  "example": "renv_basic",
+  "solvers": {
+    "FLD": [
+      {
+        "JobClass": "Jobs",
+        "QLen": 2.9996,
+        "RespT": 1.0,
+        "Station": "ThinkTime",
+        "Tput": 2.9996,
+        "Util": 2.9996
+      },
+      {
+        "JobClass": "Jobs",
+        "QLen": 2.0004,
+        "RespT": 0.66679,
+        "Station": "Fast/Slow Server",
+        "Tput": 3.0,
+        "Util": 1.0
+      }
+    ],
+    "MVA": [
+      {
+        "ArvR": 3.2037,
+        "JobClass": "Jobs",
+        "QLen": 3.2037,
+        "ResidT": 1.0,
+        "RespT": 1.0,
+        "Station": "ThinkTime",
+        "Tput": 3.2037,
+        "Util": 3.2037
+      },
+      {
+        "ArvR": 3.2037,
+        "JobClass": "Jobs",
+        "QLen": 1.7963,
+        "ResidT": 0.56068,
+        "RespT": 0.56068,
+        "Station": "Fast/Slow Server",
+        "Tput": 3.2037,
+        "Util": 0.80093
+      }
+    ]
+  }
+}

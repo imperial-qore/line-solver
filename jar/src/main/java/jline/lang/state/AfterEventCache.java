@@ -38,21 +38,10 @@ public class AfterEventCache implements Serializable {
                 break;
             case DEP:
                 if (spaceSrv.get(jobClass) > 0) {
-                    Set<Integer> retrievalClassIndices = ((CacheNodeParam) sn.nodeparam.get(sn.nodes.get(ind))).retrievalClassIndices;
-                    List<Double> p = ((CacheNodeParam) sn.nodeparam.get(sn.nodes.get(ind))).pread.get(jobClass);
-                    int totalCacheCapacity = ((CacheNodeParam) sn.nodeparam.get(sn.nodes.get(ind))).totalCacheCapacity;
-
+                    // A retrieval-class job departs the cache only to BEGIN a retrieval
+                    // (cache -> queue). The per-item occupancy bit is already set by the
+                    // READ that started the fetch, so the departure only moves the job.
                     Matrix var = spaceVar.copy();
-                    // A retrieval-class job departs the cache only to BEGIN a retrieval (cache -> queue).
-                    if (retrievalClassIndices.contains(jobClass)) {
-                        // Retrieval classes have one-hot read access representing the item the retrieval belongs to
-                        int item = p.indexOf(1.0);
-                        if (isInRetrievalSystem(var, item, totalCacheCapacity)) {
-                            break;
-                        }
-                        // Beginning a retrieval: record the item as in-flight as the job leaves for the queue.
-                        addToRetrievalSystem(var, item, totalCacheCapacity);
-                    }
 
                     for (int row = 0; row < spaceSrv.getNumRows(); row++) {
                         spaceSrv.set(row, jobClass, spaceSrv.get(row, jobClass) - 1);
@@ -108,6 +97,30 @@ public class AfterEventCache implements Serializable {
 
                 if (spaceSrv.sumCols(jobClass) > 0 && (int) spaceSrv.elementSum() == 1) {
                     List<Double> p = ((CacheNodeParam) sn.nodeparam.get(sn.nodes.get(ind))).pread.get(jobClass);
+                    // Block B of the local-variable vector: per-retrieval-class counts of the
+                    // secondary requests merged onto an in-flight fetch (see State.spaceCache).
+                    // Its width and truncation level are read off the node state space rather
+                    // than from nodeparam, because only sn.space is propagated back from the
+                    // state-space generator.
+                    int[][] rcMap = State.cacheRetrievalClassMap(sn, ind);
+                    int[] rcList = rcMap[0], rcItems = rcMap[1], rcOrigClass = rcMap[2];
+                    int blockBOffset = totalCacheCapacity + n;
+                    int widthB = (spaceVar.getNumCols() - blockBOffset == rcList.length) ? rcList.length : 0;
+                    // Simulation has no enumerated state space, hence no truncation: a fetch
+                    // may absorb any number of secondary requests.
+                    int maxPending = isSimulation ? Integer.MAX_VALUE : 0;
+                    if (widthB > 0 && !isSimulation) {
+                        Matrix spc = sn.space.get(sn.stateful.get((int) sn.nodeToStateful.get(ind)));
+                        if (spc != null && spc.getNumRows() > 0) {
+                            for (int r2 = 0; r2 < spc.getNumRows(); r2++) {
+                                double tot = 0;
+                                for (int c2 = spc.getNumCols() - widthB; c2 < spc.getNumCols(); c2++) {
+                                    tot += spc.get(r2, c2);
+                                }
+                                maxPending = Math.max(maxPending, (int) tot);
+                            }
+                        }
+                    }
                     Matrix spaceSrvK = new Matrix(0, 0);
                     Matrix spaceVarK = new Matrix(0, 0);
                     outrate = new Matrix(0, 0);
@@ -198,9 +211,27 @@ public class AfterEventCache implements Serializable {
                                         if (!retrievalClassIndices.contains(jobClass) &&
                                                 jobClass < retrievalClasses.getNumCols() &&
                                                 retrievalClass.get(jobClass) != -1) {
-                                            // If retrieval has not started for the item, then begin it
+                                            // If retrieval has not started for the item, then begin it and
+                                            // mark item k as being fetched. A concurrent request for an item
+                                            // already being fetched is a delayed hit: it merges onto the
+                                            // in-flight fetch and is held in block B until that fetch completes.
                                             if (!isInRetrievalSystem(var, k, totalCacheCapacity)) {
                                                 spaceSrvE.set((int) retrievalClass.get(jobClass), spaceSrvE.get((int) retrievalClass.get(jobClass)) + 1);
+                                                addToRetrievalSystem(var, k, totalCacheCapacity);
+                                            } else {
+                                                int rClassVal = (int) retrievalClass.get(jobClass);
+                                                int bslot = -1;
+                                                for (int j = 0; j < rcList.length; j++) {
+                                                    if (rcList[j] == rClassVal) { bslot = j; break; }
+                                                }
+                                                double pendTot = 0;
+                                                for (int j = 0; j < widthB; j++) {
+                                                    pendTot += var.get(blockBOffset + j);
+                                                }
+                                                if (bslot < 0 || blockBOffset + bslot >= var.getNumCols() || pendTot >= maxPending) {
+                                                    continue; // beyond the delayed-hit truncation level
+                                                }
+                                                var.set(blockBOffset + bslot, var.get(blockBOffset + bslot) + 1);
                                             }
 
                                             if (spaceSrvK.isEmpty()) {
@@ -237,9 +268,23 @@ public class AfterEventCache implements Serializable {
                                             }
                                             continue;
                                         }
-                                        // Item has now been retrieved and can be marked as a miss
+                                        // Item has now been retrieved and can be marked as a miss. Every
+                                        // secondary request merged onto this fetch is released in the same
+                                        // transition and departs as a delayed hit, in the hit class of the
+                                        // job class that issued it.
                                         spaceSrvE.set((int) missclass.get(jobClass), spaceSrvE.get((int) missclass.get(jobClass)) + 1);
                                         removeFromRetrievalSystem(var, k, totalCacheCapacity);
+                                        for (int bslot = 0; bslot < widthB; bslot++) {
+                                            if (rcItems[bslot] != k + 1) continue;
+                                            int bcol = blockBOffset + bslot;
+                                            if (bcol < var.getNumCols() && var.get(bcol) > 0) {
+                                                int hc = (int) hitclass.get(rcOrigClass[bslot]);
+                                                if (hc >= 0) {
+                                                    spaceSrvE.set(hc, spaceSrvE.get(hc) + var.get(bcol));
+                                                }
+                                                var.set(bcol, 0);
+                                            }
+                                        }
                                         Matrix varp;
                                         switch (replacement) {
                                             case FIFO:

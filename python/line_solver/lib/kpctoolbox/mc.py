@@ -283,84 +283,72 @@ def ctmc_randomization(Q: np.ndarray, q: float = None,
 
 
 def ctmc_uniformization(pi0: np.ndarray, Q: np.ndarray, t: float,
-                        tol: float = 1e-12, maxiter: int = 1000
+                        tol: float = 1e-12, maxiter: int = -1
                         ) -> Tuple[np.ndarray, int]:
     """
-    Compute transient probabilities using uniformization method.
+    Compute transient probabilities using uniformization (Jensen's method).
+
+    Faithful twin of MATLAB ctmc_uniformization: the Poisson series is
+    truncated on the CUMULATIVE mass, not on a single term, and the horizon is
+    split so that exp(-q*t) never underflows within a segment.
 
     Args:
         pi0: Initial probability distribution vector
         Q: Infinitesimal generator matrix
         t: Time point for transient analysis
         tol: Error tolerance (default: 1e-12)
-        maxiter: Maximum iterations (default: 1000)
+        maxiter: Truncation depth cap; nonpositive sizes it adaptively as
+            max(100, q*t + 10*sqrt(q*t) + 20)
 
     Returns:
-        Tuple of (probability distribution at time t, number of iterations)
+        Tuple of (probability distribution at time t, number of terms used)
     """
     Q = np.asarray(Q, dtype=np.float64)
-    pi0 = np.asarray(pi0, dtype=np.float64)
+    pi0 = np.asarray(pi0, dtype=np.float64).flatten()
     n = Q.shape[0]
 
-    # For very large t, return equilibrium distribution
-    if t > 1e6:
-        return ctmc_solve(Q), 0
-
-    # Uniformization rate
-    max_diag = np.max(np.abs(np.diag(Q)))
-    q = 1.1 * max_diag
-
+    q = 1.1 * np.max(np.abs(np.diag(Q)))
     if q == 0 or t == 0:
         return pi0.copy(), 0
 
-    # Uniformized matrix: Qs = I + Q/q
+    # Split the horizon so exp(-q*t) never underflows within a segment
+    # (exp(-745) == 0 in double precision): exp(Q*t) = (exp(Q*t/nSeg))^nSeg
+    MAXQT = 500.0
+    if q * t > MAXQT:
+        n_seg = int(np.ceil(q * t / MAXQT))
+        t_seg = t / n_seg
+        pi = pi0.copy()
+        kmax = 0
+        for _ in range(n_seg):
+            pi, kmax = ctmc_uniformization(pi, Q, t_seg, tol, maxiter)
+        return pi, kmax
+
+    if maxiter <= 0:
+        # The Poisson(q*t) mass concentrates around q*t with spread
+        # O(sqrt(q*t)); a fixed cap silently truncates the series
+        maxiter = max(100, int(np.ceil(q * t + 10 * np.sqrt(q * t) + 20)))
+
     Qs = np.eye(n) + Q / q
-
-    # For large q*t, use more iterations and different approach
     qt = q * t
-
-    # Compute using Fox-Glynn algorithm or direct summation
-    # Find truncation point using Poisson tail bound
-    if qt > 700:  # Avoid overflow in exp
-        # For very large qt, just return equilibrium
-        return ctmc_solve(Q), 0
-
-    # Find number of terms needed using Poisson CDF
-    # P(N > k) < tol where N ~ Poisson(qt)
-    from math import ceil
-    import scipy.stats as stats
-
-    # Use inverse Poisson CDF to find truncation point
-    kmax = int(ceil(stats.poisson.ppf(1 - tol, qt))) + 10
-    kmax = min(kmax, maxiter)
-    kmax = max(kmax, int(qt + 6 * np.sqrt(qt)))  # Ensure enough terms
-
-    # Compute transient probability using matrix powers
-    # pi(t) = sum_{k=0}^{inf} exp(-qt) * (qt)^k / k! * pi0 * Qs^k
-
-    # Initialize
-    pi = np.zeros(n)
-    P = pi0.copy()  # Current power: pi0 * Qs^k
-
-    # k=0 term
-    poisson_weight = np.exp(-qt)  # exp(-qt)
-    pi += poisson_weight * P
-
-    for k in range(1, kmax + 1):
-        P = P @ Qs
-        poisson_weight *= (qt / k)
-        pi += poisson_weight * P
-
-        # Check convergence
-        if poisson_weight < tol:
+    s = 1.0
+    r = 1.0
+    kmax = 1
+    for k in range(1, maxiter + 1):
+        r = r * qt / k
+        s = s + r
+        kmax = k
+        if (1 - np.exp(-qt) * s) <= tol:
             break
 
-    # Normalize to ensure valid probability distribution
-    total = np.sum(pi)
-    if total > 0:
-        pi = pi / total
+    pi = pi0 * np.exp(-qt)
+    P = pi0.copy()
+    ri = np.exp(-qt)
+    for j in range(1, kmax + 1):
+        P = P @ Qs
+        ri = ri * qt / j
+        pi = pi + ri * P
 
-    return pi, min(k, kmax)
+    return pi, kmax
 
 
 def ctmc_relsolve(Q: np.ndarray, refstate: int = 0) -> np.ndarray:
@@ -586,7 +574,7 @@ def dtmc_timereverse(P: np.ndarray) -> np.ndarray:
 
 
 def dtmc_uniformization(pi0: np.ndarray, P: np.ndarray, t: float = 1e4,
-                        tol: float = 1e-12, maxiter: int = 100
+                        tol: float = 1e-12, maxiter: int = -1
                         ) -> Tuple[np.ndarray, int]:
     """
     Compute transient probabilities for a DTMC using uniformization.
@@ -596,7 +584,9 @@ def dtmc_uniformization(pi0: np.ndarray, P: np.ndarray, t: float = 1e4,
         P: Transition probability matrix
         t: Time point for transient analysis (default: 1e4)
         tol: Error tolerance (default: 1e-12)
-        maxiter: Maximum iterations (default: 100)
+        maxiter: Truncation depth cap; nonpositive (the default) lets
+            ctmc_uniformization size it from q*t, since a fixed cap silently
+            truncates the Poisson series for large horizons
 
     Returns:
         Tuple of (probability distribution at time t, number of iterations)
@@ -1119,27 +1109,27 @@ def ctmc_solve_reducible(Q: np.ndarray, pi0: np.ndarray = None) -> np.ndarray:
     return pi
 
 
-def ctmc_solve_reducible_blkdecomp(Q: np.ndarray, pi0: np.ndarray = None,
+def ctmc_solve_reducible_blkdecomp(Q: np.ndarray, pin: np.ndarray = None,
                                     tol: float = 1e-12) -> Tuple:
     """
     Solve a reducible CTMC using direct block decomposition.
 
     Algorithm:
       1. Decompose states into transient and recurrent classes via SCC
-      2. For transient states: solve n * Q_tt = -p0_t for expected sojourn
-      3. Compute hitting probabilities: h = n * Q_ta + p0_r
+      2. For transient states: solve sojourn * Q_tt = -p0_t for expected sojourn
+      3. Compute hitting probabilities: hit = sojourn * Q_ta + p0_r
       4. For each recurrent class: solve pi_c * Q_cc = 0, scale by hitting prob
 
     Args:
         Q: Infinitesimal generator matrix
-        pi0: Initial distribution (optional)
+        pin: Initial distribution (optional)
         tol: Numerical tolerance
 
     Returns:
-        Tuple of (pi, pis, pi0_out, scc, isrec) where:
+        Tuple of (pi, pis, pi0, scc, isrec) where:
             pi: Limiting distribution
             pis: Per-SCC limiting distributions (numSCC x N)
-            pi0_out: Starting distribution for each SCC
+            pi0: Starting distribution for each SCC
             scc: SCC label per state (1-based)
             isrec: Boolean array of recurrent SCCs
 
@@ -1184,12 +1174,12 @@ def ctmc_solve_reducible_blkdecomp(Q: np.ndarray, pi0: np.ndarray = None,
 
     # Per-SCC limiting distributions
     pis = np.zeros((numSCC, N))
-    pi0_out = np.zeros((numSCC, N))
+    pi0 = np.zeros((numSCC, N))
 
     for s in range(numSCC):
         p0 = np.zeros(N)
         p0[scc_idx[s]] = 1.0 / len(scc_idx[s])
-        pi0_out[s, :] = p0
+        pi0[s, :] = p0
 
         hit = np.zeros(nr)
         if nt > 0 and Q_tt is not None and Q_ta is not None:
@@ -1218,7 +1208,7 @@ def ctmc_solve_reducible_blkdecomp(Q: np.ndarray, pi0: np.ndarray = None,
                 pis[s, idx_c] = pi_c * reachprob
 
     # Compute weighted average
-    if pi0 is None:
+    if pin is None:
         pinl = np.ones(numSCC)
         col_sums = np.sum(np.abs(Q), axis=0)
         for j in np.where(col_sums < 1e-12)[0]:
@@ -1231,7 +1221,7 @@ def ctmc_solve_reducible_blkdecomp(Q: np.ndarray, pi0: np.ndarray = None,
     else:
         pinl = np.zeros(numSCC)
         for i in range(numSCC):
-            pinl[i] = np.sum(pi0[scc_idx[i]])
+            pinl[i] = np.sum(pin[scc_idx[i]])
 
     pi = np.zeros(N)
     for i in range(numSCC):
@@ -1239,14 +1229,14 @@ def ctmc_solve_reducible_blkdecomp(Q: np.ndarray, pi0: np.ndarray = None,
             pi += pis[i, :] * pinl[i]
 
     # Special case: single transient SCC without explicit initial
-    if len(trans_scc_ids) == 1 and pi0 is None:
+    if len(trans_scc_ids) == 1 and pin is None:
         pi = pis[trans_scc_ids[0], :]
 
     total = np.sum(pi)
     if total > 0:
         pi /= total
 
-    return pi, pis, pi0_out, scc, isrec
+    return pi, pis, pi0, scc, isrec
 
 
 def dtmc_solve_reducible(P: np.ndarray, pin: np.ndarray = None,

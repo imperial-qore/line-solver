@@ -96,6 +96,19 @@ def dist_scale_rate(distrib, factor):
         from .continuous import NHPP
         return NHPP(distrib.getBreakpoints() / factor,
                     distrib.getRates() * factor, distrib.isCyclic())
+    elif name == 'MAPt':
+        # Speeding a MAP_t by `factor` compresses the schedule and scales both
+        # matrices, exactly as for NHPP; the phase structure is unchanged.
+        from .continuous import MAPt
+        return MAPt(distrib.getBreakpoints() / factor,
+                    [M * factor for M in distrib.D0],
+                    [M * factor for M in distrib.D1], distrib.isCyclic())
+    elif name == 'PHt':
+        # alpha is dimensionless, so only the sub-generator and the schedule scale.
+        from .continuous import PHt
+        return PHt(distrib.getBreakpoints() / factor,
+                   [a.copy() for a in distrib.alpha],
+                   [M * factor for M in distrib.S], distrib.isCyclic())
     elif name == 'Replayer':
         # see _kb/03-api-layer.md (dist_scale_rate) for rationale
         from .discrete import Replayer
@@ -113,7 +126,8 @@ def dist_scale_rate(distrib, factor):
         raise ValueError(
             "Rate scaling is not defined for a %s process. Supported: Exp, "
             "Erlang, HyperExp, Coxian, Cox2, APH, PH, MAP, MMPP2, Det, "
-            "Uniform, Gamma, Pareto, Weibull, Lognormal, NHPP, Replayer, "
+            "Uniform, Gamma, Pareto, Weibull, Lognormal, NHPP, MAPt, PHt, "
+            "Replayer, "
             "Immediate." % name)
 
 

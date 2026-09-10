@@ -30,14 +30,117 @@ public final class Mapqn_qr_bounds_bas {
         return solve(params, objectiveQueue, "min");
     }
 
-    public static Mapqn_solution solve(Mapqn_qr_bounds_bas_parameters params, int objectiveQueue, String sense) {
+
+    /**
+     * The assembled BAS constraint system, so a second objective can be
+     * optimized over the SAME polytope without a second transcription of the
+     * fifteen families. {@link Mapqn_qrf_bas_nlp} minimizes the MMI and MEM
+     * objectives over it; this class maximizes one station's utilization.
+     */
+    public static final class BasSystem {
+        public final int nCols;
+        public final int[] colMap;
+        final List<Row> rows;
+        final IndexFn7 p2Idx;
+        final IndexFn2 eIdx;
+        public final int M;
+        public final int[] K;
+        public final int[] F;
+        public final int MR;
+
+        BasSystem(int nCols, int[] colMap, List<Row> rows, IndexFn7 p2Idx, IndexFn2 eIdx,
+                  int M, int[] K, int[] F, int MR) {
+            this.nCols = nCols;
+            this.colMap = colMap;
+            this.rows = rows;
+            this.p2Idx = p2Idx;
+            this.eIdx = eIdx;
+            this.M = M;
+            this.K = K;
+            this.F = F;
+            this.MR = MR;
+        }
+
+        /** Column of a p2 entry, or -1 when the model pinned it to zero. */
+        public int p2Column(int j, int nj, int kj, int i, int ni, int hi, int m) {
+            int idx = p2Idx.idx(j, nj, kj, i, ni, hi, m);
+            return (idx < 0) ? -1 : colMap[idx];
+        }
+
+        /** Column of an e entry, or -1 when the model pinned it to zero. */
+        public int eColumn(int i, int ki) {
+            int idx = eIdx.idx(i, ki);
+            return (idx < 0) ? -1 : colMap[idx];
+        }
+
+        /** Dense equality rows of the system, as Mapqn_nlp_solver takes them. */
+        public double[][] equalityMatrix() {
+            List<double[]> out = new ArrayList<double[]>();
+            for (int r = 0; r < rows.size(); r++) {
+                Row row = rows.get(r);
+                if (row.idx.length == 0 || !row.hasLower || !row.hasUpper) continue;
+                if (row.lower != row.upper) continue;
+                double[] dense = new double[nCols];
+                for (int t = 0; t < row.idx.length; t++) dense[row.idx[t]] += row.val[t];
+                out.add(dense);
+            }
+            return out.toArray(new double[0][]);
+        }
+
+        public double[] equalityRhs() {
+            List<Double> out = new ArrayList<Double>();
+            for (int r = 0; r < rows.size(); r++) {
+                Row row = rows.get(r);
+                if (row.idx.length == 0 || !row.hasLower || !row.hasUpper) continue;
+                if (row.lower != row.upper) continue;
+                out.add(Double.valueOf(row.lower));
+            }
+            double[] b = new double[out.size()];
+            for (int i = 0; i < b.length; i++) b[i] = out.get(i).doubleValue();
+            return b;
+        }
+
+        /** Dense inequality rows, normalised to A x <= b. */
+        public double[][] inequalityMatrix() {
+            List<double[]> out = new ArrayList<double[]>();
+            collectInequalities(out, null);
+            return out.toArray(new double[0][]);
+        }
+
+        public double[] inequalityRhs() {
+            List<Double> rhs = new ArrayList<Double>();
+            collectInequalities(new ArrayList<double[]>(), rhs);
+            double[] b = new double[rhs.size()];
+            for (int i = 0; i < b.length; i++) b[i] = rhs.get(i).doubleValue();
+            return b;
+        }
+
+        private void collectInequalities(List<double[]> mat, List<Double> rhs) {
+            for (int r = 0; r < rows.size(); r++) {
+                Row row = rows.get(r);
+                if (row.idx.length == 0) continue;
+                if (row.hasLower && row.hasUpper && row.lower == row.upper) continue;
+                if (row.hasUpper) {
+                    double[] dense = new double[nCols];
+                    for (int t = 0; t < row.idx.length; t++) dense[row.idx[t]] += row.val[t];
+                    if (mat != null) mat.add(dense);
+                    if (rhs != null) rhs.add(Double.valueOf(row.upper));
+                }
+                if (row.hasLower) {
+                    double[] dense = new double[nCols];
+                    for (int t = 0; t < row.idx.length; t++) dense[row.idx[t]] -= row.val[t];
+                    if (mat != null) mat.add(dense);
+                    if (rhs != null) rhs.add(Double.valueOf(-row.lower));
+                }
+            }
+        }
+    }
+
+    /**
+     * Build the constraint system of the BAS model, without an objective.
+     */
+    public static BasSystem buildSystem(Mapqn_qr_bounds_bas_parameters params) {
         params.validate();
-        if (!(objectiveQueue >= 1 && objectiveQueue <= params.M)) {
-            throw new IllegalArgumentException("Objective queue must be in range 1..M");
-        }
-        if (!("min".equals(sense) || "max".equals(sense))) {
-            throw new IllegalArgumentException("Sense must be 'min' or 'max'");
-        }
 
         int M = params.M;
         int N = params.N;
@@ -568,16 +671,52 @@ public final class Mapqn_qr_bounds_bas {
             }
         }
 
-        // Objective U1min / U1max (example_bas.mod:62).
+        return new BasSystem(nCols, colMap, rows, p2Idx, eIdx, M, K, F, MR);
+    }
+
+    public static Mapqn_solution solve(Mapqn_qr_bounds_bas_parameters params, int objectiveQueue, String sense) {
+        if (!(objectiveQueue >= 1 && objectiveQueue <= params.M)) {
+            throw new IllegalArgumentException("Objective queue must be in range 1..M");
+        }
+        if (!("min".equals(sense) || "max".equals(sense))) {
+            throw new IllegalArgumentException("Sense must be 'min' or 'max'");
+        }
+        BasSystem sys = buildSystem(params);
+        int M = params.M;
+        int[] K = params.K;
+        int[] F = params.F;
+        int MR = params.MR;
+        int nCols = sys.nCols;
+        int[] colMap = sys.colMap;
+        List<Row> rows = sys.rows;
+        IndexFn7 p2Idx = sys.p2Idx;
+        IndexFn2 eIdx = sys.eIdx;
+
+        // Objective: the UTILIZATION of the target queue, not its occupancy.
+        //
+        // This used to sum the diagonal p2 over ALL blocking configurations,
+        // i.e. P(n_i >= 1) with the BLOCKED ones included. A blocked BAS server
+        // holds a job it has already finished and does no work, so that is
+        // occupancy: on cqn_bas_blocking it reported U = 1 against an exact
+        // utilization of 0.590164, and the error propagated into the derived
+        // throughput through U = X*V*s.
+        //
+        // The e variables already carry the right quantity -- UEFF above
+        // restricts them to the configurations where i is NOT blocked -- and
+        // optimising e rather than reading it out afterwards is what keeps the
+        // answer a BOUND rather than an incidental value at the
+        // occupancy-maximising vertex.
+        //
+        // Coefficient 1.0, with NO 1/M: this port emits UEFF as one row per
+        // (j, i, ki), the j loop creating separate rows that each pin e to the
+        // same marginal. The MATLAB and C++ ports emit one row per (i, ki) with
+        // j summed INSIDE, which leaves their e scaled by M and needs the 1/M.
+        // The scale belongs to the formulation, not to the definition of e.
         double[] objectiveCoeffs = new double[nCols];
         int targetQueue = objectiveQueue - 1;
-        for (int m = 0; m < MR; m++) {
-            for (int ki = 0; ki < K[targetQueue]; ki++) {
-                for (int ni = 1; ni <= F[targetQueue]; ni++) {
-                    int idx = p2Idx.idx(targetQueue, ni, ki, targetQueue, ni, ki, m);
-                    if (idx >= 0 && colMap[idx] >= 0) objectiveCoeffs[colMap[idx]] = 1.0;
-                }
-            }
+        for (int ki = 0; ki < K[targetQueue]; ki++) {
+            int idx = eIdx.idx(targetQueue, ki);
+            if (idx >= 0 && colMap[idx] >= 0) objectiveCoeffs[colMap[idx]] = 1.0;
         }
 
         // see _kb/03-api-layer.md for rationale
@@ -677,6 +816,8 @@ public final class Mapqn_qr_bounds_bas {
             settings.eps_rel = OSQP_EPS;
             settings.rho = OSQP_RHO;
             settings.scaling = OSQP_SCALING;
+            // josqp defaults adaptive_rho to true, which on this LP re-tunes rho onto a stalling branch and burns max_iter without converging
+            settings.adaptive_rho = false;
             settings.polish = true;
             settings.verbose = false;
 
@@ -702,15 +843,18 @@ public final class Mapqn_qr_bounds_bas {
 
             Map<String, Double> variables = new HashMap<String, Double>();
             for (int i = 0; i < M; i++) {
-                double totalU = 0.0;
+                // P(n_i >= 1) over every configuration, blocked included. This
+                // is what U used to hold; it is occupancy, not utilization, and
+                // is kept because it is the quantity the QRF papers report.
+                double occupancy = 0.0;
                 for (int m = 0; m < MR; m++) {
                     for (int ki = 0; ki < K[i]; ki++) {
                         for (int ni = 1; ni <= F[i]; ni++) {
-                            totalU += value(point, colMap, p2Idx.idx(i, ni, ki, i, ni, ki, m));
+                            occupancy += value(point, colMap, p2Idx.idx(i, ni, ki, i, ni, ki, m));
                         }
                     }
                 }
-                variables.put("U_" + (i + 1), Double.valueOf(totalU));
+                variables.put("occupancy_" + (i + 1), Double.valueOf(occupancy));
             }
             for (int i = 0; i < M; i++) {
                 double totalE = 0.0;
@@ -719,9 +863,13 @@ public final class Mapqn_qr_bounds_bas {
                     totalE += ev;
                     variables.put("e_" + (i + 1) + "_" + (ki + 1), Double.valueOf(ev));
                 }
+                // U is read from the SAME quantity the objective optimises, so
+                // the objective queue's entry is a genuine bound.
+                variables.put("U_" + (i + 1), Double.valueOf(totalE));
                 variables.put("Ueff_" + (i + 1), Double.valueOf(totalE));
                 variables.put("pb_" + (i + 1),
-                        Double.valueOf(variables.get("U_" + (i + 1)).doubleValue() - totalE));
+                        Double.valueOf(variables.get("occupancy_" + (i + 1)).doubleValue()
+                                - totalE));
             }
 
             return new Mapqn_solution(objective, variables);
@@ -743,36 +891,39 @@ public final class Mapqn_qr_bounds_bas {
      * josqp settings. The three constants are tuned together; changing one
      * without re-measuring the others is not meaningful.
      *
-     * <p>Measured on tomacs_qrf/example_bas.mod (M=5, N=10, MR=5), against the
-     * AMPL optimum U1min = 0.4776625414, U1max = 0.8077316296, which glpsol also
-     * reproduces from the LP this method dumps under
+     * <p>THE DECISIVE SETTING IS {@code adaptive_rho = false}. josqp defaults it
+     * to true, and on this LP the rho re-tuning steps onto a branch that never
+     * satisfies the termination test: the solve burns all 200000 iterations and
+     * returns MAX_ITER_REACHED, i.e. nothing, on any instance past a few hundred
+     * columns. With it disabled the same LP converges in seconds and to the
+     * vertex, not merely near it. Every measurement below has it disabled.
+     *
+     * <p>Measured on tomacs_qrf/example_bas.mod (M=5, N=10, MR=5, 15714 columns),
+     * against the AMPL optimum U1min = 0.4776625414, U1max = 0.8077316296, which
+     * glpsol also reproduces from the LP this method dumps under
      * {@code -Djline.mapqn.dumpmps} (6707 and 9111 simplex iterations, ~3 s).
-     * The column is the absolute deviation of U1min and the wall time:
+     * The columns are the absolute deviation and the wall time per direction:
      *
      * <pre>
-     *   eps    rho=0.1 scaling=10      rho=1.0 scaling=25
-     *   1e-4   6.1e-03    5 s          -
-     *   1e-5   9.7e-04   13 s          -
-     *   1e-6   7.5e-04   26 s          7.9e-05   33 s
-     *   1e-7   9.8e-06  292 s          6.8e-06   20 s
+     *   eps    U1min dev    time     U1max dev    time
+     *   1e-7   5.5e-08       37 s    4.4e-07       7 s
+     *   1e-8   7.3e-08      148 s    6.7e-08       7 s
+     *   1e-9   1.1e-08      183 s    4.9e-09      10 s
      * </pre>
      *
-     * <p>The deviation is NOT monotone in eps, which is characteristic of ADMM:
-     * the iterate approaches the optimal face quickly and then crawls along it,
-     * so a looser tolerance can happen to stop nearer the vertex. rho = 1.0 with
-     * scaling = 25 is both the most accurate and, at eps = 1e-7, an order of
-     * magnitude faster than the josqp default rho = 0.1, which spends 292 s to
-     * reach the same accuracy. At the settings below the max direction lands
-     * within 2.1e-07, and the two small instances asserted by MapqnAPITest
-     * within 1e-16 (M=2, N=2) and 4.6e-07 (M=2, N=3).
-     *
-     * <p>ACCURACY LIMIT, and it is a real one. ADMM converges linearly and its
-     * polish step does not recover the exact vertex of this degenerate LP, so
-     * about five decimals is the ceiling. MATLAB (matlab/lib/qrf/qrf_bas.m) and
-     * native Python (api/mapqn/qr_bounds_bas.py) agree with AMPL to ~3e-11, so a
-     * JAR bound is NOT interchangeable with theirs beyond that.
+     * <p>For comparison, the previous default (eps = 1e-7 WITH adaptive rho) left
+     * 6.8e-06 on U1min. The deviation is not monotone in eps -- characteristic of
+     * ADMM, whose iterate reaches the optimal face quickly and then crawls along
+     * it -- but at 1e-9 the polish step does recover the vertex: on the M=3, N=5
+     * instance (matlab/lib/qrf/example_bas_small.m) this method now reproduces
+     * MATLAB's U at ALL THREE stations, 0.571555 / 0.770258 / 0.770258 at the
+     * min direction, not just the objective. That agreement of the non-objective
+     * utilizations is what makes the bound interchangeable with the MATLAB
+     * (matlab/lib/qrf/qrf_bas.m) and native-Python (api/mapqn/qr_bounds_bas.py)
+     * twins, which agree with AMPL to ~3e-11: on a degenerate optimal face the
+     * objective can match while the vertex does not.
      */
-    private static final double OSQP_EPS = 1.0e-7;
+    private static final double OSQP_EPS = 1.0e-9;
 
     private static final double OSQP_RHO = 1.0;
 

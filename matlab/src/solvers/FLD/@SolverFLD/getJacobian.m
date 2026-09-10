@@ -15,6 +15,7 @@ function [J, rhs, vars, equilibria] = getJacobian(self, options)
 % Only smooth drifts have a Jacobian: see getSymbolicDrift, which refuses the
 % min-scaled methods by name rather than returning a one-sided derivative.
 %
+% @param self The SolverFLD instance
 % @param options Solver options (optional, defaults to the solver's own)
 % @return J Cell matrix of expressions, J{i,j} = d f_i / d x_j
 % @return rhs The drift itself, one expression per state variable
@@ -23,6 +24,16 @@ function [J, rhs, vars, equilibria] = getJacobian(self, options)
 %
 % Copyright (c) 2012-2026, Imperial College London
 % All rights reserved.
+
+
+% lang='cpp' takes the Jacobian from line-cli (-s fluid -a jacobian). Both
+% sides are SYMBOLIC and reach the same computer-algebra backend: the C++ arm
+% builds the drift with fluid_symodes and differentiates it there, exactly as
+% the SAGE call below does, so the entries are expressions on both paths.
+if isfield(self.options,'lang') && strcmp(self.options.lang,'cpp')
+    [J, rhs, vars, equilibria] = CPPLINE.jacobian(self.name, self.model, self.options, nargout >= 4);
+    return
+end
 
 if nargin < 2 || isempty(options)
     options = self.getOptions();

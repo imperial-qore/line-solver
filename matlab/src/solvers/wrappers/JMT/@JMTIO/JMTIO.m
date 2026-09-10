@@ -110,6 +110,7 @@ classdef JMTIO < handle
         [simDoc, section] = saveLogTunnel(self, simDoc, section, ind)
         [simElem, simDoc] = saveMetric(self, simElem, simDoc, handles)
         [simElem, simDoc] = saveMetrics(self, simElem, simDoc)
+        [simDoc, node] = saveClassSoftDeadlines(self, simDoc, node, ind)
         [simDoc, section] = saveModeNames(self, simDoc, section, ind)
         [simDoc, section] = saveNumberOfServers(self, simDoc, section, ind)
         [simDoc, section] = saveNumbersOfServers(self, simDoc, section, ind)

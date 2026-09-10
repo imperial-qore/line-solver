@@ -12,7 +12,7 @@ model.link(Network.serialRouting(source, queue, sink));
 
 problem = opt.OptimizationProblem(model);
 problem.addVariable(opt.ServiceRate(queue, jobs, [3.5 8.0]));
-rateCost = containers.Map('KeyType','char','ValueType','double');
+rateCost = configureDictionary('string','double');
 rateCost('Server') = 20.0;
 problem.setObjective(opt.MinimizeCost([], rateCost, [], {}));
 problem.addConstraint(opt.ResponseTimeConstraint(queue, jobs, 0.5));

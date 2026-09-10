@@ -26,14 +26,21 @@ class ServerType(Element):
         >>> queue.set_service(class_a, fast_server, Exp(2.0))
     """
 
-    def __init__(self, name: str, num_of_servers: int = 1, compatible_classes=None):
+    def __init__(self, name: str, num_of_servers: int = 1, compatible_classes=None, rate=1.0):
         """
         Create a new server type.
 
         Args:
             name: String name identifying this server type
             num_of_servers: Number of servers of this type (must be >= 1)
-            compatible_classes: Optional list of compatible JobClass objects
+            compatible_classes: Optional list of compatible JobClass objects, or,
+                on a layered server, of compatible Task/Entry operands
+            rate: Per-server rate of this pool. Read on a LAYERED server, where
+                the rate law is per pool: the activated-server rate reads only
+                which pools are active, and a per-operand rate would need to know
+                WHICH compatible operand each server picked, which is a matching
+                and not order independent. A Queue ignores this and keeps its
+                per-(type, class) service distributions. See sn_compat_rate.
         """
         super().__init__(ElementType.NODE, name)
         if num_of_servers < 1:
@@ -43,6 +50,18 @@ class ServerType(Element):
         self._num_of_servers = num_of_servers
         self._compatible_classes = list(compatible_classes) if compatible_classes else []
         self._parent_queue = None
+        self._rate = float(rate)
+
+    def get_rate(self) -> float:
+        """Per-server rate of this pool."""
+        return self._rate
+
+    def set_rate(self, rate) -> None:
+        """Set the per-server rate of this pool."""
+        rate = float(rate)
+        if not rate > 0:
+            raise ValueError("Server type rate must be a positive scalar")
+        self._rate = rate
 
     def get_id(self) -> int:
         """Get the server type ID."""

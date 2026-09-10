@@ -55,7 +55,12 @@ def pfqn_linearizer(
         N: Population vector (R,)
         Z: Think time vector (R,)
         sched_type: List of scheduling strategies per station ('FCFS', 'PS', etc.)
-        tol: Convergence tolerance
+        tol: Convergence tolerance; 'cn' or NaN selects the published
+            Linearizer termination test of Chandy and Neuse,
+            Commun. ACM 25(2), 1982, p.129: each Core call stops when
+            max_{i,r}|dQ(i,r)|/N_r falls below pfqn_cntol evaluated at
+            the population Core is running at, rather than on the
+            Frobenius norm of dQ. See pfqn_cntol.
         maxiter: Maximum iterations
 
     Returns:
@@ -89,7 +94,12 @@ def pfqn_gflinearizer(
         N: Population vector (R,)
         Z: Think time vector (R,)
         sched_type: List of scheduling strategies per station
-        tol: Convergence tolerance
+        tol: Convergence tolerance; 'cn' or NaN selects the published
+            Linearizer termination test of Chandy and Neuse,
+            Commun. ACM 25(2), 1982, p.129: each Core call stops when
+            max_{i,r}|dQ(i,r)|/N_r falls below pfqn_cntol evaluated at
+            the population Core is running at, rather than on the
+            Frobenius norm of dQ. See pfqn_cntol.
         maxiter: Maximum iterations
         alpha: Linearization parameter (scalar)
 
@@ -114,7 +124,8 @@ def pfqn_egflinearizer(
     tol: float = 1e-8,
     maxiter: int = 1000,
     alpha: np.ndarray = None,
-    QN0: np.ndarray = None
+    QN0: np.ndarray = None,
+    npasses: int = 3
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
     """
     Extended general-form linearizer with class-specific parameters.
@@ -124,18 +135,38 @@ def pfqn_egflinearizer(
         N: Population vector (R,)
         Z: Think time vector (R,)
         sched_type: List of scheduling strategies per station
-        tol: Convergence tolerance
+        tol: Convergence tolerance; 'cn' or NaN selects the published
+            Linearizer termination test of Chandy and Neuse,
+            Commun. ACM 25(2), 1982, p.129: each Core call stops when
+            max_{i,r}|dQ(i,r)|/N_r falls below pfqn_cntol evaluated at
+            the population Core is running at, rather than on the
+            Frobenius norm of dQ. See pfqn_cntol.
         maxiter: Maximum iterations
         alpha: Class-specific linearization parameters (R,)
+        npasses: Number of Delta refresh passes (3 is the Chandy-Neuse fixed
+            rule; pfqn_scat passes 1)
 
     Returns:
-        Tuple of (Q, U, W, T, C, X, iterations)
+        Tuple of (Q, U, W, T, C, X, iterations), where T is the throughput PER
+        REFERENCE VISIT (X broadcast over the stations the class visits), not the
+        per-station throughput: visits are folded into L here and cannot be
+        recovered from it. MATLAB returns no T at all and has the caller build
+        `T = V .* X`; the slot exists because three Python callers unpack seven
+        values. See the comment at the return statement.
     """
     from .mva import pfqn_bs
+    from .cntol import is_cntol
 
     L = np.atleast_2d(np.asarray(L, dtype=float))
     N = np.asarray(N, dtype=float).ravel()
     Z = np.asarray(Z, dtype=float).ravel()
+
+    # Carried as NaN so that the pfqn_bs warm-start below inherits the same
+    # test; the cutoff itself is population-dependent and so is recomputed
+    # inside each Core call rather than once here.
+    cntest = is_cntol(tol)
+    if cntest:
+        tol = float('nan')
 
     M, R = L.shape
 
@@ -175,8 +206,8 @@ def pfqn_egflinearizer(
 
     totiter = 0
 
-    # Main outer loop (3 iterations for linearization)
-    for I in range(3):
+    # Main outer loop (3 refresh passes for linearization, 1 for SCAT)
+    for I in range(npasses):
         for s in range(-1, R):
             N_1 = _oner(N, [s])
             Q1 = np.zeros((M, R))
@@ -185,7 +216,8 @@ def pfqn_egflinearizer(
                     Q1[i, j] = Q[i][j, 1 + s]
 
             Q_new, W_new, T_new, iter_count = _egflinearizer_core(
-                L, M, R, N_1, Z, Q1, Delta, sched_type, tol, maxiter - totiter, alpha
+                L, M, R, N_1, Z, Q1, Delta, sched_type, tol, maxiter - totiter, alpha,
+                cntest
             )
 
             for i in range(M):
@@ -219,7 +251,7 @@ def pfqn_egflinearizer(
             Q1[i, j] = Q[i][j, 0]
 
     Q_final, W, T, iter_count = _egflinearizer_core(
-        L, M, R, N, Z, Q1, Delta, sched_type, tol, maxiter - totiter, alpha
+        L, M, R, N, Z, Q1, Delta, sched_type, tol, maxiter - totiter, alpha, cntest
     )
     totiter += iter_count
 
@@ -235,7 +267,28 @@ def pfqn_egflinearizer(
         if X[r] > 0:
             C[r] = N[r] / X[r] - Z[r]
 
-    return Q_final, U, W, U, C.reshape(1, -1), X.reshape(1, -1), totiter
+    # THE FOURTH SLOT IS PER-REFERENCE-VISIT THROUGHPUT, NOT UTILIZATION. It used
+    # to return `U` a second time, so every caller that wrote it into a TN matrix
+    # reported the utilization in the throughput column -- and, downstream,
+    # `sn_get_arvr_from_tput` propagated that through the routing matrix, so ArvR
+    # came out as the utilization of the PREDECESSOR station. Invisible on a
+    # product-form model (which takes `sn_deaggregate_chain_results` instead) and
+    # on any model whose service is class-independent; reached by a HETEROGENEOUS
+    # FCFS station, which is exactly where the linearizer family is needed.
+    #
+    # MATLAB has no fourth output at all -- `pfqn_egflinearizer.m` returns
+    # [Q,U,W,C,X,totiter] and `solver_amva.m:291` builds `T = V .* repmat(X,M,1)`
+    # in the CALLER, from visits this layer does not have. The value returned here
+    # is therefore X broadcast to the stations the class visits, i.e. the
+    # throughput PER REFERENCE VISIT; a caller reporting per-station throughput
+    # must still scale it by V, as the callers in solver_mva.py now do.
+    Tref = np.zeros((M, R))
+    for i in range(M):
+        for r in range(R):
+            if L[i, r] > 0:
+                Tref[i, r] = X[r]
+
+    return Q_final, U, W, Tref, C.reshape(1, -1), X.reshape(1, -1), totiter
 
 
 def _egflinearizer_core(
@@ -249,7 +302,8 @@ def _egflinearizer_core(
     sched_type: List[str],
     tol: float,
     maxiter: int,
-    alpha: np.ndarray
+    alpha: np.ndarray,
+    cntest: bool = False
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, int]:
     """
     Core iteration for extended general-form linearizer.
@@ -263,6 +317,14 @@ def _egflinearizer_core(
     has_converged = False
     iter_count = 0
 
+    if cntest:
+        from .cntol import pfqn_cntol
+        # Chandy and Neuse (1982), p.129 and appendix: the cutoff is a function
+        # of the population Core is running at, so it is recomputed here rather
+        # than once for the whole Linearizer.
+        tol = pfqn_cntol(N_1)
+        nz = np.asarray(N_1, dtype=float).ravel() > 0
+
     while not has_converged:
         Q_last = Q.copy()
 
@@ -273,7 +335,15 @@ def _egflinearizer_core(
         Q, W, T = _egflinearizer_forward_mva(L, M, R, sched_type, N_1, Z, Q_1)
 
         # Check convergence
-        diff_norm = np.linalg.norm(Q - Q_last)
+        if cntest:
+            # max_{i,r} |dQ(i,r)| / N_r over the non-empty classes; an empty
+            # class would divide by zero and it carries no jobs to converge.
+            if not np.any(nz):
+                diff_norm = 0.0
+            else:
+                diff_norm = float(np.max(np.abs(Q[:, nz] - Q_last[:, nz]) / np.asarray(N_1, dtype=float).ravel()[nz]))
+        else:
+            diff_norm = np.linalg.norm(Q - Q_last)
         if diff_norm < tol or iter_count > maxiter:
             has_converged = True
 

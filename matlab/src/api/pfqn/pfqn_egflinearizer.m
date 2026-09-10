@@ -13,9 +13,11 @@
  % @param N Population vector.
  % @param Z Think time vector.
  % @param type Scheduling strategy type per station.
- % @param tol Convergence tolerance (default: 1e-8).
+ % @param tol Convergence tolerance (default: 1e-8); 'cn' or NaN selects the Chandy-Neuse (1982) population-scaled termination test, see pfqn_cntol.
  % @param maxiter Maximum number of iterations (default: 1000).
  % @param alpha Per-class scaling exponent vector.
+ % @param QN0 (M x R) queue lengths that warm-start the Bard-Schweitzer initialization; empty for the default cold start.
+ % @param npasses Number of Delta refresh passes (default 3, the Chandy-Neuse rule; pfqn_scat sets 1).
  % @return Q Mean queue lengths.
  % @return U Utilization.
  % @return W Waiting times.
@@ -24,9 +26,12 @@
  % @return totiter Total iterations performed.
 %}
 %}
-function [Q,U,W,C,X,totiter] = pfqn_egflinearizer(L,N,Z,type,tol,maxiter,alpha,QN0)
+function [Q,U,W,C,X,totiter] = pfqn_egflinearizer(L,N,Z,type,tol,maxiter,alpha,QN0,npasses)
 % Single-server version of linearizer
 
+if nargin<9 || isempty(npasses)
+    npasses = 3; % Chandy-Neuse (1982) fixed three-iteration rule; pfqn_scat passes 1
+end
 if nargin<8
     QN0 = [];
 end
@@ -35,6 +40,26 @@ if nargin<5
 end
 if nargin<4
     tol = 1e-8;
+end
+
+% tol = 'cn' (or NaN) selects the published Linearizer termination test of
+% Chandy and Neuse, Commun. ACM 25(2), 1982, p.129: Core stops when
+% max_{i,r}|dQ(i,r)|/N_r < pfqn_cntol(N), where N is the population Core is
+% being run at, so each of the R+1 Core calls gets its own cutoff. The default
+% instead stops on enorm(dQ) < tol. Carried as NaN so that the pfqn_bs
+% initialization below inherits the same test.
+cntest = false;
+if ischar(tol) || isstring(tol)
+    if strcmpi(tol,'cn')
+        cntest = true;
+    else
+        line_error(mfilename,sprintf('pfqn_egflinearizer: unknown tolerance specifier ''%s''.',char(tol)));
+    end
+elseif isnan(tol)
+    cntest = true;
+end
+if cntest
+    tol = NaN;
 end
 
 [M,R]=size(L);
@@ -75,11 +100,11 @@ end
 
 totiter = 0;
 % Main loop
-for I=1:3
+for I=1:npasses
     for s=0:R
         N_1 = oner(N,s); % for k=0 it just returns N
         % Core(N_1)
-        [Q(:,:,1+s),~,~,iter] = Core(L,M,R,N_1,Z,Q(:,:,1+s),Delta,type,tol,maxiter-totiter,alpha);
+        [Q(:,:,1+s),~,~,iter] = Core(L,M,R,N_1,Z,Q(:,:,1+s),Delta,type,tol,maxiter-totiter,alpha,cntest);
         totiter = totiter + iter;
     end
     % Update_Delta
@@ -108,7 +133,7 @@ end
 
 
 % Core(N)
-[Q,W,X,iter] = Core(L,M,R,N,Z,Q(:,:,1+0),Delta,type,tol,maxiter-totiter,alpha);
+[Q,W,X,iter] = Core(L,M,R,N,Z,Q(:,:,1+0),Delta,type,tol,maxiter-totiter,alpha,cntest);
 totiter = totiter + iter;
 % Compute performance metrics
 U = zeros(M,R);
@@ -121,18 +146,36 @@ Q = Q(1:M,1:R,1+0);
 C = N./X-Z;
 end
 
-function [Q,W,T,iter] = Core(L,M,R,N_1,Z,Q,Delta,type,tol,maxiter,alpha)
+function [Q,W,T,iter] = Core(L,M,R,N_1,Z,Q,Delta,type,tol,maxiter,alpha,cntest)
 hasConverged = false;
 W = L;
 T = zeros(1,R);
 iter = 0;
+if cntest
+    % Chandy and Neuse (1982), p.129 and appendix: the cutoff is a function of
+    % the population Core is running at, so it is recomputed here rather than
+    % once for the whole Linearizer.
+    tol = pfqn_cntol(N_1);
+    nz = N_1 > 0;
+end
 while ~hasConverged
     Qlast = Q;
     % Estimate population at
     Q_1 = Estimate(L,M,R,N_1,Z,Q,Delta,W,alpha);
     % Forward MVA
     [Q,W,T] = ForwardMVA(L,M,R,type,N_1,Z,Q_1);
-    if enorm(Q-Qlast)<tol || iter > maxiter
+    if cntest
+        % max_{i,r} |dQ(i,r)| / N_r over the non-empty classes; an empty class
+        % would divide by zero and it carries no jobs to converge.
+        if isempty(find(nz,1))
+            dev = 0;
+        else
+            dev = max(max(abs(Q(:,nz)-Qlast(:,nz))./repmat(N_1(nz),M,1)));
+        end
+    else
+        dev = enorm(Q-Qlast);
+    end
+    if dev<tol || iter > maxiter
         hasConverged = true;
     end
     iter = iter + 1;

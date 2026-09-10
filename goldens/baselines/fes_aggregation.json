@@ -1,0 +1,90 @@
+{
+  "class": {
+    "MVA": "deterministic"
+  },
+  "example": "fes_aggregation",
+  "solvers": {
+    "MVA": [
+      {
+        "ArvR": 0.27067,
+        "JobClass": "Class1",
+        "QLen": 1.3533,
+        "ResidT": 5.0,
+        "RespT": 5.0,
+        "Station": "ThinkTime",
+        "Tput": 0.27067,
+        "Util": 1.3533
+      },
+      {
+        "ArvR": 0.17304,
+        "JobClass": "Class2",
+        "QLen": 0.69217,
+        "ResidT": 4.0,
+        "RespT": 4.0,
+        "Station": "ThinkTime",
+        "Tput": 0.17304,
+        "Util": 0.69217
+      },
+      {
+        "ArvR": 0.27067,
+        "JobClass": "Class1",
+        "QLen": 0.89529,
+        "ResidT": 3.3077,
+        "RespT": 3.3077,
+        "Station": "Queue1",
+        "Tput": 0.27067,
+        "Util": 0.406
+      },
+      {
+        "ArvR": 0.17304,
+        "JobClass": "Class2",
+        "QLen": 0.72906,
+        "ResidT": 4.2132,
+        "RespT": 4.2132,
+        "Station": "Queue1",
+        "Tput": 0.17304,
+        "Util": 0.34609
+      },
+      {
+        "ArvR": 0.27067,
+        "JobClass": "Class1",
+        "QLen": 0.43467,
+        "ResidT": 1.6059,
+        "RespT": 1.6059,
+        "Station": "Queue2",
+        "Tput": 0.27067,
+        "Util": 0.27067
+      },
+      {
+        "ArvR": 0.17304,
+        "JobClass": "Class2",
+        "QLen": 0.32924,
+        "ResidT": 1.9026,
+        "RespT": 1.9026,
+        "Station": "Queue2",
+        "Tput": 0.17304,
+        "Util": 0.20765
+      },
+      {
+        "ArvR": 0.27067,
+        "JobClass": "Class1",
+        "QLen": 0.31669,
+        "ResidT": 1.17,
+        "RespT": 1.17,
+        "Station": "Queue3",
+        "Tput": 0.27067,
+        "Util": 0.21653
+      },
+      {
+        "ArvR": 0.17304,
+        "JobClass": "Class2",
+        "QLen": 0.24953,
+        "ResidT": 1.442,
+        "RespT": 1.442,
+        "Station": "Queue3",
+        "Tput": 0.17304,
+        "Util": 0.17304
+      }
+    ]
+  }
+}

@@ -33,15 +33,13 @@ end
 
 mean_queue = (0:Nlev) * pLevel(:);
 
-% Utilization: P(busy) for a (load-dependent) single server, else average
-% fraction of c servers in use.
-if ld.hasLLD || c == 1
-    util = 1 - pLevel(1);
-else
-    util = 0;
-    for n = 1:Nlev
-        util = util + (min(n, c) / c) * pLevel(n+1);
-    end
+% Utilization is the fraction of PEAK capacity in use, sum_n p(n)*sf(n)/utilPeak,
+% the same work-based convention CTMC/MVA/NC report. Without load dependence
+% sf(n) = min(n,c) and utilPeak = c, so this is the average fraction of c
+% servers in use, and at c = 1 it collapses to 1 - p(0).
+util = 0;
+for n = 1:Nlev
+    util = util + (ld.sf(n) / ld.utilPeak) * pLevel(n+1);
 end
 
 QN = zeros(M, 1);
@@ -60,6 +58,7 @@ else
     if X > 0, R_queue = mean_queue / X; else, R_queue = 0; end
     R_delay = 1 / ld.delayRate;
     QN(ri) = mean_delay; UN(ri) = mean_delay; RN(ri) = R_delay; TN(ri) = X;
-    QN(qi) = mean_queue; UN(qi) = util / c;   RN(qi) = R_queue; TN(qi) = X;
+    % util is already per-server: the /utilPeak is inside the sum above
+    QN(qi) = mean_queue; UN(qi) = util;       RN(qi) = R_queue; TN(qi) = X;
 end
 end

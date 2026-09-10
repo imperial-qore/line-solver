@@ -77,7 +77,15 @@ class TestQuickstartScript(unittest.TestCase):
         path = os.path.join(PYTHON_ROOT, 'mm1.ipynb')
         with open(path) as f:
             nb = nbformat.read(f, as_version=4)
-        ExecutePreprocessor(timeout=600, kernel_name='python3').preprocess(
+        # THE KERNEL BOOT IS A SECOND DEADLINE, and nbclient defaults it to 60 s.
+        # It runs before the first cell, so `timeout` never covers it, and under
+        # `-n auto` on a loaded host 60 s is a contention detector rather than a
+        # hang detector -- see notebook_suite.KERNEL_STARTUP, which carries the
+        # measurement and lost two notebooks to this on 2026-09-09. Spelled out
+        # here rather than imported: importing that module installs a kernelspec
+        # under an flock, and this test drives the plain `python3` kernel.
+        ExecutePreprocessor(timeout=600, kernel_name='python3',
+                            startup_timeout=480).preprocess(
             nb, {'metadata': {'path': PYTHON_ROOT}})
 
         stdout = ''
@@ -92,7 +100,9 @@ class TestQuickstartScript(unittest.TestCase):
 
         rows = parse_avg_table(stdout)
         self.assertTrue(rows, f"mm1.ipynb printed no avg table:\n{stdout}")
-        self.assert_mm1_table(rows, 'mySource', 'myQueue')
+        # Same node names as the script: mm1.ipynb is generated from mm1.py by
+        # tools/gen_notebooks.py, so the two cannot name their nodes differently.
+        self.assert_mm1_table(rows, 'Source', 'Queue')
 
     def test_readme_documents_the_printed_columns(self):
         """The README example block must list the columns the script really prints."""

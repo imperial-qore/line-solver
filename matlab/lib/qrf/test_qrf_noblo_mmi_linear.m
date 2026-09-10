@@ -1,9 +1,11 @@
 function test_qrf_noblo_mmi_linear
 % Regression test for the QRF no-blocking MMI polytope (linear assembly).
 %
-% Self-contained: no LINE dependencies and no LP solver. It uses feasibility
-% of a known-exact point as the oracle, which is what actually discriminates
-% the polytope (an fmincon iterate does not).
+% No LINE dependencies. The single-phase block below needs no LP solver either:
+% it uses feasibility of a known-exact point as the oracle, which is what
+% actually discriminates the polytope (an fmincon iterate does not). The
+% MULTI-PHASE block that follows does run the solver, because the two defects it
+% covers were both in the solve rather than in the polytope.
 %
 % The instance is the 2-station closed network with exponential service and
 % load-dependent rates alpha(i,n), for which the exact stationary law is the
@@ -35,7 +37,7 @@ for t = 1:numel(cases)
     alpha = ones(M,N); alpha(1,:) = cases{t}.alpha;
     MAPs = {{-mu(1), mu(1)}; {-mu(2), mu(2)}};
 
-    [~,~,~,lp] = qrf_noblo_mmi_linear(MAPs,N,rt,alpha,true);
+    [~,~,~,~,lp] = qrf_noblo_mmi_linear(MAPs,N,rt,alpha,true);
 
     % 1. arity of q
     q = local_q(MAPs,N,rt,alpha);
@@ -60,7 +62,44 @@ for t = 1:numel(cases)
     end
 end
 
-fprintf('test_qrf_noblo_mmi_linear: %d cases passed\n', numel(cases));
+% ---- MULTI-PHASE (K > 1), the instances the block above cannot reach ----
+%
+% Until 2026-09-01 this file covered only the SINGLE-PHASE exponential instance,
+% so neither of the two defects below was visible to it:
+%
+%   K = [2,2]  the inlined phase 1 was a bare minimum-norm quadprog with no
+%              linprog fallback, and it stalls at an equality residual of
+%              7.9e+00 on this polytope. The arm RAISED on a well-posed model.
+%   K = [2,1]  sub_qrfvar filled the decision vector compactly while deltap2
+%              addressed it with max(K)-padded strides, so every family indexed
+%              the wrong columns and the arm returned UN = [0,0].
+%
+% Two oracles, neither needing a hand-computed CTMC. Visits are equal on this
+% cycle, so U(i) = X*s(i) and the utilizations carry the DEMAND RATIO exactly;
+% and the queue lengths must carry the population. The UN values additionally
+% pin against native python, which returns the same numbers to the digits shown.
+mpTol = 1e-6;
+erl2 = @(mean) {[-2/mean, 2/mean; 0, -2/mean], [0, 0; 2/mean, 0]};
+expo = @(mean) {-1/mean, 1/mean};
+mp = { ...
+    struct('name','K=[2,2]','MAPs',{{erl2(1/2); erl2(1/4)}},'UN',[0.75 0.375]), ...
+    struct('name','K=[2,1]','MAPs',{{erl2(1/2); expo(1/4)}},'UN',[0.80 0.400])};
+
+Nmp = 2; rtmp = [0 1; 1 0]; alphamp = ones(2,Nmp);
+for t = 1:numel(mp)
+    [UNmp,QNmp] = qrf_noblo_mmi_linear(mp{t}.MAPs,Nmp,rtmp,alphamp);
+    assert(all(isfinite(UNmp)) && any(UNmp > 0), ...
+        '%s: solver returned no utilization (UN = %s)', mp{t}.name, mat2str(UNmp));
+    assert(abs(sum(QNmp) - Nmp) < mpTol, ...
+        '%s: queue lengths carry %g jobs, not N = %d', mp{t}.name, sum(QNmp), Nmp);
+    assert(abs(UNmp(1)/UNmp(2) - 2) < mpTol, ...
+        '%s: demands are 2:1 but UN = %s', mp{t}.name, mat2str(UNmp,8));
+    assert(max(abs(UNmp(:).' - mp{t}.UN)) < mpTol, ...
+        '%s: UN = %s, expected %s', mp{t}.name, mat2str(UNmp,8), mat2str(mp{t}.UN));
+end
+
+fprintf('test_qrf_noblo_mmi_linear: %d single-phase + %d multi-phase cases passed\n', ...
+    numel(cases), numel(mp));
 end
 
 function q = local_q(MAPs,N,rt,alpha)

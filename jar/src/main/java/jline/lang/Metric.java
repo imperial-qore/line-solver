@@ -144,5 +144,41 @@ public class Metric {
     public void setStationName(String stationName) {
         this.stationName = stationName;
     }
+
+    /**
+     * Overwrites the mean. Needed by the JMVA reader, which must rescale a
+     * chain-level measure into the per-class value it stands for.
+     */
+    public void setMeanValue(double meanValue) {
+        this.meanValue = meanValue;
+        this.lowerLimit = meanValue;
+        this.upperLimit = meanValue;
+    }
+
+    /**
+     * Overwrites the metric type. The JMVA reader uses it to restate JMVA's
+     * "Residence time" as a per-visit response time once it has divided the
+     * value by the visit count.
+     */
+    public void setMetricType(MetricType metricType) {
+        this.metricType = metricType;
+    }
+
+    /**
+     * Sets the analysed-sample count. JMVA is analytical and reports no sample
+     * counts, so its reader must stamp the saturated value: the consumer in
+     * SolverJMT.getResults() drops any closed-class metric whose
+     * analyzedSamples does not exceed the chain population, a JSIM
+     * sample-sufficiency test that would otherwise discard every analytical
+     * result. MATLAB writes Inf here for the same reason.
+     */
+    public void setAnalyzedSamples(int analyzedSamples) {
+        this.analyzedSamples = analyzedSamples;
+    }
+
+    /** Sets the node type ("station" or "region"). */
+    public void setNodeType(String nodeType) {
+        this.nodeType = nodeType;
+    }
 }
 

@@ -62,6 +62,8 @@ public class FeatureSet implements Serializable {
         set.put("BMAP", false);
         set.put("MMPP2", false);
         set.put("NHPP", false);
+        set.put("MAPt", false);
+        set.put("PHt", false);
         // Name declared by EmpiricalCDF.java, which is what getUsedLangFeatures
         // marks; the JSON wire type "EmpiricalCDF" is unrelated to it.
         set.put("EmpiricalCdf", false);
@@ -95,9 +97,12 @@ public class FeatureSet implements Serializable {
         set.put("StatelessClassSwitcher", false);
         set.put("CacheClassSwitcher", false);
         set.put("CacheRetrieval", false);
+        set.put("CacheItemSize", false);
         set.put("InfiniteServer", false);
         set.put("Forker", false);
         set.put("Joiner", false);
+        // quorum join: k of n siblings, k < n
+        set.put("JoinPartial", false);
         set.put("LogTunnel", false);
         set.put("SharedServer", false);
         set.put("Buffer", false);
@@ -140,7 +145,7 @@ public class FeatureSet implements Serializable {
         set.put("RoutingStrategy_WRROBIN", false);
         set.put("RoutingStrategy_JSQ", false);
         set.put("RoutingStrategy_SQ", false);
-        set.put("RoutingStrategy_RL", false);
+        set.put("RoutingStrategy_SDR", false);
         set.put("SchedStrategy_INF", false);
         set.put("SchedStrategy_FCFS", false);
         set.put("SchedStrategy_FCFSPR", false);
@@ -201,7 +206,9 @@ public class FeatureSet implements Serializable {
         set.put("LoadDependence", false);
         set.put("ClassDependence", false);
         set.put("JointDependence", false);
+        set.put("GlobalDependence", false);
         set.put("SetupDelayOff", false);
+        set.put("ServerParallelism", false);
         set.put("Retrial", false);
         set.put("Balking", false);
         set.put("Reneging", false);
@@ -221,6 +228,56 @@ public class FeatureSet implements Serializable {
         set.put("ActivityPrecedence_PRE_OR", false);
         set.put("ActivityPrecedence_POST_OR", false);
         set.put("SchedStrategy_REF", false);
+        // Layered cache-queueing models: a CacheTask holds a segmented cache
+        // whose items are ItemEntry entries, and a read is a call to one of them
+        // whose bound activity branches on a POST_CACHE precedence into hit and
+        // miss. SolverLDES.getLNFeatureSet DECLARES all three, and setTrue
+        // line_errors on an unregistered name, so that whole feature set threw
+        // before it could compare anything: supports(LayeredNetwork) could not
+        // run at all, which is also why nobody noticed SchedStrategy_REF was
+        // never recorded.
+        set.put("CacheTask", false);
+        set.put("ItemEntry", false);
+        set.put("ActivityPrecedence_POST_CACHE", false);
+        // Variable forking levels. A Fork emits tasksPerLink jobs on every
+        // outgoing link; these three name the ways that degree stops being one
+        // number. ForkFanoutVector: the count differs by destination or by class
+        // (ForkNodeParam.fanOutLink). ForkFanoutRandom: the count is a draw from
+        // a DiscreteSampler, redrawn per link and per forked job
+        // (ForkNodeParam.fanOutDist). ForkBranchProbability: a branch fires only
+        // with probability p, so the SIBLING COUNT is random even when each link
+        // carries a fixed number (ForkNodeParam.fanOutProb). Appended at the
+        // tail so every earlier index is unchanged.
+        set.put("ForkFanoutVector", false);
+        set.put("ForkFanoutRandom", false);
+        set.put("ForkBranchProbability", false);
+        // Two names the C++ port carried alone until 2026-08-22, for
+        // capabilities this codebase can express but no gate could see.
+        // HeteroServers: Queue.addServerType gives a station several server
+        // POOLS with their own counts, class compatibilities and per-(type,
+        // class) rates. Only SolverJMT and the LDES engine honour them; every
+        // other solver reads sn.nservers and answers for a homogeneous station,
+        // which is a different system. DepartureDiscipline:
+        // Place.setDepartureDiscipline(class, FIFO) makes the depository
+        // release a served token only after the earlier ones, which changes
+        // which transitions are enabled. NO solver implements it in any
+        // codebase, so declaring it nowhere is the point -- the model is
+        // refused instead of being solved as if it were Normal.
+        set.put("HeteroServers", false);
+        set.put("DepartureDiscipline", false);
+        // Ported from MATLAB SolverFeatureSet.m (2026-09-05), in this order, so
+        // that every earlier index is unchanged. Both are "having something"
+        // properties the registry could not name, so every rule about them
+        // lived only in structural predicates and was invisible to the gate.
+        // MultiServer: a finite-server station serving more than one job at
+        // once, i.e. a Queue whose numberOfServers is finite and > 1 (a Delay /
+        // INF station is not one). FiniteCapacity: a station or per-class
+        // buffer that can BIND, exactly the condition Network.findBindingCapacity
+        // tests (node-level cap / classCap below the population that can reach
+        // it; an open class always binds; a Cache model is exempt), which is
+        // also what NetworkSolver.bindingCapacityReason refuses on.
+        set.put("MultiServer", false);
+        set.put("FiniteCapacity", false);
     }
 
     /**
@@ -251,17 +308,69 @@ public class FeatureSet implements Serializable {
      * @return - empty string if supported, else the offending feature list
      */
     public static String supportsReason(FeatureSet supported, FeatureSet used) {
-        List<String> unsupported = new LinkedList<>();
-        used.set.forEach((usedFeat, val) -> {
-            if (val && !supported.set.getOrDefault(usedFeat, false)) {
-                unsupported.add(usedFeat);
-            }
-        });
+        List<String> unsupported = unsupportedFeatures(supported, used);
         if (!unsupported.isEmpty()) {
             return "Some features are not supported by the chosen solver (feature: "
                     + String.join(", ", unsupported) + ").";
         }
         return "";
+    }
+
+    /**
+     * The names of the used features the given feature set does not cover, as a
+     * list rather than a message. Dispatch decisions that depend on WHICH
+     * features are missing (e.g. the MAP/MMPP random-environment fallback, which
+     * fires only when the missing features are all non-renewal processes) read
+     * this instead of parsing supportsReason.
+     *
+     * @param supported - the features supported by the (method of the) solver
+     * @param used      - the used features
+     * @return the offending feature names, empty when every used feature is supported
+     */
+    public static List<String> unsupportedFeatures(FeatureSet supported, FeatureSet used) {
+        List<String> unsupported = new LinkedList<>();
+        used.set.forEach((usedFeat, val) -> {
+            if (!val || supported.set.getOrDefault(usedFeat, false)) {
+                return;
+            }
+            // A specialization the solver did not name is covered by the general
+            // capability when that one IS declared; see generalizationOf.
+            String general = generalizationOf(usedFeat);
+            if (general != null && supported.set.getOrDefault(general, false)) {
+                return;
+            }
+            unsupported.add(usedFeat);
+        });
+        return unsupported;
+    }
+
+    /**
+     * The registry name a specialization falls back to when it is not declared,
+     * or null when the feature stands on its own.
+     *
+     * A few entries name a SPECIAL CASE of another entry rather than a
+     * capability of their own: "Cox2" is a Coxian restricted to two phases and
+     * "Trace" is a Replayer under another class name. Marking a model with only
+     * the general name left the specific entry unreachable, which is dead
+     * registry surface; marking it with the specific name alone would instead
+     * REJECT the model at every solver that declares only the general one, i.e.
+     * at every solver that accepts it today. So getFeatureName marks the most
+     * specific name and the gate falls back here.
+     *
+     * The fallback runs one way only: a solver supporting just the special case
+     * can still declare "Cox2" alone and keep refusing a five-phase Coxian.
+     *
+     * @param feature the used feature name
+     * @return the more general feature name, or null if there is none
+     */
+    public static String generalizationOf(String feature) {
+        if ("Cox2".equals(feature)) {
+            return "Coxian";
+        }
+        if ("Trace".equals(feature)) {
+            return "Replayer";
+        }
+        return null;
     }
 
     /**

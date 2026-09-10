@@ -136,20 +136,37 @@ else
     pi0 = zeros(numSCC,numSCC);
     pil = zeros(numSCC,numSCC);
     pis = zeros(numSCC,length(P));
+    % Each SCC's internal stationary vector depends only on that SCC, not on
+    % where the chain started, so solve it ONCE per SCC and reuse it across the
+    % rows below. Solving it inside the (i,j) loop costs numSCC^2 solves for
+    % numSCC distinct answers.
+    sccpi = cell(1,numSCC);
+    for j = 1:numSCC
+        scc_j = scc_idx{j};
+        if nargin<3
+            sccpi{j} = dtmc_solve(P(scc_j, scc_j));
+        else
+            sccpi{j} = dtmc_solve(P(scc_j, scc_j), options);
+        end
+    end
+
+    % Fill a row for EVERY SCC, not only those with pinl(i)>0. The rows are
+    % addressed by SCC index below ("pis(transient_states,:)"), so a row left
+    % unfilled is not absent, it is a row of ZEROS masquerading as a
+    % distribution: the single-transient-SCC branch would then return an
+    % all-zero vector for a start whose SCC happened to carry no initial mass.
+    % The mixture still uses pinl, so pi is unchanged.
     for i = 1:numSCC
-        if pinl(i)>0
-            pi0(i,:) = zeros(1,numSCC);
-            pi0(i,i) = 1;
-            pil(i,:) = pi0(i,:)*PI;
-            pis(i,1:length(P)) = 0;
-            for j=1:numSCC
-                scc_j = scc_idx{j};
-                if nargin<3
-                    pis(i, scc_j) = pil(i,j)*dtmc_solve(P(scc_j, scc_j));
-                else
-                    pis(i, scc_j) = pil(i,j)*dtmc_solve(P(scc_j, scc_j), options);
-                end
+        pi0(i,:) = zeros(1,numSCC);
+        pi0(i,i) = 1;
+        pil(i,:) = pi0(i,:)*PI;
+        pis(i,1:length(P)) = 0;
+        for j=1:numSCC
+            if pil(i,j) ~= 0
+                pis(i, scc_idx{j}) = pil(i,j)*sccpi{j};
             end
+        end
+        if pinl(i)>0
             pi = pi + pis(i,:) * pinl(i);
         end
     end

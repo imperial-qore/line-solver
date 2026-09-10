@@ -85,6 +85,24 @@ public class Exp extends Markovian implements Serializable {
     }
 
     /**
+     * Sets the mean by rescaling the process AND the rate parameter.
+     *
+     * Markovian.setMean rewrites the MAP representation only, but getRate,
+     * getMean, evalCDF, evalLST and Network.refreshStruct all read the rate
+     * parameter, so a rescaled Exp would otherwise keep reporting its old rate
+     * and every estimator's model update would be silently lost.
+     *
+     * @param newMean the new mean value
+     */
+    @Override
+    public void setMean(double newMean) {
+        super.setMean(newMean);
+        double lambda = min(GlobalConstants.Immediate,
+                max(GlobalConstants.Zero, newMean == 0.0 ? GlobalConstants.Immediate : 1 / newMean));
+        this.setParam(1, "lambda", lambda);
+    }
+
+    /**
      * Gets the mean of this exponential distribution.
      * 
      * @return the mean value (1/λ)
@@ -165,52 +183,52 @@ public class Exp extends Markovian implements Serializable {
         this.immediate = 1.0 / rate < GlobalConstants.FineTol;
     }
 
-    // =================== KOTLIN-STYLE PROPERTY ALIASES ===================
+    // =================== PROPERTY ALIASES ===================
     
     /**
-     * Kotlin-style property alias for getNumberOfPhases()
+     * Property alias for getNumberOfPhases
      */
     public long numberOfPhases() {
         return getNumberOfPhases();
     }
     
     /**
-     * Kotlin-style property alias for getNumberOfPhases()
+     * Property alias for getNumberOfPhases
      */
     public long numPhases() {
         return getNumberOfPhases();
     }
     
     /**
-     * Kotlin-style property alias for getMean()
+     * Property alias for getMean
      */
     public double mean() {
         return getMean();
     }
     
     /**
-     * Kotlin-style property alias for getRate()
+     * Property alias for getRate
      */
     public double rate() {
         return getRate();
     }
     
     /**
-     * Kotlin-style property alias for getSCV()
+     * Property alias for getSCV
      */
     public double scv() {
         return getSCV();
     }
     
     /**
-     * Kotlin-style property alias for getSkewness()
+     * Property alias for getSkewness
      */
     public double skewness() {
         return getSkewness();
     }
     
     /**
-     * Kotlin-style property alias for getVar()
+     * Property alias for getVar
      */
     public double var() {
         return getVar();

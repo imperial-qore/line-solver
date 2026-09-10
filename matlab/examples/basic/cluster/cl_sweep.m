@@ -9,8 +9,8 @@ cluster.setScheduling(SchedStrategy.PS).setDispatching(RoutingStrategy.RAND);
 solverFcn = @(m) MVA(m).getAvgTable();
 results = cluster.sweepArrivalRate([0.2, 0.5, 0.9, 1.5], solverFcn);
 
-keys_ = sort(cell2mat(results.keys));
+keys_ = sort(keys(results));
 for k = 1:numel(keys_)
     fprintf('\n=== lambda = %g ===\n', keys_(k));
-    disp(results(keys_(k)));
+    disp(results{keys_(k)});
 end

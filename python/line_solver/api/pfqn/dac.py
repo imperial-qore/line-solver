@@ -105,7 +105,7 @@ def pfqn_dac(L: np.ndarray, N: np.ndarray,
     network by a chain-by-chain recursion over a related network in which every
     chain holds a single customer, a transformation that leaves the aggregate
     queue-length distribution unchanged. Given the distribution of a network
-    with k-1 such chains, adding one customer of a chain with demands r gives
+    with k-1 such chains, adding one customer of a chain with demands r gives::
 
         c_j      = sum_{n=1..k} (n/mu_j(n)) * P_j^{k-1}(n-1)
         lambda_k = 1 / sum_j r_j c_j
@@ -126,9 +126,11 @@ def pfqn_dac(L: np.ndarray, N: np.ndarray,
             for infinite server and mu[j,n]=min(n+1,c) for a c-server station.
 
     Returns:
-        Tuple of (Pjoint, states, XN, QN, UN, CN, pi):
+        Tuple of (Pjoint, states, XN, QN, UN, CN, pi)::
+
             Pjoint: Probability of the aggregate state in the corresponding row
                     of states, of length nchoosek(Nt+J-1, J-1)
+
             states: Aggregate states (S x J), states[s,j] = jobs at center j
             XN: Throughput of chain r (R,)
             QN: Mean number of chain-r customers at station j (M x R)

@@ -68,7 +68,9 @@ def _assign_items_to_levels(m: np.ndarray, selected: np.ndarray) -> list:
 
 
 def cache_is(gamma: np.ndarray, m: np.ndarray,
-             samples: int = 100000) -> Tuple[float, float]:
+             samples: int = 100000,
+             sigma: Optional[np.ndarray] = None,
+             k: Optional[np.ndarray] = None) -> Tuple[float, float]:
     """
     Importance sampling estimation of cache normalizing constant.
 
@@ -79,6 +81,8 @@ def cache_is(gamma: np.ndarray, m: np.ndarray,
         gamma: Item popularity probabilities (n x h matrix)
         m: Cache capacity vector (h,)
         samples: Number of Monte Carlo samples (default: 100000)
+        sigma: Optional item storage costs (sizes) (n,)
+        k: Optional per-list storage cost caps (h,)
 
     Returns:
         Tuple of (E, lE) where:
@@ -90,10 +94,18 @@ def cache_is(gamma: np.ndarray, m: np.ndarray,
     """
     gamma = np.asarray(gamma, dtype=np.float64)
     m = np.asarray(m, dtype=np.float64).ravel()
+    capped = not (sigma is None or k is None
+                  or len(np.asarray(sigma).ravel()) == 0
+                  or len(np.asarray(k).ravel()) == 0)
+    if capped:
+        sigma = np.asarray(sigma, dtype=np.float64).ravel()
+        k = np.asarray(k, dtype=np.float64).ravel()
 
     # Remove items with zero gamma
     row_sums = np.sum(gamma, axis=1)
     gamma = gamma[row_sums > 0, :]
+    if capped:
+        sigma = sigma[row_sums > 0]
 
     n, h = gamma.shape
     mt = int(np.sum(m))  # total cache capacity
@@ -107,7 +119,7 @@ def cache_is(gamma: np.ndarray, m: np.ndarray,
 
     if n == mt:
         # All items must be in cache - use exact method
-        E = cache_erec(gamma, m)
+        E = cache_erec(gamma, m, sigma if capped else None, k if capped else None)
         lE = np.log(E) if E > 0 else float('-inf')
         return E, lE
 
@@ -131,10 +143,17 @@ def cache_is(gamma: np.ndarray, m: np.ndarray,
 
         # Compute log of unnormalized state probability
         log_state_prob = log_m_fact
+        feasible = True
         for j in range(h):
             items_in_level = assignment[j]
+            if capped and np.sum(sigma[items_in_level]) > k[j]:
+                feasible = False
+                break
             for i in items_in_level:
                 log_state_prob += log_gamma[i, j]
+        if not feasible:
+            lZ_samples[s] = float('-inf')  # I{S_v in O} = 0
+            continue
 
         # Proposal probability is 1/(C(n,mt) * multinomial(mt; m))
         log_multinomial = factln(mt) - log_m_fact
@@ -149,7 +168,9 @@ def cache_is(gamma: np.ndarray, m: np.ndarray,
 
 
 def cache_prob_is(gamma: np.ndarray, m: np.ndarray,
-                  samples: int = 100000) -> np.ndarray:
+                  samples: int = 100000,
+                  sigma: Optional[np.ndarray] = None,
+                  k: Optional[np.ndarray] = None) -> np.ndarray:
     """
     Importance sampling estimation of cache hit probabilities.
 
@@ -171,6 +192,12 @@ def cache_prob_is(gamma: np.ndarray, m: np.ndarray,
     """
     gamma = np.asarray(gamma, dtype=np.float64)
     m = np.asarray(m, dtype=np.float64).ravel()
+    capped = not (sigma is None or k is None
+                  or len(np.asarray(sigma).ravel()) == 0
+                  or len(np.asarray(k).ravel()) == 0)
+    if capped:
+        sigma = np.asarray(sigma, dtype=np.float64).ravel()
+        k = np.asarray(k, dtype=np.float64).ravel()
 
     n, h = gamma.shape
     mt = int(np.sum(m))
@@ -189,7 +216,8 @@ def cache_prob_is(gamma: np.ndarray, m: np.ndarray,
 
     if n == mt:
         # All items in cache - use exact method
-        return cache_prob_erec(gamma, m)
+        return cache_prob_erec(gamma, m, sigma if capped else None,
+                               k if capped else None)
 
     log_gamma = np.log(gamma + 1e-300)
     log_m_fact = sum(factln(mj) for mj in m)
@@ -212,9 +240,15 @@ def cache_prob_is(gamma: np.ndarray, m: np.ndarray,
 
         # Compute unnormalized state probability
         log_state_prob = log_m_fact
+        feasible = True
         for j in range(h):
+            if capped and np.sum(sigma[assignment[j]]) > k[j]:
+                feasible = False
+                break
             for i in assignment[j]:
                 log_state_prob += log_gamma[i, j]
+        if not feasible:
+            continue  # I{S_v in O} = 0
 
         # Compute proposal probability
         log_proposal = -log_combinations - log_multinomial
@@ -243,7 +277,9 @@ def cache_prob_is(gamma: np.ndarray, m: np.ndarray,
 
 def cache_miss_is(gamma: np.ndarray, m: np.ndarray,
                   lambd: Optional[np.ndarray] = None,
-                  samples: int = 100000
+                  samples: int = 100000,
+                  sigma: Optional[np.ndarray] = None,
+                  k: Optional[np.ndarray] = None
                   ) -> Tuple[float, Optional[np.ndarray], Optional[np.ndarray],
                              Optional[np.ndarray], float]:
     """
@@ -275,10 +311,10 @@ def cache_miss_is(gamma: np.ndarray, m: np.ndarray,
     n = gamma.shape[0]
 
     # Compute normalizing constant via importance sampling
-    _, lE = cache_is(gamma, m, samples)
+    _, lE = cache_is(gamma, m, samples, sigma, k)
 
     # Compute hit probabilities via importance sampling
-    pij = cache_prob_is(gamma, m, samples)
+    pij = cache_prob_is(gamma, m, samples, sigma, k)
 
     # Extract miss probabilities (first column)
     pi0 = pij[:, 0]

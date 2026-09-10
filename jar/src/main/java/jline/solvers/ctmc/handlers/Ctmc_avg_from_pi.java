@@ -69,9 +69,23 @@ public final class Ctmc_avg_from_pi {
         if (probSysState.getNumCols() == 1 && probSysState.getNumRows() > 1) {
             probSysState = probSysState.transpose();
         }
-        for (int col = 0; col < probSysState.getNumCols(); col++) {
-            if (probSysState.get(col) < jline.GlobalConstants.Zero) {
-                probSysState.set(col, 0);
+        // Skipped under a matrix exponential: the vector is then a genuinely signed
+        // measure and the clamp would delete real mass -- see Solver_ctmc_analyzer.
+        boolean allPhaseType = true;
+        if (sn.isph != null) {
+            for (java.util.Map<jline.lang.JobClass, Boolean> isphRow : sn.isph.values()) {
+                for (Boolean v : isphRow.values()) {
+                    if (v != null && !v) {
+                        allPhaseType = false;
+                    }
+                }
+            }
+        }
+        if (allPhaseType) {
+            for (int col = 0; col < probSysState.getNumCols(); col++) {
+                if (probSysState.get(col) < jline.GlobalConstants.Zero) {
+                    probSysState.set(col, 0);
+                }
             }
         }
         double psum = probSysState.elementSum();
@@ -94,15 +108,27 @@ public final class Ctmc_avg_from_pi {
         Matrix TN = new Matrix(M, K); TN.zero();
         Matrix CN = new Matrix(1, K); CN.zero();
 
+        // Column span of each STATION inside a state-space row. A row is the
+        // concatenation of the per-node local states in STATEFUL index order, and
+        // sn.space is keyed the same way. A stateful node need not be a station --
+        // a Cache is stateful and is not -- so the running offset must walk every
+        // stateful node and be read back through sn.stationToStateful. Walking it
+        // with the station index instead both skipped the non-station widths and
+        // took the wrong node's width, handing ToMarginal another node's columns.
+        Matrix sfSpaceShift = new Matrix(1, sn.nstateful);
+        sfSpaceShift.zero();
+        for (int isf = 1; isf < sn.nstateful; isf++) {
+            sfSpaceShift.set(0, isf,
+                    sfSpaceShift.get(0, isf - 1) + sn.space.get(sn.stateful.get(isf - 1)).getNumCols());
+        }
         Matrix istSpaceShift = new Matrix(1, M);
         istSpaceShift.zero();
+        Matrix istSpaceWidth = new Matrix(1, M);
+        istSpaceWidth.zero();
         for (int i = 0; i < M; i++) {
-            if (i == 0) {
-                istSpaceShift.set(0, i, 0);
-            } else {
-                double temp = istSpaceShift.get(0, i - 1) + sn.space.get(sn.stateful.get(i - 1)).getNumCols();
-                istSpaceShift.set(0, i, temp);
-            }
+            int isf = (int) sn.stationToStateful.get(i);
+            istSpaceShift.set(0, i, sfSpaceShift.get(0, isf));
+            istSpaceWidth.set(0, i, sn.space.get(sn.stateful.get(isf)).getNumCols());
         }
 
         for (int k = 0; k < K; k++) {
@@ -160,14 +186,9 @@ public final class Ctmc_avg_from_pi {
                         for (int k = 0; k < K; k++) {
                             MatrixCell value = ((Map<Object, Map<Object, MatrixCell>>) PH).get(sn.stations.get(i)).get(sn.jobclasses.get(k));
                             if (!value.isEmpty()) {
+                                // Departure-rate estimator only; see _kb/06-solver-catalog.md
                                 double mean = Map_mean.map_mean(value) / S.get(i);
-                                double UNarv_ik = 0.0;
-                                for (int idx = 0; idx < wset.length(); idx++) {
-                                    UNarv_ik += probSysState.get(idx) * arvRates[(int) wset.get(idx)][isf][k];
-                                }
-                                UNarv_ik = UNarv_ik * mean;
-                                double UNdep_ik = TN.get(i, k) * mean;
-                                UN.set(i, k, canDropClass[k] ? UNdep_ik : Maths.max(UNarv_ik, UNdep_ik));
+                                UN.set(i, k, TN.get(i, k) * mean);
                             }
                         }
                     } else {
@@ -185,7 +206,7 @@ public final class Ctmc_avg_from_pi {
                         for (int index = 0; index < wset.getNumCols(); index++) {
                             int st = (int) wset.get(index);
                             int c0 = (int) istSpaceShift.get(i);
-                            int c1 = c0 + sn.space.get(sn.stateful.get(i)).getNumCols();
+                            int c1 = c0 + (int) istSpaceWidth.get(0, i);
                             State.StateMarginalStatistics tm = ToMarginal.toMarginal(sn, ind,
                                     Matrix.extract(StateSpaceWork, st, st + 1, c0, c1), null, null, null, null, null);
                             Matrix ni = tm.ni;
@@ -224,7 +245,7 @@ public final class Ctmc_avg_from_pi {
                     for (int index = 0; index < wset.length(); index++) {
                         int st = (int) wset.get(index);
                         int c0 = (int) istSpaceShift.get(i);
-                        int c1 = c0 + sn.space.get(sn.stateful.get(i)).getNumCols();
+                        int c1 = c0 + (int) istSpaceWidth.get(0, i);
                         State.StateMarginalStatistics tm = ToMarginal.toMarginal(sn, ind,
                                 Matrix.extract(StateSpaceWork, st, st + 1, c0, c1), null, null, null, null, null);
                         Matrix sir = tm.sir;
@@ -237,14 +258,9 @@ public final class Ctmc_avg_from_pi {
                         for (int k = 0; k < K; k++) {
                             MatrixCell value = ((Map<Object, Map<Object, MatrixCell>>) PH).get(sn.stations.get(i)).get(sn.jobclasses.get(k));
                             if (!value.isEmpty()) {
+                                // Departure-rate estimator only; see _kb/06-solver-catalog.md
                                 double mean = Map_mean.map_mean(value);
-                                double UNarv_ik = 0.0;
-                                for (int idx = 0; idx < wset.length(); idx++) {
-                                    UNarv_ik += probSysState.get(idx) * arvRates[(int) wset.get(idx)][isf][k];
-                                }
-                                UNarv_ik = UNarv_ik * mean / S.get(i);
-                                double UNdep_ik = TN.get(i, k) * mean / S.get(i);
-                                UN.set(i, k, canDropClass[k] ? UNdep_ik : Maths.max(UNarv_ik, UNdep_ik));
+                                UN.set(i, k, TN.get(i, k) * mean / S.get(i));
                             }
                         }
                     } else {
@@ -254,7 +270,7 @@ public final class Ctmc_avg_from_pi {
                         for (int index = 0; index < wset.length(); index++) {
                             int st = (int) wset.get(index);
                             int c0 = (int) istSpaceShift.get(i);
-                            int c1 = c0 + sn.space.get(sn.stateful.get(i)).getNumCols();
+                            int c1 = c0 + (int) istSpaceWidth.get(0, i);
                             State.StateMarginalStatistics tm = ToMarginal.toMarginal(sn, ind,
                                     Matrix.extract(StateSpaceWork, st, st + 1, c0, c1), null, null, null, null, null);
                             Matrix ni = tm.ni;
@@ -305,7 +321,7 @@ public final class Ctmc_avg_from_pi {
                 }
                 ReplyBlock.Info rinfoU = ReplyBlock.info(sn, ind);
                 int c0 = (int) istSpaceShift.get(i);
-                int wid = sn.space.get(sn.stateful.get(i)).getNumCols();
+                int wid = (int) istSpaceWidth.get(0, i);
                 int bcol0 = c0 + wid - rinfoU.width;
                 for (int pos = 0; pos < rinfoU.classes.size(); pos++) {
                     int r = rinfoU.classes.get(pos).intValue();
@@ -321,8 +337,12 @@ public final class Ctmc_avg_from_pi {
             }
         }
 
-        // see _kb/06-solver-catalog.md for rationale
-        if (sn.cdscaling != null && !sn.cdscaling.isEmpty()) {
+        // class- and joint-dependence utilization normalization (U = T*S/peak
+        // using the declared sn.cdscalingpeak and sn.jdscalingpeak); see
+        // _kb/06-solver-catalog.md for rationale
+        boolean anyCd = sn.cdscaling != null && !sn.cdscaling.isEmpty();
+        boolean anyJd = sn.jdscaling != null && !sn.jdscaling.isEmpty();
+        if (anyCd || anyJd) {
             boolean allFinite = true;
             for (int k = 0; k < K; k++) {
                 if (Double.isInfinite(sn.njobs.get(k))) { allFinite = false; break; }
@@ -330,38 +350,19 @@ public final class Ctmc_avg_from_pi {
             if (allFinite) {
                 for (int ist = 0; ist < M; ist++) {
                     Station stat = sn.stations.get(ist);
-                    SerializableFunction<Matrix, Matrix> beta = sn.cdscaling.get(stat);
-                    if (beta == null) continue;
-                    Matrix peakVec = sn.cdscalingpeak != null ? sn.cdscalingpeak.get(stat) : null;
+                    SerializableFunction<Matrix, Matrix> beta = anyCd ? sn.cdscaling.get(stat) : null;
+                    SerializableFunction<Matrix, Matrix> eta = anyJd ? sn.jdscaling.get(stat) : null;
+                    if (beta == null && eta == null) continue;
+                    Matrix cdPeak = (beta != null && sn.cdscalingpeak != null)
+                            ? sn.cdscalingpeak.get(stat) : null;
+                    Matrix jdPeak = (eta != null && sn.jdscalingpeak != null)
+                            ? sn.jdscalingpeak.get(stat) : null;
                     for (int k = 0; k < K; k++) {
                         double rate = sn.rates.get(ist, k);
-                        double bmax = (peakVec != null) ? peakVec.get(0, k) : 1.0;
-                        if (Double.isFinite(rate) && rate > 0 && bmax > 0) {
-                            UN.set(ist, k, TN.get(ist, k) / rate / bmax);
-                        } else {
-                            UN.set(ist, k, 0.0);
-                        }
-                    }
-                }
-            }
-        }
-
-        // joint-dependence utilization normalization (U = T*S/peak using the
-        // declared sn.jdscalingpeak), mirroring the class-dependence block.
-        if (sn.jdscaling != null && !sn.jdscaling.isEmpty()) {
-            boolean allFinite = true;
-            for (int k = 0; k < K; k++) {
-                if (Double.isInfinite(sn.njobs.get(k))) { allFinite = false; break; }
-            }
-            if (allFinite) {
-                for (int ist = 0; ist < M; ist++) {
-                    Station stat = sn.stations.get(ist);
-                    SerializableFunction<Matrix, Matrix> eta = sn.jdscaling.get(stat);
-                    if (eta == null) continue;
-                    Matrix peakVec = sn.jdscalingpeak != null ? sn.jdscalingpeak.get(stat) : null;
-                    for (int k = 0; k < K; k++) {
-                        double rate = sn.rates.get(ist, k);
-                        double bmax = (peakVec != null) ? peakVec.get(0, k) : 1.0;
+                        // beta_r(n) and eta_i(n) scale the SAME rate, so the peaks multiply
+                        double bmax = 1.0;
+                        if (cdPeak != null) bmax *= cdPeak.get(0, k);
+                        if (jdPeak != null) bmax *= jdPeak.get(0, k);
                         if (Double.isFinite(rate) && rate > 0 && bmax > 0) {
                             UN.set(ist, k, TN.get(ist, k) / rate / bmax);
                         } else {

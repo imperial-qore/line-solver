@@ -222,11 +222,11 @@ public final class Matrix implements Serializable {
     }
 
     /**
-     * Creates a matrix from a Kotlin Array<DoubleArray> type.
-     * This constructor enables direct initialization from Kotlin's arrayOf(doubleArrayOf(...)) syntax.
+     * Creates a matrix from a row-array of double arrays.
+     * This constructor enables direct initialization from nested array literals.
      * Uses EJML's triplet format for efficient single-pass batch insertion.
      *
-     * @param arrays Kotlin Array containing DoubleArray rows
+     * @param arrays array containing the double[] rows
      */
     public Matrix(Double[][] arrays) {
         int numRows = arrays.length;
@@ -698,6 +698,24 @@ public final class Matrix implements Serializable {
      * @param B The matrix to copy the structure from
      * @return A new matrix with the same dimensions and sparsity structure as {@code B}
      */
+    /**
+     * Creates a zeroed matrix backed by DENSE storage.
+     *
+     * <p>{@code new Matrix(r,c)} is sparse (CSC), whose {@code set} is O(nnz)
+     * because an insertion shifts the column arrays: filling a full block entry
+     * by entry is quadratic in its size. Use this whenever the block being built
+     * is known to be full -- a Jacobian block, a per-coordinate rate vector --
+     * rather than allocating sparse and calling {@link #toDense()}, which pays
+     * for the CSC first.</p>
+     *
+     * @param numRows number of rows
+     * @param numCols number of columns
+     * @return a dense-backed zero matrix
+     */
+    public static Matrix dense(int numRows, int numCols) {
+        return new Matrix(new DMatrixRMaj(numRows, numCols));
+    }
+
     public static Matrix createLike(Matrix B) {
         Matrix m = new Matrix(B.getNumRows(), B.getNumCols());
         if (B.isDense()) {
@@ -1709,7 +1727,7 @@ public final class Matrix implements Serializable {
             return false;
         }
 
-        // residual check ||A*x-b||_inf/||b||_inf catches a wrong non-NaN LU answer that slips past the rank check (e.g. SVD failed and rank check was skipped)
+        // residual check ||A*x-b||_inf/||b||_inf catches a wrong non-NaN LU answer slipping past the rank check (e.g. SVD failed, rank check skipped)
         double bNormInf = 0;
         for (int i = 0; i < n; i++) {
             bNormInf = Math.max(bNormInf, Math.abs(b.get(i, 0)));
@@ -4306,7 +4324,7 @@ public final class Matrix implements Serializable {
         return delegate.hasMultipleFinite();
     }
 
-    // Additional delegation methods used by Kotlin code
+    // Additional delegation methods
     public boolean hasNaN() {
         return delegate.hasNaN();
     }
@@ -4691,6 +4709,10 @@ public final class Matrix implements Serializable {
      * @return The maximum dimension of the matrix
      */
     public int length() {
+        // an empty matrix has no elements whichever dimension is zero
+        if (getNumRows() == 0 || getNumCols() == 0) {
+            return 0;
+        }
         return FastMath.max(getNumRows(), getNumCols());
     }
 
@@ -5403,19 +5425,44 @@ public final class Matrix implements Serializable {
             }
             return new Matrix(out);
         }
-        Matrix res = this.copy();
-        for (int i = 1; i < rows; i++) {
-            Matrix tmp = new Matrix(res.getNumRows() + this.getNumRows(), res.getNumCols());
-            concatRowsInPlace(res.asCSC(), this.asCSC(), tmp.asCSC());
-            res = tmp;
+        // Build the tiled CSC in ONE pass. The previous implementation ran
+        // rows-1 successive concatRowsInPlace followed by cols-1
+        // concatColumnsInPlace, each allocating a new CSC and re-copying
+        // everything accumulated so far -- Theta(rows^2 + cols^2) in nnz. Since
+        // CSC is column-major, a tile is a pure index remap: output column
+        // j + m*jc holds input column j's entries repeated `rows` times with the
+        // row index shifted by ir*n. No value is arithmetically combined, so the
+        // result is bit-identical to the concat path; only the copying is gone.
+        DMatrixSparseCSC src = this.asCSC();
+        if (!src.indicesSorted) {
+            src = src.copy();
+            src.sortIndices(null);
         }
-        Matrix colBase = res.copy();
-        for (int i = 1; i < cols; i++) {
-            Matrix tmp = new Matrix(res.getNumRows(), res.getNumCols() + colBase.getNumCols());
-            concatColumnsInPlace(res.asCSC(), colBase.asCSC(), tmp.asCSC());
-            res = tmp;
+        int n = src.numRows;
+        int m = src.numCols;
+        DMatrixSparseCSC out = new DMatrixSparseCSC(n * rows, m * cols, src.nz_length * rows * cols);
+        out.nz_length = src.nz_length * rows * cols;
+        out.col_idx[0] = 0;
+        int k = 0;
+        for (int jc = 0; jc < cols; jc++) {
+            for (int j = 0; j < m; j++) {
+                int lo = src.col_idx[j];
+                int hi = src.col_idx[j + 1];
+                // ir ascending keeps the output column's row indices ascending,
+                // because every source row index is < n.
+                for (int ir = 0; ir < rows; ir++) {
+                    int shift = ir * n;
+                    for (int p = lo; p < hi; p++) {
+                        out.nz_rows[k] = src.nz_rows[p] + shift;
+                        out.nz_values[k] = src.nz_values[p];
+                        k++;
+                    }
+                }
+                out.col_idx[jc * m + j + 1] = k;
+            }
         }
-        return res;
+        out.indicesSorted = true;
+        return new Matrix(out);
     }
 
     /**

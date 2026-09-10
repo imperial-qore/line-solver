@@ -1,5 +1,26 @@
-function probSys = getProbSys(self)
+function varargout = getProbSys(self,varargin)
 % PROBSYS = GETPROBSYS()
+% The result recorder captures the scalar this getter returned together
+% with the solver that produced it -- see LineResultRecorder. Six of the
+% statepr_* goldens hold exactly this number and nothing else, so recording
+% it is what makes those goldens attributable instead of "the first bare
+% number the example printed". The wrapper exists so that recording happens
+% on EVERY exit path of the implementation below.
+[scope, scopeGuard] = LineResultRecorder.enter(); %#ok<ASGLU>
+[varargout{1:max(nargout,1)}] = getProbSys_impl(self,varargin{:});
+LineResultRecorder.captureScalar(scope, self, 'probSys', varargout{1});
+end
+
+function probSys = getProbSys_impl(self)
+% GETPROBSYS_IMPL Implementation of GETPROBSYS; see the wrapper above.
+
+% lang='cpp' answers this from -a prob. See CPPLINE.assertSingleState.
+if isfield(self.options,'lang') && strcmp(self.options.lang,'cpp')
+    CPPLINE.assertSingleState(self.name, 'getProbSys', self.model);
+    probSys = CPPLINE.probAggr(self.name, self.model, self.options).ProbSys;
+    return
+end
+
 if GlobalConstants.DummyMode
     probSys = NaN;
     return

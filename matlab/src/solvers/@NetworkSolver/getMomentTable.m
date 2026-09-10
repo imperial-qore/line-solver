@@ -1,4 +1,4 @@
-function [MomentTable, mom] = getMomentTable(self, order)
+function [MomentTable, mom] = getMomentTable(self, order, method)
 % GETMOMENTTABLE Exact higher moments of the per-class performance measures.
 %
 % [MOMENTTABLE, MOM] = GETMOMENTTABLE(SELF) returns a table with one row per
@@ -24,10 +24,25 @@ function [MomentTable, mom] = getMomentTable(self, order)
 % QLenSkew is available only for closed single-server models, which is the scope
 % of pfqn_sens_mom; it is NaN otherwise.
 %
-% All of it is exact, not simulated and not approximated. The queue-length
-% moments come from the product-form identity Cov[n(i,r),n(j,s)] =
-% L(j,s) dQ(i,r)/dL(j,s), evaluated by the pfqn_sens_* family; see
-% _kb/03-api-layer.md.
+% All of it is exact, not simulated and not approximated, EXCEPT on the
+% momlin branch below. The queue-length moments come from the product-form
+% identity Cov[n(i,r),n(j,s)] = L(j,s) dQ(i,r)/dL(j,s), evaluated by the
+% pfqn_sens_* family; see _kb/03-api-layer.md.
+%
+% [..] = GETMOMENTTABLE(SELF, ORDER, METHOD) selects how the queue-length
+% moments are obtained on a closed single-server model:
+%   ''        (default) exact, unless the population lattice prod(N+1) exceeds
+%             1e6 points, in which case momlin is used and a warning is raised
+%   'exact'   always the pfqn_sens_* recursion, however large the lattice
+%   'momlin'  always pfqn_momlin: the same covariance identity, but with the
+%             derivatives taken by linearizing the Schweitzer-Bard fixed point
+%             instead of the exact recursion. Cost is polynomial rather than
+%             exponential in the number of classes, and BOTH moments then carry
+%             the AMVA error. mom.qlen.method is set to 'momlin' on this branch,
+%             which also fills mom.qlen.QCovFull, the cross-station covariance
+%             tensor the exact branch does not return.
+% METHOD is ignored on multiserver, mixed and purely open models, which have no
+% momlin path.
 %
 % RESPONSE-TIME MOMENTS ARE FCFS OR PROCESSOR-SHARING. RespTVar and RespTSCV
 % are NaN at any station that is neither, and at an LCFS center in particular,
@@ -69,6 +84,19 @@ if nargin < 2 || isempty(order)
     order = 2;
 end
 order = validateMomentOrder(order, 3);
+if nargin < 3
+    method = '';
+end
+if ~ischar(method) && ~isstring(method)
+    line_error(mfilename, 'METHOD must be '''', ''exact'' or ''momlin''.');
+end
+method = char(lower(method));
+if ~any(strcmp(method, {'', 'default', 'exact', 'momlin'}))
+    line_error(mfilename, 'Unknown moment method ''%s''. Supported: '''' (auto), ''exact'', ''momlin''.', method);
+end
+if strcmp(method, 'default')
+    method = '';
+end
 
 sn = self.model.getStruct();
 R = sn.nclasses;
@@ -88,7 +116,17 @@ QLenVar = zeros(Mq, R);
 
 % ---- queue-length moments -------------------------------------------------
 if ~isOpen
-    if all(Ssrv == 1)
+    if all(Ssrv == 1) && useMomlin(method, Np)
+        % Approximate branch: the exact recursion is exponential in the number
+        % of classes, so above the lattice gate it is not run at all. momlin
+        % linearizes the Schweitzer fixed point instead; both moments then
+        % carry the AMVA error. Announced, never silent.
+        if isempty(method)
+            line_warning(mfilename, 'The exact moment recursion needs %d population points; falling back to the pfqn_momlin approximation. Pass ''exact'' to force the recursion, or ''momlin'' to select this branch explicitly.', prod(Np(isfinite(Np))+1));
+        end
+        [Qml, Xml, Uml, Rml, QVarml, QCovml] = pfqn_momlin(D, Np, Ztot);
+        mom.qlen = packMomlin(Qml, Xml, Uml, Rml, QVarml, QCovml);
+    elseif all(Ssrv == 1)
         mom.qlen = pfqn_sens_mva(D, Np, Ztot);
     else
         mom.qlen = pfqn_sens_mvaldmx(zeros(1,R), D, Np, Ztot, mu, Ssrv);
@@ -434,4 +472,48 @@ elseif ~isempty(mom.qlen)
 else
     x = 0;
 end
+end
+
+% =========================================================================
+function tf = useMomlin(method, Np)
+% Selects the approximate branch. pfqn_sens_mva differentiates the exact MVA
+% recursion, whose cost is prod(N+1) population points, so it becomes
+% unaffordable in the number of CLASSES, not in the population.
+if strcmp(method, 'momlin')
+    tf = true;
+    return
+end
+if strcmp(method, 'exact')
+    tf = false;
+    return
+end
+Nf = Np(isfinite(Np) & Np > 0);
+tf = ~isempty(Nf) && prod(Nf + 1) > 1e6;   % lattice gate for the automatic branch
+end
+
+% =========================================================================
+function mom = packMomlin(Q, X, U, R, QVar, QCovFull)
+% Reshapes pfqn_momlin's (M,R,M,R) covariance tensor into the (M,R,R) per-station
+% layout that pfqn_sens_mva returns, so both branches fill mom.qlen identically.
+[M, Rc] = size(Q);
+mom.X = X(:)'; mom.Q = Q; mom.U = U; mom.R = R;
+QCov = zeros(M, Rc, Rc);
+for i = 1:M
+    for r = 1:Rc
+        for s = 1:Rc
+            QCov(i, r, s) = QCovFull(i, r, i, s);
+        end
+    end
+end
+QCov = (QCov + permute(QCov, [1 3 2])) / 2;
+mom.QCov = QCov;
+mom.QCovAsym = 0;   % symmetrized above; momlin reports no asymmetry residual
+mom.QVar = QVar;
+QTotVar = zeros(M, 1);
+for i = 1:M
+    QTotVar(i) = sum(sum(QCov(i, :, :)));
+end
+mom.QTotVar = QTotVar;
+mom.QCovFull = QCovFull;   % the cross-station block, which the exact branch does not return
+mom.method = 'momlin';
 end

@@ -49,7 +49,7 @@ classdef SolverFeatureSet < handle
             'MMAP',...
             'BMAP',...
             'MMPP2',...
-            'NHPP',...
+            'NHPP','MAPt','PHt',...
             'EmpiricalCdf',... % name declared by EmpiricalCDF.m, not the JSON wire type
             'Expolynomial',...
             'Normal',...
@@ -82,6 +82,7 @@ classdef SolverFeatureSet < handle
             'InfiniteServer',...
             'Forker',...
             'Joiner',...
+            'JoinPartial',... % quorum join: k of n siblings, k < n
             'LogTunnel', ...
             'SharedServer', ...
             'Buffer', ...
@@ -102,7 +103,7 @@ classdef SolverFeatureSet < handle
             'RoutingStrategy_WRROBIN', ...
             'RoutingStrategy_JSQ', ...
             'RoutingStrategy_SQ', ...
-            'RoutingStrategy_RL', ...
+            'RoutingStrategy_SDR', ...
             'SchedStrategy_INF', ...
             'SchedStrategy_FCFS', ...
             'SchedStrategy_FCFSPR', ...
@@ -160,10 +161,13 @@ classdef SolverFeatureSet < handle
             'SignalBatchRemoval', ...
             'SignalRemovalPolicy', ...
             'BatchArrival', ...
+            'CacheItemSize', ...
             'LoadDependence', ...
             'ClassDependence', ...
             'JointDependence', ...
+            'GlobalDependence', ...
             'SetupDelayOff', ...
+            'ServerParallelism', ...
             'Retrial', ...
             'Balking', ...
             'Reneging', ...
@@ -181,7 +185,63 @@ classdef SolverFeatureSet < handle
             'ActivityPrecedence_POST_AND', ...
             'ActivityPrecedence_PRE_OR', ...
             'ActivityPrecedence_POST_OR', ...
-            'SchedStrategy_REF'};
+            'SchedStrategy_REF', ...
+            ... Layered cache-queueing models: a CacheTask holds a segmented
+            ... cache whose items are ItemEntry entries, and a read is a call to
+            ... one of them whose bound activity branches on a POST_CACHE
+            ... precedence into hit and miss. Registered in all four codebases
+            ... because the jar SolverLDES.getLNFeatureSet DECLARES all three,
+            ... and there an unregistered name is a hard error, so that whole
+            ... feature set threw before it could compare anything.
+            'CacheTask', ...
+            'ItemEntry', ...
+            'ActivityPrecedence_POST_CACHE', ...
+            ... Variable forking levels. A Fork emits tasksPerLink jobs on every
+            ... outgoing link; these three name the ways that degree stops being
+            ... one number. ForkFanoutVector: the count differs by destination
+            ... or by class (sn.nodeparam{f}.fanOutLink). ForkFanoutRandom: the
+            ... count is a draw from a DiscreteSampler, redrawn per link and per
+            ... forked job (sn.nodeparam{f}.fanOutDist). ForkBranchProbability:
+            ... a branch fires only with probability p, so the SIBLING COUNT is
+            ... random even when each link carries a fixed number
+            ... (sn.nodeparam{f}.fanOutProb). Appended at the tail so every
+            ... earlier index is unchanged.
+            'ForkFanoutVector', ...
+            'ForkFanoutRandom', ...
+            'ForkBranchProbability', ...
+            ... Two names the C++ port carried alone until 2026-08-22, for
+            ... capabilities this codebase can express but no gate could see.
+            ... HeteroServers: Queue.addServerType gives a station several
+            ... server POOLS with their own counts, class compatibilities and
+            ... per-(type,class) rates (sn.nodeparam{i}.nservertypes and the
+            ... servertypenames/serverspertype/servercompat/heterorates block).
+            ... Only SolverJMT and the LDES engine honour them; every other
+            ... solver reads sn.nservers and answers for a homogeneous station,
+            ... which is a different system. DepartureDiscipline:
+            ... Place.setDepartureDiscipline(class, FIFO) makes the depository
+            ... release a served token only after the earlier ones, which
+            ... changes which transitions are enabled. NO solver implements it
+            ... in any codebase, so declaring it nowhere is the point -- the
+            ... model is refused instead of being solved as if NORMAL.
+            'HeteroServers', ...
+            'DepartureDiscipline', ...
+            ... MATLAB-FIRST (2026-09-05): these two are registered HERE ONLY
+            ... for now, so the identity rule at the top of this list is broken
+            ... on purpose until the jar FeatureSet.java and the python
+            ... base.py FIELDS append the same two names, in this order, in the
+            ... follow-up port. Both are "having something" properties that the
+            ... registry could not name, so every rule about them lived only
+            ... in structural predicates and was invisible to model.help.
+            ... MultiServer: a finite-server station serving more than one job
+            ... at once, i.e. a Queue whose numberOfServers is finite and > 1
+            ... (a Delay / INF station is not one). FiniteCapacity: a station
+            ... or per-class buffer that can BIND, exactly the condition
+            ... MNetwork.findBindingCapacity tests (node-level cap / classCap
+            ... below the population that can reach it; an open class always
+            ... binds; a Cache model is exempt), which is also what
+            ... NetworkSolver.checkBindingCapacity refuses on.
+            'MultiServer', ...
+            'FiniteCapacity'};
     end
     
     methods
@@ -235,12 +295,41 @@ classdef SolverFeatureSet < handle
     end
     
     methods(Static)
-        function [bool, reason] = supports(featSupportedList, featUsedList)
-            % [BOOL, REASON] = SUPPORTS(FEATSUPPORTEDLIST, FEATUSEDLIST)
+        function general = generalizationOf(feature)
+            % GENERAL = GENERALIZATIONOF(FEATURE)
+            %
+            % The registry name a specialization falls back to when it is not
+            % declared, or '' when the feature stands on its own.
+            %
+            % A few entries name a SPECIAL CASE of another entry rather than a
+            % capability of their own: 'Cox2' is a Coxian restricted to two
+            % phases and 'Trace' is a Replayer under another class name. Marking
+            % a model with only the general name left the specific entry
+            % unreachable, which is dead registry surface; marking it with the
+            % specific name alone would instead REJECT the model at every solver
+            % declaring only the general one, i.e. at every solver that accepts
+            % it today. So getUsedLangFeatures marks the most specific name and
+            % SUPPORTS falls back here. The fallback runs one way only: a solver
+            % supporting just the special case declares 'Cox2' alone and keeps
+            % refusing a five-phase Coxian.
+            switch feature
+                case 'Cox2'
+                    general = 'Coxian';
+                case 'Trace'
+                    general = 'Replayer';
+                otherwise
+                    general = '';
+            end
+        end
+
+        function [bool, reason, unsupported] = supports(featSupportedList, featUsedList)
+            % [BOOL, REASON, UNSUPPORTED] = SUPPORTS(FEATSUPPORTEDLIST, FEATUSEDLIST)
             %
             % BOOL is true when every feature used by the model is supported.
             % REASON is a human-readable list of the offending feature names
             % (empty when BOOL is true), for use in method-aware error messages.
+            % UNSUPPORTED is the same list as a cell array of feature names, for
+            % dispatch decisions that depend on which features are missing.
 
             bool = true;
             unsupported = {};
@@ -249,6 +338,12 @@ classdef SolverFeatureSet < handle
             fields = SolverFeatureSet.fields;
             for f=1:length(fields)
                 if featUsedList.list.(fields{f}) > featSupportedList.list.(fields{f})
+                    % A specialization the solver did not name is covered by the
+                    % general capability when that one IS declared.
+                    general = SolverFeatureSet.generalizationOf(fields{f});
+                    if ~isempty(general) && featSupportedList.list.(general)
+                        continue
+                    end
                     bool = false;
                     unsupported{end+1} = fields{f}; %#ok<AGROW>
                 end

@@ -1,0 +1,30 @@
+{
+  "class": {
+    "CTMC": "deterministic"
+  },
+  "example": "rewardModel_mm1k",
+  "solvers": {
+    "CTMC": [
+      {
+        "JobClass": "Reward",
+        "QLen": 1.015385,
+        "Station": "QueueLength"
+      },
+      {
+        "JobClass": "Reward",
+        "QLen": 0.584615,
+        "Station": "Utilization"
+      },
+      {
+        "JobClass": "Reward",
+        "QLen": 0.123077,
+        "Station": "BlockingProb"
+      },
+      {
+        "JobClass": "Reward",
+        "QLen": 2.123077,
+        "Station": "QueueCost"
+      }
+    ]
+  }
+}

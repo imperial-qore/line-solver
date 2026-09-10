@@ -23,6 +23,8 @@ import jline.solvers.mva.handlers.Solver_mva;
 import jline.solvers.mva.handlers.Solver_mva_sum;
 import jline.solvers.mva.handlers.Solver_qna;
 import jline.solvers.mva.handlers.Solver_rqna;
+import jline.solvers.mva.handlers.Solver_mapqn;
+import jline.solvers.mva.handlers.Solver_rqt;
 
 public final class Solver_mva_analyzer {
     private Solver_mva_analyzer() {}
@@ -54,6 +56,88 @@ public final class Solver_mva_analyzer {
     }
 
     /**
+     * True when the MVA path this model already dispatches to carries a class-level interlock
+     * matrix (Franks 1999, Eq. 4.7) itself, so that supplying one does not silently move the
+     * model to a DIFFERENT algorithm.
+     *
+     * <p>Only two kernels implement the correction: {@link jline.api.pfqn.mva.Pfqn_mva} (exact,
+     * closed single-server) and the AMVA forward step of
+     * {@link jline.solvers.mva.handlers.Solver_amvald}. A model that would otherwise be solved
+     * by exact multiserver or mixed MVA, or by the product-form AMVA kernels (linearizer and
+     * relatives), cannot take the matrix without swapping its algorithm, and the swap is not a
+     * small perturbation: it moves the answer by far more than the correction itself and, inside
+     * SolverLN, can turn a converging Picard iteration into a limit cycle. Callers that hold a
+     * matrix such a model cannot carry must apply their own correction instead.</p>
+     *
+     * <p>The test is deliberately conservative: where the AMVA product-form branch is entered
+     * only for some resolved methods, this returns false for all of them, since refusing the
+     * matrix falls back on the caller's own handling rather than on a changed algorithm.</p>
+     */
+    public static boolean mvaCarriesInterlock(NetworkStruct sn, SolverOptions options) {
+        String method = options == null || options.method == null ? "default" : options.method;
+        method = method.replaceFirst("^amva\\.", "");
+        boolean hasOpenClass = false, hasClosedClass = false, hasFiniteServer = false;
+        double maxFiniteServers = Double.NaN;
+        boolean closedPopsIntegral = true;
+        for (int r = 0; r < sn.nclasses; r++) {
+            double nj = sn.njobs.get(r);
+            if (Double.isInfinite(nj)) {
+                hasOpenClass = true;
+            } else {
+                if (nj > 0) hasClosedClass = true;
+                if (nj != Math.floor(nj)) closedPopsIntegral = false;
+            }
+        }
+        for (int i = 0; i < sn.nstations; i++) {
+            double si = sn.nservers.get(i);
+            if (!Double.isInfinite(si)) {
+                hasFiniteServer = true;
+                if (Double.isNaN(maxFiniteServers) || si > maxFiniteServers) maxFiniteServers = si;
+            }
+        }
+        // Pfqn_mva takes the matrix for a closed single-server model, and for nothing else
+        boolean pfqnMvaCanTakeIt = !hasOpenClass && closedPopsIntegral
+                && (Double.isNaN(maxFiniteServers) || maxFiniteServers <= 1.0);
+        if ("exact".equals(method) || "mva".equals(method)) {
+            return pfqnMvaCanTakeIt;
+        }
+        if (isAmvaMethod(method)) {
+            // Only Solver_amvald carries the correction among the AMVA handlers
+            return !Solver_amva.amvaUsesProductFormKernels(sn);
+        }
+        if ("default".equals(method)) {
+            if (isBasModel(sn)) {
+                return false; // Solver_sqd has no interlock term
+            }
+            boolean exactMixed = hasOpenClass && hasClosedClass && hasFiniteServer && maxFiniteServers == 1.0
+                    && SnHasProductForm.snHasProductForm(sn) && closedPopsIntegral;
+            boolean exactSmall = sn.nchains <= 4 && sn.njobs.sumRows().toDouble() <= 20
+                    && SnHasProductForm.snHasProductForm(sn)
+                    && !SnHasFractionalPopulations.snHasFractionalPopulations(sn);
+            if (exactMixed || exactSmall) {
+                return pfqnMvaCanTakeIt;
+            }
+            return !Solver_amva.amvaUsesProductFormKernels(sn);
+        }
+        // mvac, sqd, sum, qna, rqna, rqt and mapqn reach neither kernel
+        return false;
+    }
+
+    /** True for the method names that solver_mva_analyzer sends to Solver_amva. */
+    private static boolean isAmvaMethod(String method) {
+        return "amva".equals(method) || "bs".equals(method) || "qd".equals(method)
+                || "qli".equals(method) || "fli".equals(method) || "lin".equals(method)
+                || "qdlin".equals(method) || "sqni".equals(method) || "gflin".equals(method)
+                || "egflin".equals(method) || "schmidt".equals(method) || "schmidt-ext".equals(method)
+                || "ab".equals(method) || "aql".equals(method) || "qsa".equals(method)
+                || "tay".equals(method) || "scat".equals(method)
+                || "lcp".equals(method) || "chow".equals(method)
+                || "pamb".equals(method) || "pami".equals(method) || "pamt".equals(method)
+                || "clust".equals(method) || "dmlin".equals(method)
+                || "priomva".equals(method);
+    }
+
+    /**
      * MVA Analyzer.
      */
     public static MVAResult solver_mva_analyzer(NetworkStruct sn, SolverOptions options) {
@@ -75,8 +159,12 @@ public final class Solver_mva_analyzer {
             ret = Solver_mva_sum.solver_mva_sum(sn, options);
         } else if ("qna".equals(method)) {
             ret = Solver_qna.solver_qna(sn, options);
+        } else if ("rqt".equals(method)) {
+            ret = Solver_rqt.solver_rqt(sn, options);
         } else if ("rqna".equals(method)) {
             ret = Solver_rqna.solver_rqna(sn, options);
+        } else if ("mapqn".equals(method)) {
+            ret = Solver_mapqn.solver_mapqn(sn, options);
         } else if ("default".equals(method)) {
             // see _kb/06-solver-catalog.md for rationale
             boolean allOpen = true;
@@ -113,15 +201,20 @@ public final class Solver_mva_analyzer {
                     break;
                 }
             }
+            // An interlock matrix that exact MVA cannot honour sends the model to AMVA, which
+            // applies the same Eq. (4.7) correction to the arrival-instant queue length:
+            // Pfqn_mva carries it for closed single-server models only.
+            boolean ilNeedsAmva = options.config.interlock != null && !options.config.interlock.isEmpty()
+                    && (hasOpenClass || (hasFiniteServer && maxFiniteServers > 1.0));
             if (isBasModel(sn)) {
                 ret = Solver_sqd.solver_sqd(sn, options);
                 method = "sqd";
-            } else if (hasOpenClass && hasClosedClass && hasFiniteServer && maxFiniteServers == 1.0
+            } else if (!ilNeedsAmva && hasOpenClass && hasClosedClass && hasFiniteServer && maxFiniteServers == 1.0
                     && SnHasProductForm.snHasProductForm(sn)
                     && closedPopsIntegral) {
                 ret = Solver_mva.solver_mva(sn, options);
                 method = "exact";
-            } else if (sn.nchains <= 4 && sn.njobs.sumRows().toDouble() <= 20
+            } else if (!ilNeedsAmva && sn.nchains <= 4 && sn.njobs.sumRows().toDouble() <= 20
                     && SnHasProductForm.snHasProductForm(sn)
                     && !SnHasFractionalPopulations.snHasFractionalPopulations(sn)) {
                 ret = Solver_mva.solver_mva(sn, options);
@@ -135,7 +228,12 @@ public final class Solver_mva_analyzer {
                 || "qli".equals(method) || "fli".equals(method) || "lin".equals(method)
                 || "qdlin".equals(method) || "sqni".equals(method) || "gflin".equals(method)
                 || "egflin".equals(method) || "schmidt".equals(method) || "schmidt-ext".equals(method)
-                || "ab".equals(method)) {
+                || "ab".equals(method) || "aql".equals(method) || "qsa".equals(method) || "tay".equals(method)
+                || "scat".equals(method)
+                || "lcp".equals(method) || "chow".equals(method)
+                || "pamb".equals(method) || "pami".equals(method) || "pamt".equals(method)
+                || "clust".equals(method) || "dmlin".equals(method)
+                || "priomva".equals(method)) {
             ret = Solver_amva.solver_amva(sn, options);
             method = ret.method;
         } else {
@@ -147,8 +245,8 @@ public final class Solver_mva_analyzer {
             // matlab/src/solvers/MVA/solver_mva_analyzer.m.
             throw new RuntimeException("solver_mva_analyzer: the '" + method
                     + "' method is not dispatched by solver_mva_analyzer. Supported: default, "
-                    + "exact, mva, mvac, amva, bs, qd, qli, fli, lin, qdlin, sqni, egflin, gflin, ab, "
-                    + "schmidt, schmidt-ext.");
+                    + "exact, mva, mvac, amva, aql, qsa, bs, qd, qli, fli, lin, qdlin, sqni, egflin, gflin, ab, "
+                    + "schmidt, schmidt-ext, tay, scat.");
         }
         long endTime = System.nanoTime();
         res.QN = ret.QN;

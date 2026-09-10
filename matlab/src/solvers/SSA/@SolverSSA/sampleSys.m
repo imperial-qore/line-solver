@@ -1,5 +1,10 @@
 function tranSysState = sampleSys(self, numEvents, markActivePassive)
 % TRANSYSSTATE = SAMPLESYS(NUMSAMPLES)
+
+% The trajectory is the C++ engine's; markActivePassive below is a rearrangement
+% of the event cell and applies to it unchanged.
+useCpp = isfield(self.options,'lang') && strcmp(self.options.lang,'cpp');
+
 options = self.getOptions;
 
 if GlobalConstants.DummyMode
@@ -17,11 +22,14 @@ if nargin<3
     markActivePassive = false;
 end
 
+if useCpp
+    tranSysState = CPPLINE.sysSamplePath(self.name, self.model, self.options, numEvents, false);
+else
 switch options.method
     case {'default','serial'}
         options.method = 'serial'; % nrm does not support tran*
         [~, tranSystemState, tranSync] = self.runAnalyzer(options);
-		
+
         tranSysState = struct();
         tranSysState.handle = self.model.getStatefulNodes';
         tranSysState.t = tranSystemState{1};
@@ -50,6 +58,7 @@ switch options.method
         tranSysState.isaggregate = false;                
     otherwise
         line_error(mfilename,'sampleSys is not available in SolverSSA with the chosen method.');
+end
 end
 
 if markActivePassive

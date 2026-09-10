@@ -47,6 +47,9 @@ lqn.hashnames = {};
 %lqn.shortnames = {};
 lqn.mult = [];
 lqn.repl = [];
+% Task scheduling priority, 0 on every other index. Lower is served first,
+% the convention sn.classprio uses in a Network. Read by HOL scheduling.
+lqn.prio = [];
 lqn.type = [];
 %lqn.replies = [];
 lqn.parent = [];
@@ -102,12 +105,21 @@ lqn.actposttype = sparse([]);
 lqn.graph = sparse([]);
 lqn.taskgraph = sparse([]);
 lqn.replygraph = [];
-lqn.actphase = [];  % Phase number (1 or 2) for each activity
+lqn.actphase = [];  % Phase number (1..3) for each activity
+
+lqn.lincon = {};            % cell(nhosts+ntasks,2); lincon{i,1}=Matrix(C_i,K_i), lincon{i,2}=Matrix(C_i,1): admission A*n<=b on host/task i's layer station. Empty if none
+
+lqn.lldscaling = {};        % cell(nhosts+ntasks,1); lldscaling{i}=vector alpha(n) scaling host/task i's layer-station rate at total population n. Empty where absent
+lqn.cdscaling = {};         % cell(nhosts+ntasks,1); cdscaling{i}=product-form handle beta(n) over that server's operands, tasksof/entriesof order as lincon. Empty where absent
+lqn.cdscalingpeak = {};     % cell(nhosts+ntasks,1); per-operand peak rate scaling of cdscaling{i}, for the Util=T*S/peak normalization
+lqn.jdscaling = {};         % cell(nhosts+ntasks,1); non-product-form handle eta(n) over that server's operands. Empty where absent
+lqn.jdscalingpeak = {};     % cell(nhosts+ntasks,1); per-operand peak rate scaling of jdscaling{i}
+lqn.pools = {};             % cell(nhosts+ntasks,1); struct('names','counts','rates','compat') of the compatibility pools declared on that server. compat(t,j) nonzero = pool t may serve operand j. Empty where absent; see sn_compat_rate
 
 lqn.iscache = sparse(logical([]));
 lqn.iscaller = sparse([]);
 lqn.issynccaller = sparse([]);
 lqn.isasynccaller = sparse([]);
 lqn.isref = sparse(logical([]));
-lqn.isfunction = sparse(logical([]));
+lqn.hassetup = sparse(logical([]));
 end

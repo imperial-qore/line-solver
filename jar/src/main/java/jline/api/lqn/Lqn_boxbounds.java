@@ -42,7 +42,7 @@ public final class Lqn_boxbounds {
     private Lqn_boxbounds() {
     }
 
-    /** Result holder. Vectors are 1-based (index 0 unused), length nidx+1. */
+    /** Result holder. Vectors are indexed by 0-based element index, length nidx. */
     public static final class Result {
         public int[] refidx;
         public double[] Xlo;
@@ -58,7 +58,7 @@ public final class Lqn_boxbounds {
         int nH = lqn.nhosts;
 
         List<Integer> refs = new ArrayList<Integer>();
-        for (int t = 1; t <= lqn.ntasks; t++) {
+        for (int t = 0; t < lqn.ntasks; t++) {
             int tidx = lqn.tshift + t;
             if ((int) lqn.isref.get(tidx) != 0) {
                 refs.add(tidx);
@@ -67,7 +67,7 @@ public final class Lqn_boxbounds {
         int R = refs.size();
 
         double[][] D = new double[nH][R];               // 0-based host row, class col
-        double[][] Vis = new double[nidx + 1][R];       // 1-based element row
+        double[][] Vis = new double[nidx][R];       // element row
         double[] Nref = new double[R];
         double[] Zref = new double[R];
         for (int r = 0; r < R; r++) {
@@ -100,7 +100,7 @@ public final class Lqn_boxbounds {
             Zm.set(0, r, Zref[r]);
         }
         for (int h = 0; h < nH; h++) {
-            int hidx = lqn.hshift + h + 1;              // host absolute index
+            int hidx = lqn.hshift + h;                  // host absolute index
             schedm.set(h, 0, discCode(lqn.sched.get(hidx)));
         }
 
@@ -115,17 +115,17 @@ public final class Lqn_boxbounds {
             out.Xlo[r] = rbb.Xlo.get(0, r);
             out.Xup[r] = rbb.Xup.get(0, r);
         }
-        out.TN_lo = new double[nidx + 1];
-        out.TN_up = new double[nidx + 1];
-        out.UN_lo = new double[nidx + 1];
-        out.UN_up = new double[nidx + 1];
-        for (int i = 0; i <= nidx; i++) {
+        out.TN_lo = new double[nidx];
+        out.TN_up = new double[nidx];
+        out.UN_lo = new double[nidx];
+        out.UN_up = new double[nidx];
+        for (int i = 0; i < nidx; i++) {
             out.TN_lo[i] = Double.NaN;
             out.TN_up[i] = Double.NaN;
             out.UN_lo[i] = Double.NaN;
             out.UN_up[i] = Double.NaN;
         }
-        for (int i = 1; i <= nidx; i++) {
+        for (int i = 0; i < nidx; i++) {
             double tlo = 0, tup = 0;
             boolean visited = false;
             for (int r = 0; r < R; r++) {
@@ -141,7 +141,7 @@ public final class Lqn_boxbounds {
             }
         }
         for (int h = 0; h < nH; h++) {
-            int hidx = lqn.hshift + h + 1;
+            int hidx = lqn.hshift + h;
             double ulo = 0, uup = 0;
             for (int r = 0; r < R; r++) {
                 ulo += out.Xlo[r] * D[h][r];
@@ -157,7 +157,7 @@ public final class Lqn_boxbounds {
                                    int nH, int r, double[][] D, double[][] Vis) {
         Vis[eidx][r] += mult;
         int tidx = (int) lqn.parent.get(0, eidx);       // task hosting this entry
-        if (tidx >= 1 && tidx < Vis.length) {
+        if (tidx >= 0 && tidx < Vis.length) {
             Vis[tidx][r] += mult;
         }
         if (lqn.actsof.get(eidx) == null) {
@@ -177,7 +177,7 @@ public final class Lqn_boxbounds {
         int hidx = (int) lqn.parent.get(0, tidx);         // host absolute index
         Double hd = lqn.hostdem_mean.get(aidx);
         double dem = (hd == null || Double.isNaN(hd)) ? 0.0 : hd;
-        int hrow = hidx - lqn.hshift - 1;                 // 0-based host row
+        int hrow = hidx - lqn.hshift;                     // host-local row
         if (hrow >= 0 && hrow < nH) {
             D[hrow][r] += mult * dem;
         }
@@ -188,7 +188,7 @@ public final class Lqn_boxbounds {
             if (lqn.calltype.get(cidx) == CallType.SYNC) {
                 Double cm = lqn.callproc_mean.get(cidx);
                 double cmean = (cm == null || Double.isNaN(cm)) ? 0.0 : cm;
-                int callee = (int) lqn.callpair.get(cidx, 2);
+                int callee = (int) lqn.callpair.get(cidx, 1);
                 visitEntry(lqn, callee, mult * cmean, nH, r, D, Vis);
             }
         }

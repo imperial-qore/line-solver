@@ -598,7 +598,7 @@ public class ClosedModel {
      * @return configured APH-based network model
      */
     public static Network cqn_mmpp2_service() {
-        Network model = new Network("myModel");
+        Network model = new Network("model");
 
         // Block 1: nodes
         Delay node1 = new Delay(model, "Delay");
@@ -617,26 +617,26 @@ public class ClosedModel {
         node3.setService(jobclass2, new Erlang(1, 2)); // (Queue2,Class2)
 
         // Block 3: topology
-        RoutingMatrix routingMatrix = model.initRoutingMatrix();
+        model.addLink(node1, node1);
+        model.addLink(node1, node2);
+        model.addLink(node1, node3);
+        model.addLink(node2, node1);
+        model.addLink(node3, node1);
 
-        // Class 1 routing probabilities
-        routingMatrix.set(jobclass1, jobclass1, node1, node1, 0.0);
-        routingMatrix.set(jobclass1, jobclass1, node1, node2, 0.3);
-        routingMatrix.set(jobclass1, jobclass1, node1, node3, 0.7);
-        routingMatrix.set(jobclass1, jobclass1, node2, node1, 1.0);
-        routingMatrix.set(jobclass1, jobclass1, node3, node1, 1.0);
+        // Class 1: probabilistic routing out of the delay
+        node1.setProbRouting(jobclass1, node1, 0.0);
+        node1.setProbRouting(jobclass1, node2, 0.3);
+        node1.setProbRouting(jobclass1, node3, 0.7);
+        node2.setProbRouting(jobclass1, node1, 1.0);
+        node3.setProbRouting(jobclass1, node1, 1.0);
 
-        // Class 2 routing probabilities (RAND = uniform among connected neighbors)
-        // node1 connects to node1, node2, node3 -> 1/3 each
-        routingMatrix.set(jobclass2, jobclass2, node1, node1, 1.0 / 3.0);
-        routingMatrix.set(jobclass2, jobclass2, node1, node2, 1.0 / 3.0);
-        routingMatrix.set(jobclass2, jobclass2, node1, node3, 1.0 / 3.0);
-        // node2 connects only to node1 -> 1.0
-        routingMatrix.set(jobclass2, jobclass2, node2, node1, 1.0);
-        // node3 connects only to node1 -> 1.0
-        routingMatrix.set(jobclass2, jobclass2, node3, node1, 1.0);
-
-        model.link(routingMatrix);
+        // Class 2: RANDOM routing, which is the strategy the reference declares.
+        // Materialising it as 1/3 probabilities gives the same distribution but a
+        // different STRATEGY on the wire, so the simulator draws from a different
+        // stream and the seeded sample path parts company with the reference.
+        node1.setRouting(jobclass2, RoutingStrategy.RAND);
+        node2.setRouting(jobclass2, RoutingStrategy.RAND);
+        node3.setRouting(jobclass2, RoutingStrategy.RAND);
 
         return model;
     }

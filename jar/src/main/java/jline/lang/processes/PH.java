@@ -98,7 +98,9 @@ public class PH extends Markovian {
 
     @Override
     public long getNumberOfPhases() {
-        return (long) this.getParam(1).getValue();
+        // Parameter 1 is stored from the int nPhases, so it boxes to an
+        // Integer; casting the boxed value straight to long throws
+        return ((Number) this.getParam(1).getValue()).longValue();
     }
 
     @Override
@@ -153,73 +155,73 @@ public class PH extends Markovian {
         return map_sample(D(0), D(1), n, random);
     }
 
-    // =================== KOTLIN-STYLE PROPERTY ALIASES ===================
+    // =================== PROPERTY ALIASES ===================
     
     /**
-     * Kotlin-style property alias for getMean()
+     * Property alias for getMean
      */
     public double mean() {
         return getMean();
     }
     
     /**
-     * Kotlin-style property alias for getRate()
+     * Property alias for getRate
      */
     public double rate() {
         return getRate();
     }
     
     /**
-     * Kotlin-style property alias for getSCV()
+     * Property alias for getSCV
      */
     public double scv() {
         return getSCV();
     }
     
     /**
-     * Kotlin-style property alias for getSkewness()
+     * Property alias for getSkewness
      */
     public double skewness() {
         return getSkewness();
     }
     
     /**
-     * Kotlin-style property alias for getVar()
+     * Property alias for getVar
      */
     public double var() {
         return getVar();
     }
     
     /**
-     * Kotlin-style property alias for getInitProb()
+     * Property alias for getInitProb
      */
     public Matrix initProb() {
         return getInitProb();
     }
     
     /**
-     * Kotlin-style property alias for getNumberOfPhases()
+     * Property alias for getNumberOfPhases
      */
     public long numberOfPhases() {
         return getNumberOfPhases();
     }
     
     /**
-     * Kotlin-style property alias for getNumberOfPhases()
+     * Property alias for getNumberOfPhases
      */
     public long numPhases() {
         return getNumberOfPhases();
     }
     
     /**
-     * Kotlin-style property alias for getProcess()
+     * Property alias for getProcess
      */
     public MatrixCell process() {
         return getProcess();
     }
     
     /**
-     * Kotlin-style property alias for getSubgenerator()
+     * Property alias for getSubgenerator
      */
     public Matrix subgenerator() {
         return getSubgenerator();

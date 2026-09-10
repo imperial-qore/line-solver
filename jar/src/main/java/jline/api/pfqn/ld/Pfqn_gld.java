@@ -28,11 +28,39 @@ public final class Pfqn_gld {
         Double G;
         double lG;
 
+        // The mu default has to precede the M == 1 and R == 1 branches below,
+        // both of which READ mu: left further down, next to the options
+        // default, a null rate matrix reached them and threw instead of
+        // running the load-independent model the default describes.
+        Matrix mu_new;
+        if (mu == null) {
+            mu_new = new Matrix(M, (int) N.elementSum());
+            mu_new.fill(1.0);
+        } else {
+            mu_new = mu.copy();
+        }
+
         if (M == 1) {
+            // A CLASS WITH JOBS AND NO DEMAND AT THE ONLY STATION MAKES THE CONSTANT ZERO.
+            // Its factor is L_r^N_r = 0, so the whole product vanishes; dropping the class
+            // from the sum below instead answers with the constant of a DIFFERENT model, the
+            // one without it. The recursion at the foot of this method reaches this base case
+            // with the full population every time it peels a station, so the error surfaces on
+            // any load-dependent model carrying a zero demand.
+            // See _kb/07-cross-language-parity.md.
+            for (int i = 0; i < R; i++) {
+                // abs(), not L > 0, so the guard means "no demand" and not "not positive",
+                // matching the MATLAB and python twins
+                if (N.get(i) > 0 && Math.abs(L.get(0, i)) == 0) {
+                    return new Ret.pfqnNc(0.0, Double.NEGATIVE_INFINITY);
+                }
+            }
             Matrix N_tmp = new Matrix(1, 0);
             Matrix L_tmp = new Matrix(1, 0);
             for (int i = 0; i < R; i++) {
-                if (L.get(i) > GlobalConstants.FineTol) {
+                // exact zeros only: a small demand is still a demand, and its logarithm is
+                // finite, so thresholding here would drop a legitimate factor
+                if (L.get(0, i) > 0) {
                     Matrix N_tmp2 = new Matrix(1, 1);
                     N_tmp2.fill(N.get(i));
                     Matrix L_tmp2 = new Matrix(1, 1);
@@ -41,32 +69,32 @@ public final class Pfqn_gld {
                     L_tmp = Matrix.concatColumns(L_tmp, L_tmp2, null);
                 }
             }
-            Matrix mu_new;
-            if ((int) N.elementSum() >= mu.getNumCols()) {
-                mu_new = Matrix.extractRows(mu, 0, 1, null);
+            Matrix muRow;
+            if ((int) N.elementSum() >= mu_new.getNumCols()) {
+                muRow = Matrix.extractRows(mu_new, 0, 1, null);
             } else {
-                mu_new = new Matrix(1, 0);
+                muRow = new Matrix(1, 0);
                 int i = 0;
                 while (i < N.elementSum()) {
                     Matrix mu_col_i = new Matrix(1, 1);
-                    Matrix.extract(mu, 0, 1, i, i + 1, mu_col_i, 0, 0);
-                    mu_new = Matrix.concatColumns(mu_new, mu_col_i, null);
+                    Matrix.extract(mu_new, 0, 1, i, i + 1, mu_col_i, 0, 0);
+                    muRow = Matrix.concatColumns(muRow, mu_col_i, null);
                     i++;
                 }
             }
 
-            for (int i = 0; i < mu_new.length(); i++) {
-                mu_new.set(i, FastMath.log(mu_new.get(i)));
+            for (int i = 0; i < muRow.length(); i++) {
+                muRow.set(i, FastMath.log(muRow.get(i)));
             }
 
             lG = (Maths.factln(N.elementSum()) - Matrix.factln(N).elementSum()
-                    + N_tmp.mult(L_tmp.transpose()).get(0) - mu_new.elementSum());
+                    + N_tmp.mult(L_tmp.transpose()).get(0) - muRow.elementSum());
             G = FastMath.exp(lG);
             return new Ret.pfqnNc(G, lG);
         }
 
         if (R == 1) {
-            Ret.pfqnNc ret = Pfqn_gldsingle.pfqn_gldsingle(L, N, mu, null);
+            Ret.pfqnNc ret = Pfqn_lldsingle.pfqn_lldsingle(L, N, mu_new, null);
             lG = ret.lG;
             G = ret.G;
             return new Ret.pfqnNc(G, lG);
@@ -78,13 +106,6 @@ public final class Pfqn_gld {
             return new Ret.pfqnNc(G, lG);
         }
 
-        Matrix mu_new;
-        if (mu == null) {
-            mu_new = new Matrix(M, (int) N.elementSum());
-            mu_new.fill(1.0);
-        } else {
-            mu_new = mu.copy();
-        }
         SolverOptions options_new = (options != null) ? options : SolverNC.defaultOptions();
 
         boolean isLoadDep = false;
@@ -131,7 +152,7 @@ public final class Pfqn_gld {
                 Zli.fill(0.0);
             }
             options_new.method = "exact";
-            lG = Pfqn_nc.pfqn_nc(lambda, Lli, N, Zli.sumCols(), options_new).lG;
+            lG = Pfqn_nc.pfqn_nc(lambda, Lli, N, Zli.sumCols(), options_new, false).lG;
             G = FastMath.exp(lG);
             return new Ret.pfqnNc(G, lG);
         }
@@ -145,12 +166,6 @@ public final class Pfqn_gld {
         if (FastMath.abs(N.elementMax()) < GlobalConstants.FineTol
                 && FastMath.abs(N.elementMin()) < GlobalConstants.FineTol) {
             G = 1.0;
-            lG = FastMath.log(G);
-            return new Ret.pfqnNc(G, lG);
-        }
-
-        if (R == 1) {
-            G = Pfqn_gldsingle.pfqn_gldsingle(L, N, mu_new, null).G;
             lG = FastMath.log(G);
             return new Ret.pfqnNc(G, lG);
         }

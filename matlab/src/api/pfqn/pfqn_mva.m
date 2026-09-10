@@ -13,7 +13,12 @@ function [XN,QN,UN,CN,lGN] = pfqn_mva(L,N,Z,mi)
  % @param L Service demand matrix (M x R).
  % @param N Population vector (1 x R).
  % @param Z Think time vector (1 x R).
- % @param mi (Optional) Server multiplicity vector (1 x M). Default: single servers.
+ % @param mi (Optional) Additive term of the residence-time recursion
+ %        C(i,s)=L(i,s)*(mi(i)+Qarv), 1 for a queueing station. Default: ones.
+ %        THIS IS NOT A SERVER COUNT: mi(i)=c INFLATES the residence time by c
+ %        rather than adding c servers. For multiserver stations call
+ %        PFQN_MVAMS(lambda,L,N,Z,mi,S), which passes S to the load-dependent
+ %        recursion with mu(i,n)=min(n,S(i)).
  % @return XN System throughput (1 x R).
  % @return QN Mean queue length (M x R).
  % @return UN Utilization (M x R).
@@ -23,6 +28,9 @@ function [XN,QN,UN,CN,lGN] = pfqn_mva(L,N,Z,mi)
 %}
 % [XN,QN,UN,CN,LGN] = PFQN_MVA(L,N,Z,MI)
 % [XN,QN,UN,CN] = pfqn_mva(L,N,Z,mi)
+%
+% Standard arrival theorem. For the interlocked-flow correction of Franks
+% (1999), Ch. 4, Eq. (4.7), call PFQN_MVA_ILOCK instead.
 XN=[];
 QN=[];
 UN=[];
@@ -102,7 +110,8 @@ while ctr % for each population
         i=1;
         while i <= M
             Lis=L(i,s);
-            CN(i,s)=Lis*(mi(i)+Q(1+pos_n_1s,i));
+            qarv=Q(1+pos_n_1s,i);
+            CN(i,s)=Lis*(mi(i)+qarv);
             CNtot=CNtot+CN(i,s);
             i=i+1;
         end % while i <= M

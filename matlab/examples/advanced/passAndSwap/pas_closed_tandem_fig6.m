@@ -66,7 +66,7 @@ model.link(P);
 q1.setState([1 2 3 4 5 6]);
 
 fprintf('=== CTMC (exact) ===\n');
-Tc = CTMC(model, 'cutoff', 6).getAvgTable;
+Tc = CTMC(model, 'exact', 'cutoff', 6).getAvgTable;
 disp(Tc);
 
 fprintf('=== LDES (simulation, 6e5 samples) ===\n');
@@ -98,7 +98,7 @@ function [Q1, Q2] = reference_pas_tandem(G, mu)
 % (queue 1 = (1,...,6) ascending, queue 2 empty), head-only service.
 n = size(G,1);
 init1 = 1:n;
-states = {};  idx = containers.Map('KeyType','char','ValueType','double');
+states = {};  idx = configureDictionary('string','double');
     function id = getid(l1, l2)
         key = [sprintf('%d,', l1), '|', sprintf('%d,', l2)];
         if isKey(idx, key)

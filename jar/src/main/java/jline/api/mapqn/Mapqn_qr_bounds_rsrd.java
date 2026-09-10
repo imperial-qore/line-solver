@@ -683,6 +683,8 @@ public final class Mapqn_qr_bounds_rsrd {
             settings.max_iter = 200000;
             settings.eps_abs = OSQP_EPS;
             settings.eps_rel = OSQP_EPS;
+            // josqp defaults adaptive_rho to true, which on this LP re-tunes rho onto a stalling branch and burns max_iter without converging
+            settings.adaptive_rho = false;
             settings.polish = true;
             settings.verbose = false;
 
@@ -735,32 +737,38 @@ public final class Mapqn_qr_bounds_rsrd {
      * ADMM termination tolerance for the josqp backend, used for both eps_abs
      * and eps_rel.
      *
-     * <p>TIGHTER IS NOT BETTER HERE, and the failure is not graceful. Measured
-     * over eps in {1e-4 .. 1e-10} x rho in {1e-2, 1e-1, 1} x scaling in {10, 25}
-     * on the two paper instances (objective error d against the AMPL optimum,
-     * which glpsol reproduces from this method's own LP dump):
+     * <p>TIGHTER IS NOT BETTER HERE, and the failure is not graceful: past a
+     * point josqp saturates its 200000 iterations and returns nothing (the
+     * method then reports a NaN objective, which the analyzer turns into an
+     * error rather than a number).
+     *
+     * <p>Measured with {@code adaptive_rho = false} -- see
+     * {@link Mapqn_qr_bounds_bas}, where leaving josqp's default on made the
+     * larger LPs unsolvable -- on the two paper instances, as the absolute
+     * error against the AMPL optimum, which glpsol reproduces from this
+     * method's own LP dump:
      *
      * <pre>
-     *   eps    sec7.1 (0.7332453660)          M5N20 (0.8705798470)
-     *   1e-4   SOLVED     d=3.6e-05  0.1 s    SOLVED     d=1.9e-03  0.3 s
-     *   1e-5   SOLVED     d=2.1e-06  0.5 s    SOLVED     d=8.7e-05  0.4 s
-     *   1e-6   MAX_ITER   (NaN)       23 s    SOLVED     d=6.4e-06  1.6 s
-     *   1e-8   MAX_ITER   (NaN)       23 s    MAX_ITER   (NaN)       51 s
+     *   eps    sec7.1 min (0.7332453660)   sec7.1 max   M5N20 min (0.8705798470)
+     *   1e-5   5.1e-06     4 s             SOLVED       5.1e-06     1 s
+     *   1e-6   3.0e-06     6 s             SOLVED       5.0e-09    30 s
+     *   1e-7   1.6e-07    17 s             MAX_ITER     5.0e-09    32 s
+     *   1e-9   2.7e-09    15 s             MAX_ITER     5.0e-09    32 s
      * </pre>
      *
-     * <p>1e-5 is the only value that converges on BOTH. 1e-6 is more accurate on
-     * M5N20 but saturates 200000 iterations on the SMALLER sec7.1 and returns
-     * nothing, so it cannot be the default. rho barely matters (its default is
-     * already 1e-1) and scaling 10 vs 25 makes no measurable difference.
+     * <p>1e-6 is the tightest value that converges in EVERY measured direction:
+     * at 1e-7 and below the max direction of sec7.1 returns nothing at all, so
+     * the two orders of magnitude it would buy on the min direction are not
+     * available. Against the previous default (1e-5 with adaptive rho) this
+     * gains four orders of magnitude on M5N20. rho barely matters (its default
+     * is already 1e-1) and scaling 10 vs 25 makes no measurable difference.
      *
-     * <p>The residual ~1e-4 relative error is inherent to ADMM on this
-     * degenerate LP; the polish step does not recover the exact vertex. MATLAB
-     * (matlab/lib/qrf/qrf_rsrd.m) and native Python (api/mapqn/qr_bounds_rsrd.py)
-     * agree with AMPL to ~2e-11, so the JAR bound is NOT interchangeable with
-     * theirs beyond about four significant decimals. Re-measure both instances
-     * before changing this.
+     * <p>MATLAB (matlab/lib/qrf/qrf_rsrd.m) and native Python
+     * (api/mapqn/qr_bounds_rsrd.py) agree with AMPL to ~2e-11, so the JAR bound
+     * is interchangeable with theirs to about six significant decimals, not
+     * beyond. Re-measure both instances before changing this.
      */
-    private static final double OSQP_EPS = 1.0e-5;
+    private static final double OSQP_EPS = 1.0e-6;
 
     /**
      * Read the primal solution out of a solved josqp workspace.

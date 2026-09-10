@@ -8,7 +8,7 @@ model = LayeredNetwork('myLayeredModel')
 # Definition of processors - matching MATLAB exactly
 P = []
 P.append(Processor(model, 'R1_Processor', 100, SchedStrategy.FCFS))     # P{1}
-P.append(Processor(model, 'R2_Processor', GlobalConstants.MaxInt, SchedStrategy.INF))  # P{2} - Inf as large int
+P.append(Processor(model, 'R2_Processor', float('inf'), SchedStrategy.INF))  # P{2}
 P.append(Processor(model, 'R3_Processor', 2, SchedStrategy.FCFS))       # P{3}
 P.append(Processor(model, 'R1A_Processor', 7, SchedStrategy.FCFS))      # P{4}
 P.append(Processor(model, 'R1B_Processor', 3, SchedStrategy.FCFS))      # P{5}
@@ -18,7 +18,7 @@ P.append(Processor(model, 'R2B_Processor', 5, SchedStrategy.FCFS))      # P{7}
 # Definition of tasks - matching MATLAB exactly
 T = []
 T.append(Task(model, 'R1_Task', 100, SchedStrategy.REF).on(P[0]).set_think_time(Exp.fit_mean(20)))  # T{1}
-T.append(Task(model, 'R2_Task', GlobalConstants.MaxInt, SchedStrategy.INF).on(P[1]).set_think_time(Immediate()))  # T{2}
+T.append(Task(model, 'R2_Task', float('inf'), SchedStrategy.INF).on(P[1]).set_think_time(Immediate()))  # T{2}
 T.append(Task(model, 'R3_Task', 2, SchedStrategy.FCFS).on(P[2]).set_think_time(Immediate()))       # T{3}
 T.append(Task(model, 'R1A_Task', 7, SchedStrategy.FCFS).on(P[3]).set_think_time(Immediate()))      # T{4}
 T.append(Task(model, 'R1B_Task', 3, SchedStrategy.FCFS).on(P[4]).set_think_time(Immediate()))      # T{5}

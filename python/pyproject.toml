@@ -33,6 +33,7 @@ exclude = ["tests/**", "**/tests/**", "line_solver/bin/.gitignore", "**/jline.ja
 python = ">=3.11"
 numpy = "^2.3.3"
 matplotlib = "^3.10.6"
+networkx = "^3.6"
 pandas = "^2.3.2"
 scipy = "^1.16.2"
 websockets = "^12.0"
@@ -48,6 +49,11 @@ symbolic = ["sympy"]
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.0.2"
+# The suite is subprocess-bound, not CPU-bound: 627 parity rows each fork a
+# fresh interpreter and ~335 notebooks each spawn a Jupyter kernel, so a serial
+# session leaves a 16-core host at load 2-3 for 13h45m. run-tests.sh passes
+# `-n auto --dist loadfile` by default; see the DIST_ARGS block there.
+pytest-xdist = "^3.6.1"
 nbformat = "^5.10.4"
 nbconvert = "^7.16.6"
 ipykernel = "^6.30.1"
@@ -63,4 +69,21 @@ build-backend = "poetry.core.masonry.api"
 [tool.pytest.ini_options]
 markers = [
     "slow: marks tests that run full LINE solves (deselect with '-m \"not slow\"')",
+]
+# The vendored butools (line_solver/lib/thirdparty/butools) is matrix-typed
+# throughout: every mam/reptrans/queues entry point takes and returns
+# numpy.matrix, so each call raises PendingDeprecationWarning. On the full
+# suite that is ~750k of ~900k warnings and it buries the actionable ones.
+# The filter matches on MESSAGE, not module: numpy raises from its own
+# matrixlib frame, so a module-scoped filter would not catch it. Removing the
+# matrix subclass means rewriting butools, which is out of scope.
+#
+# The CTMC truncation advisory is emitted for EVERY open or mixed model, with no
+# dependence on the model or the cutoff, so in a suite that deliberately solves
+# open models by CTMC it discriminates nothing and only hides the actionable
+# warnings. It stays on for users; it is the run report it is filtered out of.
+filterwarnings = [
+    "ignore:the matrix subclass is not the recommended way:PendingDeprecationWarning",
+    "ignore:Importing from numpy.matlib is deprecated:PendingDeprecationWarning",
+    "ignore:State space truncation may cause inaccurate results:UserWarning",
 ]

@@ -332,11 +332,11 @@ def mmpp2_fitc_approx(a: float, bt1: float, bt2: float, binf: float,
 
     def compute_obj(params):
         l1, l2, r1, r2 = params
-        if l1 <= 0 or l2 <= 0 or r1 < 0 or r2 < 0:
+        if l1 <= 0 or l2 <= 0 or r1 < 0 or r2 < 0 or r1 + r2 <= 0:
             return 1e10
 
         xa = (l1 * r2 + l2 * r1) / (r1 + r2)
-        if xa <= 0:
+        if not np.isfinite(xa) or xa <= 0:
             return 1e10
         factor = a / xa
 
@@ -425,7 +425,8 @@ def mmpp2_fitc_approx(a: float, bt1: float, bt2: float, binf: float,
     D1 = np.array([[l1, 0.0],
                    [0.0, l2]])
 
-    # Scale to match exact rate
+    # Force the rate to a exactly, as MATLAB's map_scale(FIT, 1/a) does: the
+    # third argument is the target MEAN inter-arrival time in every codebase.
     D0, D1 = map_scale(D0, D1, 1.0 / a)
     return (D0, D1)
 

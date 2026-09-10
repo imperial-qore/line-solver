@@ -310,7 +310,7 @@ class LSODAOptions:
     __slots__ = [
         'ixpr', 'mxstep', 'mxhnil', 'mxordn', 'mxords',
         'tcrit', 'h0', 'hmax', 'hmin', 'hmxi', 'itask',
-        'rtol', 'atol',
+        'rtol', 'atol', 'force_stiff',
     ]
 
     def __init__(self):
@@ -327,6 +327,12 @@ class LSODAOptions:
         self.itask = 0
         self.rtol = None
         self.atol = None
+        # Start on BDF and stay there, never switching to Adams. The Adams half
+        # loses its stability bound at a fixed point: the corrector converges on
+        # the `del <= 100*pnorm*ETA` branch before `pdest` is ever formed, so
+        # `scaleh`'s pdh guard never binds and h runs up to hmax. Same pin as
+        # LSODA.setForceStiff(true) in the JAR and lsoda_matlab's forceStiff.
+        self.force_stiff = False
 
 
 def _alloc_mem(neq, mxordn, mxords):
@@ -473,17 +479,32 @@ def _solsy(c, y, neq):
     return 1
 
 
-def _prja(c, y, neq, f, data):
-    """Compute and process Jacobian P = I - h*el[1]*J by finite differences."""
+def _prja(c, y, neq, f, data, opt=None):
+    """Compute and process Jacobian P = I - h*el[1]*J by finite differences.
+
+    UNDER force_stiff THE INCREMENT CARRIES MATLAB NUMJAC'S FLOOR. LSODA sizes
+    the difference as max(sqrt(eps)*|y_j|, r0/ewt_j), and a component sitting at
+    EXACTLY zero under a tight atol takes the second branch with r ~ 1e-19: the
+    column is then rounding noise divided by that, the Newton matrix is
+    meaningless, and the corrector converges to nonsense. The auto-switcher never
+    meets this because it starts on Adams and only takes a Jacobian once the
+    solution is smooth; pinning BDF takes one at t0, so it needs the rule ode15s
+    uses, sqrt(eps)*max(|y_j|, atol_j/rtol_j), which is exactly why ode15s has
+    never had this failure. Applied ONLY under the pin, so the auto-switcher and
+    the C reference vectors it reproduces are untouched.
+    """
     c.nje += 1
     hl0 = c.h * c.el[1]
     fac = _vmnorm(neq, c.savf, c.ewt)
     r0 = 1000.0 * abs(c.h) * ETA * float(neq) * fac
     if r0 == 0.0:
         r0 = 1.0
+    pin = opt is not None and opt.force_stiff
     for j in range(1, neq + 1):
         yj = y[j]
         r = max(SQRTETA * abs(yj), r0 / c.ewt[j])
+        if pin and opt.rtol[j] > 0.0:
+            r = max(r, SQRTETA * max(abs(yj), opt.atol[j] / opt.rtol[j]))
         y[j] += r
         fac_val = -hl0 / r
         f(c.tn, y, c.acor, data)
@@ -519,7 +540,7 @@ def _corfailure(c, told, neq):
     return 1
 
 
-def _correction(c, y, pnorm, neq, f, data):
+def _correction(c, y, pnorm, neq, f, data, opt=None):
     """Corrector iteration. Returns (corflag, del_val, delp, m).
     corflag: 0=converged, 1=reduce h & redo, 2=failure.
     """
@@ -535,7 +556,7 @@ def _correction(c, y, pnorm, neq, f, data):
     while True:
         if m == 0:
             if c.ipup > 0:
-                ierpj = _prja(c, y, neq, f, data)
+                ierpj = _prja(c, y, neq, f, data, opt)
                 c.jcur = 1
                 c.ipup = 0
                 c.rc = 1.0
@@ -605,6 +626,8 @@ def _correction(c, y, pnorm, neq, f, data):
 
 def _methodswitch(c, dsm, pnorm, neq, opt):
     """Consider switching between Adams and BDF methods. Returns rh or None."""
+    if opt.force_stiff:
+        return None
     mxordn = opt.mxordn
     mxords = opt.mxords
 
@@ -778,7 +801,9 @@ def _stoda(c, y, jstart, neq, f, data, opt):
         c.irflag = 0
         c.pdest = 0.0
         c.pdlast = 0.0
-        _cfode(c, 1)
+        # cfode(1) in the C, which assumes meth = 1 at the start; under
+        # force_stiff the start is meth = 2 and the tables must match it
+        _cfode(c, c.meth)
         _resetcoeff(c)
 
     if jstart == -1:
@@ -817,7 +842,7 @@ def _stoda(c, y, jstart, neq, f, data, opt):
                         c.yh[i1][i] += c.yh[i1 + 1][i]
             pnorm = _vmnorm(neq, c.yh[1], c.ewt)
             c.told_corr = told
-            corflag, del_val, delp, m = _correction(c, y, pnorm, neq, f, data)
+            corflag, del_val, delp, m = _correction(c, y, pnorm, neq, f, data, opt)
             if corflag == 0:
                 break
             if corflag == 1:
@@ -969,9 +994,353 @@ def _stoda(c, y, jstart, neq, f, data, opt):
 
 # ---- Public interface ----
 
+def _tol_array(tol, neq):
+    """Tolerances as a 1-based array of length neq+1, index 0 unused."""
+    if np.isscalar(tol):
+        return np.full(neq + 1, float(tol))
+    out = np.zeros(neq + 1)
+    out[1:] = np.asarray(tol, dtype=float)
+    return out
+
+
+class LSODAStepper:
+    """The C driver `lsoda()` as a stateful object: one call advances the solve.
+
+    `lsoda()` below drives it with itask=1, integrating to each requested output
+    time, which is the mode the C reference benchmarks are stated for. A
+    STEPPING interface needs itask=5 instead -- one internal step, never past
+    `tcrit` -- which is the mode scipy's own LSODA wrapper uses and the one
+    `solver_fld` drives through `ode/native_lsoda.py`.
+
+    Parameters mirror `lsoda()`, plus:
+
+    tcrit : float
+        The instant itask=4/5 must not step past.
+    force_stiff : bool
+        Start on BDF and never switch to Adams; see `LSODAOptions.force_stiff`.
+
+    The public state is `t`, `y`, `state` (2 after a successful call, negative
+    after a soft failure) and `message`. A soft failure leaves `y` at the last
+    accepted step; an illegal input or a failure at the very first step raises
+    `LSODAError`, which is what the C calls a hard failure.
+    """
+
+    def __init__(self, f, y0, t0, rtol=1e-6, atol=1e-6, max_steps=500,
+                 mxordn=12, mxords=5, hmax=0.0, hmin=0.0, h0=0.0, tcrit=0.0,
+                 force_stiff=False, data=None):
+        y0 = np.asarray(y0, dtype=float).ravel()
+        neq = len(y0)
+        if neq < 1:
+            raise LSODAError("neq = %d is less than 1" % neq)
+        if hmax < 0.0 or hmin < 0.0:
+            raise LSODAError("hmax and hmin must be nonnegative")
+        self.neq = neq
+        self.data = data
+        self._user_f = f
+        self._ydot_buf = np.zeros(neq)
+
+        opt = LSODAOptions()
+        opt.rtol = _tol_array(rtol, neq)
+        opt.atol = _tol_array(atol, neq)
+        if np.any(opt.rtol[1:] < 0.0):
+            raise LSODAError("rtol = %g is less than 0." % np.min(opt.rtol[1:]))
+        if np.any(opt.atol[1:] < 0.0):
+            raise LSODAError("atol = %g is less than 0." % np.min(opt.atol[1:]))
+        opt.mxstep = max_steps if max_steps > 0 else 500
+        opt.mxhnil = 10
+        opt.mxordn = min(mxordn if mxordn > 0 else 100, 12)
+        opt.mxords = min(mxords if mxords > 0 else 100, 5)
+        opt.h0 = h0
+        opt.hmax = hmax
+        opt.hmin = hmin
+        opt.hmxi = 1.0 / hmax if hmax > 0 else 0.0
+        opt.tcrit = tcrit
+        opt.itask = 1
+        opt.ixpr = 0
+        opt.force_stiff = bool(force_stiff)
+        self.opt = opt
+
+        self.c = _alloc_mem(neq, opt.mxordn, opt.mxords)
+        self.state = 1
+        self.t = float(t0)
+        self.message = ''
+        # JSTART lives in the FORTRAN common block, i.e. it PERSISTS across
+        # calls: dstoda leaves it at 1 and the driver overrides it with -1 when
+        # a method switch has to be completed on the next step. liblsoda made it
+        # a local and rebuilds it as 1 on every continuation call, which drops
+        # that -1. With itask=1 over sparse output times the switch is normally
+        # completed inside the same call and nothing shows; in STEPPING mode
+        # (itask=2/5) every step returns, so the switch was never completed, the
+        # elco tables stayed on the old method and Robertson ran away to
+        # y1 = -1.9e7 in 8e6 function evaluations. Persisting it is the
+        # reference's own rule, not a repair on top of it.
+        self.jstart = 0
+        self._y = np.zeros(neq + 1)
+        self._y[1:neq + 1] = y0
+
+    # -- read-only views on the internal state --
+
+    @property
+    def y(self):
+        return self._y[1:self.neq + 1].copy()
+
+    @property
+    def h(self):
+        return self.c.h
+
+    @property
+    def nfe(self):
+        return self.c.nfe
+
+    @property
+    def nje(self):
+        return self.c.nje
+
+    @property
+    def nst(self):
+        return self.c.nst
+
+    @property
+    def meth(self):
+        return self.c.meth
+
+    def interpolate(self, t, k=0):
+        """The k-th derivative at t from the Nordsieck history, i.e. `intdy`."""
+        dky = np.zeros(self.neq + 1)
+        iflag = _intdy(self.c, t, k, dky, self.neq)
+        if iflag != 0:
+            raise LSODAError("intdy refused t = %g (iflag = %d)" % (t, iflag))
+        return dky[1:self.neq + 1].copy()
+
+    def _f(self, t, y1, ydot1, data):
+        self._user_f(t, y1[1:self.neq + 1], self._ydot_buf, data)
+        ydot1[1:self.neq + 1] = self._ydot_buf[:]
+
+    def advance(self, tout, itask=1):
+        """One call of the C driver, integrating from t towards tout.
+
+        Returns the state: 2 on success, negative on a soft failure (the reason
+        is in `message`).
+        """
+        c = self.c
+        opt = self.opt
+        neq = self.neq
+        y = self._y
+        opt.itask = itask
+        h0 = opt.h0
+        ihit = False
+
+        if self.state == 1 and (tout - self.t) * h0 < 0.0:
+            raise LSODAError("tout = %g behind t = %g, the integration direction "
+                             "is given by %g" % (tout, self.t, h0))
+        if self.state == 3:
+            self.jstart = -1
+
+        if self.state == 1:
+            c.meth = 2 if opt.force_stiff else 1
+            if opt.force_stiff:
+                c.miter = 2
+            c.tn = self.t
+            c.tsw = self.t
+            if itask == 4 or itask == 5:
+                if (opt.tcrit - tout) * (tout - self.t) < 0.0:
+                    raise LSODAError("itask = 4 or 5 and tcrit behind tout")
+                if h0 != 0.0 and (self.t + h0 - opt.tcrit) * h0 > 0.0:
+                    h0 = opt.tcrit - self.t
+            self.jstart = 0
+            c.nq = 1
+            self._f(self.t, y, c.yh[2], self.data)
+            c.nfe = 1
+            for i in range(1, neq + 1):
+                c.yh[1][i] = y[i]
+            for i in range(1, neq + 1):
+                c.ewt[i] = opt.rtol[i] * abs(y[i]) + opt.atol[i]
+                c.ewt[i] = 1.0 / c.ewt[i]
+                if c.ewt[i] <= 0.0:
+                    raise LSODAError("ewt[%d] = %g <= 0" % (i, c.ewt[i]))
+            if h0 == 0.0:
+                tdist = abs(tout - self.t)
+                w0 = max(abs(self.t), abs(tout))
+                if tdist < 2.0 * ETA * w0:
+                    raise LSODAError("tout too close to t to start integration")
+                tol_val = 0.0
+                for i in range(1, neq + 1):
+                    tol_val = max(tol_val, opt.rtol[i])
+                if tol_val <= 0.0:
+                    for i in range(1, neq + 1):
+                        ayi = abs(y[i])
+                        if ayi != 0.0:
+                            tol_val = max(tol_val, opt.atol[i] / ayi)
+                tol_val = max(tol_val, 100.0 * ETA)
+                tol_val = min(tol_val, 0.001)
+                sum_val = _vmnorm(neq, c.yh[2], c.ewt)
+                sum_val = 1.0 / (tol_val * w0 * w0) + tol_val * sum_val * sum_val
+                h0 = 1.0 / math.sqrt(sum_val)
+                h0 = min(h0, tdist)
+                h0 *= (1.0 if tout - self.t >= 0.0 else -1.0)
+            rh = abs(h0) * opt.hmxi
+            if rh > 1.0:
+                h0 /= rh
+            c.h = h0
+            for i in range(1, neq + 1):
+                c.yh[2][i] *= h0
+
+        if self.state == 2 or self.state == 3:
+            c.nslast = c.nst
+            if itask == 1:
+                if (c.tn - tout) * c.h >= 0.0:
+                    return self._intdy_return(tout, itask)
+            elif itask == 3:
+                tp = c.tn - c.hu * (1.0 + 100.0 * ETA)
+                if (tp - tout) * c.h > 0.0:
+                    raise LSODAError("itask = %d and tout behind tcur - hu" % itask)
+                if (c.tn - tout) * c.h >= 0.0:
+                    return self._success_return(itask, False)
+            elif itask == 4 or itask == 5:
+                # case 4 falls through into case 5 in the C driver
+                if itask == 4:
+                    if (c.tn - opt.tcrit) * c.h > 0.0:
+                        raise LSODAError("itask = 4 or 5 and tcrit behind tcur")
+                    if (opt.tcrit - tout) * c.h < 0.0:
+                        raise LSODAError("itask = 4 or 5 and tcrit behind tout")
+                    if (c.tn - tout) * c.h >= 0.0:
+                        return self._intdy_return(tout, itask)
+                else:
+                    if (c.tn - opt.tcrit) * c.h > 0.0:
+                        raise LSODAError("itask = 4 or 5 and tcrit behind tcur")
+                hmx = abs(c.tn) + abs(c.h)
+                ihit = abs(c.tn - opt.tcrit) <= (100.0 * ETA * hmx)
+                if ihit:
+                    self.t = opt.tcrit
+                    return self._success_return(itask, ihit)
+                tnext = c.tn + c.h * (1.0 + 4.0 * ETA)
+                if (tnext - opt.tcrit) * c.h > 0.0:
+                    c.h = (opt.tcrit - c.tn) * (1.0 - 4.0 * ETA)
+                    if self.state == 2:
+                        self.jstart = -2
+            elif itask != 2:
+                raise LSODAError("illegal itask = %d" % itask)
+
+        while True:
+            if self.state != 1 or c.nst != 0:
+                if (c.nst - c.nslast) >= opt.mxstep:
+                    return self._soft_failure(
+                        -1, "%d steps taken before reaching tout" % opt.mxstep)
+                bad = 0
+                for i in range(1, neq + 1):
+                    c.ewt[i] = opt.rtol[i] * abs(c.yh[1][i]) + opt.atol[i]
+                    c.ewt[i] = 1.0 / c.ewt[i]
+                    if c.ewt[i] <= 0.0 and bad == 0:
+                        bad = i
+                if bad:
+                    return self._soft_failure(
+                        -6, "ewt[%d] = %g <= 0." % (bad, c.ewt[bad]))
+            tolsf = ETA * _vmnorm(neq, c.yh[1], c.ewt)
+            if tolsf > 0.01:
+                tolsf *= 200.0
+                if c.nst == 0:
+                    raise LSODAError("at start of problem, too much accuracy requested "
+                                     "for precision of machine, suggested scaling "
+                                     "factor = %g" % tolsf)
+                return self._soft_failure(
+                    -2, "at t = %g, too much accuracy requested for precision of "
+                        "machine, suggested scaling factor = %g" % (self.t, tolsf))
+            if c.tn + c.h == c.tn:
+                c.nhnil += 1
+                if c.nhnil <= opt.mxhnil:
+                    import warnings
+                    warnings.warn("lsoda: internal t=%g and h=%g are such that t+h=t"
+                                  % (c.tn, c.h))
+
+            kflag = _stoda(c, y, self.jstart, neq, self._f, self.data, opt)
+
+            if kflag == 0:
+                self.jstart = 1
+                if c.meth != c.mused:
+                    c.tsw = c.tn
+                    self.jstart = -1
+                if itask == 1:
+                    if (c.tn - tout) * c.h < 0.0:
+                        continue
+                    return self._intdy_return(tout, itask)
+                if itask == 2:
+                    return self._success_return(itask, ihit)
+                if itask == 3:
+                    if (c.tn - tout) * c.h >= 0.0:
+                        return self._success_return(itask, ihit)
+                    continue
+                if itask == 4:
+                    if (c.tn - tout) * c.h >= 0.0:
+                        return self._intdy_return(tout, itask)
+                    hmx = abs(c.tn) + abs(c.h)
+                    ihit = abs(c.tn - opt.tcrit) <= (100.0 * ETA * hmx)
+                    if ihit:
+                        return self._success_return(itask, ihit)
+                    tnext = c.tn + c.h * (1.0 + 4.0 * ETA)
+                    if (tnext - opt.tcrit) * c.h <= 0.0:
+                        continue
+                    c.h = (opt.tcrit - c.tn) * (1.0 - 4.0 * ETA)
+                    self.jstart = -2
+                    continue
+                if itask == 5:
+                    hmx = abs(c.tn) + abs(c.h)
+                    ihit = abs(c.tn - opt.tcrit) <= (100.0 * ETA * hmx)
+                    return self._success_return(itask, ihit)
+
+            if kflag == -1 or kflag == -2:
+                big = 0.0
+                c.imxer = 1
+                for i in range(1, neq + 1):
+                    size = abs(c.acor[i]) * c.ewt[i]
+                    if big < size:
+                        big = size
+                        c.imxer = i
+                if kflag == -1:
+                    return self._soft_failure(
+                        -4, "at t = %g and step size h = %g, the error test failed "
+                            "repeatedly or with abs(h) = hmin" % (c.tn, c.h))
+                return self._soft_failure(
+                    -5, "at t = %g and step size h = %g, the corrector convergence "
+                        "failed repeatedly or with abs(h) = hmin" % (c.tn, c.h))
+
+    # -- the three exits of the C driver --
+
+    def _success_return(self, itask, ihit):
+        c = self.c
+        for i in range(1, self.neq + 1):
+            self._y[i] = c.yh[1][i]
+        self.t = c.tn
+        if (itask == 4 or itask == 5) and ihit:
+            self.t = self.opt.tcrit
+        self.state = 2
+        return self.state
+
+    def _intdy_return(self, tout, itask):
+        c = self.c
+        iflag = _intdy(c, tout, 0, self._y, self.neq)
+        if iflag != 0:
+            import warnings
+            warnings.warn("lsoda: trouble from intdy, itask = %d, tout = %g"
+                          % (itask, tout))
+            for i in range(1, self.neq + 1):
+                self._y[i] = c.yh[1][i]
+        self.t = tout
+        self.state = 2
+        return self.state
+
+    def _soft_failure(self, code, message):
+        c = self.c
+        for i in range(1, self.neq + 1):
+            self._y[i] = c.yh[1][i]
+        self.t = c.tn
+        self.state = code
+        self.message = message
+        return self.state
+
+
 def lsoda(f, y0, t_span, t_eval=None, rtol=1e-6, atol=1e-6, max_steps=500,
           h0=0.0, hmax=0.0, hmin=0.0, mxordn=12, mxords=5, data=None,
-          dense_output=False):
+          dense_output=False, force_stiff=False):
     """Solve an ODE system using the LSODA method.
 
     Parameters
@@ -1008,6 +1377,9 @@ def lsoda(f, y0, t_span, t_eval=None, rtol=1e-6, atol=1e-6, max_steps=500,
         Extra data passed to f.
     dense_output : bool
         If True, return interpolation-capable solution (not yet implemented).
+    force_stiff : bool
+        Start on BDF and never switch to Adams; see `LSODAOptions.force_stiff`
+        and the caveat on `solver_fld.ode.native_lsoda.NativeLSODAStiff`.
 
     Returns
     -------
@@ -1022,219 +1394,37 @@ def lsoda(f, y0, t_span, t_eval=None, rtol=1e-6, atol=1e-6, max_steps=500,
         - message : str
     """
     y0 = np.asarray(y0, dtype=float)
-    neq = len(y0)
     t0, tf = float(t_span[0]), float(t_span[1])
 
-    # Set up tolerances as 1-based arrays
-    if np.isscalar(rtol):
-        rtol_arr = np.full(neq + 1, float(rtol))
-    else:
-        rtol_arr = np.zeros(neq + 1)
-        rtol_arr[1:] = np.asarray(rtol, dtype=float)
-    if np.isscalar(atol):
-        atol_arr = np.full(neq + 1, float(atol))
-    else:
-        atol_arr = np.zeros(neq + 1)
-        atol_arr[1:] = np.asarray(atol, dtype=float)
+    stepper = LSODAStepper(f, y0, t0, rtol=rtol, atol=atol, max_steps=max_steps,
+                           mxordn=mxordn, mxords=mxords, hmax=hmax, hmin=hmin,
+                           h0=h0, force_stiff=force_stiff, data=data)
 
-    # Build options
-    opt = LSODAOptions()
-    opt.rtol = rtol_arr
-    opt.atol = atol_arr
-    opt.mxstep = max_steps if max_steps > 0 else 500
-    opt.mxhnil = 10
-    opt.mxordn = min(mxordn, 12)
-    opt.mxords = min(mxords, 5)
-    opt.h0 = h0
-    opt.hmax = hmax
-    opt.hmin = hmin
-    opt.hmxi = 1.0 / hmax if hmax > 0 else 0.0
-    opt.itask = 1
-    opt.ixpr = 0
-    opt.tcrit = 0.0
-
-    # Allocate internal state
-    c = _alloc_mem(neq, opt.mxordn, opt.mxords)
-
-    # Wrapper for the user function: converts between 0-based user arrays
-    # and 1-based internal arrays
-    _ydot_buf = np.zeros(neq)
-
-    def _f_wrapper(t_val, y_1based, ydot_1based, udata):
-        # y_1based[1:neq+1] -> 0-based
-        _y0b = y_1based[1:neq + 1]
-        f(t_val, _y0b, _ydot_buf, udata)
-        ydot_1based[1:neq + 1] = _ydot_buf[:]
-
-    # Build output time list
     if t_eval is not None:
         t_out_list = np.asarray(t_eval, dtype=float)
     else:
         t_out_list = np.array([tf])
 
-    # y is 1-based
-    y = np.zeros(neq + 1)
-    y[1:neq + 1] = y0[:]
-
-    # Initial call to f
-    c.meth = 1
-    c.tn = t0
-    c.tsw = t0
-    c.nq = 1
-    _f_wrapper(t0, y, c.yh[2], data)
-    c.nfe = 1
-    for i in range(1, neq + 1):
-        c.yh[1][i] = y[i]
-
-    # Compute error weights
-    for i in range(1, neq + 1):
-        c.ewt[i] = rtol_arr[i] * abs(y[i]) + atol_arr[i]
-        if c.ewt[i] <= 0.0:
-            raise LSODAError(f"ewt[{i}] = {c.ewt[i]} <= 0")
-        c.ewt[i] = 1.0 / c.ewt[i]
-
-    # Compute initial step size
-    h0_val = opt.h0
-    if h0_val == 0.0:
-        tdist = abs(tf - t0)
-        w0 = max(abs(t0), abs(tf))
-        if tdist < 2.0 * ETA * w0:
-            raise LSODAError("tout too close to t to start integration")
-        tol_val = 0.0
-        for i in range(1, neq + 1):
-            tol_val = max(tol_val, rtol_arr[i])
-        if tol_val <= 0.0:
-            for i in range(1, neq + 1):
-                ayi = abs(y[i])
-                if ayi != 0.0:
-                    tol_val = max(tol_val, atol_arr[i] / ayi)
-        tol_val = max(tol_val, 100.0 * ETA)
-        tol_val = min(tol_val, 0.001)
-        sum_val = _vmnorm(neq, c.yh[2], c.ewt)
-        sum_val = 1.0 / (tol_val * w0 * w0) + tol_val * sum_val * sum_val
-        h0_val = 1.0 / math.sqrt(sum_val)
-        h0_val = min(h0_val, tdist)
-        h0_val *= (1.0 if tf - t0 >= 0.0 else -1.0)
-    # Adjust for hmax
-    rh = abs(h0_val) * opt.hmxi
-    if rh > 1.0:
-        h0_val /= rh
-    c.h = h0_val
-    for i in range(1, neq + 1):
-        c.yh[2][i] *= h0_val
-
-    # Results storage
     t_results = [t0]
     y_results = [y0.copy()]
-
-    # Main integration loop
-    t_current = t0
-    state = 1  # 1 = first call
-    jstart = 0
-    nslast = 0
-    nhnil = 0
-    message = "Integration successful"
     success = True
+    message = "Integration successful"
 
     for tout in t_out_list:
-        if state == 2:
-            # Check if we already passed tout
-            if (c.tn - tout) * c.h >= 0.0:
-                iflag = _intdy(c, tout, 0, y, neq)
-                if iflag != 0:
-                    for i in range(1, neq + 1):
-                        y[i] = c.yh[1][i]
-                t_results.append(tout)
-                y_results.append(y[1:neq + 1].copy())
-                continue
-            jstart = 1
-            nslast = c.nst
-
-        while True:
-            # Check step count
-            if state != 1 or c.nst != 0:
-                if c.nst - nslast >= opt.mxstep:
-                    success = False
-                    message = f"{opt.mxstep} steps taken before reaching tout"
-                    for i in range(1, neq + 1):
-                        y[i] = c.yh[1][i]
-                    break
-                # Update ewt
-                for i in range(1, neq + 1):
-                    c.ewt[i] = rtol_arr[i] * abs(c.yh[1][i]) + atol_arr[i]
-                    if c.ewt[i] <= 0.0:
-                        success = False
-                        message = f"ewt[{i}] = {c.ewt[i]} <= 0"
-                        for i2 in range(1, neq + 1):
-                            y[i2] = c.yh[1][i2]
-                        break
-                    c.ewt[i] = 1.0 / c.ewt[i]
-                if not success:
-                    break
-
-            # Check tolerance
-            tolsf = ETA * _vmnorm(neq, c.yh[1], c.ewt)
-            if tolsf > 0.01:
-                success = False
-                message = f"Too much accuracy requested (scaling factor = {tolsf * 200.0})"
-                if c.nst == 0:
-                    raise LSODAError(message)
-                for i in range(1, neq + 1):
-                    y[i] = c.yh[1][i]
-                break
-
-            # Check h vs roundoff
-            if c.tn + c.h == c.tn:
-                nhnil += 1
-                if nhnil <= opt.mxhnil:
-                    import warnings
-                    warnings.warn(f"lsoda: internal t={c.tn} and h={c.h} are such that t+h=t")
-
-            # Take a step
-            kflag = _stoda(c, y, jstart, neq, _f_wrapper, data, opt)
-
-            if kflag == 0:
-                # Success
-                jstart = 1
-                if c.meth != c.mused:
-                    c.tsw = c.tn
-                    jstart = -1
-                # Check if tout reached
-                if (c.tn - tout) * c.h < 0.0:
-                    continue
-                # Interpolate at tout
-                iflag = _intdy(c, tout, 0, y, neq)
-                if iflag != 0:
-                    for i in range(1, neq + 1):
-                        y[i] = c.yh[1][i]
-                state = 2
-                nslast = c.nst
-                break
-            else:
-                # Step failure
-                success = False
-                if kflag == -1:
-                    message = f"Error test failed at t={c.tn}, h={c.h}"
-                elif kflag == -2:
-                    message = f"Corrector convergence failed at t={c.tn}, h={c.h}"
-                else:
-                    message = f"Fatal error in lsoda at t={c.tn}"
-                for i in range(1, neq + 1):
-                    y[i] = c.yh[1][i]
-                break
-
-        t_results.append(tout)
-        y_results.append(y[1:neq + 1].copy())
-
-        if not success:
+        state = stepper.advance(float(tout), itask=1)
+        t_results.append(float(tout))
+        y_results.append(stepper.y)
+        if state <= 0:
+            success = False
+            message = stepper.message
             break
 
     return LSODAResult(
         t=np.array(t_results),
         y=np.array(y_results),
-        nfe=c.nfe,
-        nje=c.nje,
-        nst=c.nst,
+        nfe=stepper.nfe,
+        nje=stepper.nje,
+        nst=stepper.nst,
         success=success,
         message=message,
     )

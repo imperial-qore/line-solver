@@ -20,15 +20,22 @@ public final class Qsys_gigk_approx_whitt {
      *
      * @param lambda arrival rate
      * @param mu service rate per server
-     * @param ca2 squared coefficient of variation of inter-arrival time
-     * @param cs2 squared coefficient of variation of service time
+     * @param ca coefficient of variation of the inter-arrival time
+     * @param cs coefficient of variation of the service time
      * @param k number of servers
      * @return HashMap containing L, W, Q, U
      */
     public static HashMap<String, Object> qsys_gigk_approx_whitt(
-            double lambda, double mu, double ca2, double cs2, int k) {
+            double lambda, double mu, double ca, double cs, int k) {
         HashMap<String, Object> result = new HashMap<String, Object>();
 
+        // ca and cs are the coefficients of variation, as in every other
+        // qsys_gigk_* entry point and as in the MATLAB and Python twins. This
+        // signature previously read them as ALREADY SQUARED, which no caller
+        // supplied and which made the Java answer differ from MATLAB's on every
+        // input with ca != 1 or cs != 1.
+        double ca2 = ca * ca;
+        double cs2 = cs * cs;
         double rho = lambda / (k * mu);
 
         // Exact M/M/k baseline (Erlang-C based)

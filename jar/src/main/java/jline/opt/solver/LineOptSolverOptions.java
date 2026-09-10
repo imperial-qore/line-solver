@@ -26,6 +26,12 @@ public class LineOptSolverOptions {
     /** 'evolution', 'gradient', or 'auto'. */
     public String optimizer = "evolution";
     public double fdStep = 1e-6;
+    /**
+     * Step for a differencing that RE-SOLVES a LayeredNetwork: the SolverLN
+     * fixed point is smooth only above its own noise floor, which
+     * {@link #penaltyWeight} amplifies by 1e6. See _kb/05-solvers-overview.md.
+     */
+    public double fdStepLayered = 1e-4;
     public int gradientRestarts = 4;
     /**
      * LayeredNetwork (LQN) gradient source, used only when the model is a
@@ -107,6 +113,11 @@ public class LineOptSolverOptions {
 
     public LineOptSolverOptions setFdStep(double v) {
         this.fdStep = v;
+        return this;
+    }
+
+    public LineOptSolverOptions setFdStepLayered(double v) {
+        this.fdStepLayered = v;
         return this;
     }
 

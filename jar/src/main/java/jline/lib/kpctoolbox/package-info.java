@@ -6,7 +6,7 @@
 /**
  * Port of the KPC-Toolbox library for Markovian process fitting and manipulation.
  *
- * <p>This package provides Java/Kotlin implementations of algorithms from
+ * <p>This package provides Java implementations of algorithms from
  * the KPC-Toolbox (Kronecker Product Composition Toolbox) for analyzing
  * structured Markov chains and queueing networks using matrix analytic methods.
  *

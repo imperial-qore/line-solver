@@ -1,0 +1,30 @@
+{
+  "class": {
+    "JMT": "stochastic"
+  },
+  "example": "fcr_mm1kdrop",
+  "solvers": {
+    "JMT": [
+      {
+        "ArvR": 0.0,
+        "JobClass": "Class1",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 0.79526,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 0.6621,
+        "JobClass": "Class1",
+        "QLen": 1.2175,
+        "ResidT": 1.8344,
+        "RespT": 1.8344,
+        "Station": "Queue",
+        "Tput": 0.66208,
+        "Util": 0.66118
+      }
+    ]
+  }
+}

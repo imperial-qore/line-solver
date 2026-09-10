@@ -2,7 +2,7 @@
 Multivariate Phase-Type Distribution (MVPH) functions.
 
 Ported from MATLAB: matlab/lib/kpctoolbox/mvph/
-JAR reference: jar/src/main/kotlin/jline/lib/kpctoolbox/mvph/MVPH.kt
+JAR reference: jar/src/main/java/jline/lib/kpctoolbox/mvph/MVPH.java
 
 Provides functions for computing joint moments and derived statistics
 (mean, covariance, correlation) of bivariate phase-type distributions.

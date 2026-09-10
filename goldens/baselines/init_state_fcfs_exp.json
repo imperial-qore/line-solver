@@ -1,0 +1,20 @@
+{
+  "class": {
+    "FLD": "deterministic"
+  },
+  "example": "init_state_fcfs_exp",
+  "solvers": {
+    "FLD": [
+      {
+        "JobClass": "QLen",
+        "QLen": 4.3,
+        "Station": "Prior1"
+      },
+      {
+        "JobClass": "QLen",
+        "QLen": 4.3,
+        "Station": "Prior2"
+      }
+    ]
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "class": {
+    "MVA": "deterministic"
+  },
+  "example": "cs_single_diamond",
+  "solvers": {
+    "MVA": [
+      {
+        "ArvR": 0.32258,
+        "JobClass": "Chain1",
+        "QLen": 0.32258,
+        "ResidT": 1.0,
+        "RespT": 1.0,
+        "Station": "Queue 0",
+        "Tput": 0.32258,
+        "Util": 0.32258
+      },
+      {
+        "ArvR": 0.096774,
+        "JobClass": "Chain1",
+        "QLen": 0.19355,
+        "ResidT": 0.6,
+        "RespT": 2.0,
+        "Station": "Queue 1",
+        "Tput": 0.096774,
+        "Util": 0.19355
+      },
+      {
+        "ArvR": 0.16129,
+        "JobClass": "Chain1",
+        "QLen": 0.48387,
+        "ResidT": 1.5,
+        "RespT": 3.0,
+        "Station": "Queue 2",
+        "Tput": 0.16129,
+        "Util": 0.48387
+      }
+    ]
+  }
+}

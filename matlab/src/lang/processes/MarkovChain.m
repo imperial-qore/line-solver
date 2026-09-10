@@ -43,6 +43,90 @@ classdef MarkovChain < Process
             transMat = self.transMat;
         end
 
+        function pi = solve(self)
+            % PI = SOLVE()
+            % Stationary distribution of the DTMC. Twin of MarkovProcess.solve.
+            if issym(self.transMat)
+                pi = dtmc_solve(self.transMat);
+            else
+                pi = dtmc_solve_reducible(self.transMat);
+            end
+        end
+
+        function pi_t = transient(self, pi0, steps)
+            % PI_T = TRANSIENT(PI0, STEPS)
+            % Distribution at each step 0,...,STEPS from PI0 (uniform if empty).
+            if nargin<2
+                pi0 = [];
+            end
+            if nargin<3
+                steps = 1;
+            end
+            pi_t = dtmc_transient(self.transMat, pi0, steps);
+        end
+
+        function pi_t = transientProb(self, pi0, steps)
+            % PI_T = TRANSIENTPROB(PI0, STEPS)
+            % Alias of transient, under the name the JAR must use since
+            % 'transient' is a Java keyword.
+            if nargin<2
+                pi0 = [];
+            end
+            if nargin<3
+                steps = 1;
+            end
+            pi_t = self.transient(pi0, steps);
+        end
+
+        function h = hittingTime(self, targetStates)
+            % H = HITTINGTIME(TARGETSTATES)
+            % Mean number of steps to reach any state in TARGETSTATES.
+            h = dtmc_hitting_time(self.transMat, targetStates);
+        end
+
+        function S = stochComp(self, I)
+            % S = STOCHCOMP(I)
+            % Stochastic complement of the states I, a DTMC on that subset.
+            % Use stochCompFull to also obtain the partitioned blocks.
+            if nargin<2
+                S = dtmc_stochcomp(self.transMat);
+            else
+                S = dtmc_stochcomp(self.transMat, I);
+            end
+        end
+
+        function [S, P11, P12, P21, P22] = stochCompFull(self, I)
+            % [S, P11, P12, P21, P22] = STOCHCOMPFULL(I)
+            % Stochastic complement of the states I together with the blocks of
+            % the transition matrix partitioned by I and its complement.
+            if nargin<2
+                [S, P11, P12, P21, P22] = dtmc_stochcomp(self.transMat);
+            else
+                [S, P11, P12, P21, P22] = dtmc_stochcomp(self.transMat, I);
+            end
+        end
+
+        function [pi_t, kmax] = transientUnif(self, pi0, t)
+            % [PI_T, KMAX] = TRANSIENTUNIF(PI0, T)
+            % Distribution at time T of the DTMC seen through uniformization.
+            % The chain is read as the randomized image of a CTMC, so T is
+            % continuous here, unlike the step count taken by transient.
+            n = size(self.transMat,1);
+            if nargin<2 || isempty(pi0)
+                pi0 = ones(1,n)/n;
+            end
+            if nargin<3
+                t = 1;
+            end
+            [pi_t, kmax] = dtmc_uniformization(reshape(pi0,1,[]), self.transMat, t);
+        end
+
+        function bool = isFeasible(self)
+            % BOOL = ISFEASIBLE()
+            % True when the transition matrix is stochastic.
+            bool = dtmc_isfeasible(self.transMat) > 0;
+        end
+
         function sts = sample(self, n)
             % STS = SAMPLE(N) - Simulate n steps of the DTMC from a random initial state
             if nargin<2

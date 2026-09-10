@@ -1,0 +1,60 @@
+{
+  "class": {
+    "CACHE": "deterministic"
+  },
+  "example": "cache_rmf_transient",
+  "solvers": {
+    "CACHE": [
+      {
+        "JobClass": "Steady",
+        "QLen": 0.312854,
+        "Station": "HitRate_L1"
+      },
+      {
+        "JobClass": "Steady",
+        "QLen": 0.301606,
+        "Station": "HitRate_L2"
+      },
+      {
+        "JobClass": "Steady",
+        "QLen": 0.38554,
+        "Station": "MissRate"
+      },
+      {
+        "JobClass": "Steady",
+        "QLen": 0.61446,
+        "Station": "TotalHitProb"
+      },
+      {
+        "JobClass": "Steady",
+        "QLen": 0.38554,
+        "Station": "TotalMissProb"
+      },
+      {
+        "JobClass": "Transient",
+        "QLen": 0.728003,
+        "Station": "t=0.000"
+      },
+      {
+        "JobClass": "Transient",
+        "QLen": 0.64575,
+        "Station": "t=5.025"
+      },
+      {
+        "JobClass": "Transient",
+        "QLen": 0.624411,
+        "Station": "t=12.563"
+      },
+      {
+        "JobClass": "Transient",
+        "QLen": 0.616758,
+        "Station": "t=25.126"
+      },
+      {
+        "JobClass": "Transient",
+        "QLen": 0.614587,
+        "Station": "t=50.000"
+      }
+    ]
+  }
+}

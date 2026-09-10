@@ -1,0 +1,30 @@
+{
+  "class": {
+    "LDES": "stochastic"
+  },
+  "example": "oqn_nhpp",
+  "solvers": {
+    "LDES": [
+      {
+        "ArvR": 0.0,
+        "JobClass": "OpenClass",
+        "QLen": 0.0,
+        "ResidT": 0.0,
+        "RespT": 0.0,
+        "Station": "Source",
+        "Tput": 3.6667,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 3.6667,
+        "JobClass": "OpenClass",
+        "QLen": 0.7226,
+        "ResidT": 0.19751,
+        "RespT": 0.19751,
+        "Station": "Queue",
+        "Tput": 3.6581,
+        "Util": 0.3662
+      }
+    ]
+  }
+}

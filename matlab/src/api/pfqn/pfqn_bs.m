@@ -13,7 +13,7 @@ function [XN,QN,UN,RN,it]=pfqn_bs(L,N,Z,tol,maxiter,QN0,type)
  % @param L Service demand matrix.
  % @param N Population vector.
  % @param Z Think time vector.
- % @param tol Tolerance for convergence.
+ % @param tol Tolerance for convergence; 'cn' or NaN selects the Chandy-Neuse (1982) population-scaled termination test, see pfqn_cntol.
  % @param maxiter Maximum number of iterations.
  % @param QN0 Initial guess for queue lengths.
  % @param type Scheduling strategy type (default: PS).
@@ -34,6 +34,24 @@ if nargin<4%~exist('tol','var')
 end
 if nargin<5%~exist('maxiter','var')
     maxiter = 1000;
+end
+
+% tol = 'cn' (or NaN) selects the published Linearizer termination test of
+% Chandy and Neuse, Commun. ACM 25(2), 1982: the cutoff pfqn_cntol(N) applied to
+% max_{i,r}|dQ(i,r)|/N_r instead of the relative-change metric used by default.
+% This is the test LQNS runs, since it sets it in SchweitzerCommon.
+cntest = false;
+if ischar(tol) || isstring(tol)
+    if strcmpi(tol,'cn')
+        cntest = true;
+    else
+        line_error(mfilename,sprintf('pfqn_bs: unknown tolerance specifier ''%s''.',char(tol)));
+    end
+elseif isnan(tol)
+    cntest = true;
+end
+if cntest
+    tol = pfqn_cntol(N);
 end
 
 [M,R]=size(L);
@@ -96,7 +114,17 @@ for it=1:maxiter
     % Convergence is measured on the non-empty classes only: an empty class has
     % QN = QN_1 = 0, and 0/0 = NaN would make the test never fire.
     nz = N > 0;
-    if isempty(find(nz,1)) || max(max(abs(1-QN(:,nz)./QN_1(:,nz)))) < tol
+    if isempty(find(nz,1))
+        break
+    end
+    if cntest
+        % Chandy and Neuse (1982), p.129: absolute queue-length change scaled by
+        % the class population, not the relative change.
+        dev = max(max(abs(QN(:,nz)-QN_1(:,nz))./repmat(N(nz),M,1)));
+    else
+        dev = max(max(abs(1-QN(:,nz)./QN_1(:,nz))));
+    end
+    if dev < tol
         break
     end
 end

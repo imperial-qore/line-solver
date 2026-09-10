@@ -5,6 +5,7 @@ This implementation uses pure Python/NumPy algorithms from the api.solvers.ctmc
 module.
 """
 
+import warnings
 import os
 import numpy as np
 import pandas as pd
@@ -15,10 +16,13 @@ from ...constants import default_verbose
 
 from ...api.sn.transforms import sn_get_residt_from_respt
 from ...api.sn.getters import sn_get_node_tput_from_tput, sn_get_node_arvr_from_tput, sn_get_arvr_from_tput
+from ...api.fjnative import sn_fj_supports
+from ..fjtag_transform import FJTagTransformMixin
+from ..transform_driver import TransformSolveMixin
 from ...api.sn.network_struct import NodeType
 from ...api.io.logging import line_debug, line_warning
 from ...constants import GlobalConstants
-from ..base import NetworkSolver
+from ..base import NetworkSolver, method_type
 
 
 class OptionsDict(dict):
@@ -76,11 +80,18 @@ class SolverCTMCOptions:
     keep: bool = True  # Whether to keep state space after analysis
     force: bool = False  # Force solver to run even if state space may be too large
     config: Dict[str, Any] = field(default_factory=dict)  # Configuration dict (e.g., {'nonmkv': 'none'})
+    init_sol: Optional[np.ndarray] = None  # Chain-mode initial distribution (transient analysis, sample paths)
     timespan: Optional[List[float]] = None  # Time interval [t_start, t_end] for transient analysis
     timestep: Optional[float] = None  # Time step for transient analysis (None = auto, matches MATLAB [])
     timeout: float = float('inf')  # Wall-clock time budget in seconds (inf = no budget)
     gen_method: str = 'default'  # 'default' = monolithic builder, 'sync' = sync-action-based builder
-    lang: str = field(default_factory=lambda: os.environ.get('LINE_SOLVER_LANG', 'python'))  # env LINE_SOLVER_LANG overrides; 'python' (native) or 'java' (delegate to jline.jar via JSON)
+    lang: str = field(default_factory=lambda: os.environ.get('LINE_SOLVER_LANG', 'python'))  # env LINE_SOLVER_LANG overrides; 'python' (native), 'java' (jline.jar via JSON) or 'cpp' (line-cli via JSON)
+    # Arithmetic backend, lang='cpp' ONLY: 'double' (default), 'exact' or
+    # 'real:<digits>'. Meaningless for the other langs, which are IEEE double
+    # throughout, so line-cli is invoked without --arith unless the caller sets it.
+    # Every step from the generator to the means is a field operation, so 'exact'
+    # returns the exact rational stationary law here.
+    arith: Optional[str] = None
 
 
 class _QRFResult:
@@ -96,6 +107,53 @@ class _QRFResult:
         self.runtime = runtime
         self.method = method
         self.pi = None
+        self.depRates = None
+
+
+class _CFTPResult:
+    """Result container for the perfect-sampling (cftp) method.
+
+    Carries the sampled states alongside the metrics: they are the only
+    representation of the stationary distribution this method produces, since
+    no state space is enumerated.
+    """
+
+    def __init__(self, QN, UN, RN, TN, CN, XN, runtime, method, samples, horizon, pAggr, SSq):
+        self.Q = QN
+        self.U = UN
+        self.R = RN
+        self.T = TN
+        self.C = CN
+        self.X = XN
+        self.runtime = runtime
+        self.method = method
+        self.pi = pAggr
+        self.space = SSq
+        self.spaceAggr = SSq
+        self.cftpSamples = samples
+        self.cftpHorizon = horizon
+        self.depRates = None
+
+
+class _MDDResult:
+    """Result container for the decision-diagram aggregation (mdd) method.
+
+    No state space is enumerated, so pi/space stay empty; the diagram and the
+    level sizes are carried instead, as the only description of how the
+    reachable set was represented.
+    """
+
+    def __init__(self, QN, UN, RN, TN, CN, XN, runtime, method, mddinfo):
+        self.Q = QN
+        self.U = UN
+        self.R = RN
+        self.T = TN
+        self.C = CN
+        self.X = XN
+        self.runtime = runtime
+        self.method = method
+        self.pi = None
+        self.mdd = mddinfo
         self.depRates = None
 
 
@@ -120,7 +178,7 @@ def _eventRates(F):
     return rates, shapes
 
 
-class SolverCTMC(NetworkSolver):
+class SolverCTMC(FJTagTransformMixin, TransformSolveMixin, NetworkSolver):
     """
     Native Python CTMC (Continuous-Time Markov Chain) solver.
 
@@ -130,7 +188,8 @@ class SolverCTMC(NetworkSolver):
 
     Supported methods:
         - 'default': Basic state-space enumeration
-        - 'basic': Same as default
+        - 'gpu': the gpuArray backend of ctmc_solve, which falls back to the
+          plain direct solve when no GPU is present
 
     Args:
         model: Network model (Python wrapper or native structure)
@@ -165,6 +224,11 @@ class SolverCTMC(NetworkSolver):
                 kwargs.setdefault('timespan', method_or_options['timespan'])
             if 'timestep' in method_or_options:
                 kwargs.setdefault('timestep', method_or_options['timestep'])
+            # The config map is carried too: a key dropped here is dropped
+            # SILENTLY, so the solver would answer the default while the caller
+            # believes it asked for something else.
+            if 'config' in method_or_options and method_or_options['config']:
+                kwargs.setdefault('config', dict(method_or_options['config']))
         elif hasattr(method_or_options, 'method'):
             # SolverOptions-like object
             self.method = getattr(method_or_options, 'method', 'default')
@@ -180,19 +244,165 @@ class SolverCTMC(NetworkSolver):
                 kwargs.setdefault('timespan', method_or_options.timespan)
             if hasattr(method_or_options, 'timestep'):
                 kwargs.setdefault('timestep', method_or_options.timestep)
+            # See the note on the dict-like branch above: a config key dropped
+            # here is dropped silently.
+            if getattr(method_or_options, 'config', None):
+                kwargs.setdefault('config', dict(method_or_options.config))
         else:
             self.method = 'default'
 
-        # Remove 'method' from kwargs if present to avoid duplicate argument
-        kwargs.pop('method', None)
+        # A method= keyword is the native-Python call style; honour it when no
+        # positional method was given instead of dropping it, which silently
+        # solved with 'default' whatever the caller asked for.
+        method_kw = kwargs.pop('method', None)
+        if method_or_options is None and method_kw is not None:
+            self.method = str(method_kw).lower()
         self.options = SolverCTMCOptions(method=self.method, **kwargs)
+
+        # Chain mode: a user-supplied MarkovProcess (CTMC) or MarkovChain (DTMC)
+        # is solved directly, so there is no network structure to extract. A DTMC
+        # is carried as its P-I image, which has the same stationary vector.
+        from ...lang.processes import MarkovChain, MarkovProcess
+        self._chain_matrix = model if isinstance(model, MarkovChain) else None
+        if isinstance(model, MarkovProcess):
+            self._chain_process = model
+        elif self._chain_matrix is not None:
+            self._chain_process = model.toCTMC()
+        else:
+            self._chain_process = None
+        if self._chain_process is not None:
+            return
 
         # Extract network structure
         self._extract_network_params()
 
+    def isChainSolver(self) -> bool:
+        """True when the solver was built from a MarkovProcess or a MarkovChain."""
+        return getattr(self, '_chain_process', None) is not None
+
+    is_chain_solver = isChainSolver
+
+    def isDiscreteChain(self) -> bool:
+        """True in chain mode when the user supplied a DTMC (MarkovChain)."""
+        return getattr(self, '_chain_matrix', None) is not None
+
+    is_discrete_chain = isDiscreteChain
+
+    def getTransMat(self) -> np.ndarray:
+        """Transition matrix of the user-supplied DTMC (chain mode only)."""
+        if not self.isDiscreteChain():
+            raise RuntimeError("getTransMat requires a SolverCTMC built from a MarkovChain.")
+        return np.asarray(self._chain_matrix.getTransMat(), dtype=np.float64)
+
+    get_trans_mat = getTransMat
+
+    def _assert_not_chain_model(self, caller: str) -> None:
+        """Guard for the entry points that need stations and classes."""
+        if self.isChainSolver():
+            kind = 'MarkovChain' if self.isDiscreteChain() else 'MarkovProcess'
+            raise RuntimeError(
+                f"{caller} requires a Network model. This solver was built from a {kind}, "
+                "which has no stations or classes: use getProbSys, getGenerator, getStateSpace, "
+                "getTranProbSys or sampleSys instead.")
+
+    def _chain_state_space(self) -> np.ndarray:
+        """State space of the user-supplied chain, or the state indices."""
+        space = self._chain_matrix.stateSpace if self.isDiscreteChain() else self._chain_process.stateSpace
+        if space is not None and np.asarray(space).size > 0:
+            return np.atleast_2d(np.asarray(space, dtype=np.float64))
+        n = np.asarray(self._chain_process.getGenerator(), dtype=np.float64).shape[0]
+        return np.arange(1, n + 1, dtype=np.float64).reshape(n, 1)
+
+    def _chain_run_analyzer(self) -> None:
+        """Steady-state analysis of the user-supplied chain."""
+        import time
+        from ...api.mc import ctmc_solve, ctmc_solve_reducible, dtmc_solve, dtmc_solve_reducible
+        from ...api.solvers.ctmc.analyzers import CTMCResult
+
+        start_time = time.time()
+        infgen = np.asarray(self._chain_process.getGenerator(), dtype=np.float64)
+        n = infgen.shape[0]
+        if self.isDiscreteChain():
+            P = self.getTransMat()
+            pi = np.asarray(dtmc_solve(P), dtype=np.float64).flatten()
+            if not self._is_chain_distribution(pi, n):
+                pi = np.asarray(dtmc_solve_reducible(P), dtype=np.float64).flatten()
+        else:
+            pi = np.asarray(ctmc_solve(infgen), dtype=np.float64).flatten()
+            if not self._is_chain_distribution(pi, n):
+                pi = np.asarray(ctmc_solve_reducible(infgen), dtype=np.float64).flatten()
+
+        result = CTMCResult()
+        result.pi = pi
+        result.infgen = infgen
+        result.space = self._chain_state_space()
+        result.runtime = time.time() - start_time
+        result.method = self.method
+        self._result = result
+
+    @staticmethod
+    def _is_chain_distribution(pi: np.ndarray, n: int) -> bool:
+        """Reject a solution the primary solver could not produce on a reducible chain."""
+        pi = np.asarray(pi, dtype=np.float64).flatten()
+        if pi.size != n or not np.all(np.isfinite(pi)):
+            return False
+        return bool(np.all(pi >= -1e-8) and abs(pi.sum() - 1) <= 1e-4)
+
+    def _chain_init_distribution(self) -> np.ndarray:
+        """options.init_sol when it matches the chain size, uniform otherwise."""
+        n = np.asarray(self._chain_process.getGenerator(), dtype=np.float64).shape[0]
+        pi0 = getattr(self.options, 'init_sol', None)
+        if pi0 is not None and np.asarray(pi0).size == n:
+            pi0 = np.asarray(pi0, dtype=np.float64).flatten()
+            return pi0 / pi0.sum()
+        return np.ones(n) / n
+
+    def _network_init_distribution(self) -> np.ndarray:
+        """
+        pi(0) for a Network model's transient analyses: the model's INITIAL STATE.
+
+        `pi0(matchrow(stateSpace, s0)) = 1`, which is what
+        `@SolverCTMC/getTranProbSys.m` does. The transient getters used to seed
+        e_0 instead, on the assumption that row 0 of the enumerated space is the
+        initial state; it is not. On a two-station closed model with 2 jobs the
+        space begins at (Think 0, Q1 2) while the model starts at (Think 2, Q1 0),
+        so pi(2) came out [0.2122, 0.4000, 0.3878] against MATLAB's [0.1939,
+        0.4000, 0.4061] -- a wrong answer to the right question, with nothing in
+        the output to say which state it started from.
+
+        A state the enumeration does not contain is an error rather than a
+        fallback: the alternative is answering for a state the model is not in.
+        """
+        space = self._result.space
+        if space is None or np.asarray(space).size == 0:
+            raise RuntimeError(
+                "the transient analysis needs the enumerated state space to place pi(0) and the "
+                "solve returned none")
+        space = np.atleast_2d(np.asarray(space, dtype=float))
+        pi0 = np.zeros(space.shape[0])
+        init = getattr(self.options, 'init_sol', None)
+        if init is not None and np.asarray(init).size == space.shape[0]:
+            init = np.asarray(init, dtype=float).reshape(-1)
+            return init / init.sum()
+
+        sn = self._sn if self._sn is not None else self.model.getStruct()
+        rows = []
+        for st in list(sn.state or []):
+            rows.extend(np.asarray(st, dtype=float).reshape(-1).tolist())
+        s0 = np.asarray(rows, dtype=float)
+        if s0.size == space.shape[1]:
+            hit = np.flatnonzero(np.all(np.isclose(space, s0), axis=1))
+            if hit.size:
+                pi0[hit[0]] = 1.0
+                return pi0
+        raise RuntimeError(
+            "the model's initial state %s is not a row of the enumerated state space (%d x %d), "
+            "so pi(0) cannot be placed; set options.init_sol to name the distribution explicitly"
+            % (np.array2string(s0, precision=6), space.shape[0], space.shape[1]))
+
     def reset(self):
         """Clear cached results so the solver re-runs on next query."""
-        self._result = None
+        self._clearResultStores()
         self._sn = None
         self._extract_network_params()
 
@@ -278,17 +488,270 @@ class SolverCTMC(NetworkSolver):
                 "(Place.setClassCapacity) or a finite SolverCTMC cutoff, or "
                 "use SolverJMT for the unbounded net.")
 
+    def supportsTransientAnalysis(self):
+        """Transient averages are available (uniformization of the generator over options.timespan)."""
+        return True
+
+    supports_transient_analysis = supportsTransientAnalysis
+
+    def _ensureAvgResults(self):
+        """Chain mode has no averages to gate, only the stationary vector."""
+        if self.isChainSolver():
+            if self._result is None:
+                self._chain_run_analyzer()
+            return
+        super()._ensureAvgResults()
+
+    def _run_chain_aggregation(self, sn):
+        """Solve the CHAIN-AGGREGATED model and map its metrics back to the classes.
+
+        ModelAdapter.aggregate_chains collapses every chain onto a single class,
+        class switching disappearing with it, and sn_deaggregate_chain_results
+        maps chain-level metrics back through alpha, the per-station share of the
+        chain's visits each class carries. What is traded is exactness on a
+        non-product-form model: one aggregate service law replaces the per-class
+        ones. A caller who needs the exact multiclass answer leaves the flag off
+        and pays the state space.
+        """
+        # Driven by TransformSolveMixin, so the aggregate is solved by an
+        # instance of THIS solver rather than a hard-wired SolverCTMC. Clearing
+        # the flag states that the aggregate must not be re-aggregated, rather
+        # than relying on its nchains == nclasses guard to decline.
+        cfg = dict(self.options.config or {})
+        cfg['chain_aggregation'] = False
+        cfg['transform'] = 'chains'
+        self.options.config = cfg
+        self._run_transform(sn, 'chainaggr')
+
+    def _transform_publish(self, tr, method):
+        """SolverCTMC keeps a _QRFResult, not the dict the mixin defaults to."""
+        self._result = _QRFResult(tr.Q, tr.U, tr.R, tr.T, tr.C, tr.X, tr.runtime, method)
+        # The sweep count is a reported property of an ITERATED strategy, not a
+        # diagnostic: a Jacobi coupling reaches the same fixed point at a
+        # different count, so the count is what pins the four codebases.
+        self._result.iter = tr.iter
+        self._extract_names()
+        return self._result
+
+    def _run_transform(self, sn, label=None):
+        """Run whichever transformation options.config['transform'] names.
+
+        The strategy rewrites the model into subproblems, TransformSolveMixin
+        solves each with an instance of THIS solver, and the strategy maps the
+        metrics back. LABEL overrides the suffix of the reported method name so
+        the older `chain_aggregation` entry keeps reporting `/chainaggr` and
+        stays in step with the MATLAB, JAR and C++ twins.
+        """
+        import sys
+
+        from ..base import print_solver_banner
+
+        tr = self.transform_solve(sn)
+        runtime = tr.runtime
+        method = str(self.options.method) + '/' + (label if label else tr.method)
+        self._transform_publish(tr, method)
+        if self.options.verbose:
+            py_version = "%d.%d.%d" % (sys.version_info.major, sys.version_info.minor,
+                                       sys.version_info.micro)
+            print_solver_banner(
+                "CTMC analysis [method: %s; type: %s; lang: python; env: %s] completed in %.6fs."
+                % (method, method_type('CTMC', self.options.method), py_version, runtime))
+
+    def _run_fes_aggregation(self, sn):
+        """Solve with a station subset replaced by a FLOW-EQUIVALENT SERVER.
+
+        ModelAdapter.aggregate_fes has existed in all four codebases with no
+        solver consumer at all: it was exercised by examples and tests only, so
+        nothing in the solver stack depended on it. Flow-equivalent aggregation
+        is the standard route to HIERARCHICAL DECOMPOSITION -- a subnetwork is
+        solved in isolation and enters the outer chain as a single
+        load-dependent station, which is what makes an otherwise intractable
+        state space tractable. This is that consumer.
+
+        The reduced model answers for the surviving stations directly. For a
+        collapsed station the answer is the Chandy-Herzog-Woo conditional sum
+        E[Q_i] = sum_n P(N_fes = n) * Q_i(n), with P read off the reduced
+        chain's stationary law and Q_i(n) from the isolated subnetwork.
+        Throughput needs no conditioning: flow is fixed by the routing and an
+        exact reduction leaves the chain throughput unchanged.
+        """
+        import time
+
+        import numpy as _np
+
+        from ...api.fes import fes_compute_metrics
+        from ...api.io.model_adapter import ModelAdapter
+        from ...api.pfqn.ljd import ljd_linearize
+        from ..base import print_solver_banner
+
+        t0 = time.time()
+        subset_idx = [int(i) for i in (self.options.config or {})['fes_stations']]
+        M = int(sn.nstations)
+        K = int(sn.nclasses)
+        if len(subset_idx) < 2:
+            raise ValueError(
+                "options.config['fes_stations'] must name at least two stations: "
+                "collapsing one station into a flow-equivalent server saves nothing.")
+        if len(set(subset_idx)) != len(subset_idx) or min(subset_idx) < 0 or max(subset_idx) >= M:
+            raise ValueError(
+                "options.config['fes_stations'] must be distinct 0-based station "
+                "indices in 0..%d." % (M - 1))
+        if len(subset_idx) >= M:
+            raise ValueError(
+                "options.config['fes_stations'] names every station: there is no "
+                "complement left to solve.")
+
+        stations = self.model.getStations()
+        res = ModelAdapter.aggregate_fes(self.model, [stations[i] for i in subset_idx])
+        fes_model = res['fes_model']
+        info = res['deagg_info']
+
+        sub = dict(self.options.config or {})
+        sub['fes_stations'] = None
+        inner = SolverCTMC(fes_model, config=sub, method=self.options.method,
+                           verbose=self.options.verbose)
+        Qr, Ur, _Rr, Tr = inner.getAvg()[:4]
+        Xr = _np.atleast_1d(_np.asarray(inner.getAvgSysTput(), dtype=float)).ravel()
+
+        # P(N_fes = n): the aggregate state space carries K columns per stateful
+        # node, so the FES's block is the one at its stateful index.
+        snRed = fes_model.get_struct()
+        pi = _np.asarray(inner._result.pi, dtype=float).ravel()
+        SSq = _np.asarray(inner.getStateSpaceAggr())
+        fes_ist = int(snRed.nodeToStation[int(info['fes_node_idx'])])
+        fes_isf = int(snRed.nodeToStateful[int(info['fes_node_idx'])])
+        cutoffs = _np.asarray(info['cutoffs'], dtype=int).ravel()
+        cols = list(range(fes_isf * K, fes_isf * K + K))
+        Pn = _np.zeros(int(_np.prod(cutoffs + 1)))
+        for srow in range(SSq.shape[0]):
+            nvec = SSq[srow, cols]
+            Pn[ljd_linearize(nvec, cutoffs) - 1] += pi[srow]
+
+        Qtab, Utab = fes_compute_metrics(info['isolated_model'], cutoffs, K)
+
+        QN = _np.zeros((M, K))
+        UN = _np.zeros((M, K))
+        TN = _np.zeros((M, K))
+        comp = [int(i) for i in info['complement_indices']]
+        Qr = _np.atleast_2d(_np.asarray(Qr))
+        Ur = _np.atleast_2d(_np.asarray(Ur))
+        Tr = _np.atleast_2d(_np.asarray(Tr))
+        for a, i in enumerate(comp):
+            QN[i, :] = Qr[a, :]
+            UN[i, :] = Ur[a, :]
+            TN[i, :] = Tr[a, :]
+
+        sub_idx = [int(i) for i in info['subset_indices']]
+        Qsub = _np.zeros((len(sub_idx), K))
+        Usub = _np.zeros((len(sub_idx), K))
+        for idx0 in range(len(Pn)):
+            if Pn[idx0] <= 0:
+                continue
+            Qsub += Pn[idx0] * Qtab[idx0]
+            Usub += Pn[idx0] * Utab[idx0]
+        for a, i in enumerate(sub_idx):
+            QN[i, :] = Qsub[a, :]
+            UN[i, :] = Usub[a, :]
+            # Flow through a station is fixed by the routing, so it is the FES's
+            # throughput scaled by the ratio of ORIGINAL visit ratios.
+            TN[i, :] = Tr[fes_ist, :] * self._fes_visit_ratio(sn, snRed, i, fes_ist, K)
+
+        with _np.errstate(divide='ignore', invalid='ignore'):
+            RN = _np.where(TN > 0, QN / _np.where(TN > 0, TN, 1.0), 0.0)
+
+        runtime = time.time() - t0
+        method = str(self.options.method) + '/fes'
+        self._result = _QRFResult(QN, UN, RN, TN, RN.sum(axis=0), Xr, runtime, method)
+        self._extract_names()
+        if self.options.verbose:
+            py_version = "%d.%d.%d" % (sys.version_info.major, sys.version_info.minor,
+                                       sys.version_info.micro)
+            print_solver_banner(
+                "CTMC analysis [method: %s; type: %s; lang: python; env: %s] completed in %.6fs."
+                % (method, method_type('CTMC', self.options.method), py_version, runtime))
+
+    @staticmethod
+    def _fes_visit_ratio(sn, snRed, ist, fes_ist, K):
+        """Visits at ORIGINAL station `ist` per visit to the FES, per class."""
+        import numpy as _np
+
+        out = _np.zeros(K)
+        for c in range(int(sn.nchains)):
+            V = _np.asarray(sn.visits[c]) if sn.visits[c] is not None else None
+            Vr = _np.asarray(snRed.visits[c]) if (snRed.visits and c < len(snRed.visits)
+                                                  and snRed.visits[c] is not None) else None
+            if V is None or Vr is None:
+                continue
+            isf = int(sn.stationToStateful[ist])
+            isf_fes = int(snRed.stationToStateful[fes_ist])
+            for k in range(K):
+                if isf < V.shape[0] and isf_fes < Vr.shape[0] and Vr[isf_fes, k] > 0:
+                    out[k] += V[isf, k] / Vr[isf_fes, k]
+        return out
+
     def runAnalyzer(self) -> 'SolverCTMC':
         """Run the CTMC analysis."""
-        # unbounded open SPN rejection runs BEFORE lang=java delegation, since the JAR would otherwise silently build a cutoff-truncated wrong answer instead of rejecting it.
+        # Chain mode: the generator is user-supplied, so there is no state space
+        # to generate and no performance metric to derive.
+        if self.isChainSolver():
+            self._chain_run_analyzer()
+            return self
+
+        # unbounded open SPN rejection runs BEFORE lang=java delegation; else the JAR silently builds a cutoff-truncated wrong answer instead of rejecting.
         self._reject_unbounded_open_spn()
         # lang=java delegation populates the native result container from jline.jar; imported lazily so a JVM-free install never touches this path.
         if getattr(self.options, 'lang', 'python') == 'java':
             from ..jar_dispatch import populate_java_result
             populate_java_result(self)
             return self
+        # see _kb/06-solver-catalog.md ("Python lang='cpp' opt-in C++ delegation");
+        # an absent binary is the only automatic fallback, a C++ refusal propagates.
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            from ..cpp_dispatch import LineCliNotAvailable, populate_cpp_result
+            try:
+                populate_cpp_result(self)
+                return self
+            except LineCliNotAvailable as e:
+                line_warning("SolverCTMC", "lang='cpp' requested but the C++ solver is "
+                             "unavailable (%s); falling back to lang='python'." % e)
 
         line_debug("CTMC: using lang=python", options=self.options)
+
+        # Chain aggregation, opt-in through options.config['chain_aggregation'].
+        # The state space of a multiclass model grows with the per-class
+        # populations, so collapsing every chain onto a single class is the
+        # standard way to make an otherwise intractable model solvable.
+        # ModelAdapter.aggregate_chains builds the collapsed model and
+        # sn_deaggregate_chain_results maps its metrics back, both of which
+        # existed with no solver consumer until this branch. EXACT on a
+        # product-form model, an approximation otherwise: one aggregate service
+        # law, fitted to the alpha-weighted first two moments, replaces the
+        # per-class ones.
+        # Flow-equivalent server aggregation, opt-in through
+        # options.config['fes_stations']. ModelAdapter.aggregate_fes collapses
+        # the named station subset into one load-dependent station and the
+        # collapsed stations' own metrics are recovered by conditioning on its
+        # population; see _run_fes_aggregation. Exact when the subnetwork is
+        # product-form.
+        if (self.options.config or {}).get('fes_stations'):
+            _snf = self._sn if getattr(self, '_sn', None) is not None else self._get_network_struct()
+            self._run_fes_aggregation(_snf)
+            return self
+
+        # A user-supplied transform method name runs whichever strategy it names. The
+        # inner solve carries transform='none', so a transformed submodel cannot
+        # re-enter the driver.
+        _tok = (self.options.config or {}).get('transform')
+        if _tok and str(_tok).lower() != 'none':
+            _sn = self._sn if getattr(self, '_sn', None) is not None else self._get_network_struct()
+            self._run_transform(_sn)
+            return self
+
+        if (self.options.config or {}).get('chain_aggregation'):
+            _sn = self._sn if getattr(self, '_sn', None) is not None else self._get_network_struct()
+            if int(_sn.nchains) < int(_sn.nclasses):
+                self._run_chain_aggregation(_sn)
+                return self
 
         # reject features outside the CTMC feature set rather than silently solve a mis-specified model; mirrors MATLAB runAnalyzerChecks.
         model = getattr(self, 'model', None)
@@ -307,23 +770,16 @@ class SolverCTMC(NetworkSolver):
             _has_fj = any((int(nt.value) if hasattr(nt, 'value') else int(nt)) in (fork_v, join_v)
                           for nt in sn.nodetype)
             if _has_fj:
-                if not hasattr(self.model, 'copy') or not hasattr(self.model, 'get_linked_routing_matrix'):
-                    raise RuntimeError(
-                        "Native fork-join CTMC requires a Network model (not a bare NetworkStruct).")
+                self._fjtag_require_network('CTMC')
                 if getattr(self.options, 'timespan', None) is not None:
                     ts = np.atleast_1d(self.options.timespan)
                     if ts.size and np.isfinite(ts[0]):
                         raise RuntimeError(
                             "Transient analysis of fork-join models is not supported by SolverCTMC.")
-                from ...io.model_adapter import ModelAdapter
-                Korig = int(sn.nclasses)
-                _orig_sn = sn
-                _fjmodel, fjsn, fjclassmap = ModelAdapter.fjtag(self.model)
-                self._sn = fjsn
-                sn = fjsn
-                self._fj_foldback = (fjclassmap, Korig, _orig_sn)
+                sn = self._fjtag_expand(sn)
+                self._sn = sn
 
-        # deadline/elapsed-time scheduling (EDD/EDF/SETF/FSP) needs per-job clocks a memoryless CTMC cannot represent; rejected explicitly rather than solved on a wrong phase-only space.
+        # deadline/elapsed-time scheduling (EDD/EDF/SETF/FSP) needs per-job clocks memoryless CTMC can't represent; rejected, not solved on phase-only space.
         if sn is not None and getattr(sn, 'sched', None) is not None:
             _unsupported_sched = {
                 _SchedStrategy.EDD: 'EDD', _SchedStrategy.EDF: 'EDF',
@@ -358,13 +814,13 @@ class SolverCTMC(NetworkSolver):
                             "policy (FCFS/PS/...) at queues, or SolverLDES/SolverSSA."
                         )
 
-        # FCR enforced in the CTMC handler by filtering the state space to aggregate per-region caps (blocking-before-entry); per-station setCapacity also honored.
+        # FCR enforced in CTMC handler by filtering the state space to aggregate per-region caps (blocking-before-entry); per-station setCapacity honored.
 
         # reneging models exponential patience via a RENEGE event at rate waiting*mu; PH/MAP patience needs a per-job phase dimension and is left to LDES/JMT.
 
-        # retrial models the classical exponential-delay, unlimited-attempt, single-class case; other configurations are rejected rather than silently mis-solved with no retry.
+        # retrial models the exponential-delay, unlimited-attempt, single-class case; other configs are rejected, not silently mis-solved with no retry.
 
-        # signal classes never occupy a station; capped at 0 per-station capacity (except EXT/Source) so the space does not enumerate unreachable signal-holding states. A REPLY signal is exempt: it stays as an ordinary job.
+        # signal classes never occupy a station; 0 per-station cap (except EXT/Source) omits unreachable signal-holding states. REPLY exempt: ordinary job.
         if (sn is not None and getattr(sn, 'issignal', None) is not None
                 and getattr(sn, 'classcap', None) is not None):
             from ...api.state.reply_block import is_reply_class as _is_reply_class
@@ -416,19 +872,58 @@ class SolverCTMC(NetworkSolver):
                         _lim = min(_n, _c)
                         sn.lldscaling[_ist, _n - 1] = sum(_srvrates[:_lim]) / (_mu_base * _lim)
 
-        # open SPN solved as a bounded CTMC as long as the marking is bounded (finite Place capacity or solver cutoff); only a genuinely unbounded net is rejected (see _reject_unbounded_open_spn).
+        # open SPN solved as bounded CTMC if marking bounded (finite Place cap or cutoff); only unbounded net rejected (see _reject_unbounded_open_spn).
 
-        # QRF dispatch intercepted before the CTMC state-space path; native-python QRF is not yet functional end-to-end (sn.proc holds compact dicts, not MAP matrices).
-        if self.options.method.startswith('qrf'):
-            line_debug("Using QRF method for steady-state CTMC analysis", options=self.options)
-            from ...api.solvers.ctmc.solver_ctmc_qrf_analyzer import solver_ctmc_qrf_analyzer
-            QN, UN, RN, TN, CN, XN, runtime = solver_ctmc_qrf_analyzer(self._sn, self.options)
-            # Store as a lightweight result object
-            self._result = _QRFResult(QN, UN, RN, TN, CN, XN, runtime, self.options.method)
+        # QRF (Quadratic/Linear Reduction Framework) LP-based bounds moved out of
+        # SolverCTMC into SolverBA, which is where listValidMethods stopped
+        # naming them. This entry point outlived the move: it kept dispatching
+        # to solver_ctmc_qrf_analyzer, the very analyzer SolverBA itself calls
+        # (solver_ba_analyzer:435), so it was a second front door onto one
+        # computation -- measured identical, QLen [1.7778, 0.22222] on a
+        # two-queue closed model either way. The text lives in
+        # unsupportedMethodReason, which runAnalyzerChecks asks BEFORE it
+        # reports an unlisted method; this call is what still refuses on the
+        # enableChecks = False path, which skips that gate entirely.
+        moved_qrf = self.unsupportedMethodReason(self.options.method)
+        if moved_qrf:
+            raise RuntimeError(moved_qrf)
+
+        # The 'mdd' method never builds the explicit generator, so it returns
+        # before the state-space path below and leaves the state space empty by
+        # design.
+        if self.options.method.lower() == 'mdd':
+            line_debug("Using MDD level aggregation for steady-state CTMC analysis",
+                       options=self.options)
+            import time
+            from ...api.solvers.ctmc.solver_ctmc_mdd_analyzer import solver_ctmc_mdd_analyzer
+            t0 = time.time()
+            QN, UN, RN, TN, CN, XN, mddinfo = solver_ctmc_mdd_analyzer(self._sn, self.options, self.model)
+            runtime = time.time() - t0
+            self._result = _MDDResult(QN, UN, RN, TN, CN, XN, runtime, self.options.method,
+                                      mddinfo)
             self._extract_names()
             if self.options.verbose:
                 py_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
-                print(f"CTMC analysis [method: {self.options.method}, lang: python, env: {py_version}] completed in {runtime:.6f}s.")
+                from line_solver.solvers.base import print_solver_banner
+                print_solver_banner(f"CTMC analysis [method: {self.options.method}; type: {method_type('CTMC', self.options.method)}; lang: python; env: {py_version}] completed in {runtime:.6f}s.")
+            return self
+
+        # Perfect sampling replaces enumeration: intercepted before the state space
+        # is built, so the memory guard below never applies to it.
+        if self.options.method.lower().startswith('cftp'):
+            line_debug("Using perfect sampling for steady-state CTMC analysis", options=self.options)
+            import time
+            from ...api.solvers.ctmc.solver_ctmc_cftp_analyzer import solver_ctmc_cftp_analyzer
+            t0 = time.time()
+            QN, UN, RN, TN, CN, XN, Xs, Ts, pAggr, SSq = solver_ctmc_cftp_analyzer(self._sn, self.options)
+            runtime = time.time() - t0
+            self._result = _CFTPResult(QN, UN, RN, TN, CN, XN, runtime, self.options.method,
+                                       Xs, Ts, pAggr, SSq)
+            self._extract_names()
+            if self.options.verbose:
+                py_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+                from line_solver.solvers.base import print_solver_banner
+                print_solver_banner(f"CTMC analysis [method: {self.options.method}; type: {method_type('CTMC', self.options.method)}; lang: python; env: {py_version}] completed in {runtime:.6f}s.")
             return self
 
         from ...api.solvers.ctmc.handler import (
@@ -444,6 +939,10 @@ class SolverCTMC(NetworkSolver):
             verbose=self.options.verbose,
             force=self.options.force,
             gen_method=getattr(self.options, 'gen_method', 'default'),
+            # the wall-clock budget and the state cap bound the solve only if they reach the handler.
+            timeout=getattr(self.options, 'timeout', float('inf')),
+            ctmc_max_states=getattr(self.options, 'ctmc_max_states', 3_000_000),
+            memory_safety_fraction=getattr(self.options, 'memory_safety_fraction', 0.6),
         )
 
         # Log open/mixed cutoff if applicable
@@ -463,39 +962,29 @@ class SolverCTMC(NetworkSolver):
         line_debug("CTMC: converted non-Markovian distributions to PH (nstations=%d, nclasses=%d)",
                    sn.nstations if sn is not None else 0, sn.nclasses if sn is not None else 0, options=self.options)
 
-        # Run the solver
-        self._result = solver_ctmc(sn, handler_options)
+        # Run the solver. The result is published to self._result only once the
+        # post-processing below has finalized Q/U/R/T: the setter applies the
+        # getAvg near-zero mask, which must see the folded-back matrices.
+        r = solver_ctmc(sn, handler_options)
 
-        # native fork-join: fold auxiliary sibling-class metrics back and restore the pre-augmentation struct for reporting; raw pi/space/infgen stay fjsn-based for state-probability APIs.
+        # native fork-join: fold sibling-class metrics back, restore pre-augmentation struct; raw pi/space/infgen stay fjsn-based for state-probability APIs.
         if getattr(self, '_fj_foldback', None) is not None:
-            from ...api.fjnative import sn_fj_foldback
-            from ...api.sn.getters import sn_get_arvr_from_tput, sn_pn_avg_rates
-            fjclassmap, Korig, _orig_sn = self._fj_foldback
-            r = self._result
-            r.Q, r.U, r.R, r.T, r.C, r.X = sn_fj_foldback(
-                r.Q, r.U, r.R, r.T, r.C, r.X, fjclassmap, Korig)
-            # a Place counts tokens, not firings: rescaled before arrival rates are derived so everything downstream sees one convention.
-            r.T, _, r.R = sn_pn_avg_rates(_orig_sn, r.Q, r.T, None, r.R)
-            # Join response time uses RN=QN/AN (not QN/TN): a Join sees B sibling arrivals per released job; mirrors SolverCTMC/runAnalyzer.m:166-175.
-            AN = sn_get_arvr_from_tput(_orig_sn, r.T, None)
-            AN = np.atleast_2d(np.asarray(AN, dtype=float))
-            RN = np.array(r.R, dtype=float, copy=True)
-            for ist in range(RN.shape[0]):
-                for rr in range(min(Korig, RN.shape[1])):
-                    if ist < AN.shape[0] and rr < AN.shape[1] and AN[ist, rr] > 0:
-                        RN[ist, rr] = r.Q[ist, rr] / AN[ist, rr]
-            r.R = RN
-            self._sn = _orig_sn
+            # SolverCTMC's result container carries no arrival-rate field, so
+            # the AN the lift returns is used for RN inside it and dropped here.
+            self._fjtag_lift(r)
         else:
             from ...api.sn.getters import sn_pn_avg_rates
-            r = self._result
             r.T, _, r.R = sn_pn_avg_rates(sn, r.Q, r.T, None, r.R)
+
+        self._result = r
 
         # Extract station and class names
         self._extract_names()
 
         # Compute cache hit/miss probabilities for cache nodes
         self._compute_cache_hit_miss_probs()
+        self._compute_cache_item_prob()
+        self._compute_cache_delayed_hit_qlen()
 
         # After computing actual cache probs, refresh routing and visits
         # (matches MATLAB runAnalyzer.m: setResultHitProb -> refreshChains)
@@ -506,8 +995,9 @@ class SolverCTMC(NetworkSolver):
             from ..base import method_label
             py_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
             runtime = self._result.runtime if hasattr(self._result, 'runtime') else 0.0
-            method = self._result.method if hasattr(self._result, 'method') else 'basic'
-            print(f"CTMC analysis [method: {method_label(self.options.method, method)}, lang: python, env: {py_version}] completed in {runtime:.6f}s.")
+            method = self._result.method if hasattr(self._result, 'method') else 'default'
+            from line_solver.solvers.base import print_solver_banner
+            print_solver_banner(f"CTMC analysis [method: {method_label(self.options.method, method)}; type: {method_type('CTMC', method_label(self.options.method, method))}; lang: python; env: {py_version}] completed in {runtime:.6f}s.")
 
         return self
 
@@ -540,6 +1030,208 @@ class SolverCTMC(NetworkSolver):
         else:
             self.station_names = []
             self.class_names = []
+
+    def _stationary_state_cols(self):
+        """Stationary vector, state space and the column range of each stateful node.
+
+        Returns (pi, space, state_cols) or None when the CTMC result does not
+        carry an explicit state space.
+        """
+        sn = self._sn
+        if sn is None or self._result is None:
+            return None
+        pi = getattr(self._result, 'pi', None)
+        space = getattr(self._result, 'space', None)
+        if pi is None or space is None:
+            return None
+        pi = np.ravel(np.asarray(pi, dtype=float))
+        space = np.atleast_2d(np.asarray(space, dtype=float))
+        if space.shape[0] != pi.shape[0]:
+            return None
+        widths = getattr(self._result, 'node_space_width', None)
+        if not widths:
+            return None
+        col_off = 0
+        state_cols = {}
+        for isf in range(sn.nstateful):
+            w = int(widths.get(isf, 0))
+            state_cols[isf] = (col_off, col_off + w)
+            col_off += w
+        if col_off != space.shape[1]:
+            return None
+        return pi, space, state_cols
+
+    def _compute_cache_item_prob(self):
+        """Time-stationary per-item occupancy of each cache list.
+
+        The cache-contents block of the local-variable vector holds the item
+        index resident in each cache position, so P(item i is held by list l) is
+        a state reward of the stationary distribution. This is the TIME-WEIGHTED
+        occupancy, the CTMC counterpart of the EMBEDDED (per-request) occupancy
+        the NC/MVA cache algorithms return; the two coincide only when requests
+        see time averages (PASTA).
+
+        Port of the per-item block in MATLAB solver_ctmc_analyzer.m.
+        """
+        sn = self._sn
+        got = self._stationary_state_cols()
+        if got is None:
+            return
+        pi, space, state_cols = got
+        nodes = self.model.get_nodes() if hasattr(self.model, 'get_nodes') else []
+        for ind in range(sn.nnodes):
+            if sn.nodetype[ind] != NodeType.CACHE:
+                continue
+            np_ = sn.nodeparam[ind] if sn.nodeparam is not None and ind in sn.nodeparam else None
+            if np_ is None:
+                continue
+            itemcap = np.atleast_1d(np.asarray(getattr(np_, 'itemcap', []), dtype=int)).ravel()
+            nitems = int(getattr(np_, 'nitems', 0))
+            if itemcap.size == 0 or nitems == 0:
+                continue
+            isf = int(sn.nodeToStateful[ind])
+            c0, c1 = state_cols[isf]
+            if int(getattr(np_, 'retrieval_system_capacity', 0)) > 0:
+                from ...api.state.ctmc_ssg import cache_retrieval_class_map
+                _, rc_items_all, _ = cache_retrieval_class_map(sn, ind)
+                lvw = int(np.sum(itemcap)) + nitems + len(rc_items_all)
+            else:
+                lvw = int(np.sum(itemcap))
+            lvs = (c1 - c0) - lvw  # per-class server presence width
+            if lvs < 0:
+                continue
+            itemprob = np.zeros((nitems, itemcap.size + 1))
+            off = 0
+            for l in range(itemcap.size):
+                lcols = [c0 + lvs + off + q for q in range(int(itemcap[l]))]
+                off += int(itemcap[l])
+                for i in range(nitems):
+                    inlist = np.any(space[:, lcols] == (i + 1), axis=1)
+                    itemprob[i, l + 1] = float(np.sum(pi[inlist]))
+            itemprob[:, 0] = 1.0 - np.sum(itemprob[:, 1:], axis=1)
+            np_.actualitemprob = itemprob
+            if ind < len(nodes) and hasattr(nodes[ind], 'set_result_item_prob'):
+                nodes[ind].set_result_item_prob(itemprob)
+
+    def _compute_cache_delayed_hit_qlen(self):
+        """Exact delayed-hit queue length of a retrieval-system cache.
+
+        Block A of the cache local-variable vector marks the items being fetched
+        and block B counts, per retrieval class, the secondary requests merged
+        onto those fetches, so
+
+            phi_i   = P(a fetch of item i is in flight)
+            d1_i    = E[secondary requests waiting on the fetch of item i]
+            dfull_i = d1_i + phi_i
+
+        are state rewards of the stationary distribution, hence exact.
+
+        Port of the delayed-hit block in MATLAB solver_ctmc_analyzer.m.
+        """
+        sn = self._sn
+        got = self._stationary_state_cols()
+        if got is None:
+            return
+        pi, space, state_cols = got
+        from ...api.state.ctmc_ssg import cache_retrieval_class_map
+
+        nodes = self.model.get_nodes() if hasattr(self.model, 'get_nodes') else []
+        for ind in range(sn.nnodes):
+            if sn.nodetype[ind] != NodeType.CACHE:
+                continue
+            np_ = sn.nodeparam[ind] if sn.nodeparam is not None and ind in sn.nodeparam else None
+            if np_ is None or getattr(np_, 'retrieval_system_capacity', 0) <= 0:
+                continue
+            _, rc_items, rc_orig = cache_retrieval_class_map(sn, ind)
+            nitems = int(getattr(np_, 'nitems', 0))
+            tcc = int(getattr(np_, 'total_cache_capacity', 0))
+            isf = int(sn.nodeToStateful[ind])
+            c0, c1 = state_cols[isf]
+            lvs = (c1 - c0) - (tcc + nitems + len(rc_items))
+            if lvs < 0:
+                continue
+            a0 = c0 + lvs + tcc
+            b0 = a0 + nitems
+            phi = np.zeros(nitems)
+            d1 = np.zeros(nitems)
+            for i in range(nitems):
+                phi[i] = float(np.sum(pi[space[:, a0 + i] != 0]))
+                bsel = [b0 + j for j, it in enumerate(rc_items) if it == i + 1]
+                if bsel:
+                    d1[i] = float(np.sum(pi * np.sum(space[:, bsel], axis=1)))
+            np_.delayedhitprobitem = phi
+            np_.delayedhitqlen = d1
+            np_.delayedhitqlenfull = d1 + phi
+            if ind < len(nodes) and hasattr(nodes[ind], 'set_result_delayed_hit_qlen'):
+                nodes[ind].set_result_delayed_hit_qlen(d1, d1 + phi)
+
+            # Exact delayed-hit rate per originating class. A fetch of item i completes
+            # on exactly the transitions that clear block A bit i, and each such
+            # transition releases the block-B counts of item i as delayed hits. The rate
+            # is therefore a TRANSITION reward over the generator, not a state reward:
+            # the alternative arrival-rate identity lambda_i*phi_i is only PASTA-exact.
+            Q = getattr(self._result, 'infgen', None)
+            if Q is None:
+                continue
+            Q = np.asarray(Q.todense()) if hasattr(Q, 'todense') else np.asarray(Q)
+            offdiag = Q - np.diag(np.diag(Q))
+            delayed_rate = np.zeros(sn.nclasses)
+            for j, item in enumerate(rc_items):
+                i = item - 1
+                rows = np.where((space[:, a0 + i] != 0) & (space[:, b0 + j] > 0))[0]
+                for rr in rows:
+                    nz = np.where(offdiag[rr] != 0)[0]
+                    completes = nz[space[nz, a0 + i] == 0]
+                    if completes.size == 0:
+                        continue
+                    delayed_rate[rc_orig[j]] += (pi[rr] * space[rr, b0 + j]
+                                                 * float(np.sum(offdiag[rr, completes])))
+            np_.delayedhitrate = delayed_rate
+            self._apply_delayed_hit_split(sn, ind, np_, delayed_rate, nodes)
+
+    def _apply_delayed_hit_split(self, sn, ind, np_, delayed_rate, nodes):
+        """Split the cache hit-class rate into true hits and delayed hits.
+
+        Delayed hits depart in the hit class, so the hit-class rate is
+        (true hits + delayed hits); the exact delayed rate splits it so that
+        hit + delayed + miss = 1, matching the LDES/NC report.
+        """
+        hitclass = np.atleast_1d(np.asarray(getattr(np_, 'hitclass', []), dtype=int))
+        missclass = np.atleast_1d(np.asarray(getattr(np_, 'missclass', []), dtype=int))
+        hp = getattr(np_, 'actualhitprob', None)
+        mp = getattr(np_, 'actualmissprob', None)
+        if hp is None or mp is None:
+            return
+        hp = np.array(hp, dtype=float, copy=True)
+        mp = np.array(mp, dtype=float, copy=True)
+        dp = np.zeros_like(hp)
+        depRates = getattr(self._result, 'depRates', None)
+        pi = np.ravel(np.asarray(getattr(self._result, 'pi', []), dtype=float))
+        isf = int(sn.nodeToStateful[ind])
+        for k in range(min(len(hitclass), len(hp))):
+            h, m = int(hitclass[k]), int(missclass[k])
+            if h < 0 or m < 0 or depRates is None or isf >= np.asarray(depRates).shape[1]:
+                continue
+            tn_hit = float(np.dot(pi, np.asarray(depRates)[:, isf, h]))
+            tn_miss = float(np.dot(pi, np.asarray(depRates)[:, isf, m]))
+            denom = tn_hit + tn_miss
+            if denom <= 0:
+                continue
+            d = min(delayed_rate[k] if k < len(delayed_rate) else 0.0, tn_hit)
+            hp[k] = (tn_hit - d) / denom
+            dp[k] = d / denom
+            mp[k] = tn_miss / denom
+        np_.actualhitprob = hp
+        np_.actualmissprob = mp
+        np_.actualdelayedhitprob = dp
+        if ind < len(nodes):
+            cn = nodes[ind]
+            if hasattr(cn, 'set_result_hit_prob'):
+                cn.set_result_hit_prob(hp)
+            if hasattr(cn, 'set_result_miss_prob'):
+                cn.set_result_miss_prob(mp)
+            if hasattr(cn, 'set_result_delayed_hit_prob'):
+                cn.set_result_delayed_hit_prob(dp)
 
     def _compute_cache_hit_miss_probs(self):
         """
@@ -628,7 +1320,7 @@ class SolverCTMC(NetworkSolver):
                         actual_hit_prob[orig_class] = TN_hit / TN_total
                         actual_miss_prob[orig_class] = TN_miss / TN_total
             else:
-                # sync builder reads hit/miss split directly via pi @ depRates[:,cache_sf,hit|miss]; the flat builder's station-indexed depRates lacks the cache column and falls through to the stationary computation.
+                # sync builder: hit/miss via pi @ depRates[:,cache_sf,hit|miss]; flat builder station-indexed depRates lacks cache column, falls back to stationary.
                 cache_sf = int(sn.nodeToStateful[cache_ind]) if cache_ind < len(sn.nodeToStateful) else -1
                 if depRates is not None and 0 <= cache_sf < depRates.shape[1]:
                     for orig_class in range(len(hitclass)):
@@ -690,7 +1382,7 @@ class SolverCTMC(NetworkSolver):
                 if cache_state_offset is None:
                     continue
 
-                # cache states enumerated as [cache | retrieval slots] when a retrieval system is present, matching the state-vector index built in _get_cache_stations_info.
+                # cache states enumerated as [cache | retrieval slots] with a retrieval system, matching state-vector index built in _get_cache_stations_info.
                 retrieval_capacity = int(
                     getattr(node_param, 'retrieval_system_capacity', 0))
                 tcc = int(getattr(node_param, 'total_cache_capacity', capacity))
@@ -721,7 +1413,7 @@ class SolverCTMC(NetworkSolver):
 
                     pread_k = np.atleast_1d(pread_k).flatten()
 
-                    # expected hit ratio counts both cached and currently-retrieving items as hits (delayed hits count as hits), matching the [cache | retrieval slots] layout.
+                    # expected hit ratio counts both cached and retrieving items as hits (delayed hits count), matching [cache | retrieval slots] layout.
                     expected_hit_prob = 0.0
                     for s_idx, state in enumerate(space):
                         cache_state_idx = int(state[cache_state_offset])
@@ -960,7 +1652,7 @@ class SolverCTMC(NetworkSolver):
                     if input_src_idx >= sn.rt.shape[0]:
                         continue
 
-                    # input-class routing zeroed and recombined with actual probabilities in both sn.rt and sn.rt_visits (used by sn_refresh_visits for Sink->Source folding).
+                    # input-class routing zeroed and recombined with actual probabilities in sn.rt and sn.rt_visits (used by sn_refresh_visits for Sink->Source folding).
                     for rt_matrix in [sn.rt] + ([sn.rt_visits] if hasattr(sn, 'rt_visits') and sn.rt_visits is not None and sn.rt_visits is not sn.rt else []):
                         if input_src_idx >= rt_matrix.shape[0]:
                             continue
@@ -991,8 +1683,9 @@ class SolverCTMC(NetworkSolver):
         Returns:
             pandas.DataFrame with columns: Node, JobClass, QLen, Util, RespT, ResidT, ArvR, Tput
         """
+        self._assert_not_chain_model('getAvgTable')
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         sn = self._sn
         M = self._result.Q.shape[0]  # nstations
@@ -1171,20 +1864,23 @@ class SolverCTMC(NetworkSolver):
 
     def getAvgQLen(self) -> np.ndarray:
         """Get average queue lengths (M x K)."""
+        self._assert_not_chain_model('getAvgQLen')
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         return self._result.Q.copy()
 
     def getAvgUtil(self) -> np.ndarray:
         """Get average utilizations (M x K)."""
+        self._assert_not_chain_model('getAvgUtil')
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         return self._result.U.copy()
 
     def getAvgRespT(self) -> np.ndarray:
         """Get average response times (M x K)."""
+        self._assert_not_chain_model('getAvgRespT')
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         return self._result.R.copy()
 
     def getAvgResidT(self) -> np.ndarray:
@@ -1193,8 +1889,9 @@ class SolverCTMC(NetworkSolver):
         Residence time is computed from response time using visit ratios:
         WN[ist,k] = RN[ist,k] * V[ist,k] / V[refstat,refclass]
         """
+        self._assert_not_chain_model('getAvgResidT')
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         # Compute ResidT using proper visit ratios from network structure
         if self._sn is not None and self._sn.visits:
@@ -1205,8 +1902,9 @@ class SolverCTMC(NetworkSolver):
 
     def getAvgWaitT(self) -> np.ndarray:
         """Get average waiting times (M x K)."""
+        self._assert_not_chain_model('getAvgWaitT')
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         R = self._result.R.copy()
         # W = R - S where S is service time (1/rate)
@@ -1222,14 +1920,16 @@ class SolverCTMC(NetworkSolver):
 
     def getAvgTput(self) -> np.ndarray:
         """Get average throughputs (M x K)."""
+        self._assert_not_chain_model('getAvgTput')
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         return self._result.T.copy()
 
     def getAvgArvR(self) -> np.ndarray:
         """Get average arrival rates (M x K)."""
+        self._assert_not_chain_model('getAvgArvR')
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         TN = self._result.T.copy()
         return sn_get_arvr_from_tput(self._sn, TN, TN)
 
@@ -1240,6 +1940,7 @@ class SolverCTMC(NetworkSolver):
         @NetworkSolver/getAvgSys.m): open chains sum alpha-weighted class
         residence times, closed chains apply Little's law nJobsChain/XNchain.
         """
+        self._assert_not_chain_model('getAvgSysRespT')
         CN, _ = self._computeChainMetrics()
         return CN
 
@@ -1250,6 +1951,7 @@ class SolverCTMC(NetworkSolver):
         routed back into the chain reference station (carried rate), not the
         offered/source arrival rate.
         """
+        self._assert_not_chain_model('getAvgSysTput')
         _, XN = self._computeChainMetrics()
         return XN
 
@@ -1267,8 +1969,12 @@ class SolverCTMC(NetworkSolver):
                 buffer and phase columns (matching MATLAB's nodeStateSpace format).
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         space = self._result.space.copy() if self._result.space is not None else np.array([])
+
+        if self.isChainSolver():
+            # Chain mode: one component, so there is no per-station slicing.
+            return space, [space]
 
         # Generate localStateSpace - slice state space by station using column ranges
         localStateSpace = []
@@ -1306,13 +2012,13 @@ class SolverCTMC(NetworkSolver):
     def getSteadyState(self) -> np.ndarray:
         """Get the steady-state probability distribution."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         return self._result.pi.copy() if self._result.pi is not None else np.array([])
 
     def getInfGen(self) -> np.ndarray:
         """Get the infinitesimal generator matrix."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         return self._result.infgen.copy() if self._result.infgen is not None else np.array([])
 
     # =========================================================================
@@ -1321,7 +2027,25 @@ class SolverCTMC(NetworkSolver):
 
     def getCdfRespT(self, R: Optional[np.ndarray] = None) -> List[Dict]:
         """
-        Get response time CDF using exponential approximation.
+        Response-time distribution by tagged-chain analysis.
+
+        One job of each chain is tagged, the tagged model is solved with its
+        event filtration kept, and for each station the arrival and departure
+        events OF THE TAGGED JOB split the generator into TWO maps:
+
+            A = map_normalize(Q - A1, A1)     A1: tagged job arrives at station
+            D = map_normalize(Q - D1, D1)     D1: tagged job departs station
+            pie = map_pie(A)                  the state seen ON ARRIVAL
+            F(t) = 1 - pie expm(D.D0 t) 1
+
+        The two maps are not interchangeable: pie must come from the ARRIVAL
+        map, and D0 from the DEPARTURE one.
+
+        THIS REPLACED AN EXPONENTIAL FIT that returned 1 - exp(-t/R) from the
+        mean response time, with no tagging and no filtration, and was therefore
+        exact only for an M/M/1.
+
+        Reference: matlab/src/solvers/CTMC/@SolverCTMC/getCdfRespT.m.
 
         Returns:
             List of dicts with 'station', 'class', 't', 'p' keys
@@ -1329,31 +2053,131 @@ class SolverCTMC(NetworkSolver):
         if getattr(self.options, 'lang', 'python') == 'java':
             from ..jar_dispatch import cdf_respt_via_jar
             return cdf_respt_via_jar(self)
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            from ..cpp_dispatch import cdf_respt_via_cpp, cpp_unsupported
+            if R is not None:
+                # R overrides the mean this native getter builds its exponential
+                # approximation from; the C++ integrates the tagged chain instead
+                # and has no mean to override, so a supplied R would be ignored.
+                cpp_unsupported(
+                    self, 'getCdfRespT(R=...)',
+                    "the C++ integrates the tagged chain rather than fitting an exponential to a "
+                    "mean response time, so there is no R for it to take")
+            return cdf_respt_via_cpp(self)
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
-        if R is None:
-            R = self._result.R
+        return self._taggedCdfRespT()
 
-        nstations, nclasses = R.shape
-        RD = []
+    def _taggedCdfRespT(self) -> List[Dict]:
+        """The tagged-chain response-time law. See getCdfRespT."""
+        import copy as _copy
+        from scipy.linalg import expm as _expm
+        from ...api.io.model_adapter import tag_chain
+        from ...api.mam.map_analysis import map_normalize, map_pie
+        from ...constants import EventType
+        from ...lang.sync import refresh_sync
 
-        for i in range(nstations):
-            for r in range(nclasses):
-                mean_resp_t = R[i, r]
-                if mean_resp_t <= 0:
+        sn = self._sn if self._sn is not None else self.model.get_struct()
+        njobs = np.asarray(sn.njobs, dtype=float).ravel()
+        if np.any(np.isinf(njobs)):
+            raise RuntimeError(
+                "getCdfRespT is presently supported only for closed models.")
+
+        classes = self.model.get_classes()
+        nchains = int(sn.nchains)
+        RD: List[Dict] = []
+
+        class _Chain(object):
+            """The minimal chain shape tag_chain reads: its class objects."""
+            def __init__(self, cls):
+                self.classes = cls
+
+        for ch in range(nchains):
+            inchain = [int(x) for x in np.asarray(sn.inchain[ch]).ravel()]
+            tagged_src_idx = None
+            for r in inchain:
+                if njobs[r] > 0:
+                    tagged_src_idx = r
+                    break
+            if tagged_src_idx is None:
+                continue
+
+            tagged = tag_chain(self.model,
+                               _Chain([classes[r] for r in inchain]),
+                               classes[tagged_src_idx])
+            tsolver = SolverCTMC(tagged.model, self.options)
+            Q, filt = tsolver.getGenerator()
+            Q = np.asarray(Q, dtype=float)
+            tsn = tagged.model.get_struct()
+            # sn.sync is never stored by the native struct: the CTMC handler
+            # builds it locally with refresh_sync and keeps it on the stack, so
+            # the same call is what guarantees this ordering matches Dfilt's.
+            sync = refresh_sync(tsn)
+            if sync is None or filt is None or len(filt) == 0:
+                raise RuntimeError(
+                    "getCdfRespT needs the event filtration of the tagged chain, which this "
+                    "model did not produce; the response-time law cannot be computed without it")
+
+            tagged_cls = tagged.tagged_job._index \
+                if hasattr(tagged.tagged_job, '_index') else len(tagged.model.get_classes()) - 1
+            node_to_station = np.asarray(tsn.nodeToStation).ravel()
+
+            for ist in range(int(tsn.nstations)):
+                A1 = np.zeros_like(Q)
+                D1 = np.zeros_like(Q)
+                for v, ev in enumerate(sync):
+                    if v >= len(filt) or filt[v] is None:
+                        continue
+                    Fv = np.asarray(filt[v], dtype=float)
+                    pas = getattr(ev, 'passive', None)
+                    act = getattr(ev, 'active', None)
+                    if (pas is not None and pas.event == EventType.ARV
+                            and pas.job_class == tagged_cls
+                            and 0 <= pas.node < len(node_to_station)
+                            and int(node_to_station[pas.node]) == ist):
+                        A1 = A1 + Fv
+                    if (act is not None and act.event == EventType.DEP
+                            and act.job_class == tagged_cls
+                            and 0 <= act.node < len(node_to_station)
+                            and int(node_to_station[act.node]) == ist):
+                        D1 = D1 + Fv
+                if not np.any(A1) or not np.any(D1):
                     continue
 
-                lambda_rate = 1.0 / mean_resp_t
-                quantiles = np.linspace(0.001, 0.999, 100)
-                times = -np.log(1 - quantiles) / lambda_rate
-                cdf_vals = 1 - np.exp(-lambda_rate * times)
+                A0n, A1n = map_normalize(Q - A1, A1)
+                pie = np.asarray(map_pie(A0n, A1n), dtype=float).ravel()
+                D0, _ = map_normalize(Q - D1, D1)
+
+                nz = np.abs(Q[Q != 0])
+                nz = nz[nz > 1e-8]
+                if nz.size == 0:
+                    continue
+                intervals = 100000
+                T = abs(100.0 / nz.min())
+                dT = T / intervals
+                # One matrix exponential, then propagate: the reference
+                # recomputes expm(D0*t) at each of the 100001 grid points, which
+                # is the same answer at a cost linear in the grid.
+                E = _expm(D0 * dT)
+                ones = np.ones(D0.shape[0])
+                v = pie.copy()
+                tvals = []
+                Fvals = []
+                for k in range(intervals + 1):
+                    if k > 0:
+                        v = v.dot(E)
+                    Fk = min(1.0, max(0.0, 1.0 - float(v.dot(ones))))
+                    tvals.append(k * dT)
+                    Fvals.append(Fk)
+                    if Fk > 1.0 - 1e-3:
+                        break
 
                 RD.append({
-                    'station': i + 1,
-                    'class': r + 1,
-                    't': times,
-                    'p': cdf_vals,
+                    'station': ist + 1,
+                    'class': tagged_src_idx + 1,
+                    't': np.array(tvals),
+                    'p': np.array(Fvals),
                 })
 
         return RD
@@ -1381,7 +2205,7 @@ class SolverCTMC(NetworkSolver):
         percentiles_normalized = percentiles / 100.0
 
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         R = self._result.R
         nstations, nclasses = R.shape
@@ -1481,6 +2305,24 @@ class SolverCTMC(NetworkSolver):
 
         return SSq
 
+    def _station_class_counts(self, ist0: int) -> list:
+        """Per-class job counts at station `ist0` (0-based) in the model's state."""
+        from ...api.state.marginal import toMarginal
+
+        sn = self._sn if self._sn is not None else self.model.getStruct()
+        ind = int(np.asarray(sn.stationToNode).flatten()[ist0])
+        isf = int(np.asarray(sn.nodeToStateful).flatten()[ind])
+        state_i = np.asarray(sn.state[isf], dtype=float).flatten()
+        _, nir, _, _ = toMarginal(sn, ind, state_i)
+        nir = np.asarray(nir).reshape(-1)[:int(sn.nclasses)]
+        return [int(round(v)) for v in nir]
+
+    def _system_class_counts(self) -> list:
+        """Per-class job counts at EVERY station, station-major: the system
+        state the joint getters ask about, in the shape `prob_via_jar` sends."""
+        sn = self._sn if self._sn is not None else self.model.getStruct()
+        return [self._station_class_counts(i) for i in range(int(sn.nstations))]
+
     def getProbAggr(self, ist) -> float:
         """
         Get probability of a specific per-class job distribution at a station.
@@ -1499,7 +2341,22 @@ class SolverCTMC(NetworkSolver):
         self._assert_phasetype_states('getProbAggr')
         if getattr(self.options, 'lang', 'python') == 'java':
             from ..jar_dispatch import prob_via_jar
-            return prob_via_jar(self, 'prob-aggr', ist=ist, kind='scalar')
+            # model.json carries no per-station initial state, so a delegated
+            # query is answered at the JAR's default initialization unless the
+            # cell is named explicitly (as SolverFLD.getProbAggr already does).
+            station0 = int(ist)
+            return prob_via_jar(self, 'prob-aggr', ist=station0, kind='scalar',
+                                state=self._station_class_counts(station0))
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            from ..cpp_dispatch import prob_aggr_via_cpp
+            # `-s ctmc -a prob` reports every station's marginal at the model's
+            # declared state, which the wire now carries, so the selection here
+            # is an index into the engine's answer and not a computation of it.
+            station0 = ist if isinstance(ist, (int, np.integer)) else ist.get_station_index0()
+            p = prob_aggr_via_cpp(self)['probAggr']
+            if not (0 <= int(station0) < len(p)):
+                raise ValueError("station index %r is outside 0..%d" % (station0, len(p) - 1))
+            return float(p[int(station0)])
         from ...api.state.marginal import toMarginal
 
         # Convert node object to index if needed (like MATLAB)
@@ -1507,7 +2364,7 @@ class SolverCTMC(NetworkSolver):
             ist = ist.get_station_index0()
 
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         pi = self._result.pi
         SS = self._result.space
@@ -1597,11 +2454,19 @@ class SolverCTMC(NetworkSolver):
         self._assert_phasetype_states('getProbSysAggr')
         if getattr(self.options, 'lang', 'python') == 'java':
             from ..jar_dispatch import prob_via_jar
-            return prob_via_jar(self, 'prob-sys-aggr', kind='scalar')
+            # model.json carries no per-station initial state, so the whole
+            # system state has to be named or the JAR answers about ITS default
+            # initialization -- every closed job at its reference station, which
+            # is a different question and not a numerically close one.
+            return prob_via_jar(self, 'prob-sys-aggr', kind='scalar',
+                                state=self._system_class_counts())
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            from ..cpp_dispatch import prob_aggr_via_cpp
+            return float(prob_aggr_via_cpp(self)['probSysAggr'])
         from ...api.state.marginal import toMarginal
 
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         pi = self._result.pi
         SS = self._result.space
@@ -1673,15 +2538,25 @@ class SolverCTMC(NetworkSolver):
 
         Matches MATLAB: solver_ctmc_joint.m
 
+        In chain mode this returns the stationary vector of the user-supplied
+        chain, one entry per state of the chain state space.
+
         Returns:
             float: Joint probability of the detailed system state.
         """
+        if self.isChainSolver():
+            self._ensureAvgResults()
+            return self._result.pi.copy()
         self._assert_phasetype_states('getProbSys')
         if getattr(self.options, 'lang', 'python') == 'java':
             from ..jar_dispatch import prob_via_jar
-            return prob_via_jar(self, 'prob-sys', kind='scalar')
+            return prob_via_jar(self, 'prob-sys', kind='scalar',
+                                state=self._system_class_counts())
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            from ..cpp_dispatch import prob_sys_via_cpp
+            return prob_sys_via_cpp(self)
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         pi = self._result.pi
         SS = self._result.space
@@ -1775,29 +2650,58 @@ class SolverCTMC(NetworkSolver):
 
         Matches MATLAB: solver_ctmc_marg.m
 
+        In chain mode the argument is a state of the user-supplied chain: a row
+        of its state space, or a 1-based state index when the chain carries none.
+
         Args:
             station: Station index (0-based) or node object. If None, returns steady-state.
 
         Returns:
             float: Probability that station is in the specified detailed state.
         """
+        if self.isChainSolver():
+            self._ensureAvgResults()
+            pi = self._result.pi
+            if station is None:
+                return pi.copy()
+            user_space = self._chain_matrix.stateSpace if self.isDiscreteChain() else self._chain_process.stateSpace
+            if user_space is None or np.asarray(user_space).size == 0:
+                idx = np.asarray(station).flatten()
+                if idx.size != 1 or idx[0] != round(float(idx[0])) or not (1 <= idx[0] <= len(pi)):
+                    raise RuntimeError(
+                        f"The chain carries no state space, so getProb requires a state index in 1..{len(pi)}.")
+                return float(pi[int(idx[0]) - 1])
+            user_space = np.atleast_2d(np.asarray(user_space, dtype=np.float64))
+            row = np.asarray(station, dtype=np.float64).flatten()
+            matches = np.flatnonzero(np.all(user_space == row, axis=1))
+            if matches.size == 0:
+                raise RuntimeError("The requested state is not in the chain state space.")
+            return float(pi[matches[0]])
         self._assert_phasetype_states('getProb')
         if station is None:
             if self._result is None:
-                self.runAnalyzer()
+                self._ensureAvgResults()
             return self.getSteadyState()
 
         # Convert node object to index if needed (like MATLAB)
         if not isinstance(station, (int, np.integer)):
             station = station.get_station_index0()
 
-        # lang=java has no native state space, so _result.station_col_ranges (native-only) cannot be reconstructed on that path; routed the same as getProbAggr/getProbSys.
+        # lang=java has no native state space, so _result.station_col_ranges (native-only) can't be rebuilt there; routed like getProbAggr/getProbSys.
         if getattr(self.options, 'lang', 'python') == 'java':
             from ..jar_dispatch import prob_via_jar
             return prob_via_jar(self, 'prob', ist=station, kind='scalar')
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            from ..cpp_dispatch import prob_aggr_via_cpp
+            # The DETAILED marginal, phases and buffer arrangement included; the
+            # aggregate one is `ProbAggr` in the same payload, off one solve.
+            p = prob_aggr_via_cpp(self)['prob']
+            if not (0 <= int(station) < len(p)):
+                raise ValueError("station index %r is outside 0..%d" % (station, len(p) - 1))
+            return float(p[int(station)])
 
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         pi = self._result.pi
         SS = self._result.space
@@ -1878,6 +2782,116 @@ class SolverCTMC(NetworkSolver):
 
         return infGen, eventFilt
 
+    def getAsymptoticVariance(self, f):
+        """
+        The asymptotic variance of the time-average of a reward ``f`` along a
+        sample path of this model's CTMC.
+
+        WHAT IT IS FOR. A simulation estimate of a steady-state mean has a
+        standard error that shrinks like ``sqrt(sigma^2/t)``, where sigma^2 is
+        NOT the stationary variance of f but its ASYMPTOTIC variance, which also
+        carries the autocorrelation of the path. That number is what says how
+        long a run has to be, and :func:`sim_runlength` turns it into a run
+        length for a target precision. It cannot be guessed from the stationary
+        variance: on M/M/1 the two differ by a factor that blows up like
+        ``(1-rho)^-2``.
+
+        Args:
+            f: one reward value per CTMC state, in the state order
+                :meth:`getGenerator` returns, or a callable applied to each row
+                of the state space
+
+        Returns:
+            The dict of :func:`sim_asymvar_ctmc`: ``mean``, ``variance``,
+            ``asymptoticVariance`` and the deviation vector.
+
+        References:
+            W. Whitt (1989). Planning queueing simulations. Management Science
+            35(11), 1341-1366.
+        """
+        from ...api.sim.runlength import sim_asymvar_ctmc
+        from ...api.mc.ctmc import ctmc_solve
+        infGen = np.asarray(self.getInfGen(), dtype=float)
+        if hasattr(infGen, 'toarray'):
+            infGen = infGen.toarray()
+        n = infGen.shape[0]
+        if callable(f):
+            # getStateSpace returns (global, per-station); the reward is a
+            # function of the GLOBAL state, which is the first of the two.
+            space = self.getStateSpace()
+            if isinstance(space, tuple):
+                space = space[0]
+            space = np.asarray(space)
+            if space.shape[0] != n:
+                raise RuntimeError('the state space has %d rows but the generator is %dx%d; pass '
+                                   'the reward as a vector instead' % (space.shape[0], n, n))
+            fvec = np.array([float(f(space[i, :])) for i in range(n)], dtype=float)
+        else:
+            fvec = np.asarray(f, dtype=float).ravel()
+            if fvec.size != n:
+                raise RuntimeError('the reward vector has %d entries but the generator is %dx%d'
+                                   % (fvec.size, n, n))
+        pi_ss = np.asarray(ctmc_solve(infGen), dtype=float).ravel()
+        return sim_asymvar_ctmc(infGen, fvec, pi_ss)
+
+    def getStartRate(self) -> np.ndarray:
+        """(nstations x nclasses) rate at which a class-r job BEGINS or RESUMES
+        holding a server at station i, i.e. pi*F*e over the START filtration.
+
+        At a lossless station with no in-service abandonment
+
+            getStartRate == getAvgTput + getPreemptRate
+
+        because every job starts service once per entry into a server and every
+        preemption is followed by exactly one later resume or restart. At a
+        non-preemptive station this collapses to startRate == throughput.
+
+        An accessor, not a MetricType: it adds no getAvgTable column.
+        """
+        if self._result is None or getattr(self._result, 'startRate', None) is None:
+            self._ensureAvgResults()
+        rate = getattr(self._result, 'startRate', None)
+        if rate is None:
+            raise RuntimeError("This solver run produced no START rates.")
+        return np.asarray(rate)
+
+    def getPreemptRate(self) -> np.ndarray:
+        """(nstations x nclasses) rate at which a class-r job HOLDING A SERVER
+        at station i is pushed back into the buffer. Identically zero at a
+        non-preemptive station; preempt-resume and preempt-independent stations
+        report the SAME rate, since which phase the displaced job resumes in is
+        not a property of how often it is displaced."""
+        if self._result is None or getattr(self._result, 'preemptRate', None) is None:
+            self._ensureAvgResults()
+        rate = getattr(self._result, 'preemptRate', None)
+        if rate is None:
+            raise RuntimeError("This solver run produced no PREEMPT rates.")
+        return np.asarray(rate)
+
+    def getEventFiltration(self, event_type):
+        """Filtration of a DERIVED event type, indexed [station][class]: the
+        (s,ns) entry is the rate at which the transition s -> ns carries one
+        such event at that station for that class.
+
+        EVENT_TYPE must be EventType.START or EventType.PREEMPT. The two are not
+        synchronizations: they are tags on the ARV and DEP arcs that cause them,
+        so they are NOT part of the event filtration getGenerator returns (which
+        pairs one-to-one with sn.sync and is summed as D1) and are kept here.
+        """
+        from ...constants import EventType
+        if event_type not in (EventType.START, EventType.PREEMPT):
+            raise ValueError(
+                "getEventFiltration serves the derived events only (START, PREEMPT); "
+                "%s is a synchronization and its filtration is the one getGenerator returns."
+                % str(event_type))
+        if self._result is None or getattr(self._result, 'startFilt', None) is None:
+            self._ensureAvgResults()
+        filt = (getattr(self._result, 'startFilt', None) if event_type == EventType.START
+                else getattr(self._result, 'preemptFilt', None))
+        if filt is None:
+            raise RuntimeError("This model produced no derived event filtration.")
+        return filt
+
     def getStateSpaceAggr(self) -> np.ndarray:
         """Get aggregated state space (jobs per station per class).
 
@@ -1886,7 +2900,11 @@ class SolverCTMC(NetworkSolver):
             (ist * nclasses + k) = jobs of class k at station ist (0-indexed)
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
+
+        if self.isChainSolver():
+            # Chain mode: no phases, so the aggregate space is the state space.
+            return self._result.space.copy()
 
         # Use pre-computed aggregated state space (nstates, nstations * nclasses)
         if hasattr(self._result, 'space_aggr') and self._result.space_aggr is not None:
@@ -1899,32 +2917,130 @@ class SolverCTMC(NetworkSolver):
         return space.copy()
 
     def getCdfSysRespT(self) -> List[Dict]:
-        """Get system response time CDF.
+        """
+        The SYSTEM response-time distribution: one law per CHAIN.
+
+        THE QUANTITY IS THE CYCLE TIME. The split is the tagged job's ARRIVAL AT
+        ITS OWN REFERENCE STATION, so a passage runs from one such arrival to the
+        next: the job's whole trip round the network, not its stay at one
+        station. A single MAP suffices here where getCdfRespT needs two, because
+        the arrival that starts the passage and the one that ends it are the same
+        event.
+
+        THIS REPLACED AN EXPONENTIAL FIT to the mean system response time, which
+        returned one entry per CLASS. The law is per CHAIN, as it is in MATLAB
+        (RD = cell(1, sn.nchains)) and C++, so the 'chain' key replaces 'class'.
+
+        Two constants differ from the per-station getter on purpose, matching the
+        reference: the grid is 10000 intervals rather than 100000, and the
+        truncation is at 1 - 1e-8 rather than 1e-3, because a cycle time is
+        longer and its tail matters more.
+
+        Reference: matlab/src/solvers/CTMC/@SolverCTMC/getCdfSysRespT.m.
 
         Returns:
-            List of dicts with 'class', 't', 'p' keys
+            List of dicts with 'chain', 't', 'p' keys
         """
-        if self._result is None:
-            self.runAnalyzer()
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            # The two compute the SAME quantity, one law per chain, so this
+            # delegates rather than refusing. The older refusal reason -- that
+            # the native getter fitted an exponential per class -- stopped being
+            # true when this getter was rewritten onto the tagged chain.
+            from ..cpp_dispatch import cdf_sys_respt_via_cpp
+            return cdf_sys_respt_via_cpp(self)
 
-        C = self._result.C
-        nclasses = len(C)
-        RD = []
+        from scipy.linalg import expm as _expm
+        from ...api.io.model_adapter import tag_chain
+        from ...api.mam.map_analysis import map_normalize, map_pie
+        from ...constants import EventType
+        from ...lang.sync import refresh_sync
 
-        for r in range(nclasses):
-            mean_sys_resp_t = C[r]
-            if mean_sys_resp_t <= 0:
+        sn = self._sn if self._sn is not None else self.model.get_struct()
+        njobs = np.asarray(sn.njobs, dtype=float).ravel()
+        if np.any(np.isinf(njobs)):
+            raise RuntimeError(
+                "getCdfSysRespT is presently supported only for closed models.")
+
+        classes = self.model.get_classes()
+        RD: List[Dict] = []
+
+        class _Chain(object):
+            def __init__(self, cls):
+                self.classes = cls
+
+        for ch in range(int(sn.nchains)):
+            inchain = [int(x) for x in np.asarray(sn.inchain[ch]).ravel()]
+            tagged_src_idx = None
+            for r in inchain:
+                if njobs[r] > 0:
+                    tagged_src_idx = r
+                    break
+            if tagged_src_idx is None:
                 continue
 
-            lambda_rate = 1.0 / mean_sys_resp_t
-            quantiles = np.linspace(0.001, 0.999, 100)
-            times = -np.log(1 - quantiles) / lambda_rate
-            cdf_vals = 1 - np.exp(-lambda_rate * times)
+            tagged = tag_chain(self.model,
+                               _Chain([classes[r] for r in inchain]),
+                               classes[tagged_src_idx])
+            tsolver = SolverCTMC(tagged.model, self.options)
+            Q, filt = tsolver.getGenerator()
+            Q = np.asarray(Q, dtype=float)
+            tsn = tagged.model.get_struct()
+            sync = refresh_sync(tsn)
+            if sync is None or filt is None or len(filt) == 0:
+                raise RuntimeError(
+                    "getCdfSysRespT needs the event filtration of the tagged chain, which this "
+                    "model did not produce; the system response-time law cannot be computed "
+                    "without it")
+
+            tagged_cls = tagged.tagged_job._index \
+                if hasattr(tagged.tagged_job, '_index') else len(tagged.model.get_classes()) - 1
+            # sn.refstat is a STATION index; the events carry NODE indices, so
+            # the two must be mapped rather than compared directly.
+            ref_station = int(np.asarray(tsn.refstat).ravel()[tagged_cls])
+            station_to_node = np.asarray(tsn.stationToNode).ravel()
+            ref_node = int(station_to_node[ref_station]) \
+                if 0 <= ref_station < station_to_node.size else ref_station
+
+            D1 = np.zeros_like(Q)
+            for v, ev in enumerate(sync):
+                if v >= len(filt) or filt[v] is None:
+                    continue
+                pas = getattr(ev, 'passive', None)
+                if (pas is not None and pas.event == EventType.ARV
+                        and pas.job_class == tagged_cls
+                        and pas.node == ref_node):
+                    D1 = D1 + np.asarray(filt[v], dtype=float)
+            if not np.any(D1):
+                continue
+
+            D0, D1n = map_normalize(Q - D1, D1)
+            pie = np.asarray(map_pie(D0, D1n), dtype=float).ravel()
+
+            nz = np.abs(Q[Q != 0])
+            nz = nz[nz > 1e-8]
+            if nz.size == 0:
+                continue
+            intervals = 10000
+            T = abs(100.0 / nz.min())
+            dT = T / intervals
+            E = _expm(D0 * dT)
+            ones = np.ones(D0.shape[0])
+            v = pie.copy()
+            tvals = []
+            Fvals = []
+            for k in range(intervals + 1):
+                if k > 0:
+                    v = v.dot(E)
+                Fk = min(1.0, max(0.0, 1.0 - float(v.dot(ones))))
+                tvals.append(k * dT)
+                Fvals.append(Fk)
+                if Fk > 1.0 - 1e-8:
+                    break
 
             RD.append({
-                'class': r + 1,
-                't': times,
-                'p': cdf_vals,
+                'chain': ch + 1,
+                't': np.array(tvals),
+                'p': np.array(Fvals),
             })
 
         return RD
@@ -1939,7 +3055,7 @@ class SolverCTMC(NetworkSolver):
             Expected reward
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         pi = self._result.pi
         if pi is None:
@@ -1971,7 +3087,7 @@ class SolverCTMC(NetworkSolver):
             >>> R, names = solver.getAvgReward()
         """
         if getattr(self.options, 'lang', 'python') == 'java':
-            # reward callables cannot cross the JSON round-trip to jline.jar; evaluated on a native CTMC steady-state solve instead (same distribution as the JAR's).
+            # reward callables can't cross the JSON round-trip to jline.jar; evaluated on a native CTMC steady-state solve instead (same distribution as JAR's).
             saved_lang = self.options.lang
             saved_result = self._result
             try:
@@ -1982,8 +3098,17 @@ class SolverCTMC(NetworkSolver):
             finally:
                 self.options.lang = saved_lang
                 self._result = saved_result
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            # NOT the java branch's native fallback. A reward built from a
+            # `Reward.*` template IS serialized by linemodel_save in its
+            # declarative {name, type, node, class} form, so the C++ receives the
+            # declaration and evaluates it against its own stationary law; only a
+            # bare lambda cannot cross, and the WRITER refuses that by name
+            # rather than this branch quietly solving natively.
+            from ..cpp_dispatch import avg_reward_via_cpp
+            return avg_reward_via_cpp(self)
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         return self._compute_avg_reward()
 
     def _compute_avg_reward(self) -> Tuple[np.ndarray, List[str]]:
@@ -2078,20 +3203,12 @@ class SolverCTMC(NetworkSolver):
     get_avg_reward = getAvgReward
 
     def getTranCdfRespT(self, t_max: float = 10.0, n_points: int = 100) -> List[Dict]:
-        """Get transient response time CDF approximation.
+        """Not supported, as in the reference, whose base class raises.
 
-        Uses steady-state CDF as approximation for transient behavior.
-
-        Args:
-            t_max: Maximum time horizon
-            n_points: Number of time points
-
-        Returns:
-            List of dicts with 'station', 'class', 't', 'p' keys
+        Returning the steady-state law under the transient getter's name would
+        be indistinguishable, to the caller, from a transient analysis.
         """
-        # For CTMC, transient analysis requires matrix exponential
-        # Use steady-state as approximation
-        return self.getCdfRespT()
+        raise NotImplementedError("getTranCdfRespT is not supported by SolverCTMC")
 
     # =========================================================================
     # Transient Probability Methods
@@ -2110,8 +3227,26 @@ class SolverCTMC(NetworkSolver):
             Transient probability vector at time t
         """
         self._assert_phasetype_states('getTranProb')
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            # NOT A MISSING ARM, A DIFFERENT SHAPE. `-a tranprob` returns the
+            # FULL occupancy pi(t) beside the labelled state space, while this
+            # getter returns a marginal indexed by one column of the flat space.
+            # The bucketing IS this getter's definition, so it is applied here to
+            # the C++'s law over the C++'s own enumeration -- rather than the
+            # native path being run under the C++ engine's name.
+            from ..cpp_dispatch import tran_prob_via_cpp
+            d = tran_prob_via_cpp(self, t)
+            pi_t = np.asarray(d['pit'][-1, :]).reshape(-1)
+            space = d['labels']
+            if space.size == 0 or node >= space.shape[1]:
+                return pi_t
+            col = np.asarray(space[:, node], dtype=int)
+            marginal = np.zeros(int(col.max()) + 1)
+            for s, prob in enumerate(pi_t):
+                marginal[col[s]] += prob
+            return marginal
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         from scipy.linalg import expm
 
@@ -2120,10 +3255,9 @@ class SolverCTMC(NetworkSolver):
             # Fall back to steady-state
             return self.getProb(node)
 
-        # Initial distribution (start from state 0)
-        n_states = Q.shape[0]
-        pi_0 = np.zeros(n_states)
-        pi_0[0] = 1.0
+        # pi(0) IS THE MODEL'S INITIAL STATE, located in the enumerated space;
+        # see _network_init_distribution for what seeding e_0 instead cost.
+        pi_0 = self._network_init_distribution()
 
         # Compute transient probability: π(t) = π(0) * exp(Q*t)
         pi_t = pi_0 @ expm(Q * t)
@@ -2162,15 +3296,39 @@ class SolverCTMC(NetworkSolver):
 
         Computes full system state probability at time t.
 
+        In chain mode the distribution starts from options.init_sol, or from the
+        uniform distribution when none is given; a DTMC advances one step per
+        unit of time, so t must then be a non-negative integer.
+
         Args:
             t: Time point for transient analysis
 
         Returns:
             Transient system probability vector at time t
         """
+        if self.isChainSolver():
+            self._ensureAvgResults()
+            pi0 = self._chain_init_distribution()
+            if self.isDiscreteChain():
+                if t < 0 or abs(t - round(t)) > 1e-12:
+                    raise RuntimeError(
+                        "A DTMC advances one step per unit of time, so getTranProbSys "
+                        "requires a non-negative integer number of steps.")
+                from ...api.mc import dtmc_transient
+                return dtmc_transient(self.getTransMat(), pi0, int(round(t)))[-1]
+            from ...api.mc import ctmc_transient
+            return np.asarray(ctmc_transient(self._result.infgen, pi0, float(t))).flatten()
         self._assert_phasetype_states('getTranProbSys')
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            # The occupancy vector at t, taken as the LAST row of the trajectory
+            # the C++ integrates over [0, t]: pi(t) is what this getter returns,
+            # and the horizon it was reached over is what the C++ requires to be
+            # stated.
+            from ..cpp_dispatch import tran_prob_via_cpp
+            pit = tran_prob_via_cpp(self, t)['pit']
+            return np.asarray(pit[-1, :]).reshape(-1)
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         from scipy.linalg import expm
 
@@ -2179,10 +3337,9 @@ class SolverCTMC(NetworkSolver):
             # Fall back to steady-state
             return self.getSteadyState()
 
-        # Initial distribution (start from state 0)
-        n_states = Q.shape[0]
-        pi_0 = np.zeros(n_states)
-        pi_0[0] = 1.0
+        # pi(0) IS THE MODEL'S INITIAL STATE, located in the enumerated space;
+        # see _network_init_distribution for what seeding e_0 instead cost.
+        pi_0 = self._network_init_distribution()
 
         # Compute transient probability: π(t) = π(0) * exp(Q*t)
         pi_t = pi_0 @ expm(Q * t)
@@ -2296,6 +3453,161 @@ class SolverCTMC(NetworkSolver):
             return config.symbolic_timeout
         return 300
 
+    def _resolveStateSet(self, S, n, name):
+        """Resolve a state set given as 1-based row indices or as state rows.
+
+        An unrecognised row is an error rather than a silent drop, since a
+        passage into a state that is not in the space is not a slow passage but
+        an undefined one. Mirrors the local_one helper of MATLAB
+        @SolverCTMC/getCdfFirstPassT.m.
+        """
+        from ...api.pfqn.utils import matchrow
+
+        if S is None:
+            return np.array([], dtype=int)
+        arr = np.atleast_1d(np.asarray(S))
+        if arr.size == 0:
+            return np.array([], dtype=int)
+        if arr.ndim == 1 and np.all(arr == np.round(arr)) \
+                and np.all(arr >= 1) and np.all(arr <= n):
+            # 1-based row indices, as in MATLAB; stored 0-based here
+            return np.unique(arr.astype(int)) - 1
+        arr = np.atleast_2d(arr)
+        space, _ = self.getStateSpace()
+        idx = np.zeros(arr.shape[0], dtype=int)
+        for i in range(arr.shape[0]):
+            r = matchrow(np.asarray(space), np.asarray(arr[i, :]).ravel())
+            if r <= 0:
+                raise ValueError('A state given in set %s is not in the state space.'
+                                 % name)
+            idx[i] = r - 1
+        return np.unique(idx)
+
+    def _passageInitial(self, Aidx, n):
+        """Uniform initial law on A, or None to start from the conditional
+        stationary law on the complement of B."""
+        if Aidx is None or len(Aidx) == 0:
+            return None
+        pi0 = np.zeros(n)
+        pi0[Aidx] = 1.0 / len(Aidx)
+        return pi0
+
+    def getCdfFirstPassT(self, A, B):
+        """Distribution of the FIRST PASSAGE TIME from state set A into set B.
+
+        Mirrors MATLAB ``@SolverCTMC/getCdfFirstPassT.m``. RD is an (n, 2) array
+        whose first column is F(t) and whose second is t, the column order every
+        other CDF getter in LINE uses.
+
+        A and B name states either as 1-based ROW INDICES into the state space
+        returned by getStateSpace, or as matrices of state rows, which are
+        resolved against that space. An empty A starts from the conditional
+        stationary law on the complement of B.
+
+        THIS IS NOT getCdfRespT. That getter times a tagged job between an
+        arrival at a station and its departure, through the event filtration;
+        this one times the chain between two sets of states the caller names,
+        and answers questions the filtration cannot express -- the writer cycle
+        time of a readers-writers model, the time to fill a buffer, the time to
+        leave a degraded region.
+
+        Args:
+            A: source state set, or empty for the conditional stationary law
+            B: target state set, which may not be empty
+
+        Returns:
+            (RD, out) with RD the (n, 2) [F(t), t] array and out the dict
+            returned by ctmc_passage_time, extended with tset, density, source,
+            target and runtime.
+
+        References:
+            P. G. Harrison and W. J. Knottenbelt, "Passage Time Distributions in
+            Large Markov Chains", 2002.
+        """
+        import time as _time
+        from ...api.mc.passage import ctmc_passage_time
+        from ...constants import GlobalConstants
+
+        t0 = _time.time()
+        Q = np.asarray(self.getInfGen(), dtype=float)
+        n = Q.shape[0]
+
+        Bidx = self._resolveStateSet(B, n, 'B')
+        if len(Bidx) == 0:
+            raise ValueError('The target state set B is empty: a first passage '
+                             'time into no state is undefined.')
+        Aidx = self._resolveStateSet(A, n, 'A')
+
+        config = getattr(self.options, 'config', None)
+        method = None
+        if isinstance(config, dict):
+            method = config.get('passage_method', None)
+        elif config is not None and hasattr(config, 'passage_method'):
+            method = config.passage_method
+        if not method:
+            method = 'expm'
+
+        pi0 = self._passageInitial(Aidx, n)
+
+        # The horizon is chosen the way the response-time getter chooses it:
+        # 100 events at the slowest rate in the chain.
+        nonzero = np.abs(Q[Q != 0])
+        nonzero = nonzero[nonzero > GlobalConstants.FineTol]
+        thor = abs(100.0 / np.min(nonzero))
+        tset = np.linspace(0.0, thor, 1000)
+
+        F, f, out = ctmc_passage_time(Q, pi0, Bidx, tset, method=method)
+        RD = np.column_stack([np.asarray(F).ravel(), tset])
+        out['tset'] = tset
+        out['density'] = f
+        out['source'] = Aidx
+        out['target'] = Bidx
+        out['runtime'] = _time.time() - t0
+        return RD, out
+
+    get_cdf_first_pass_t = getCdfFirstPassT
+
+    def getFirstPassTMoments(self, A, B, nmax: int = 3):
+        """Moments of order 1..nmax of the first passage time from A into B.
+
+        Mirrors MATLAB ``@SolverCTMC/getFirstPassTMoments.m``.
+
+        NO TRANSFORM INVERSION AND NO TIME GRID ARE INVOLVED. The moments come
+        from Eq. 3 of Harrison and Knottenbelt (2002) -- one linear solve per
+        order -- so they are exact and are not limited by the horizon a CDF
+        would have to be truncated at. This is the cheapest way to get the
+        variance or the skewness of a passage time in LINE.
+
+        Args:
+            A: source state set, named as in getCdfFirstPassT
+            B: target state set, which may not be empty
+            nmax: highest moment order, default 3
+
+        Returns:
+            (m, mall) with m the (nmax,) moment vector for a passage started
+            uniformly in A, and mall (nstates, nmax) one row per starting
+            state, zero on B and inf where B cannot be reached.
+        """
+        from ...api.mc.passage import ctmc_passage_moments
+
+        if nmax is None:
+            nmax = 3
+        nmax = int(nmax)
+        Q = np.asarray(self.getInfGen(), dtype=float)
+        n = Q.shape[0]
+
+        Bidx = self._resolveStateSet(B, n, 'B')
+        if len(Bidx) == 0:
+            raise ValueError('The target state set B is empty: a first passage '
+                             'time into no state is undefined.')
+        Aidx = self._resolveStateSet(A, n, 'A')
+        pi0 = self._passageInitial(Aidx, n)
+
+        mall, m = ctmc_passage_moments(Q, pi0, Bidx, nmax)
+        return m, mall
+
+    get_first_pass_t_moments = getFirstPassTMoments
+
     def getSensitivity(self, param, reward=None, method: str = 'fd'):
         """Parametric sensitivity of a steady-state reward to a scalar model
         parameter, following Trivedi and Bobbio (2017), Sec. 9.7.
@@ -2324,8 +3636,10 @@ class SolverCTMC(NetworkSolver):
                 'symbolic' solves the stationary distribution as a rational
                 function of the event rate symbols x1..xE and differentiates
                 it exactly with respect to each of them, then combines by the
-                chain rule
+                chain rule::
+
                     d(pi)/d(theta) = sum_e d(pi)/d(x_e) * d(x_e)/d(theta).
+
                 Only the rate map x_e(theta) is still differenced, and that
                 map is affine in theta in the common cases (a rate set to
                 theta, or scaled by it), where the central difference
@@ -2410,13 +3724,13 @@ class SolverCTMC(NetworkSolver):
         central difference is exact on an affine map. What is left is exact in
         those cases and no worse otherwise.
         """
-        # symbolic generator: each event filtration normalized by its own minimum positive rate, so x_e's nominal value is that rate; see _kb/06-solver-catalog.md CTMC Symbolic analysis section.
+        # symbolic gen: event filtration normalized by own min positive rate; x_e nominal = that rate; see _kb/06-solver-catalog.md CTMC Symbolic analysis.
         infGen = self.getSymbolicGenerator()[0]
         _, F = self.getGenerator()
         nEvents = len(F)
         rate0, shape0 = _eventRates(F)
 
-        # rate-map differencing uses a wide step (not the fd step) since an affine map loses no accuracy there while a tiny step is cancellation-dominated; see _kb/06-solver-catalog.md CTMC Symbolic analysis section.
+        # rate-map differencing: wide step (not fd), affine map exact, tiny step cancellation-dominated; see _kb/06-solver-catalog.md CTMC Symbolic analysis.
         hRate = max(abs(theta), 1.0) * 1e-3
         Qp, Fp = self._perturbedGenerator(param, theta + hRate)
         Qm, Fm = self._perturbedGenerator(param, theta - hRate)
@@ -2530,7 +3844,7 @@ class SolverCTMC(NetworkSolver):
             'pi' (steady-state), and 'marks' (transition markings)
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         Q = self._result.infgen
         space = self._result.space
@@ -2578,7 +3892,7 @@ class SolverCTMC(NetworkSolver):
             Dictionary with 'steady_state_reward', 'reward_per_state', etc.
         """
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         pi = self._result.pi
         space = self._result.space
@@ -2620,7 +3934,7 @@ class SolverCTMC(NetworkSolver):
             Expected reward at time t
         """
         if getattr(self.options, 'lang', 'python') == 'java':
-            # reward vector and transient distribution must share one state ordering, neither of which crosses the JSON round-trip; evaluated on a native CTMC solve instead, mirroring getAvgReward.
+            # reward vector and transient distribution share a state ordering, neither crossing the JSON round-trip; run on native CTMC solve, like getAvgReward.
             saved_lang = self.options.lang
             saved_result = self._result
             try:
@@ -2631,8 +3945,11 @@ class SolverCTMC(NetworkSolver):
             finally:
                 self.options.lang = saved_lang
                 self._result = saved_result
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            from ..cpp_dispatch import tran_reward_at_via_cpp
+            return tran_reward_at_via_cpp(self, t, reward_vector)
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         return self._compute_tran_reward(t, reward_vector)
 
     def _compute_tran_reward(self, t: float,
@@ -2700,23 +4017,24 @@ class SolverCTMC(NetworkSolver):
             finally:
                 self.options.lang = saved_lang
                 self._result = saved_result
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            from ..cpp_dispatch import tran_reward_via_cpp
+            return tran_reward_via_cpp(self, rewards_dict, name)
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
         return self._compute_tran_reward_named(name, rewards_dict)
 
-    def _compute_tran_reward_named(self, name, rewards_dict):
-        """Evaluate named model rewards over the aggregated state space and
-        integrate them against the CTMC transient distribution to produce the
-        E[r(X(t))] trajectories. Shared by get_tran_reward across
-        lang='python'/'java'."""
-        from scipy.linalg import expm
-        from ...lang.reward_state import RewardState
+    def reward_matrix_over(self, space, rewards_dict, nstates=None):
+        """The (nrewards x nstates) matrix of the declared rewards on `space`.
 
-        space = self._result.space_aggr if hasattr(self._result, 'space_aggr') \
-            and self._result.space_aggr is not None else self._result.space
-        Q = self._result.infgen
-        if space is None or len(space) == 0 or Q is None:
-            raise ValueError('No CTMC state space available for transient reward analysis.')
+        The reward map is a function of the AGGREGATE state row and of nothing
+        else, so the same evaluation serves whichever engine produced the space:
+        the native transient below reads it off `self._result`, and the
+        lang='cpp' path reads it off line-cli's `labelsAggr`. Keeping one
+        evaluation is what makes a bare callable answer identically under both,
+        since no wire format can carry the callable itself.
+        """
+        from ...lang.reward_state import RewardState
 
         sn = self._sn
 
@@ -2750,7 +4068,8 @@ class SolverCTMC(NetworkSolver):
         # Build a reward vector over the state space for each named reward
         import inspect
         names = list(rewards_dict.keys())
-        nstates = Q.shape[0]
+        if nstates is None:
+            nstates = len(space)
         Rmat = np.zeros((len(names), nstates))
         for ri, (nm, reward_fn) in enumerate(rewards_dict.items()):
             try:
@@ -2763,6 +4082,23 @@ class SolverCTMC(NetworkSolver):
                     Rmat[ri, s] = reward_fn(reward_state, sn) if takes_sn else reward_fn(reward_state)
                 except Exception:
                     pass
+        return names, Rmat
+
+    def _compute_tran_reward_named(self, name, rewards_dict):
+        """Evaluate named model rewards over the aggregated state space and
+        integrate them against the CTMC transient distribution to produce the
+        E[r(X(t))] trajectories. Shared by get_tran_reward across
+        lang='python'/'java'."""
+        from scipy.linalg import expm
+
+        space = self._result.space_aggr if hasattr(self._result, 'space_aggr') \
+            and self._result.space_aggr is not None else self._result.space
+        Q = self._result.infgen
+        if space is None or len(space) == 0 or Q is None:
+            raise ValueError('No CTMC state space available for transient reward analysis.')
+
+        nstates = Q.shape[0]
+        names, Rmat = self.reward_matrix_over(space, rewards_dict, nstates)
 
         # Time grid (mirror MATLAB: use timestep when provided, else 51 points)
         timespan = self.options.timespan
@@ -2814,34 +4150,6 @@ class SolverCTMC(NetworkSolver):
     # UNIFIED METRICS METHOD
     # =========================================================================
 
-    def getAvg(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """Get all average metrics at once.
-
-        Returns:
-            Tuple of (Q, U, R, T, A, W) where:
-            - Q: Queue lengths (M x K)
-            - U: Utilizations (M x K)
-            - R: Response times (M x K)
-            - T: Throughputs (M x K)
-            - A: Arrival rates (M x K)
-            - W: Residence times (M x K)
-        """
-        if self._result is None:
-            self.runAnalyzer()
-
-        Q = self._result.Q
-        U = self._result.U
-        R = self._result.R
-        T = self._result.T if self._result.T.ndim > 1 else np.tile(self._result.T, (Q.shape[0], 1))
-        A = T.copy()  # Arrival rate = throughput for open networks
-
-        # residence time W=R*V/V(refstat,refclass) via visit ratios, matching MATLAB sn_get_residt_from_respt; returning R alone would lose the visit multiplicity SolverLN needs.
-        if self._sn is not None and self._sn.visits:
-            W = sn_get_residt_from_respt(self._sn, R, None)
-        else:
-            W = R.copy()
-
-        return Q, U, R, T, A, W
 
     # =========================================================================
     # CHAIN-LEVEL METHODS
@@ -2886,7 +4194,7 @@ class SolverCTMC(NetworkSolver):
     def getAvgQLenChain(self) -> np.ndarray:
         """Get average queue lengths aggregated by chain."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         Q = self._result.Q
         chains = self._get_chains()
@@ -2903,7 +4211,7 @@ class SolverCTMC(NetworkSolver):
     def getAvgUtilChain(self) -> np.ndarray:
         """Get average utilizations aggregated by chain."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         U = self._result.U
         chains = self._get_chains()
@@ -2920,7 +4228,7 @@ class SolverCTMC(NetworkSolver):
     def getAvgRespTChain(self) -> np.ndarray:
         """Get average response times aggregated by chain."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         R = self._result.R
         chains = self._get_chains()
@@ -2941,7 +4249,7 @@ class SolverCTMC(NetworkSolver):
     def getAvgTputChain(self) -> np.ndarray:
         """Get average throughputs aggregated by chain."""
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         T = self._result.T
         if T.ndim == 1:
@@ -3001,7 +4309,9 @@ class SolverCTMC(NetworkSolver):
                     'Tput': TN[i, c],
                 })
 
-        return pd.DataFrame(rows)
+        # five SIGNIFICANT digits like MATLAB's table, not pandas' five decimals
+        from line_solver.indexed_table import IndexedTable
+        return IndexedTable(pd.DataFrame(rows))
 
     # =========================================================================
     # NODE-LEVEL METHODS
@@ -3023,7 +4333,7 @@ class SolverCTMC(NetworkSolver):
         from ...api.sn import NodeType
 
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         sn = self._sn
         I = sn.nnodes
@@ -3041,7 +4351,7 @@ class SolverCTMC(NetworkSolver):
             if np.any(self._result.A > 0):
                 AN = self._result.A
 
-        # Cache nodes prefer the already-computed actualhitprob from runAnalyzer's CTMC departure-rate measurement (more accurate); fall back to the cache analysis methods only if absent.
+        # Cache nodes prefer runAnalyzer's actualhitprob from its CTMC departure-rate measurement (more accurate); else fall back to cache analysis methods.
         if sn.nodeparam is not None:
             from ...api.cache import cache_prob_fpi, cache_ttl_lrua, cache_gamma_lp
             from ...lang.base import ReplacementStrategy
@@ -3128,7 +4438,7 @@ class SolverCTMC(NetworkSolver):
                                     Rcost = [[create_default_routing(h) for _ in range(nitems)] for _ in range(R)]
 
                                 # Compute gamma
-                                gamma, _, _, _ = cache_gamma_lp(lambd, Rcost)
+                                gamma, _, _, _, _ = cache_gamma_lp(lambd, Rcost)
 
                                 # Choose algorithm based on replacement strategy
                                 if replacement in (ReplacementStrategy.RR, ReplacementStrategy.FIFO):
@@ -3260,6 +4570,9 @@ class SolverCTMC(NetworkSolver):
         if getattr(self.options, 'lang', 'python') == 'java':
             from ..jar_dispatch import cache_table_via_jar
             return cache_table_via_jar(self)
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            from ..cpp_dispatch import cache_table_via_cpp
+            return cache_table_via_cpp(self)
         from ..cache_table import build_cache_avg_table
         return build_cache_avg_table(self)
 
@@ -3271,6 +4584,9 @@ class SolverCTMC(NetworkSolver):
         if getattr(self.options, 'lang', 'python') == 'java':
             from ..jar_dispatch import item_table_via_jar
             return item_table_via_jar(self)
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            from ..cpp_dispatch import item_table_via_cpp
+            return item_table_via_cpp(self)
         from ..cache_table import build_item_avg_table
         return build_item_avg_table(self)
 
@@ -3329,15 +4645,27 @@ class SolverCTMC(NetworkSolver):
         if getattr(self.options, 'lang', 'python') == 'java':
             from ..jar_dispatch import tran_avg_via_jar
             return tran_avg_via_jar(self)
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            from ..cpp_dispatch import tran_avg_via_cpp
+            # A state prior over several rows crosses INTACT: line-cli seeds
+            # `init_state_distribution`, the product of the declared per-node
+            # priors over the enumerated space, and integrates once from the
+            # mixture -- which is what the weighted sum below computes term by
+            # term. See cpp_dispatch._assert_default_state for why the sampling
+            # arms still cannot take one.
+            return tran_avg_via_cpp(self)
         from ...constants import TranResult
         from ...api.mc.ctmc import ctmc_transient
 
-        # initial state materialized from node objects here since the native struct (unlike MATLAB's getState/initDefault) does not carry sn.state/stateprior/space; otherwise every stateful node reports empty state and the analysis falls back to the (constant) stationary distribution.
+        # see _kb/06-solver-catalog.md (CTMC section, transient methods)
+        _tran_method, _fau_eps, _fau_delta = self._tran_fau_settings()
+
+        # init state from nodes; native struct lacks sn.state/stateprior/space (MATLAB: getState/initDefault); else nodes read empty, fall to stationary.
         if hasattr(self.model, 'has_init_state') and not self.model.has_init_state():
             self.model.init_default()
 
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         # Get dimensions
         M = self._sn.nstations
@@ -3363,7 +4691,7 @@ class SolverCTMC(NetworkSolver):
                 t_end = 100.0
             t_start = 0.0
 
-        # time-varying generator: rate_sched modulates the transitions of a scaled (station,class) service by m(t)=rate(t)/nominal; mirrors MATLAB solver_ctmc_transient_analyzer/local_ctmc_timevarying.
+        # time-varying: rate_sched scales (station,class) transitions by m(t)=rate(t)/nominal; MATLAB solver_ctmc_transient_analyzer/local_ctmc_timevarying.
         rate_sched = self._tran_rate_sched()
 
         if rate_sched:
@@ -3466,7 +4794,9 @@ class SolverCTMC(NetworkSolver):
 
                     # Compute transient probabilities
                     if qhat is None:
-                        pit = ctmc_transient(infgen, pi0, time_points, method='expm')
+                        pit = ctmc_transient(infgen, pi0, time_points,
+                                             method=_tran_method, epsilon=_fau_eps,
+                                             delta=_fau_delta)
                     else:
                         pit = self._ctmc_tv_propagate(infgen, pi0, time_points, qhat, mtraj)
                     if pit.ndim == 1:
@@ -3498,7 +4828,7 @@ class SolverCTMC(NetworkSolver):
             if carry:
                 break  # All combinations exhausted
 
-        # default transient start is the EMPTY state for open/mixed models (not the stationary distribution, which gives a flat curve); a pure closed model keeps the steady-state fallback since every state has equal population.
+        # default transient start = EMPTY state for open/mixed (not stationary, flat curve); closed keeps steady-state fallback (states equal population).
         if first_result:
             _njobs = np.asarray(self._sn.njobs, dtype=float) if getattr(self._sn, 'njobs', None) is not None else np.array([])
             _has_open = bool(_njobs.size and np.any(np.isinf(_njobs)))
@@ -3507,9 +4837,23 @@ class SolverCTMC(NetworkSolver):
                 pi0 = np.zeros(n_states)
                 pi0[int(np.argmin(_ssa.sum(axis=1)))] = 1.0
             else:
-                pi0 = self._result.pi.flatten()
+                _carried = getattr(self._result, 'pi0', None)
+                if _carried is not None and np.asarray(_carried).size == n_states:
+                    # seed carried through stochastic complementation by the analyzer:
+                    # a vanishing initial state maps to its first-entry distribution
+                    pi0 = np.asarray(_carried, dtype=float).flatten()
+                else:
+                    warnings.warn(
+                        "CTMC transient: the declared initial state could not be located "
+                        "in the enumerated state space, so the analysis starts from the "
+                        "STATIONARY distribution and every curve is constant. The result "
+                        "is a steady state reported as a transient, not a transient.",
+                        UserWarning)
+                    pi0 = self._result.pi.flatten()
             if qhat is None:
-                pit = ctmc_transient(infgen, pi0, time_points, method='expm')
+                pit = ctmc_transient(infgen, pi0, time_points,
+                                     method=_tran_method, epsilon=_fau_eps,
+                                     delta=_fau_delta)
             else:
                 pit = self._ctmc_tv_propagate(infgen, pi0, time_points, qhat, mtraj)
             if pit.ndim == 1:
@@ -3532,6 +4876,35 @@ class SolverCTMC(NetworkSolver):
                 TNt[ist][k] = TranResult(time_points, TNt_accum[:, ist, k])
 
         return QNt, UNt, TNt
+
+    def _tran_fau_settings(self):
+        """
+        The transient method and its tolerances from options.config.
+
+        `transient_method` is a config key rather than a solver method name
+        because it changes no stationary answer -- it is the transient path
+        only -- and because a new entry in listValidMethods is enumerated by the
+        sanity harness, which then demands a recorded baseline per method.
+
+        Returns (method, epsilon, delta) with method in {'expm', 'fau'}.
+        """
+        cfg = getattr(self.options, 'config', None)
+
+        def _read(name, default):
+            if cfg is None:
+                return default
+            val = cfg.get(name, default) if isinstance(cfg, dict) else getattr(cfg, name, default)
+            return default if val is None else val
+
+        method = str(_read('transient_method', 'ode')).lower()
+        if method not in ('ode', 'fau'):
+            raise ValueError("Unknown options.config.transient_method '%s'; "
+                             "use 'ode' or 'fau'." % method)
+        # 'ode' selects the matrix exponential this analyzer has always used;
+        # the name follows the MATLAB config, whose default branch integrates.
+        return ('fau' if method == 'fau' else 'expm',
+                float(_read('fau_epsilon', 1e-6)),
+                float(_read('fau_delta', 1e-12)))
 
     def _tran_rate_sched(self):
         """The options.config['rate_sched'] entries, or an empty list.
@@ -3586,7 +4959,7 @@ class SolverCTMC(NetworkSolver):
         if isinstance(proc_ir, (list, tuple)):
             elems = [np.atleast_2d(np.asarray(d, dtype=float)) if d is not None else None
                      for d in proc_ir]
-            # [alpha,T] layout: alpha is a probability vector and must not be rate-scaled; every other layout is entirely rate-valued. Discriminant mirrors the CTMC handler's own entry expansion.
+            # [alpha,T] layout: alpha probability vector, not rate-scaled; other layouts are rate-valued. Discriminant mirrors CTMC handler's entry expansion.
             if (len(elems) == 2 and elems[0] is not None and elems[1] is not None
                     and elems[0].shape[0] == 1
                     and elems[1].shape[0] == elems[1].shape[1]):
@@ -3644,7 +5017,7 @@ class SolverCTMC(NetworkSolver):
                 raise ValueError(
                     "rate_sched entry refers to a (station,class) outside the network.")
 
-            # probe rebuild time-scales one (station,class) service; the reachable state space is rate-independent so state ordering matches qbase; rate fields are restored afterward.
+            # probe rebuild time-scales a (station,class) service; reachable state space rate-independent so ordering matches qbase; rate fields restored after.
             saved_rate = float(sn.rates[ist, r])
             saved_proc = None
             if getattr(sn, 'proc', None) is not None and ist < len(sn.proc) \
@@ -3701,6 +5074,10 @@ class SolverCTMC(NetworkSolver):
             verbose=self.options.verbose,
             force=self.options.force,
             gen_method=getattr(self.options, 'gen_method', 'default'),
+            # the wall-clock budget and the state cap bound the solve only if they reach the handler.
+            timeout=getattr(self.options, 'timeout', float('inf')),
+            ctmc_max_states=getattr(self.options, 'ctmc_max_states', 3_000_000),
+            memory_safety_fraction=getattr(self.options, 'memory_safety_fraction', 0.6),
         )
 
     @staticmethod
@@ -3769,7 +5146,7 @@ class SolverCTMC(NetworkSolver):
                 nservers = 1
             sched = self._sn.sched[ist] if hasattr(self._sn, 'sched') else None
 
-            # a Source's unbounded population column is Inf, so its aggregated QNt/UNt are undefined (pit@Inf=NaN); mirrors the steady-state path leaving Source QN/UN at 0.
+            # Source's unbounded population column Inf, so aggregated QNt/UNt are undefined (pit@Inf=NaN); mirrors steady-state path leaving Source QN/UN at 0.
             is_source = False
             if hasattr(self._sn, 'stationToNode') and hasattr(self._sn, 'nodetype'):
                 ind = int(self._sn.stationToNode[ist])
@@ -3918,15 +5295,107 @@ class SolverCTMC(NetworkSolver):
         Raises:
             NotImplementedError: CTMC is an analytical solver
         """
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            # `--node` narrows the same walk to that node's own block and its
+            # per-class counts, which is the view MATLAB's per-node sampler
+            # returns and which the native Network path does not implement.
+            from ..cpp_dispatch import sample_path_via_cpp
+            seed = getattr(self.options, 'seed', None)
+            out = sample_path_via_cpp(self, numEvents, node=node,
+                                      seed=seed if seed and int(seed) > 0 else None)
+            return SampleResult(handle='ctmc', t=out['t'], state=out['nodeAggr'],
+                                event=[], isaggregate=True, nodeIndex=node,
+                                numEvents=len(out['state']))
         raise NotImplementedError("sampleAggr() not supported for analytical CTMC solver. Use SSA instead.")
 
     def sampleSys(self, numEvents: int = 1000) -> np.ndarray:
-        """Sample system states (not supported for CTMC).
+        """Sample system states.
+
+        In chain mode this returns a sample path of the user-supplied chain,
+        started from options.init_sol when given and from the uniform
+        distribution otherwise; a DTMC advances one unit of time per step. For a
+        Network model CTMC is an analytical solver and sampling is refused.
 
         Raises:
-            NotImplementedError: CTMC is an analytical solver
+            NotImplementedError: CTMC is an analytical solver on a Network model
         """
+        if self.isChainSolver():
+            return self._chain_sample_sys(numEvents)
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            # THE C++ HAS THIS AND THE NATIVE NETWORK PATH DOES NOT. MATLAB's
+            # @SolverCTMC/sampleSys walks the chain with an exponential clock and
+            # the port carries it (`-a sample`), so lang='cpp' answers a getter
+            # that refuses natively rather than relaying the refusal. The
+            # contract is _chain_sample_sys's: state rows, not state indices.
+            from ..cpp_dispatch import sample_path_via_cpp
+            seed = getattr(self.options, 'seed', None)
+            out = sample_path_via_cpp(self, numEvents,
+                                      seed=seed if seed and int(seed) > 0 else None)
+            return SampleResult(handle='ctmc', t=out['t'], state=out['stateRows'],
+                                event=[], isaggregate=False, numEvents=len(out['state']))
         raise NotImplementedError("sampleSys() not supported for analytical CTMC solver. Use SSA instead.")
+
+    def _chain_sample_sys(self, numEvents: int) -> SampleResult:
+        """Sample path of the user-supplied chain."""
+        from ...api.mc import ctmc_simulate, dtmc_simulate
+
+        self._ensureAvgResults()
+        space = self._result.space
+        pi0 = self._chain_init_distribution()
+        seed = getattr(self.options, 'seed', None)
+        rng = np.random.default_rng(seed)
+        init_state = int(rng.choice(len(pi0), p=pi0))
+
+        if self.isDiscreteChain():
+            states = dtmc_simulate(self.getTransMat(), init_state, numEvents - 1, seed=seed)
+            t = np.arange(numEvents, dtype=np.float64)
+        else:
+            Q = self._result.infgen
+            # The Gillespie sampler stops at max_time, so leave it unbounded and
+            # cap on the number of transitions instead.
+            sim = ctmc_simulate(Q, init_state, np.inf, max_events=numEvents, seed=seed)
+            states = np.asarray(sim['states'], dtype=int)[:numEvents]
+            times = np.asarray(sim['times'], dtype=np.float64)[:numEvents]
+            t = times
+        states = np.asarray(states, dtype=int)[:numEvents]
+        return SampleResult(handle='ctmc', t=np.asarray(t[:len(states)], dtype=np.float64),
+                            state=space[states, :], event=[], isaggregate=False,
+                            numEvents=len(states))
+
+    def _queue_stateful_index(self) -> int:
+        """Stateful index of the queue the sampled events are attributed to."""
+        sn = self._sn
+        nstateful = sn.nstateful if hasattr(sn, 'nstateful') else 1
+        if hasattr(sn, 'nodetype') and sn.nodetype is not None:
+            from ...api.sn.network_struct import NodeType
+            statefulToNode = sn.statefulToNode if hasattr(sn, 'statefulToNode') \
+                else list(range(nstateful))
+            for isf in range(nstateful):
+                node_idx = int(statefulToNode[isf]) if isf < len(statefulToNode) else isf
+                if node_idx < len(sn.nodetype) and sn.nodetype[node_idx] == NodeType.QUEUE:
+                    return isf
+        return 1  # default: the queue is the second stateful node
+
+    def _events_from_trajectory(self, times, state_rows) -> List[EventInfo]:
+        """ARV/DEP events of a sampled trajectory, from its population changes.
+
+        A step that raises the total population is an arrival and one that lowers
+        it a departure; a step that changes only a service phase is neither. A
+        Source's infinite job-slot column is excluded, or every state reads as
+        infinite population and no change is ever detected.
+        """
+        if times.size == 0 or state_rows.size == 0:
+            return []
+        pops = np.sum(np.where(np.isfinite(state_rows), state_rows, 0.0), axis=1)
+        node = self._queue_stateful_index()
+        events = []
+        for i in range(1, min(len(pops), len(times))):
+            change = pops[i] - pops[i - 1]
+            if change > 0:
+                events.append(EventInfo(node=node, jobclass=0, t=float(times[i]), event="ARV"))
+            elif change < 0:
+                events.append(EventInfo(node=node, jobclass=0, t=float(times[i]), event="DEP"))
+        return events
 
     def sampleSysAggr(self, numEvents: int = 1000) -> SampleResult:
         """Sample aggregated system states using CTMC simulation.
@@ -3948,9 +5417,38 @@ class SolverCTMC(NetworkSolver):
         """
         from ...api.mc.ctmc import ctmc_simulate
 
+        if getattr(self.options, 'lang', 'python') == 'cpp':
+            # The aggregate view of the same walk: `-a sample` reports the
+            # per-(station, class) counts along the trajectory beside the states,
+            # both off one sample path, so the two views cannot come from two
+            # different draws.
+            from ..cpp_dispatch import sample_path_via_cpp
+            seed = getattr(self.options, 'seed', None)
+            seed = seed if seed and int(seed) > 0 else None
+            # The ARV/DEP list is DERIVED from the trajectory, by the same
+            # population-change rule the native branch below applies; leaving it
+            # empty here made every caller that reads `.event` (the departure
+            # process analyses) silently see no events under lang='cpp'.
+            # `--samples` counts CTMC TRANSITIONS, while this method's contract
+            # is numEvents EVENTS, so the request is re-scaled by the observed
+            # event fraction rather than returning a short trajectory.
+            request = int(numEvents)
+            for _ in range(4):
+                out = sample_path_via_cpp(self, request, seed=seed)
+                times = np.asarray(out['t'], dtype=float).flatten()
+                events = self._events_from_trajectory(
+                    times, np.asarray(out['stateRows'], dtype=float))
+                if len(events) >= numEvents or not events:
+                    break
+                fraction = len(events) / float(max(len(times) - 1, 1))
+                request = int(numEvents / fraction * 1.2) + 100
+            return SampleResult(handle='ctmc', t=out['t'], state=out['sysAggr'],
+                                event=events[:numEvents], isaggregate=True,
+                                numEvents=min(len(events), numEvents))
+
         # Run analyzer if needed
         if self._result is None:
-            self.runAnalyzer()
+            self._ensureAvgResults()
 
         # Get generator and state space
         infGen, eventFilt = self.getGenerator()
@@ -3973,7 +5471,7 @@ class SolverCTMC(NetworkSolver):
 
         nstateful = sn.nstateful if hasattr(sn, 'nstateful') else 1
 
-        # total population per state excludes a Source's infinite job-slot column, or every state reads as infinite population and event_fraction never detects a change (sampling loop never terminates).
+        # per-state population excludes Source's infinite job-slot column; else states read infinite and event_fraction detects no change (loop hangs).
         state_populations = np.sum(np.where(np.isfinite(stateSpace), stateSpace, 0.0), axis=1)
 
         # Find which node corresponds to the queue (not source/sink)
@@ -3988,7 +5486,7 @@ class SolverCTMC(NetworkSolver):
                         queue_node_idx = isf
                         break
 
-        # fraction of CTMC transitions that are real events (vs internal phase transitions) estimated from the generator's population-changing exit rate over total exit rate, per state.
+        # fraction of CTMC transitions that are real events (vs phase transitions), from population-changing exit rate over total exit rate, per state.
         Q = np.asarray(infGen, dtype=np.float64)
         exit_rates = -np.diag(Q)
         # Build mask: population-changing transitions (arrivals/departures)
@@ -4092,9 +5590,42 @@ class SolverCTMC(NetworkSolver):
     # Introspection Methods
     # =========================================================================
 
+    def unsupportedMethodReason(self, method):
+        """The forwarding address for the QRF reduction bounds, SolverBA's now.
+
+        Asks nothing of the model, which is what lets the name gate in
+        ``runAnalyzerChecks`` call it; ``runAnalyzer`` reads the text from here
+        too, so the two cannot drift into two answers.
+        """
+        if not isinstance(method, str) or not method.startswith('qrf'):
+            return ''
+        return ("QRF bound method '%s' has moved out of SolverCTMC into the dedicated "
+                "SolverBA solver. Use SolverBA(model, '%s') (or aliases 'qr'/'lr') instead."
+                % (method, method))
+
+    unsupported_method_reason = unsupportedMethodReason
+
     def listValidMethods(self) -> List[str]:
-        """List valid solution methods."""
-        return ['default', 'basic']
+        """List valid solution methods.
+
+        'exact' is an explicit alias for the default state-space path: it pins
+        the intent at the call site so an example or test cannot be re-baselined
+        by a later change of what 'default' selects. It must stay behaviourally
+        identical to 'default'.
+
+        'gpu' NAMES A BACKEND AND FALLS BACK, which is what the reference does:
+        ctmc_solve.m wraps the gpuArray solve in a try/catch and runs the plain
+        direct solve when no GPU is present, so SolverCTMC(model,'gpu') returns
+        the exact answer on a host without one. This list used to name 'basic'
+        instead -- a spelling no other codebase knows -- so 'gpu' was refused
+        here and 'basic' was refused everywhere else.
+
+        'mdd' holds the reachable set in a decision diagram and solves K coupled
+        level-CTMCs instead of the ``|S|``-state generator; it is exact on
+        product-form models and approximate otherwise, and is restricted to
+        closed single-class networks (solver_ctmc_mdd_analyzer).
+        """
+        return ['default', 'exact', 'gpu', 'mdd', 'cftp', 'cftp.approx']
 
     @staticmethod
     def getFeatureSet() -> set:
@@ -4102,7 +5633,7 @@ class SolverCTMC(NetworkSolver):
         return {
             'Source', 'Sink',
             'ClassSwitch', 'Delay', 'DelayStation', 'Queue', 'Router',
-            'MAP', 'APH', 'MMPP2', 'MMAP', 'PH', 'Coxian', 'Erlang', 'Exp', 'HyperExp', 'ME',
+            'MAP', 'APH', 'MMPP2', 'MMAP', 'PH', 'Coxian', 'Cox2', 'Erlang', 'Exp', 'HyperExp', 'ME',
             'Det', 'Gamma', 'Weibull', 'Lognormal', 'Pareto', 'Uniform',
             'StatelessClassSwitcher', 'InfiniteServer', 'SharedServer', 'Buffer', 'Dispatcher',
             'Cache', 'CacheClassSwitcher', 'CacheRetrieval',
@@ -4113,6 +5644,11 @@ class SolverCTMC(NetworkSolver):
             'SchedStrategy_LEPT', 'SchedStrategy_FCFS',
             'SchedStrategy_HOL', 'SchedStrategy_LCFS',
             'SchedStrategy_LCFSPR', 'SchedStrategy_LCFSPRPRIO', 'SchedStrategy_FCFSPRPRIO',
+            # the rest of the preempt family: after_event_station carries one
+            # arm for all eight, so declaring three gated five reachable
+            # disciplines off at runAnalyzerChecks (matches SolverCTMC.m:244)
+            'SchedStrategy_FCFSPR', 'SchedStrategy_LCFSPI', 'SchedStrategy_FCFSPI',
+            'SchedStrategy_LCFSPIPRIO', 'SchedStrategy_FCFSPIPRIO',
             'SchedStrategy_PSPRIO', 'SchedStrategy_DPSPRIO', 'SchedStrategy_GPSPRIO',
             'SchedStrategy_LPS',
             'SchedStrategy_PAS',
@@ -4122,6 +5658,7 @@ class SolverCTMC(NetworkSolver):
             'RoutingStrategy_WRROBIN',
             'RoutingStrategy_JSQ',
             'RoutingStrategy_SQ',
+            'RoutingStrategy_SDR',
             'RoutingStrategy_PROB', 'RoutingStrategy_RAND',
             'ReplacementStrategy_RR', 'ReplacementStrategy_FIFO', 'ReplacementStrategy_SFIFO', 'ReplacementStrategy_LRU',
             'ReplacementStrategy_HLRU', 'ReplacementStrategy_CLIMB', 'ReplacementStrategy_QLRU',
@@ -4135,13 +5672,139 @@ class SolverCTMC(NetworkSolver):
             'LoadDependence',
             'ClassDependence',
             'JointDependence',
-            # FCR: handler filters the state space for DROP and augments it with a per-region FIFO for WAITQ; without this the featset gate rejected every FCR model even though the handler solves it exactly.
+            'GlobalDependence',
+            # FCR: handler filters state space for DROP, adds per-region FIFO for WAITQ; else featset gate rejects FCR models though handler solves it exactly.
             'Region',
+            # c-server stations and binding buffers are both State constructs
+            # (state_from_marginal / after_event_station): served by the
+            # explicit generator, withdrawn from cftp and mdd.
+            'MultiServer', 'FiniteCapacity',
         }
 
     def getMethodFeatureSet(self, method):
-        """All CTMC methods share the solver-level feature envelope."""
-        return SolverCTMC.getFeatureSet()
+        """Per-method feature deltas applied to the base CTMC envelope.
+
+        Four of the six methods share it; 'cftp'/'cftp.approx' and 'mdd' narrow
+        it, because neither builds the explicit generator that carries the rest
+        of the envelope. Mirrors MATLAB SolverCTMC.getMethodFeatureSet.
+        """
+        feats = set(SolverCTMC.getFeatureSet())
+        if method in ('cftp', 'cftp.approx'):
+            # PERFECT SAMPLING FROM A BALANCE FUNCTION, not from a generator:
+            # the sampler encodes the closed single-class product form of
+            # Gordon-Newell and nothing else, so every construct outside it has
+            # to leave the envelope. The class count and the station count have
+            # no registry name and are checked structurally in
+            # supportsModelMethod, against the same predicate the analyzer uses.
+            feats -= {
+                'OpenClass',
+                # Queue, Delay and Router are the only node kinds the sampler walks
+                'Source', 'Sink', 'RandomSource', 'JobSink',
+                'ClassSwitch', 'StatelessClassSwitcher',
+                'Cache', 'CacheClassSwitcher', 'CacheRetrieval',
+                'ReplacementStrategy_RR', 'ReplacementStrategy_FIFO',
+                'ReplacementStrategy_SFIFO', 'ReplacementStrategy_LRU',
+                'ReplacementStrategy_HLRU', 'ReplacementStrategy_CLIMB',
+                'ReplacementStrategy_QLRU',
+                'Fork', 'Join', 'Forker', 'Joiner',
+                'Place', 'Transition', 'Linkage', 'Enabling', 'Inhibiting',
+                'Timing', 'Firing', 'Storage',
+                # disciplines outside INF/PS/FCFS/SIRO/LCFSPR have no product form
+                'SchedStrategy_DPS', 'SchedStrategy_GPS',
+                'SchedStrategy_SEPT', 'SchedStrategy_LEPT',
+                'SchedStrategy_HOL', 'SchedStrategy_LCFS',
+                'SchedStrategy_LCFSPRPRIO', 'SchedStrategy_FCFSPRPRIO',
+                'SchedStrategy_FCFSPR', 'SchedStrategy_LCFSPI', 'SchedStrategy_FCFSPI',
+                'SchedStrategy_LCFSPIPRIO', 'SchedStrategy_FCFSPIPRIO',
+                'SchedStrategy_PSPRIO', 'SchedStrategy_DPSPRIO', 'SchedStrategy_GPSPRIO',
+                'SchedStrategy_LPS', 'SchedStrategy_PAS', 'SchedStrategy_OI',
+                'SchedStrategy_POLLING',
+                # The one-phase-per-station rule is deliberately NOT spelled as
+                # a list of distribution names. The sampler refuses
+                # sn.phases[i, 0] > 1, and a name is not a phase count: a
+                # one-phase Coxian passes and a HyperExp does not, while
+                # Det/Gamma/Pareto only acquire their phases in
+                # sn_nonmarkov_toph. supportsModelMethod asks the phase count
+                # instead, which is also what lets it name the offending station.
+                'Region',
+                'LoadDependence', 'ClassDependence', 'JointDependence', 'GlobalDependence',
+                # a state-dependent decision is not Markovian routing
+                'RoutingStrategy_RROBIN', 'RoutingStrategy_WRROBIN',
+                'RoutingStrategy_JSQ', 'RoutingStrategy_SQ', 'RoutingStrategy_SDR',
+                # the Gordon-Newell balance function has no buffer:
+                # solver_ctmc_cftp_supports refuses a finite one by name
+                'FiniteCapacity',
+            }
+        elif method == 'mdd':
+            # The decision diagram holds the MARKING of a closed network; an
+            # open stream makes it unbounded, so there is no finite diagram to
+            # hold. The single-class rule is structural (no registry name for a
+            # class count) and lives in supportsModelMethod. A stochastic Petri
+            # net keeps the Place/Transition names: spn_mdd reads the marking.
+            #
+            # A FORK-JOIN MODEL IS NEITHER of the two shapes it serves. The tag
+            # augmentation a fork needs adds one auxiliary class per branch, so
+            # the struct that reaches the analyzer is never single-class however
+            # the model was written, and the level decomposition has no meaning
+            # for a firing that does not conserve the per-chain population.
+            feats -= {'OpenClass', 'Source', 'Sink', 'RandomSource', 'JobSink',
+                      'Fork', 'Join', 'Forker', 'Joiner', 'JoinPartial',
+                      # the level decomposition reads rates, servers and phases
+                      # and no sn.cap/classcap, so a buffer would be dropped
+                      'FiniteCapacity'}
+        return feats
+
+    def supportsModelMethod(self, method):
+        """The per-method rules the feature registry has no name for, asked of
+        the SAME predicates the analyzers use so that the report and the run
+        cannot answer differently.
+
+        Three of them: the class count and the station count that 'cftp' and
+        'mdd' need (a class count is not a model feature), and the state-space
+        size that the explicit-generator methods need. The last one is why
+        'default'/'exact'/'gpu' were offered on models whose chain does not fit
+        memory -- the analyzer priced the state space and refused, and nothing
+        above it had asked. Mirrors MATLAB @SolverCTMC/supportsModelMethod.
+
+        THE TWO STRUCTURAL PREDICATES ARE ASKED BEFORE THE FEATURE GATE, which
+        is the reverse of the usual order and deliberate: each is the analyzer's
+        own assert, so it refuses a strict superset of what the per-method
+        feature deltas refuse, and its wording names the offending station or
+        class count instead of a feature. Asking the feature gate first would
+        replace 'the cftp method supports closed models only' with '(feature:
+        OpenClass)' on the very run the caller is about to make.
+        """
+        model = getattr(self, 'model', None)
+        if model is not None and hasattr(model, 'getStruct'):
+            if method in ('cftp', 'cftp.approx'):
+                from ...api.solvers.ctmc.solver_ctmc_cftp_analyzer import solver_ctmc_cftp_supports
+                ok, reason = solver_ctmc_cftp_supports(model.getStruct(), self.options)
+                if not ok:
+                    return ok, reason
+            elif method == 'mdd':
+                from ...api.solvers.ctmc.solver_ctmc_mdd_analyzer import solver_ctmc_mdd_supports
+                ok, reason = solver_ctmc_mdd_supports(model.getStruct())
+                if not ok:
+                    return ok, reason
+            # The fork-join model class, which EVERY method has to clear: the
+            # tag augmentation runs before the state space, the decision diagram
+            # and the sampler alike, so a model sn_fj_validate refuses is
+            # refused whichever name was asked for.
+            ok, reason = sn_fj_supports(model.getStruct())
+            if not ok:
+                return ok, reason
+        ok, reason = super().supportsModelMethod(method)
+        if not ok or model is None or not hasattr(model, 'getStruct'):
+            return ok, reason
+        if method not in ('cftp', 'cftp.approx', 'mdd'):
+            # The explicit state space is what the remaining methods enumerate,
+            # and ctmc_memory_gate refuses it above the host budget. Asking the
+            # same estimator here costs a combinatorial formula, not a state
+            # space, so the report stays cheap.
+            tractable, msg, _ = SolverCTMC.isStateSpaceTractable(model, self.options)
+            if not tractable:
+                return False, msg
+        return True, reason
 
     @staticmethod
     def supports(model) -> bool:
@@ -4179,11 +5842,52 @@ class SolverCTMC(NetworkSolver):
             return False
 
     @staticmethod
+    def isStateSpaceTractable(model, options=None):
+        """Whether the worst-case CTMC state space of ``model`` fits memory.
+
+        Same estimator and gate the analyzer runs, exposed so a caller (e.g.
+        SolverAUTO) can rank CTMC out before paying for state-space
+        generation. Mirrors MATLAB SolverCTMC.isStateSpaceTractable and JAR
+        SolverCTMC.isStateSpaceTractable.
+
+        Args:
+            model: the Network under analysis.
+            options: solver options carrying cutoff, force and safety fraction.
+
+        Returns:
+            (ok, message, log_nstates).
+        """
+        from ...api.solvers.ctmc.memory_guard import (
+            ctmc_memory_gate, state_space_log_size, DEFAULT_SAFETY_FRACTION)
+        from ...api.sn import sn_nonmarkov_toph
+
+        if options is None:
+            options = SolverCTMC.defaultOptions()
+        try:
+            sn = model.getStruct() if hasattr(model, 'getStruct') else model
+            # sn_nonmarkov_toph reads options as a mapping, not as the dataclass.
+            cfg = options.get('config', {}) if isinstance(options, dict) else getattr(options, 'config', {})
+            sn = sn_nonmarkov_toph(sn, {'config': cfg or {}})
+            log_nstates = state_space_log_size(sn, options)
+        except Exception as err:
+            # An estimator failure must not be read as a refusal: the analyzer
+            # runs its own gate and reports the real error.
+            return True, str(err), 0.0
+        force = bool(options.get('force', False) if isinstance(options, dict)
+                     else getattr(options, 'force', False))
+        safety = float(options.get('memory_safety_fraction', DEFAULT_SAFETY_FRACTION)
+                       if isinstance(options, dict)
+                       else getattr(options, 'memory_safety_fraction', DEFAULT_SAFETY_FRACTION))
+        ok, msg = ctmc_memory_gate(log_nstates, force=force, verbose=False,
+                                   safety_fraction=safety)
+        return ok, msg, log_nstates
+
+    @staticmethod
     def defaultOptions() -> OptionsDict:
         """Get default solver options."""
         return OptionsDict({
             'method': 'default',
-            'tol': 1e-6,
+            'tol': 1e-4,
             'cutoff': 10,
             'verbose': default_verbose(),
         })
@@ -4302,7 +6006,7 @@ class SolverCTMC(NetworkSolver):
     # Aliases
     # =========================================================================
 
-    GetAvg = getAvg
+    GetAvg = NetworkSolver.getAvg
     GetAvgTable = getAvgTable
     GetAvgQLen = getAvgQLen
     GetAvgUtil = getAvgUtil

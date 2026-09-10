@@ -1,0 +1,40 @@
+{
+  "class": {
+    "JMT": "stochastic"
+  },
+  "example": "spn_fourmodes",
+  "solvers": {
+    "JMT": [
+      {
+        "ArvR": 4.796,
+        "JobClass": "Class1",
+        "QLen": 3.4344,
+        "ResidT": 0.72032,
+        "RespT": 0.72032,
+        "Station": "P1",
+        "Tput": 4.7866,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 2.9984,
+        "JobClass": "Class1",
+        "QLen": 2.5589,
+        "ResidT": 0.86649,
+        "RespT": 0.86649,
+        "Station": "P2",
+        "Tput": 3.0006,
+        "Util": 0.0
+      },
+      {
+        "ArvR": 1.8044,
+        "JobClass": "Class1",
+        "QLen": 1.9935,
+        "ResidT": 1.1405,
+        "RespT": 1.1405,
+        "Station": "P3",
+        "Tput": 1.742,
+        "Util": 0.0
+      }
+    ]
+  }
+}

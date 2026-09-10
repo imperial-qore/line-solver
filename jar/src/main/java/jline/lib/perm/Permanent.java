@@ -83,17 +83,54 @@ public class Permanent extends PermSolver {
     }
 
     /**
-     * Finds unique columns in the matrix and their multiplicities.
+     * Log10 magnitude of the largest Ryser term for this orientation.
+     *
+     * The inclusion-exclusion expansion is largest when every column is selected,
+     * giving prod_i (sum_j a_ij). Since per(A) equals per(A transposed), the two
+     * orientations return the same value but not the same cancellation, so this
+     * is the quantity to minimize when choosing between them. Returns positive
+     * infinity when a row sum vanishes, so such an orientation is never chosen.
+     */
+    private static double ryserConditioning(Matrix m) {
+        double total = 0.0;
+        for (int i = 0; i < m.getNumRows(); i++) {
+            double lineSum = 0.0;
+            for (int j = 0; j < m.getNumCols(); j++) {
+                lineSum += Math.abs(m.get(i, j));
+            }
+            if (lineSum <= 0.0) {
+                return Double.POSITIVE_INFINITY;
+            }
+            total += Math.log10(lineSum);
+        }
+        return total;
+    }
+
+    /**
+     * Groups repeated columns of the better-conditioned orientation of the matrix.
+     *
+     * Exploiting repeated rows means expanding the transpose, which leaves the
+     * permanent unchanged but can raise the largest intermediate term by many
+     * orders of magnitude. Vandermonde-like matrices, such as the A_x of
+     * pfqn_lcfsqn_nc whose rows are geometric in the column index, lose every
+     * significant digit that way. Orientation is chosen by conditioning first
+     * and grouping applied second, even when that forgoes the grouping.
      */
     private Pair<Matrix, int[]> findUniqueColumnsWithMultiplicities() {
+        Matrix source = matrix;
+        Matrix transposed = matrix.transpose();
+        if (ryserConditioning(transposed) < ryserConditioning(matrix)) {
+            source = transposed;
+        }
+
         Map<List<Double>, Integer> columnMap = new HashMap<List<Double>, Integer>();
         List<List<Double>> uniqueColumns = new ArrayList<List<Double>>();
         List<Integer> multiplicities = new ArrayList<Integer>();
 
-        for (int j = 0; j < matrix.getNumCols(); j++) {
-            List<Double> column = new ArrayList<Double>(matrix.getNumRows());
-            for (int i = 0; i < matrix.getNumRows(); i++) {
-                column.add(matrix.get(i, j));
+        for (int j = 0; j < source.getNumCols(); j++) {
+            List<Double> column = new ArrayList<Double>(source.getNumRows());
+            for (int i = 0; i < source.getNumRows(); i++) {
+                column.add(source.get(i, j));
             }
             Integer index = columnMap.get(column);
             if (index == null) {
@@ -105,71 +142,16 @@ public class Permanent extends PermSolver {
             }
         }
 
-        boolean allOne = true;
-        for (int m : multiplicities) {
-            if (m != 1) { allOne = false; break; }
+        Matrix uniqueMatrix = new Matrix(source.getNumRows(), uniqueColumns.size());
+        for (int j = 0; j < uniqueColumns.size(); j++) {
+            List<Double> col = uniqueColumns.get(j);
+            for (int i = 0; i < col.size(); i++) {
+                uniqueMatrix.set(i, j, col.get(i));
+            }
         }
-
-        if (allOne) {
-            Map<List<Double>, Integer> rowMap = new HashMap<List<Double>, Integer>();
-            List<List<Double>> uniqueRows = new ArrayList<List<Double>>();
-            List<Integer> rowMultiplicities = new ArrayList<Integer>();
-
-            for (int i = 0; i < matrix.getNumRows(); i++) {
-                List<Double> row = new ArrayList<Double>(matrix.getNumCols());
-                for (int j = 0; j < matrix.getNumCols(); j++) {
-                    row.add(matrix.get(i, j));
-                }
-                Integer index = rowMap.get(row);
-                if (index == null) {
-                    rowMap.put(row, uniqueRows.size());
-                    uniqueRows.add(row);
-                    rowMultiplicities.add(1);
-                } else {
-                    rowMultiplicities.set(index, rowMultiplicities.get(index) + 1);
-                }
-            }
-
-            boolean anyRepeated = false;
-            for (int m : rowMultiplicities) {
-                if (m > 1) { anyRepeated = true; break; }
-            }
-
-            if (anyRepeated) {
-                Matrix transposedMatrix = new Matrix(uniqueRows.get(0).size(), uniqueRows.size());
-                for (int i = 0; i < uniqueRows.size(); i++) {
-                    List<Double> row = uniqueRows.get(i);
-                    for (int j = 0; j < row.size(); j++) {
-                        transposedMatrix.set(j, i, row.get(j));
-                    }
-                }
-                int[] arr = new int[rowMultiplicities.size()];
-                for (int k = 0; k < arr.length; k++) arr[k] = rowMultiplicities.get(k);
-                return new Pair<Matrix, int[]>(transposedMatrix, arr);
-            } else {
-                Matrix uniqueMatrix = new Matrix(matrix.getNumRows(), uniqueColumns.size());
-                for (int j = 0; j < uniqueColumns.size(); j++) {
-                    List<Double> col = uniqueColumns.get(j);
-                    for (int i = 0; i < col.size(); i++) {
-                        uniqueMatrix.set(i, j, col.get(i));
-                    }
-                }
-                int[] arr = new int[multiplicities.size()];
-                for (int k = 0; k < arr.length; k++) arr[k] = multiplicities.get(k);
-                return new Pair<Matrix, int[]>(uniqueMatrix, arr);
-            }
-        } else {
-            Matrix uniqueMatrix = new Matrix(matrix.getNumRows(), uniqueColumns.size());
-            for (int j = 0; j < uniqueColumns.size(); j++) {
-                List<Double> col = uniqueColumns.get(j);
-                for (int i = 0; i < col.size(); i++) {
-                    uniqueMatrix.set(i, j, col.get(i));
-                }
-            }
-            int[] arr = new int[multiplicities.size()];
-            for (int k = 0; k < arr.length; k++) arr[k] = multiplicities.get(k);
-            return new Pair<Matrix, int[]>(uniqueMatrix, arr);
-        }
+        int[] arr = new int[multiplicities.size()];
+        for (int k = 0; k < arr.length; k++) arr[k] = multiplicities.get(k);
+        return new Pair<Matrix, int[]>(uniqueMatrix, arr);
     }
 
     /**

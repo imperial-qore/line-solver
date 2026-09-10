@@ -288,38 +288,64 @@ def qsys_mapm1(D0: np.ndarray, D1: np.ndarray,
     return qsys_mapph1(D0, D1, beta, S)
 
 
+def _stat_gen(G: np.ndarray) -> np.ndarray:
+    """
+    Left null vector of G normalized to sum one, i.e. x G = 0 with x e = 1.
+
+    This is SMCSolver's stat(A) with A = G + I: the augmented system [G, e] is
+    solved directly, so G is NOT required to have zero row sums. The boundary
+    generators of the Gaver-Jacobs-Latouche recursion below do not have them.
+    """
+    G = np.atleast_2d(np.asarray(G, dtype=float))
+    n = G.shape[0]
+    B = np.hstack([G, np.ones((n, 1))])
+    y = np.zeros(n + 1)
+    y[n] = 1.0
+    x, _, _, _ = np.linalg.lstsq(B.T, y, rcond=None)
+    return x
+
+
 def qsys_mapmc(D0: np.ndarray, D1: np.ndarray,
-               mu: float, c: int) -> QueueResult:
+               mu: float, c: int, max_num_comp: int = 1000) -> QueueResult:
     """
     Analyze a MAP/M/c queue.
+
+    The chain is a level-dependent QBD in the number in system: above level c
+    the c servers are all busy, so the blocks repeat as A0 = c*mu*I (down),
+    A1 = D0 - c*mu*I (local), A2 = D1 (up) and the tail is matrix-geometric in
+    R. Below level c the departure rate is level dependent and the boundary
+    vector comes from the Gaver, Jacobs and Latouche backward recursion. The
+    waiting time is phase type; its generator is the fixed point of a Sylvester
+    equation, and the representation is the time reversal with respect to the
+    arrival-epoch vector.
 
     Args:
         D0: MAP hidden transition matrix
         D1: MAP observable transition matrix
         mu: Service rate per server
         c: Number of servers
+        max_num_comp: Cap on the number of queue length probabilities
 
     Returns:
         QueueResult with queue performance metrics
 
     References:
+        Perez, Van Velthoven, Van Houdt, Q-MAM, ValueTools 2008 (Q_CT_MAP_M_C)
+        Gaver, Jacobs, Latouche, Adv. Appl. Probab. 16:715-731, 1984
+        Asmussen, Moller, Queueing Systems 37(1):9-29, 2001
         Original MATLAB: matlab/src/api/qsys/qsys_mapmc.m
     """
+    from scipy.linalg import solve_sylvester
+    from ..mam.qbd import qbd_R_logred
+
     D0 = np.atleast_2d(np.asarray(D0, dtype=float))
     D1 = np.atleast_2d(np.asarray(D1, dtype=float))
+    c = int(c)
+    m = D0.shape[0]
+    eye_m = np.eye(m)
 
-    # Compute arrival rate
-    D = D0 + D1
-    n = D.shape[0]
-    pi = np.ones(n) / n
-    for _ in range(1000):
-        pi_new = pi @ np.linalg.matrix_power(np.eye(n) + D / 100, 100)
-        pi_new /= np.sum(pi_new)
-        if np.linalg.norm(pi_new - pi) < 1e-12:
-            break
-        pi = pi_new
-
-    lambda_val = pi @ D1 @ np.ones(n)
+    theta = _stat_gen(D0 + D1)
+    lambda_val = float(theta @ D1 @ np.ones(m))
     rho = lambda_val / (c * mu)
 
     if rho >= 1:
@@ -331,25 +357,82 @@ def qsys_mapmc(D0: np.ndarray, D1: np.ndarray,
             analyzer="native:unstable"
         )
 
-    # Use M/M/c approximation with MAP arrival rate
-    from . import qsys_mmk
-    try:
-        W, Q, rho_hat = qsys_mmk(lambda_val, mu, c)
-        meanQL = Q
-        mean_service = 1.0 / mu
-        meanST = W
-        meanWT = max(0, meanST - mean_service)
-    except:
-        meanQL = rho / (1 - rho)
-        meanWT = rho / (lambda_val * (1 - rho))
-        meanST = meanWT + 1.0 / mu
+    A0 = c * mu * eye_m
+    A1 = D0 - c * mu * eye_m
+    A2 = D1
+    R = qbd_R_logred(A0, A1, A2)
+
+    # Gaver-Jacobs-Latouche boundary levels 0..c-1
+    piGJL = np.zeros(c * m)
+    if c > 1:
+        invC = {}
+        invC[1] = np.linalg.inv(-D0)
+        for i in range(2, c):
+            invC[i] = np.linalg.inv(-D0 + (i - 1) * mu * eye_m
+                                    - (i - 1) * mu * invC[i - 1] @ D1)
+        piGJL[(c - 1) * m:c * m] = _stat_gen(
+            D0 - (c - 1) * mu * eye_m + R @ A0 + (c - 1) * mu * invC[c - 1] @ D1)
+        for i in range(c - 1, 0, -1):
+            piGJL[(i - 1) * m:i * m] = piGJL[i * m:(i + 1) * m] @ (i * mu * invC[i])
+    else:
+        piGJL[0:m] = _stat_gen(D0 + R @ A0)
+
+    ImR_inv = np.linalg.inv(eye_m - R)
+    norm_k = (np.sum(piGJL[0:(c - 1) * m])
+              + float(piGJL[(c - 1) * m:c * m] @ ImR_inv @ np.ones(m)))
+    piGJL = piGJL / norm_k
+
+    # Matrix-geometric tail from level c upwards
+    piC = [piGJL[(c - 1) * m:c * m].copy()]
+    sumpi = float(np.sum(piGJL))
+    while sumpi < 1 - 1e-10 and len(piC) < 1 + max_num_comp - c:
+        piC.append(piC[-1] @ R)
+        sumpi += float(np.sum(piC[-1]))
+    piC = np.asarray(piC)
+
+    ql = np.concatenate([
+        np.array([np.sum(piGJL[i * m:(i + 1) * m]) for i in range(c - 1)]),
+        np.sum(piC, axis=1)])
+    meanQL = float(np.sum(np.arange(len(ql)) * ql))
+
+    # Waiting time: phase-type, via the Sylvester fixed point
+    piT = np.concatenate([piGJL[0:(c - 1) * m], piC.reshape(-1)])
+    d1e = D1 @ np.ones(m)
+    denom = float(np.sum(piT.reshape(-1, m) @ d1e))
+    prob_zero = float(np.sum(piGJL.reshape(-1, m) @ d1e)) / denom
+
+    temp = piGJL[(c - 1) * m:c * m] @ ImR_inv @ D1
+    alpha_vec = temp / np.sum(temp)
+
+    Tnew = -A0.copy()
+    for _ in range(1000):
+        Told = Tnew
+        # Tnew * L + L * D0 = -I
+        Lmat = solve_sylvester(Tnew, D0, -eye_m)
+        Tnew = -A0 + Lmat @ D1 * (mu * c)
+        if np.max(np.abs(Told - Tnew)) <= 1e-10:
+            break
+
+    rho_vec = np.sum(Tnew + A0, axis=1)
+    nonz = np.flatnonzero(alpha_vec > 0)
+    theta_red = alpha_vec[nonz]
+    Tred = Tnew[np.ix_(nonz, nonz)]
+    Smat = np.diag(1.0 / theta_red) @ Tred.T @ np.diag(theta_red)
+    wait_alpha = alpha_vec * rho_vec / float(alpha_vec @ rho_vec)
+    wait_alpha = (1 - prob_zero) * wait_alpha[nonz]
+
+    # E[W] = alpha(-S)^-1 e. wait_alpha is DEFECTIVE by design: its deficit is
+    # the atom at zero, i.e. the probability of finding a free server.
+    meanWT = float(wait_alpha @ np.linalg.solve(-Smat, np.ones(len(nonz))))
+    meanST = meanWT + 1.0 / mu
 
     return QueueResult(
         meanQueueLength=meanQL,
         meanWaitingTime=meanWT,
         meanSojournTime=meanST,
         utilization=rho,
-        analyzer="native:MMc_approx"
+        queueLengthDist=ql,
+        analyzer="Q-MAM:MAP/M/%d" % c
     )
 
 

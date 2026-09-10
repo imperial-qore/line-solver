@@ -120,7 +120,7 @@ public class SolverSSA extends NetworkSolver {
                 "RoutingStrategy_WRROBIN",
                 "RoutingStrategy_JSQ",
                 "RoutingStrategy_SQ",
-                "RoutingStrategy_RL",
+                "RoutingStrategy_SDR",
                 "RoutingStrategy_PROB", "RoutingStrategy_RAND",
                 "ReplacementStrategy_RR", "ReplacementStrategy_FIFO", "ReplacementStrategy_SFIFO", "ReplacementStrategy_LRU",
                 "ReplacementStrategy_HLRU", "ReplacementStrategy_CLIMB", "ReplacementStrategy_QLRU",
@@ -130,7 +130,10 @@ public class SolverSSA extends NetworkSolver {
                 "SignalBatchRemoval", "SignalRemovalPolicy",
                 "Fork", "Join", "Forker", "Joiner",
                 "Balking", "Reneging", "Retrial",
-                "LoadDependence", "ClassDependence", "JointDependence"
+                "LoadDependence", "ClassDependence", "JointDependence", "GlobalDependence",
+                // c-server stations and binding buffers: the serial engine walks
+                // the same State arms SolverCTMC declares and the NRM honours both
+                "MultiServer", "FiniteCapacity"
         });
         return featSupported;
     }
@@ -169,8 +172,13 @@ public class SolverSSA extends NetworkSolver {
 
     public List<String> listValidMethods(Network model) {
 
-        // Implementation of listValidMethods
-        return Arrays.asList("default", "ssa", "serial", "ssa.parallel", "parallel", "nrm");
+        // SolverSSA.m:55 verbatim. 'ssa' is the reference's ALIAS for the serial
+        // engine and 'para' the short spelling of 'parallel'; both used to be
+        // wrong here -- 'ssa' and 'ssa.parallel' were advertised while
+        // Solver_ssa_analyzer dispatched neither (they fell to its "Unknown
+        // analysis method" arm), and 'para', which it does dispatch, was not
+        // advertised at all.
+        return Arrays.asList("default", "ssa", "serial", "para", "parallel", "nrm");
     }
 
     @Override
@@ -204,19 +212,14 @@ public class SolverSSA extends NetworkSolver {
                 break;
             }
         }
-        NetworkStruct snOrig = this.sn;
-        int KorigFJ = this.sn.nclasses;
-        Matrix fjclassmap = null;
+        jline.solvers.tr.FJTagTransform.Context fjctx = null;
         if (isFJ) {
             if ("parallel".equals(options.method) || "ssa.parallel".equals(options.method) || "nrm".equals(options.method)) {
                 jline.io.InputOutput.line_warning(jline.io.InputOutput.mfilename(new Object(){}), "The " + options.method + " method does not support fork-join models, switching to the serial method.");
             }
             options.method = "serial";
-            jline.lang.ModelAdapter.FJTagResult fjRet = jline.lang.ModelAdapter.fjtag(this.model);
-            this.sn = fjRet.fjsn;
-            fjclassmap = fjRet.fjclassmap;
-            line_debug(options.verbose, String.format("SSA: fork-join tag augmentation, %d classes (%d auxiliary), %d fork firings",
-                    this.sn.nclasses, this.sn.nclasses - KorigFJ, this.sn.fjsync.size()));
+            fjctx = jline.solvers.tr.FJTagTransform.expand(this.model, this.sn, options.verbose, "SSA");
+            this.sn = fjctx.fjsn;
         }
 
         String method = options.method;
@@ -227,8 +230,9 @@ public class SolverSSA extends NetworkSolver {
         try {
             result = solver_ssa_analyzer(this.sn, this.options, this);
         } catch (RuntimeException e) {
-            e.printStackTrace();
-            throw new RuntimeException("SSA simulation failed.", e);
+            // carry the reason in the message: the getAvg boundary reports only
+            // getMessage(), so a bare wrapper hides why the model was refused
+            throw new RuntimeException("SSA simulation failed: " + e.getMessage(), e);
         }
         
         // Validate that the analyzer returned valid results
@@ -256,6 +260,9 @@ public class SolverSSA extends NetworkSolver {
                     CacheNodeParam _cnp = (CacheNodeParam) sn.nodeparam.get(statefulNode);
                     cache.setResultHitProb(_cnp.actualhitprob);
                     cache.setResultMissProb(_cnp.actualmissprob);
+                    if (_cnp.actualdelayedhitprob != null) {
+                        cache.setResultDelayedHitProb(_cnp.actualdelayedhitprob);
+                    }
                     cache.setResultResidT(_cnp.actualresidt);
                     this.model.refreshChains(true);
                 }
@@ -269,30 +276,18 @@ public class SolverSSA extends NetworkSolver {
         if (isFJ) {
             // fold the auxiliary sibling classes back into the original
             // classes and report the Join per-sibling waiting time
-            jline.lang.ModelAdapter.fjFoldback(QN, UN, RN, TN, fjclassmap, KorigFJ);
-            QN = Matrix.extract(QN, 0, QN.getNumRows(), 0, KorigFJ);
-            UN = Matrix.extract(UN, 0, UN.getNumRows(), 0, KorigFJ);
-            RN = Matrix.extract(RN, 0, RN.getNumRows(), 0, KorigFJ);
-            TN = Matrix.extract(TN, 0, TN.getNumRows(), 0, KorigFJ);
-            CN = Matrix.extract(CN, 0, CN.getNumRows(), 0, Math.min(KorigFJ, CN.getNumCols()));
-            XN = Matrix.extract(XN, 0, XN.getNumRows(), 0, Math.min(KorigFJ, XN.getNumCols()));
-            // see _kb/06-solver-catalog.md for rationale
-            jline.api.sn.SnPnAvgRates.snPnAvgRates(snOrig, QN, TN, null, RN);
-            AN = snGetArvRFromTput(snOrig, TN, T);
-            // Join stations report the per-sibling waiting time (JMT convention)
-            for (int ind = 0; ind < snOrig.nnodes; ind++) {
-                if (snOrig.nodetype.get(ind) == jline.lang.constant.NodeType.Join) {
-                    int ist = (int) snOrig.nodeToStation.get(ind);
-                    for (int r = 0; r < KorigFJ; r++) {
-                        if (AN.get(ist, r) > 0) {
-                            RN.set(ist, r, QN.get(ist, r) / AN.get(ist, r));
-                        }
-                    }
-                }
-            }
+            jline.solvers.tr.FJTagTransform.Lifted lifted =
+                    jline.solvers.tr.FJTagTransform.lift(fjctx, QN, UN, RN, TN, CN, XN, T);
+            QN = lifted.QN;
+            UN = lifted.UN;
+            RN = lifted.RN;
+            TN = lifted.TN;
+            CN = lifted.CN;
+            XN = lifted.XN;
+            AN = lifted.AN;
             // restore the original struct: downstream consumers (tables,
             // handles) index the folded matrices by the original classes
-            this.sn = snOrig;
+            this.sn = fjctx.snOrig;
         } else {
             Matrix rtRefreshed = sn.rt;
             sn.rt = rtOrig;
@@ -321,7 +316,68 @@ public class SolverSSA extends NetworkSolver {
             ((SSAResult) this.result).TNCI = ssaResult.TNCI;
             ((SSAResult) this.result).ANCI = ssaResult.ANCI;
             ((SSAResult) this.result).WNCI = ssaResult.WNCI;
+            // Derived START/PREEMPT rates and the per-step tags. Kept in their
+            // own fields: they are annotations on transitions the engine already
+            // fires, not metrics, so they add no getAvgTable column.
+            ((SSAResult) this.result).startRate = ssaResult.startRate;
+            ((SSAResult) this.result).preemptRate = ssaResult.preemptRate;
+            ((SSAResult) this.result).tranTags = ssaResult.tranTags;
+            // HOW LONG THE RUN SHOULD HAVE BEEN, when the caller asked. The
+            // batch-means half-width at the run's confidence level pins the
+            // ASYMPTOTIC variance, which is the quantity a run length is planned
+            // from -- not the stationary variance, which on M/M/1 differs from
+            // it by a factor blowing up like (1-rho)^-2.
+            this.result.runLengthPlan = planRunLength(options, this.result.QN,
+                    ssaResult.QNCI, options.samples);
         }
+    }
+
+    /**
+     * runAnalyzer with its checked exceptions wrapped: the two accessors below
+     * are plain getters and a caller of getStartRate has no separate recovery
+     * for a failure of the analyzer itself.
+     */
+    private void runAnalyzerChecked() {
+        try {
+            this.runAnalyzer();
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /**
+     * (stations x classes) rate at which a class-r job BEGINS or RESUMES
+     * holding a server at station i, estimated over the simulated path exactly
+     * as the throughput is.
+     *
+     * <p>At a lossless station with no in-service abandonment
+     * getStartRate == getAvgTput + getPreemptRate up to simulation error; the
+     * CTMC accessor of the same name reports the exact value.</p>
+     */
+    public Matrix getStartRate() {
+        if (this.result == null || ((SSAResult) this.result).startRate == null) {
+            runAnalyzerChecked();
+        }
+        Matrix startRate = ((SSAResult) this.result).startRate;
+        if (startRate == null) {
+            throw new RuntimeException("This solver run produced no START rates.");
+        }
+        return startRate;
+    }
+
+    /**
+     * (stations x classes) rate at which a class-r job HOLDING A SERVER at
+     * station i is pushed back into the buffer. Zero at a non-preemptive station.
+     */
+    public Matrix getPreemptRate() {
+        if (this.result == null || ((SSAResult) this.result).preemptRate == null) {
+            runAnalyzerChecked();
+        }
+        Matrix preemptRate = ((SSAResult) this.result).preemptRate;
+        if (preemptRate == null) {
+            throw new RuntimeException("This solver run produced no PREEMPT rates.");
+        }
+        return preemptRate;
     }
 
     // set the number of threads for para SolverSSA
@@ -345,6 +401,47 @@ public class SolverSSA extends NetworkSolver {
     @Override
     public boolean isStochasticMethod(String method) {
         return true;
+    }
+
+    /**
+     * The fork-join model class, which EVERY SSA method has to clear.
+     *
+     * <p>runAnalyzer tag-augments a fork-join model through
+     * {@code ModelAdapter.fjtag}, whose first act is {@code fjValidate}, so a
+     * model that validator refuses is refused whichever method was asked for.
+     * The feature set cannot state it -- Fork and Join are declared, and the
+     * rules are about how they are WIRED (the pairing, the join strategy, the
+     * tasks per link, whether an open class is routed through the fork) -- so it
+     * is structural, and it is the validator's own body of rules rather than a
+     * copy of them.</p>
+     *
+     * <p>Without it the report offered every ssa.* row on a fork-join model
+     * whose Join names no fork, and each one then threw; SolverCTMC gates on the
+     * same predicate for the same reason.</p>
+     *
+     * @param method the concrete method name
+     * @return empty string if supported, else the offending reason
+     */
+    @Override
+    public String supportsModelMethod(String method) {
+        String reason = super.supportsModelMethod(method);
+        if (!reason.isEmpty() || this.model == null) {
+            return reason;
+        }
+        String fj = jline.lang.ModelAdapter.fjSupportsReason(this.model.getStruct(false));
+        if (!fj.isEmpty()) {
+            return fj;
+        }
+        // 'nrm' is the one SSA method with a model class of its own, and the test
+        // for it already existed: the dispatch consulted it to PREFER the NRM
+        // while nothing consulted it to decide whether the name could be OFFERED,
+        // so the report listed ssa.nrm on every model and an explicit request then
+        // raised from Solver_ssa_analyzer_nrm.
+        if ("nrm".equalsIgnoreCase(method) || "ssa.nrm".equalsIgnoreCase(method)) {
+            return jline.solvers.ssa.analyzers.Solver_ssa_analyzer.nrmMethodRefusal(
+                    this.model.getStruct(false));
+        }
+        return "";
     }
 
     /**
@@ -1462,6 +1559,32 @@ public class SolverSSA extends NetworkSolver {
     }
 
     /**
+     * Aggregated probability for a node state, addressed by NODE INDEX.
+     *
+     * <p>The Node-typed pair above is the implementation; this overload is what
+     * {@link jline.solvers.NetworkSolver#getProbAggr(int, Matrix)} declares and
+     * what every index-addressed caller reaches, LineCLI's {@code -a prob-aggr}
+     * included. Without it the base class answered "getProbAggr is not supported
+     * by SolverSSA" for a solver that implements it, and a delegating client read
+     * that refusal as a missing feature.</p>
+     *
+     * @param node  the node index
+     * @param state per-class job counts, or null for the node's own state
+     * @return scalar probability in [0,1]
+     */
+    @Override
+    public ProbabilityResult getProbAggr(int node, Matrix state) {
+        try {
+            if (node < 0 || node >= this.model.getNumberOfNodes()) {
+                return new ProbabilityResult(Double.NaN);
+            }
+            return new ProbabilityResult(getProbAggr(this.model.getNodes().get(node), state));
+        } catch (Exception e) {
+            return new ProbabilityResult(Double.NaN);
+        }
+    }
+
+    /**
      * Get system-wide probability for the current system state
      *
      * @return Probability of being in the system state
@@ -1660,17 +1783,23 @@ public class SolverSSA extends NetworkSolver {
                 jline.lang.state.State.StateMarginalStatistics marginal = 
                     jline.lang.state.ToMarginal.toMarginal(sn, ind, stateRow, null, null, null, null, null);
                 
-                // Extract nir values (marginal state)
+                // Extract nir values (marginal state). toMarginal returns nir as a
+                // 1xK ROW, so (r,0) reads past the end for every class after the
+                // first and the exception surfaced as a NaN probability.
                 for (int r = 0; r < sn.nclasses; r++) {
-                    nir.set(isf, r, marginal.nir.get(r, 0));
+                    nir.set(isf, r, marginal.nir.get(0, r));
                 }
             }
             
-            // Transpose nir and flatten to row vector (following MATLAB: nir = nir'; nir(:)')
+            // Transpose nir and flatten to row vector (following MATLAB: nir = nir'; nir(:)').
+            // Column-major over the TRANSPOSE walks the classes of one stateful node
+            // before moving to the next, which is also the order the sampled columns
+            // are concatenated in above. Walking stateful-first instead compares the
+            // target against a permutation of itself, so no row ever matched.
             Matrix targetState = new Matrix(1, sn.nstateful * sn.nclasses);
             int idx = 0;
-            for (int r = 0; r < sn.nclasses; r++) {
-                for (int isf = 0; isf < sn.nstateful; isf++) {
+            for (int isf = 0; isf < sn.nstateful; isf++) {
+                for (int r = 0; r < sn.nclasses; r++) {
                     targetState.set(0, idx++, nir.get(isf, r));
                 }
             }
@@ -1753,4 +1882,67 @@ public class SolverSSA extends NetworkSolver {
         return new SolverOptions(SolverType.SSA);
     }
 
+
+    /**
+     * The run length the caller would need for the precision they asked for.
+     *
+     * <p>Null unless {@code options.config.runLengthPlan} is set; it is either a
+     * Double target RELATIVE precision or a map with keys {@code relprecision}
+     * and {@code confidence}.
+     *
+     * @param options     the solver options
+     * @param means       the measured means
+     * @param ciHalfWidth their confidence-interval half-widths
+     * @param samplesUsed the run length those half-widths came from
+     * @return the plan, or null
+     * @see jline.api.sim.SimRunlength#sim_runlength_plan
+     */
+    public static java.util.Map<String, Object> planRunLength(SolverOptions options, Matrix means,
+                                                              Matrix ciHalfWidth,
+                                                              double samplesUsed) {
+        if (options == null || options.config == null || options.config.runLengthPlan == null
+                || means == null || ciHalfWidth == null || ciHalfWidth.isEmpty()
+                || samplesUsed <= 0) {
+            return null;
+        }
+        double relPrecision = 0.05;
+        double confidence = 0.95;
+        Object spec = options.config.runLengthPlan;
+        if (spec instanceof java.util.Map) {
+            java.util.Map<?, ?> m = (java.util.Map<?, ?>) spec;
+            if (m.get("relprecision") instanceof Number) {
+                relPrecision = ((Number) m.get("relprecision")).doubleValue();
+            }
+            if (m.get("confidence") instanceof Number) {
+                confidence = ((Number) m.get("confidence")).doubleValue();
+            }
+        } else if (spec instanceof Number && ((Number) spec).doubleValue() > 0) {
+            relPrecision = ((Number) spec).doubleValue();
+        }
+        return jline.api.sim.SimRunlength.sim_runlength_plan(means, ciHalfWidth, samplesUsed,
+                relPrecision, confidence);
+    }
+
+    /**
+     * Not available: SolverSSA does not record per-job response times.
+     *
+     * <p>A simulator must report what it measured. The inherited NetworkSolver
+     * implementation fabricates an exponential law with the right mean, which
+     * carries no information about the tail and would be indistinguishable, to
+     * the caller, from a measured distribution. SSA samples state trajectories,
+     * not per-job sojourn times, so there is nothing to build an empirical CDF
+     * from -- the reference {@code @SolverSSA/getCdfRespT.m} refuses by name
+     * and so does this port.</p>
+     */
+    @Override
+    public jline.io.Ret.DistributionResult getCdfRespT() {
+        return getCdfRespT((AvgHandle) null);
+    }
+
+    @Override
+    public jline.io.Ret.DistributionResult getCdfRespT(AvgHandle R) {
+        throw new RuntimeException("SolverSSA does not record per-job response times, so it cannot "
+                + "return an empirical response time CDF. Use SolverJMT for a measured CDF, or "
+                + "getPerctRespT(...,'forktail') for the analytical fork-join tail.");
+    }
 }

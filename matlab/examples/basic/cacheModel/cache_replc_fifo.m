@@ -28,11 +28,11 @@ P{missClass, jobClass}(cacheNode, delay) =  1.0;
 
 model.link(P);
 
-solver{1} = CTMC(model,'keep',false);
+solver{1} = CTMC(model, 'exact','keep',false);
 AvgTable{1} = solver{1}.getAvgNodeTable; AvgTable{1}
 
 model.reset;
-solver{2} = SSA(model,'samples',1e4,'verbose',true,'method','serial','seed',23000);
+solver{2} = SSA(model,'samples',1e5,'verbose',true,'method','serial','seed',23000);
 AvgTable{2} = solver{2}.getAvgNodeTable; AvgTable{2}
 
 solver{3} = MVA(model);

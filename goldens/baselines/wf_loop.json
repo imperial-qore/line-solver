@@ -1,0 +1,20 @@
+{
+  "class": {
+    "WF": "deterministic"
+  },
+  "example": "wf_loop",
+  "solvers": {
+    "WF": [
+      {
+        "JobClass": "mean",
+        "QLen": 7.5,
+        "Station": "PH"
+      },
+      {
+        "JobClass": "phases",
+        "QLen": 3.0,
+        "Station": "PH"
+      }
+    ]
+  }
+}

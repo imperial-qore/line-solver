@@ -43,6 +43,9 @@ class SolverLNActivityGraphTest extends SolverLNTestBase {
     public void test_buildModel_2() throws Exception {
         LNOptions lnoptions = new LNOptions();
         lnoptions.verbose = VerboseLevel.SILENT;
+        // the routing encoding, which this golden was recorded under; the 'srvn'
+        // alias now resolves to 'srvn.ph' on this model, covered by the test below
+        lnoptions.method = "srvn.cs";
         SolverOptions mvaoptions = new MVAOptions();
         mvaoptions.verbose = VerboseLevel.SILENT;
         SolverLN solver = new SolverLN(SolverLNTestFixtures.buildModel2(), SolverType.MVA, lnoptions, mvaoptions);
@@ -59,25 +62,83 @@ class SolverLNActivityGraphTest extends SolverLNTestBase {
     }
 
     @Test
+    public void test_buildModel_2_srvnph() throws Exception {
+        LNOptions lnoptions = new LNOptions();
+        lnoptions.verbose = VerboseLevel.SILENT;
+        SolverOptions mvaoptions = new MVAOptions();
+        mvaoptions.verbose = VerboseLevel.SILENT;
+        // the default: the 'srvn' alias resolves to 'srvn.ph' on this model
+        SolverLN solver = new SolverLN(SolverLNTestFixtures.buildModel2(), SolverType.MVA, lnoptions, mvaoptions);
+        assertEquals("srvn.ph", solver.lnmethod);
+        // Ground truth from MATLAB SolverLN(SolverMVA) with method='srvn.ph',
+        // recorded 2026-08-12. The phase-type encoding composes A1+A2 into one
+        // entry service law, so it reaches a different fixed point from the
+        // routing encoding above. RespT[4] is 13.29325240579065 before the
+        // tenths snapping getAvgTable applies in both codebases.
+        double[] expectedQLen = {Double.NaN, Double.NaN, 1.173348996711299, 0.5295990624506023, 1.173348996711299, 0.5295990624506023, 0.1614300127033691, 1.011918983125265, 0.4413325520421686, 0.08826651040843372};
+        double[] expectedUtil = {0.1412264160364762, 0.5295990624506023, 0.1412264160364762, 0.5295990624506023, 0.1412264160364762, 0.5295990624506023, 0.1412264160364762, 0, 0.4413325520421686, 0.08826651040843372};
+        double[] expectedRespT = {Double.NaN, Double.NaN, Double.NaN, Double.NaN, 13.3, 6, 1.828893117691802, 11.46435927809885, 5, 1};
+        double[] expectedResidT = {Double.NaN, Double.NaN, 1.828893117691802, 6, Double.NaN, Double.NaN, 1.828893117691802, 0, 5, 1};
+        double[] expectedArvR = {Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN};
+        double[] expectedTput = {Double.NaN, Double.NaN, 0.08826651002279765, 0.08826651040843372, 0.08826651002279765, 0.08826651040843372, 0.08826651002279765, 0.08826651002279765, 0.08826651040843372, 0.08826651040843372};
+        LayeredNetworkAvgTable avgTable = (LayeredNetworkAvgTable) solver.getEnsembleAvg();
+
+        assertTableMetrics(avgTable, expectedQLen, expectedUtil, expectedRespT,
+                expectedResidT, expectedArvR, expectedTput);
+    }
+
+    @Test
     public void test_buildModel_3() throws Exception {
         SolverOptions options = new LNOptions();
         options.verbose = VerboseLevel.SILENT;
         options.config.relax = "none";
         options.iter_max = 100;
         options.iter_tol = 0.0001;
+        // the routing encoding, which this golden was recorded under; the 'srvn'
+        // alias now resolves to 'srvn.ph' on this model, covered by the test below
+        options.method = "srvn.cs";
         SolverLN solver = new SolverLN(SolverLNTestFixtures.buildModel3(), SolverType.MVA, options);
-        double[] expectedQLen = {Double.NaN, 8.684302439121234, 0.7566547562277667, 8.684302439121234, 0.7566547562277667, 7.92765158428176, 0.7566508559719956, 0.6305456301898056, 0.1261091260379611};
-        double[] expectedUtil = {0.9999545067535648, 0.9210092588749577, 0.07894524787860714, 0.9210092588749577, 0.07894524787860714, 0.9210092588749577, 0, 0.06578770656550595, 0.01315754131310119};
-        double[] expectedRespT = {Double.NaN, Double.NaN, Double.NaN, 660.0380668062525, 57.50730613130224, 602.5298937576315, 57.50817313469662, 47.92275510941854, 9.584551021883705};
-        double[] expectedResidT = {Double.NaN, 602.5298937576315, 57.50730613130224, Double.NaN, Double.NaN, 602.5298937576315, 0, 47.92275510941854, 9.584551021883705};
+        // Ground truth from MATLAB SolverLN(SolverMVA), relax=none, iter_max=100,
+        // iter_tol=1e-4. Re-recorded 2026-08-11, when the interlock probability
+        // was aligned to Li and Franks (2015), Eq. (5), and to lqns' m' rule.
+        double[] expectedQLen = {Double.NaN, 8.675385613675, 0.729887924585703, 8.675385613675, 0.729887924585703, 7.94549769054165, 0.729887926442931, 0.608239937411964, 0.121647987482393};
+        double[] expectedUtil = {1.0067069317541, 0.927230068700173, 0.0794768630539232, 0.927230068700173, 0.0794768630539232, 0.927230068700173, 0, 0.0662307192116027, 0.0132461438423205};
+        double[] expectedRespT = {Double.NaN, Double.NaN, Double.NaN, 654.9, 55.1, 599.8, 55.1, 45.9, 9.18365291291309};
+        double[] expectedResidT = {Double.NaN, 599.8, 55.1, Double.NaN, Double.NaN, 599.8, 0, 45.9, 9.18365290902952};
         double[] expectedArvR = {Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN};
-        double[] expectedTput = {Double.NaN, 0.01315727512678511, 0.01315754131310119, 0.01315727512678511, 0.01315754131310119, 0.01315727512678511, 0.01315727512678511, 0.01315754131310119, 0.01315754131310119};
+        double[] expectedTput = {Double.NaN, 0.0132461438385739, 0.0132461438423205, 0.0132461438385739, 0.0132461438423205, 0.0132461438385739, 0.0132461438385739, 0.0132461438423205, 0.0132461438423205};
         LayeredNetworkAvgTable avgTable = (LayeredNetworkAvgTable) solver.getEnsembleAvg();
 
         avgTable.print();
         if (SolverLQNS.isAvailable()) {
             new SolverLQNS(SolverLNTestFixtures.buildModel3()).getAvgTable().print();
         }
+
+        assertTableMetrics(avgTable, expectedQLen, expectedUtil, expectedRespT,
+                expectedResidT, expectedArvR, expectedTput, 0.01);
+    }
+
+    @Test
+    public void test_buildModel_3_srvnph() throws Exception {
+        SolverOptions options = new LNOptions();
+        options.verbose = VerboseLevel.SILENT;
+        options.config.relax = "none";
+        options.iter_max = 100;
+        options.iter_tol = 0.0001;
+        // the default: the 'srvn' alias resolves to 'srvn.ph' on this model
+        SolverLN solver = new SolverLN(SolverLNTestFixtures.buildModel3(), SolverType.MVA, options);
+        assertEquals("srvn.ph", solver.lnmethod);
+        // Ground truth from MATLAB SolverLN(SolverMVA) with method='srvn.ph',
+        // relax=none, iter_max=100, iter_tol=1e-4, recorded 2026-08-11. The
+        // phase-type encoding composes A3+A4 into one entry service law, so it
+        // reaches a different fixed point from the routing encoding above.
+        double[] expectedQLen = {Double.NaN, 8.68427038904056, 0.756637982659700, 8.68427038904056, 0.756637982659700, 7.92763240586455, 0.756637983044436, 0.630531652216416, 0.126106330443283};
+        double[] expectedUtil = {1, 0.921010726732615, 0.0789437765539742, 0.921010726732615, 0.0789437765539742, 0.921010726732615, 0, 0.0657864804616452, 0.0131572960923290};
+        double[] expectedRespT = {Double.NaN, Double.NaN, Double.NaN, 660, 57.5, 602.5, 57.5, 47.9, 9.58451718030468};
+        double[] expectedResidT = {Double.NaN, 602.5, 57.5, Double.NaN, Double.NaN, 602.5, 0, 47.9, 9.58451718030468};
+        double[] expectedArvR = {Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN};
+        double[] expectedTput = {Double.NaN, 0.0131572960961802, 0.0131572960923290, 0.0131572960961802, 0.0131572960923290, 0.0131572960961802, 0.0131572960961802, 0.0131572960923290, 0.0131572960923290};
+        LayeredNetworkAvgTable avgTable = (LayeredNetworkAvgTable) solver.getEnsembleAvg();
 
         assertTableMetrics(avgTable, expectedQLen, expectedUtil, expectedRespT,
                 expectedResidT, expectedArvR, expectedTput, 0.01);
@@ -91,13 +152,19 @@ class SolverLNActivityGraphTest extends SolverLNTestBase {
         options.iter_max = 100;
         options.iter_tol = 0.0001;
         SolverLN solver = new SolverLN(SolverLNTestFixtures.buildModel4(), SolverType.MVA, options);
-        // Ground truth values from MATLAB SolverLN with relax=none, iter_max=100, iter_tol=0.0001
-        double[] expectedQLen = {Double.NaN, Double.NaN, 23.435634940633427, 8.7033320616774, 0.124378114044187, 23.435634940633427, 8.7033320616774, 0.124378114044187, 23.443153117912896, 8.70749079502882, 0.124378114044187};
-        double[] expectedUtil = {0.995942487341925, 0.041459369695908, 0.663935933793486, 0.332006553548439, 0.041459369695908, 0.663935933793486, 0.332006553548439, 0.041459369695908, 0.663935933793486, 0.332006553548439, 0.041459369695908};
-        double[] expectedRespT = {Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, 1.764901833730464, 0.655358453670374, 0.020000000796999, 1.765468016165907, 0.655671605120773, 0.020000000796999};
-        double[] expectedResidT = {Double.NaN, Double.NaN, 1.089919476635633, 0.555086679002521, 0.020000000796999, Double.NaN, Double.NaN, Double.NaN, 1.089919476635633, 0.555086679002521, 0.020000000796999};
+        // Ground truth values from MATLAB SolverLN with relax=none, iter_max=100, iter_tol=0.0001.
+        // Re-recorded 2026-08-11, when the interlock probability was aligned to
+        // Li and Franks (2015), Eq. (5), and to lqns' m' rule. Only the third
+        // digit moves on this model -- E3 settles at 66.3 completions per second
+        // rather than 66.4 (LDES, 500k samples, seed 23000: 66.744) -- because
+        // its host layers take the interlock matrix inside the layer MVA rather
+        // than the residence-time fallback.
+        double[] expectedQLen = {Double.NaN, Double.NaN, 23.3, 8.64592492555925, 1.32667626070436, 23.3, 8.64592492555925, 1.32667626070436, 23.4323888862551, 8.71305264059124, 1.32667625061483};
+        double[] expectedUtil = {0.99595480220186, 0.442225494260239, 0.66428467464315, 0.33167012755871, 0.442225494260239, 0.66428467464315, 0.33167012755871, 0.442225494260239, 0.66428467464315, 0.33167012755871, 0.442225494260239};
+        double[] expectedRespT = {Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, 1.75352816934047, 0.651696083484999, 0.01999999665214, 1.76373095607262, 0.656755908703967, 0.0199999965000377};
+        double[] expectedResidT = {Double.NaN, Double.NaN, 1.08279559337584, 0.551424906310836, 0.01999999665214, Double.NaN, Double.NaN, Double.NaN, 1.08279559337584, 0.551424906310836, 0.01999999665214};
         double[] expectedArvR = {Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN};
-        double[] expectedTput = {Double.NaN, Double.NaN, 13.278718675869721, 13.280262141937545, 6.218905454386247, 13.278718675869721, 13.280262141937545, 6.218905454386247, 13.278718675869721, 13.280262141937545, 6.218905454386247};
+        double[] expectedTput = {Double.NaN, Double.NaN, 13.285693492863, 13.2668051023484, 66.3, 13.285693492863, 13.2668051023484, 66.3, 13.285693492863, 13.2668051023484, 66.3};
         LayeredNetworkAvgTable avgTable = (LayeredNetworkAvgTable) solver.getEnsembleAvg();
 
         assertTableMetrics(avgTable, expectedQLen, expectedUtil, expectedRespT,
@@ -203,11 +270,13 @@ class SolverLNActivityGraphTest extends SolverLNTestBase {
         SolverOptions options = new LNOptions();
         options.verbose = VerboseLevel.SILENT;
         SolverLN solver = new SolverLN(jline.solvers.ln.SolverLNTestFixtures.test_activityGraph_call_or(), SolverType.MVA, options);
-        double[] expectedQLen = {Double.NaN, Double.NaN, 0.0000, 1.0000, 0.9846, 0.0000, 1.0000, 0.9846, 0.0000, 1.0000, 0.0000, 0.0096, 0.0144, 0.9606, 0.0000};
+        // P3/T3/E3/A31 are unreachable: idle, not undefined. They report zero for
+        // the measures their kind HAS and keep the NaN mask for the ones it never has.
+        double[] expectedQLen = {Double.NaN, Double.NaN, Double.NaN, 1.0000, 0.9846, 0.0000, 1.0000, 0.9846, 0.0000, 1.0000, 0.0000, 0.0096, 0.0144, 0.9606, 0.0000};
         double[] expectedUtil = {0.0154, 0.9846, 0.0000, 0.0154, 0.9846, 0.0000, 0.0154, 0.9846, 0.0000, 0.0154, 0.0000, 0.0096, 0.0144, 0.9606, 0.0000};
-        double[] expectedRespT = {Double.NaN, Double.NaN, 0.0000, Double.NaN, Double.NaN, 0.0000, 104.1000, 102.5000, 0.0000, 104.1000, 0.0000, 2.0000, 3.0000, 100.0000, 0.0000};
-        double[] expectedResidT = {Double.NaN, Double.NaN, 0.0000, 1.6000, 102.5000, 0.0000, Double.NaN, Double.NaN, 0.0000, 1.6000, 0.0000, 1.0000, 1.5000, 100.0000, 0.0000};
-        double[] expectedTput = {Double.NaN, Double.NaN, 0.0000, 0.0096, 0.0096, 0.0000, 0.0096, 0.0096, 0.0000, 0.0096, 0.0096, 0.0048, 0.0048, 0.0096, 0.0000};
+        double[] expectedRespT = {Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, 104.1000, 102.5000, 0.0000, 104.1000, 0.0000, 2.0000, 3.0000, 100.0000, 0.0000};
+        double[] expectedResidT = {Double.NaN, Double.NaN, Double.NaN, 1.6000, 102.5000, 0.0000, Double.NaN, Double.NaN, Double.NaN, 1.6000, 0.0000, 1.0000, 1.5000, 100.0000, 0.0000};
+        double[] expectedTput = {Double.NaN, Double.NaN, Double.NaN, 0.0096, 0.0096, 0.0000, 0.0096, 0.0096, 0.0000, 0.0096, 0.0096, 0.0048, 0.0048, 0.0096, 0.0000};
         LayeredNetworkAvgTable avg = (LayeredNetworkAvgTable) solver.getEnsembleAvg();
         for (int idx = 0; idx < avg.getQLen().size(); idx++) {
             assertTrue(compareAbsErr(avg.getQLen().get(idx), expectedQLen[idx]));
@@ -223,12 +292,14 @@ class SolverLNActivityGraphTest extends SolverLNTestBase {
         SolverOptions options = new LNOptions();
         options.verbose = VerboseLevel.SILENT;
         SolverLN solver = new SolverLN(jline.solvers.ln.SolverLNTestFixtures.test_activityGraph_call_seq_disconnected(), SolverType.MVA, options);
-        double[] expectedQLen = {Double.NaN, Double.NaN, 0, 0.07063197025365875, 0.05576208176883958, 0, 0.07063197025365875, 0.05576208176883958, 0, 0.07063197025365875, 0.04646840147403298, 0.009293680294806596, 0};
+        // P3/T3/E3/A31 are unreachable: idle, not undefined. They report zero for
+        // the measures their kind HAS and keep the NaN mask for the ones it never has.
+        double[] expectedQLen = {Double.NaN, Double.NaN, Double.NaN, 0.07063197025365875, 0.05576208176883958, 0, 0.07063197025365875, 0.05576208176883958, 0, 0.07063197025365875, 0.04646840147403298, 0.009293680294806596, 0};
         double[] expectedUtil = {0.01486988847445447, 0.05576208176883957, 0, 0.01486988847445447, 0.05576208176883957, 0, 0.01486988847445447, 0.05576208176883957, 0, 0.01486988847445447, 0.04646840147403298, 0.009293680294806596, 0};
-        double[] expectedRespT = {Double.NaN, Double.NaN, 0, Double.NaN, Double.NaN, 0, 7.6, 6, 0, 7.6, 5, 1, 0};
-        double[] expectedResidT = {Double.NaN, Double.NaN, 0, 1.6, 6, 0, Double.NaN, Double.NaN, 0, 1.6, 5, 1, 0};
-        double[] expectedArvR = {Double.NaN, Double.NaN, 0, Double.NaN, Double.NaN, 0, Double.NaN, Double.NaN, 0, Double.NaN, Double.NaN, Double.NaN, 0};
-        double[] expectedTput = {Double.NaN, Double.NaN, 0, 0.009293680296534046, 0.009293680294806596, 0, 0.009293680296534046, 0.009293680294806596, 0, 0.009293680296534046, 0.009293680294806596, 0.009293680294806596, 0};
+        double[] expectedRespT = {Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, 7.6, 6, 0, 7.6, 5, 1, 0};
+        double[] expectedResidT = {Double.NaN, Double.NaN, Double.NaN, 1.6, 6, 0, Double.NaN, Double.NaN, Double.NaN, 1.6, 5, 1, 0};
+        double[] expectedArvR = {Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN};
+        double[] expectedTput = {Double.NaN, Double.NaN, Double.NaN, 0.009293680296534046, 0.009293680294806596, 0, 0.009293680296534046, 0.009293680294806596, 0, 0.009293680296534046, 0.009293680294806596, 0.009293680294806596, 0};
         LayeredNetworkAvgTable avgTable = (LayeredNetworkAvgTable) solver.getEnsembleAvg();
 
         assertTableMetrics(avgTable, expectedQLen, expectedUtil, expectedRespT,

@@ -161,7 +161,16 @@ def test_deterministic_firing_matches_md1_not_mm1():
     distribution was ignored, which is what happened while the SPN branch of the
     non-Markovian-to-PH conversion was missing from the JAR.
     """
-    q_det = _solve_p1(_mg1k(Det(1.0 / _MU)))
+    # The PH expansion this test is about announces itself; assert it happened.
+    # Under lang='java' the solve is delegated to jline.jar over JSON, so the
+    # notice is cast by snNonmarkovToPh INSIDE the JAR (on its own stream) and no
+    # python warning is raised; the numeric assertions below still cover the
+    # expansion there, since collapsing Det to Exp would move q_det onto q_exp.
+    if os.environ.get('LINE_SOLVER_LANG') == 'java':
+        q_det = _solve_p1(_mg1k(Det(1.0 / _MU)))
+    else:
+        with pytest.warns(UserWarning, match='non-Markovian and will be converted to PH'):
+            q_det = _solve_p1(_mg1k(Det(1.0 / _MU)))
     q_exp = _solve_p1(_mg1k(Exp.fitMean(1.0 / _MU)))
 
     assert np.isfinite(q_det), 'Det firing produced a non-finite marking'

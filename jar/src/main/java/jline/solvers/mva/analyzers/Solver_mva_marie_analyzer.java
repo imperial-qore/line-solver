@@ -109,7 +109,19 @@ public final class Solver_mva_marie_analyzer {
         Matrix Tchain = new Matrix(M, C);
         int lastiter;
 
-        if (C == 1) {
+        if (Mq == 0) {
+            // Nothing to isolate: with every station an infinite server the
+            // aggregation-decomposition degenerates to the exact delay solution
+            // X_c = N_c / Z_c, and Pfqn_marie would be handed a zero-row demand
+            // matrix.
+            lastiter = 1;
+            for (int c = 0; c < C; c++) {
+                double z = Z.get(0, c);
+                double x = (z > 0) ? Nchain.get(c) / z : 0.0;
+                Xchain.set(0, c, x);
+                for (int i = 0; i < M; i++) Tchain.set(i, c, x * Vchain.get(i, c));
+            }
+        } else if (C == 1) {
             double N = Nchain.get(0);
             Pfqn_marie.Result mr = Pfqn_marie.pfqn_marie(L, N, Z.get(0, 0), SCV, 1e-8, 1000, nservers);
             lastiter = mr.iter;

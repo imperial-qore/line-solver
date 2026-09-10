@@ -73,6 +73,8 @@ print(f'Querying probability for station {i+1} ({target_station.getName()}) in s
 solver_ctmc = CTMC(model, options)
 pr_ctmc = solver_ctmc.getProbAggr(target_station)
 print(f'CTMC: Station {i+1} is in state {target_state} with probability {pr_ctmc}')
+print('Pmarg_ctmc =')
+print(pr_ctmc)
 
 # Solve with NC
 solver_nc = NC(model, options)

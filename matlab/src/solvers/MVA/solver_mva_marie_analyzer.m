@@ -25,24 +25,18 @@ M = sn.nstations;
 C = sn.nchains;
 
 %% gating
-% Closed models only.
-if any(isinf(Nchain)) || any(sn.nodetype == NodeType.Source)
-    line_error(mfilename, ['The ''marie'' method supports closed models only; this model has open ' ...
-        'classes. Use another SolverMVA method (e.g. ''default'').']);
+% One predicate for the gate and the run: SolverMVA.supportsMarie asks
+% mva_marie_reason the same question before the report offers 'marie' (closed
+% model, classes routed alike, FCFS/PS/LCFSPR/delay stations, no cache,
+% fork-join or scaling, multiserver only with one chain), so the sentence a
+% caller reads here is the sentence that kept the row off the report.
+marieReason = mva_marie_reason(sn);
+if ~isempty(marieReason)
+    line_error(mfilename, marieReason);
 end
 
 % Delay/infinite-server stations (fold into think time); the rest are queueing.
 isDelay = isinf(sn.nservers(:)) | (sn.sched(:) == SchedStrategy.INF);
-
-% Scheduling support: FCFS (service-sensitive), the insensitive product-form
-% disciplines PS/LCFSPR (treated as exponential), and Delay. Reject others.
-schedOK = isDelay | (sn.sched(:) == SchedStrategy.FCFS) | ...
-    (sn.sched(:) == SchedStrategy.PS) | (sn.sched(:) == SchedStrategy.LCFSPR);
-if ~all(schedOK)
-    bad = find(~schedOK, 1);
-    line_error(mfilename, sprintf(['The ''marie'' method supports FCFS, PS, LCFSPR and Delay ' ...
-        'stations only; station %d has an unsupported scheduling strategy. Use another SolverMVA method.'], bad));
-end
 
 queueRows = find(~isDelay);
 delayRows = find(isDelay);
@@ -66,16 +60,27 @@ for jj = 1:Mq
 end
 SCV(~isfinite(SCV) | SCV <= 0) = 1;   % guard undefined SCV (e.g. zero demand)
 
-% Multiserver isolation is supported for single-chain models only.
+% Multiserver isolation is supported for single-chain models only
+% (mva_marie_reason has refused the multichain case above).
 nservers = sn.nservers(queueRows);
 nservers(~isfinite(nservers)) = 1;
-if C > 1 && any(nservers > 1)
-    line_error(mfilename, ['The ''marie'' method supports multiserver queueing stations for ' ...
-        'single-chain models only; this model is multichain with a multiserver station.']);
-end
 
 %% Marie solve
-if C == 1
+if Mq == 0
+    % Nothing to isolate: with every station an infinite server the
+    % aggregation-decomposition degenerates to the exact delay solution
+    % X_c = N_c / Z_c, and pfqn_marie would be handed a zero-row demand matrix.
+    Xchain0 = zeros(1,C);
+    for c = 1:C
+        if Z(c) > 0
+            Xchain0(c) = Nchain(c) / Z(c);
+        end
+    end
+    Xm = Xchain0;
+    Qm = zeros(0,C);
+    Um = zeros(0,C);
+    lastiter = 1;
+elseif C == 1
     [Xm,Qm,Um,~,lastiter] = pfqn_marie(L, Nchain, Z, SCV, [], [], nservers);
 else
     [Xm,Qm,Um,~,lastiter] = pfqn_marie(L, Nchain, Z, SCV);

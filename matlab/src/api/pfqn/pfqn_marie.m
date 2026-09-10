@@ -28,10 +28,11 @@ function [X,Q,U,C,it,mu] = pfqn_marie(L,N,Z,scv,varargin)
  % @param Z Think time vector (1 x R; total delay demand per class).
  % @param scv Per-station per-class squared coefficient of variation (M x R).
  %            scv==1 exponential; scv<0.5 Erlang; scv>0.5 two-phase Coxian.
- % @param tol Convergence tolerance (default 1e-8).
- % @param maxiter Maximum iterations (default 1000).
- % @param nservers Per-station server count (M x 1, default all 1); single-class
- %            only (multiserver multiclass isolation is not yet supported).
+ % @param varargin Optional trailing arguments, in order: tol, the convergence
+ %            tolerance (default 1e-8); maxiter, the iteration cap (default
+ %            1000); nservers, the per-station server count (M x 1, default all
+ %            1), single-class only (multiserver multiclass isolation is not yet
+ %            supported).
  % @return X Throughput: single class M x 1 (per station); multiclass 1 x R
  %            (per-class chain throughput, visits folded into L).
  % @return Q Mean queue length (M x 1 single class, M x R multiclass).
@@ -298,7 +299,7 @@ npops = prod(boxsz);
 
 % Enumerate states: id map keyed by (popLinear, head, phase).
 % state 1 reserved for the empty station.
-key2id = containers.Map('KeyType','char','ValueType','double');
+key2id = configureDictionary('string','double');
 ids = {};                 % ids{s} = [popLinear, head, phase]
 key2id('E') = 1; ids{1} = [1, 0, 0];
 nid = 1;

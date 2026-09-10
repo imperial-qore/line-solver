@@ -763,7 +763,8 @@ public final class Solver_ssa_nrm {
     static int fcrReleaseCascade(Fcr fcr, Matrix nvec, ArrayDeque<Integer>[] buffers,
                                  ArrayDeque<Integer>[] fcrBuf, double[] mi, int R,
                                  NetworkStruct sn, Smap sm,
-                                 double[][][] svcph, boolean[] bufPHNode) {
+                                 double[][][] svcph, boolean[] bufPHNode,
+                                 double[][] startCount, double[][] preemptCount) {
         int released = 0;
         boolean progress = true;
         while (progress) {
@@ -790,7 +791,8 @@ public final class Solver_ssa_nrm {
                     int dslot = sm.phOff[dstNode][dstClass] + ke;
                     nvec.set(dslot, 0, nvec.get(dslot, 0) + 1.0);
                 }
-                applyArrivalBuffer(dstNode, dstClass, nvec, buffers, mi, R, sn, sm, svcph, bufPHNode);
+                applyArrivalBuffer(dstNode, dstClass, nvec, buffers, mi, R, sn, sm, svcph, bufPHNode,
+                        startCount, preemptCount);
                 fcrBuf[f].pollFirst();
                 released++;
                 progress = true;
@@ -940,6 +942,148 @@ public final class Solver_ssa_nrm {
         double classCapLimit = (sn.classcap != null) ? sn.classcap.get(ist, dstC) : 0.0;
         if (classCapLimit > 0 && classPop(nvec, sm, jnd, dstC) >= classCapLimit) {
             return true;
+        }
+        return false;
+    }
+
+    /**
+     * A firing has THREE outcomes, not two: fireReaction returns the destination
+     * state row when the job moves, -1 when it moves nowhere (a self-loop, or a
+     * loss -- the source departs either way), and BLOCKED when the departure does
+     * not happen at all, the source keeping the job and no slot changing.
+     */
+    private static final int BLOCKED = -2;
+
+    /**
+     * Destination-side BLOCKING: a refused arrival that may NOT be dropped.
+     * <p>
+     * {@link #capacityLoss} answers the OPEN half of the same question and
+     * returns false for a closed class precisely because a closed network's
+     * population is an invariant. Nothing then stopped the reaction, so the NRM
+     * fired into the full station anyway and reported the UNCONSTRAINED answer
+     * (BUG-81): on a closed 3-queue tandem, N=6, Q2 capped at 2 it gave QLen
+     * [1.96 2.07 1.97] against the exact [3.609 0.971 1.420] -- a mean of 2.07
+     * at a station that holds 2 -- while the serial engine, whose producer
+     * already implements the contract, gave the exact answer.
+     * </p><p>
+     * Blocking is the third outcome. The departure does not occur, the source is
+     * not decremented, no buffer moves; only the reaction's own clock is redrawn,
+     * which is exact by memorylessness (the residual of an exponential, or of the
+     * current PH phase, is that same exponential). It is what SolverCTMC does
+     * when its state lookup cannot find the over-capacity target and drops the
+     * arc, which is why the two now agree.
+     * </p><p>
+     * The gate is deliberately NARROWER than AfterEventStation's: it fires only
+     * for a CLOSED class, so every open-class drop path -- M/M/1/K included --
+     * keeps the sample path it had. A cap that cannot bind (the usual cap = N
+     * default) never enters {@code can}, so {@code on} stays false and the whole
+     * mechanism costs nothing on models that do not need it.
+     * </p>
+     */
+    static final class Blk {
+        boolean on = false;
+        boolean[][] can;      // station x class: a refusal here must block
+        double[] cap;         // station total capacity, +Inf when unbounded
+        double[][] ccap;      // per-class capacity, +Inf when unset
+        int[] node2st;        // node -> station, -1 for a non-station node
+    }
+
+    /** Builds the {@link Blk} gate for this model; see that class. */
+    static Blk blkPrecompute(NetworkStruct sn, int R) {
+        Blk blk = new Blk();
+        int M = sn.nstations;
+        blk.can = new boolean[M][R];
+        blk.cap = new double[M];
+        blk.ccap = new double[M][R];
+        blk.node2st = new int[sn.nnodes];
+        for (int ind = 0; ind < sn.nnodes; ind++) {
+            blk.node2st[ind] = (int) sn.nodeToStation.get(ind);
+        }
+        // A cap that CANNOT BIND is not a blocking site. Every closed model
+        // carries cap[ist] = N by default, and a station that can hold the whole
+        // population never refuses one: the arriving job is itself one of the N,
+        // so the pre-arrival count is at most N-1. Excluding those is what keeps
+        // `on` false -- and the per-firing test unpaid -- on ordinary models. An
+        // open class present anywhere makes a finite station cap binding again,
+        // since its jobs are not counted in N.
+        double closedTotal = 0.0;
+        boolean anyOpen = false;
+        for (int r = 0; r < R; r++) {
+            double nj = sn.njobs.get(r);
+            if (Double.isInfinite(nj)) {
+                anyOpen = true;
+            } else {
+                closedTotal += nj;
+            }
+        }
+        for (int ist = 0; ist < M; ist++) {
+            blk.cap[ist] = (sn.cap != null) ? sn.cap.get(ist) : Double.POSITIVE_INFINITY;
+            for (int r = 0; r < R; r++) {
+                // a non-positive class cap is "unset", not "holds nothing"
+                double lim = (sn.classcap != null) ? sn.classcap.get(ist, r) : 0.0;
+                blk.ccap[ist][r] = (lim > 0) ? lim : Double.POSITIVE_INFINITY;
+                double nj = sn.njobs.get(r);
+                if (Double.isInfinite(nj)) {
+                    continue;   // open class: refusal LOSES, handled by capacityLoss
+                }
+                boolean bindsSt = Double.isFinite(blk.cap[ist])
+                        && (anyOpen || blk.cap[ist] < closedTotal);
+                boolean bindsCl = Double.isFinite(blk.ccap[ist][r]) && blk.ccap[ist][r] < nj;
+                if (bindsSt || bindsCl) {
+                    blk.can[ist][r] = true;
+                    blk.on = true;
+                }
+            }
+        }
+        return blk;
+    }
+
+    /**
+     * True when a job routed to state slot destPos cannot be admitted and the
+     * firing must be cancelled.
+     * <p>
+     * The population read is the PRE-arrival one, minus the departing job when it
+     * currently sits at the destination node: a self-loop or a feedback arc at a
+     * station already at cap would otherwise block itself forever, while the
+     * reference producer sees the state AFTER the departure half.
+     * {@code fcrRefusingRegion} discounts its source in the same region for the
+     * same reason.
+     * </p>
+     */
+    static boolean capacityBlock(Blk blk, Matrix nvec, int destPos, int srcPos, int R, Smap sm) {
+        if (!blk.on) {
+            return false;
+        }
+        int jnd = sm.node[destPos];
+        if (jnd >= blk.node2st.length) {
+            return false;
+        }
+        int ist = blk.node2st[jnd];
+        int r = sm.cls[destPos];
+        if (ist < 0 || ist >= blk.can.length || r >= blk.can[ist].length || !blk.can[ist][r]) {
+            return false;
+        }
+        boolean sameNode = srcPos >= 0 && srcPos < sm.node.length && sm.node[srcPos] == jnd;
+        if (Double.isFinite(blk.cap[ist])) {
+            double total = 0.0;
+            for (int k = 0; k < R; k++) {
+                total += classPop(nvec, sm, jnd, k);
+            }
+            if (sameNode) {
+                total -= 1.0;
+            }
+            if (total >= blk.cap[ist]) {
+                return true;
+            }
+        }
+        if (Double.isFinite(blk.ccap[ist][r])) {
+            double pop = classPop(nvec, sm, jnd, r);
+            if (sameNode && sm.cls[srcPos] == r) {
+                pop -= 1.0;
+            }
+            if (pop >= blk.ccap[ist][r]) {
+                return true;
+            }
         }
         return false;
     }
@@ -1971,9 +2115,14 @@ phaseFlag.add(Boolean.FALSE);
                 jline.lang.nodeparam.CacheNodeParam cnp =
                         (jline.lang.nodeparam.CacheNodeParam) sn.nodeparam.get(sn.nodes.get(ind));
                 int tcc = cnp.totalCacheCapacity;
-                // With a retrieval system the contents are followed by a per-item
-                // occupancy bitmap: column tcc+item-1 is 1 iff item is being fetched.
-                int width = (cnp.retrievalSystemCapacity > 0) ? tcc + cnp.nitems : tcc;
+                // With a retrieval system the contents are followed by block A, a
+                // per-item occupancy bitmap (column tcc+item-1 is 1 iff item is being
+                // fetched), and by block B, the per-retrieval-class count of requests
+                // merged onto an in-flight fetch (State.spaceCache).
+                int width = tcc;
+                if (cnp.retrievalSystemCapacity > 0) {
+                    width = tcc + cnp.nitems + State.cacheRetrievalClassMap(sn, ind)[0].length;
+                }
                 cacheContents0[ind] = new int[width];
                 for (int c = 0; c < tcc; c++) cacheContents0[ind][c] = c + 1;
             }
@@ -2536,9 +2685,13 @@ phaseFlag.add(Boolean.FALSE);
         Matrix TN = new Matrix(M, K); TN.fill(0.0);
         Matrix CN = new Matrix(1, K); CN.fill(0.0);
         Matrix XN = new Matrix(1, K); XN.fill(0.0);
+        // derived START/PREEMPT rates, filled by the engine below
+        Matrix StartN = new Matrix(M, K); StartN.fill(0.0);
+        Matrix PreemptN = new Matrix(M, K); PreemptN.fill(0.0);
 
         long[][] cacheProd = new long[I][R];   // per (cache node, PRODUCED class) count
-        nrm_direct(S, D, a, nvec0, buffers0, samples, options, QN, UN, RN, TN, CN, XN, sn, fromIdx, fromIR, mi, fcr, balk, sig, rrp, isRenegeRx, isRetryRx, sm, nDepRx, isPhaseRx, anyPoll, pinfo, isPollNode, pollCtrl, isPollSwRx, pollSwNode, svcph, bufPHNode, isBufSvcRx, depPhase, phaseToArr, isCacheRx, cacheHitSlotArr, cacheMissSlotArr, isCacheNode, cacheContents0, cacheProd, cacheRetrDest);
+        long[][] cacheDly = new long[I][R];    // per (cache node, READ class) delayed hits
+        nrm_direct(S, D, a, nvec0, buffers0, samples, options, QN, UN, RN, TN, CN, XN, StartN, PreemptN, sn, fromIdx, fromIR, mi, fcr, balk, sig, rrp, isRenegeRx, isRetryRx, sm, nDepRx, isPhaseRx, anyPoll, pinfo, isPollNode, pollCtrl, isPollSwRx, pollSwNode, svcph, bufPHNode, isBufSvcRx, depPhase, phaseToArr, isCacheRx, cacheHitSlotArr, cacheMissSlotArr, isCacheNode, cacheContents0, cacheProd, cacheDly, cacheRetrDest);
 
         // Write the measured hit/miss probabilities into each Cache node's param
         // (afterEventCache convention: actualhitprob(r) = hit throughput /
@@ -2568,15 +2721,28 @@ phaseFlag.add(Boolean.FALSE);
                         int mc = (int) cnp.missclass.get(r);
                         long tot = cacheProd[ind][hc] + cacheProd[ind][mc];
                         if (tot > 0) {
-                            cnp.actualhitprob.set(r, (double) cacheProd[ind][hc] / tot);
+                            // cacheProd[hc] already contains the released delayed
+                            // hits, so carve them out rather than adding a fourth
+                            // share.
+                            long dly = cacheDly[ind][r];
+                            cnp.actualhitprob.set(r, (double) Math.max(cacheProd[ind][hc] - dly, 0L) / tot);
                             cnp.actualmissprob.set(r, (double) cacheProd[ind][mc] / tot);
+                            if (dly > 0) {
+                                if (cnp.actualdelayedhitprob == null || cnp.actualdelayedhitprob.length() < K) {
+                                    cnp.actualdelayedhitprob = new Matrix(1, K);
+                                    cnp.actualdelayedhitprob.fill(0.0);
+                                }
+                                cnp.actualdelayedhitprob.set(r, (double) dly / tot);
+                            }
                         }
                     }
                 }
             }
         }
 
-        return new SolverSSAResultNRM(QN, UN, RN, TN, CN, XN, sn);
+        SolverSSAResultNRM nrmResult = new SolverSSAResultNRM(QN, UN, RN, TN, CN, XN, sn);
+        nrmResult.setTagRates(StartN, PreemptN);
+        return nrmResult;
     }
 
     // ======================================================================
@@ -2590,7 +2756,7 @@ phaseFlag.add(Boolean.FALSE);
     // single-server mode fires at its exponential rate, an infinite/k-server
     // mode at that rate times its enabling degree. Each firing applies the
     // mode's stoichiometry once, the atomic GSPN firing shared by the exact CTMC
-    // (single server), JMT and GreatSPN. IMMEDIATE modes fire in zero time and
+    // (single server), JMT and standard GSPN tools. IMMEDIATE modes fire in zero time and
     // are resolved by vanishing-marking elimination (see spnCollapse). A
     // non-exponential firing distribution needs per-mode in-flight phase state
     // the reaction network does not carry and is rejected by the featset.
@@ -3076,6 +3242,7 @@ phaseFlag.add(Boolean.FALSE);
             int samples,
             SolverOptions options,
             Matrix QN, Matrix UN, Matrix RN, Matrix TN, Matrix CN, Matrix XN,
+            Matrix StartN, Matrix PreemptN,
             NetworkStruct sn,
             List<Integer> fromIdx,
             List<int[]> fromIR,
@@ -3106,6 +3273,7 @@ phaseFlag.add(Boolean.FALSE);
             boolean[] isCacheNode,
             int[][] cacheContents0,
             long[][] cacheProd,
+            long[][] cacheDly,
             int[][] cacheRetrDest) {
         int numReactions = S.getNumCols();
         Matrix nvec = nvec0.copy();
@@ -3154,6 +3322,9 @@ phaseFlag.add(Boolean.FALSE);
         final Routing rt = buildRouting(S);
         final boolean[] jsqReaction = buildJsqFlags(sn, rt, fromIdx, R, sm);
         final int[] sqD = buildSqK(sn, rt, fromIdx, R, sm);
+        // Closed-class destination blocking; inert unless some station carries a
+        // cap a closed class can actually reach. See Blk.
+        final Blk blk = blkPrecompute(sn, R);
 
         // Initialise propensities and absolute firing times: tau_k = -ln(U) / a_k
         double[] Ak = new double[numReactions];
@@ -3166,6 +3337,21 @@ phaseFlag.add(Boolean.FALSE);
 
         double simTime = 0.0;
         double totalTime = 0.0;
+        // Derived START/PREEMPT tallies. The NRM fires one reaction at a time and
+        // knows exactly which job takes a server and which is displaced, so these
+        // are COUNTS of events; dividing by the simulated time gives the same rate
+        // the serial engine estimates from the enabled-transition rates.
+        double[][] startCount = new double[sn.nnodes][R];
+        double[][] preemptCount = new double[sn.nnodes][R];
+        // Departures that were BLOCKED, per (node, class). TN integrates the
+        // PROPENSITY, which counts a departure the station never makes once its
+        // successor is full (0.744 against the exact 0.652 on the BUG-81
+        // tandem), so the blocked firings are subtracted from that integral
+        // before it is normalized. In expectation the count IS the integral of
+        // the blocked share of the rate, so the difference is unbiased -- and
+        // unlike recomputing that share it needs no second evaluation of a
+        // state-dependent dispatcher, whose draw would have to be replayed.
+        double[][] blockCount = new double[sn.nnodes][R];
         int n = 0;
 
         long tmoStart = System.nanoTime();
@@ -3267,15 +3453,43 @@ phaseFlag.add(Boolean.FALSE);
                     }
                     nvec.set(destPos, 0, nvec.get(destPos, 0) + 1.0);
                 }
-                // outClass < 0 is a delayed hit: the request is absorbed (produces
-                // nothing), coalescing onto the in-flight retrieval.
+                // outClass < 0 is a request merged onto a pending fetch: it produces
+                // nothing now and waits in block B. A completing fetch releases the
+                // requests merged onto it, each as a delayed hit in its own hit class.
+                // Counting the merge here is the only way to tell a delayed hit from
+                // a true hit, since both are produced in the hit class.
+                if (outClass < 0) {
+                    cacheDly[cn][rdc]++;
+                }
+                for (int j = 2; j + 1 < res.length; j += 2) {
+                    int hc = res[j], cnt = res[j + 1];
+                    int relPos = sm.slot(cn, hc, 0);
+                    nvec.set(relPos, 0, nvec.get(relPos, 0) + cnt);
+                    cacheProd[cn][hc] += cnt;
+                }
                 cacheChanged = true;
             } else {
-                destPos = fireReaction(kfire, nvec, S, rt, fromIdx, jsqReaction, sqD, R, fcr, fcrBuf, fromIR, balk, sig, rrp, buffers, mi, sm, isPhaseRx, sn);
+                destPos = fireReaction(kfire, nvec, S, rt, fromIdx, jsqReaction, sqD, R, fcr, fcrBuf, fromIR, balk, sig, rrp, buffers, mi, sm, isPhaseRx, sn, blk);
+            }
+
+            if (destPos == BLOCKED) {
+                // The departure did not happen: no slot, no buffer and no
+                // controller moved, so every propensity is what it was and only
+                // this reaction's clock is redrawn. Exact by memorylessness, and
+                // the same null event SolverCTMC represents by dropping the arc.
+                // It still consumes a sample because the estimators integrate
+                // over TIME, which advanced, so charging it costs nothing.
+                double aBlk = Ak[kfire];
+                pq.update(kfire, (aBlk > 0.0) ? simTime - Math.log(Maths.rand()) / aBlk
+                        : Double.POSITIVE_INFINITY);
+                blockCount[fromIR.get(kfire)[0]][fromIR.get(kfire)[1]]++;
+                n++;
+                printProgress(options, n);
+                continue;
             }
 
             if (!isCacheRx[kfire]) {
-                maintainBuffers(kfire, nvec, buffers, fromIR, destPos, mi, R, sn, isRenegeRx, isRetryRx, sm, svcph, bufPHNode, isBufSvcRx, depPhase, isPhaseRx, phaseToArr);
+                maintainBuffers(kfire, nvec, buffers, fromIR, destPos, mi, R, sn, isRenegeRx, isRetryRx, sm, svcph, bufPHNode, isBufSvcRx, depPhase, isPhaseRx, phaseToArr, startCount, preemptCount);
             }
 
             // A firing that touches a buffered-PH node changes svcph, which the
@@ -3295,7 +3509,7 @@ phaseFlag.add(Boolean.FALSE);
             // nodes.
             int nReleased = 0;
             if (fcr.on && fcr.anyWaitq) {
-                nReleased = fcrReleaseCascade(fcr, nvec, buffers, fcrBuf, mi, R, sn, sm, svcph, bufPHNode);
+                nReleased = fcrReleaseCascade(fcr, nvec, buffers, fcrBuf, mi, R, sn, sm, svcph, bufPHNode, startCount, preemptCount);
             }
 
             // Refresh the affected reactions' propensities and putative times.
@@ -3332,7 +3546,12 @@ phaseFlag.add(Boolean.FALSE);
                 for (int kk = 0; kk < K; kk++) {
                     QN.set(ist, kk, QN.get(ist, kk) / totalTime);
                     UN.set(ist, kk, UN.get(ist, kk) / totalTime);
-                    TN.set(ist, kk, TN.get(ist, kk) / totalTime);
+                    // counts of events over the simulated time: a rate, like TN
+                    int indTag = (int) sn.stationToNode.get(ist);
+                    // net the blocked firings out of the departure-rate integral
+                    TN.set(ist, kk, (TN.get(ist, kk) - blockCount[indTag][kk]) / totalTime);
+                    StartN.set(ist, kk, startCount[indTag][kk] / totalTime);
+                    PreemptN.set(ist, kk, preemptCount[indTag][kk] / totalTime);
                 }
             }
         }
@@ -3378,6 +3597,8 @@ phaseFlag.add(Boolean.FALSE);
             }
         }
 
+        applyLoadDependentUtil(sn, UN, TN, M, K);
+
         for (int kk = 0; kk < K; kk++) {
             XN.set(0, kk, TN.get((int) sn.refstat.get(kk), kk));
             for (int ist = 0; ist < M; ist++) {
@@ -3401,6 +3622,44 @@ phaseFlag.add(Boolean.FALSE);
     }
 
     // 0-indexed offset of 1-indexed position J in 1-indexed list I of a cache.
+    /**
+     * Override the utilization of every LOAD-DEPENDENT station with the
+     * work-based T*S/peak, peak = max(c, max(alpha)).
+     *
+     * <p>The accumulation loops integrate BUSY TIME, which is a different
+     * quantity once alpha(n) != 1: a server running alpha(n) times faster does
+     * the same work in less time, so busy time reads it as no busier than one at
+     * its nominal rate. That put NRM at 0.9587 on a 4-job closed model with
+     * alpha = [1 1.5 2 2.5] where CTMC, MVA, NC and serial SSA all report
+     * 0.6612, and left the two SSA engines disagreeing with each other. INF and
+     * EXT keep U = Q, as everywhere else.
+     */
+    private static void applyLoadDependentUtil(NetworkStruct sn, Matrix UN, Matrix TN, int M, int K) {
+        if (sn.lldscaling == null || sn.lldscaling.isEmpty() || sn.lldscaling.getNumCols() == 0) {
+            return;
+        }
+        for (int ist = 0; ist < M && ist < sn.lldscaling.getNumRows(); ist++) {
+            double peak = sn.nservers.get(ist);
+            boolean nonUnit = false;
+            for (int j = 0; j < sn.lldscaling.getNumCols(); j++) {
+                double a = sn.lldscaling.get(ist, j);
+                if (a != 1.0) nonUnit = true;
+                if (a > peak) peak = a;
+            }
+            if (!nonUnit) continue;
+            SchedStrategy sched = sn.sched.get(sn.stations.get(ist));
+            if (sched == SchedStrategy.INF || sched == SchedStrategy.EXT) continue;
+            for (int kk = 0; kk < K; kk++) {
+                double rate = sn.rates.get(ist, kk);
+                if (Double.isFinite(rate) && rate > 0 && peak > 0) {
+                    UN.set(ist, kk, TN.get(ist, kk) / rate / peak);
+                } else {
+                    UN.set(ist, kk, 0.0);
+                }
+            }
+        }
+    }
+
     private static int cposC(int[] m, int i, int j) {
         int off = 0;
         for (int x = 0; x < i - 1; x++) off += m[x];
@@ -3443,6 +3702,8 @@ phaseFlag.add(Boolean.FALSE);
      * writes to CONTENTS to mirror MATLAB's varp/var copy semantics exactly.
      */
     private static int[] cacheAccessNrm(NetworkStruct sn, int ind, int cls, int[] contents) {
+        int[][] rcMap = State.cacheRetrievalClassMap(sn, ind);
+        int[] rcList = rcMap[0], rcItems = rcMap[1], rcOrigClass = rcMap[2];
         jline.lang.nodeparam.CacheNodeParam np =
                 (jline.lang.nodeparam.CacheNodeParam) sn.nodeparam.get(sn.nodes.get(ind));
         Matrix mm = np.itemcap;
@@ -3477,9 +3738,18 @@ phaseFlag.add(Boolean.FALSE);
                 if (rClass != -1) {
                     boolean inRetrieval = (tcc + (k - 1) < contents.length) && contents[tcc + (k - 1)] != 0;
                     if (inRetrieval) {
-                        // DELAYED HIT: served by the in-flight retrieval, absorbed
-                        // (produces nothing). outClass -1 is the absorb sentinel
+                        // DELAYED HIT: merges onto the in-flight fetch and is held in
+                        // block B until it completes, then released in its own hit
+                        // class. outClass -1 is the "produces nothing yet" sentinel
                         // (class 0 is a valid class in the JAR's 0-based indexing).
+                        int bslot = -1;
+                        for (int j = 0; j < rcList.length; j++) {
+                            if (rcList[j] == rClass) { bslot = j; break; }
+                        }
+                        int bcol = tcc + np.nitems + bslot;
+                        if (bslot >= 0 && bcol < contents.length) {
+                            contents[bcol]++;
+                        }
                         return new int[]{-1, 3};
                     } else {
                         // BEGIN retrieval: switch to the item's retrieval class and
@@ -3491,7 +3761,24 @@ phaseFlag.add(Boolean.FALSE);
             }
             // COMPLETE the miss: returning retrieval, or a plain miss with no
             // retrieval class. Clear the retrieval bit (if any) and admit item k.
-            if (isFromRetrieval && (tcc + (k - 1) < contents.length)) contents[tcc + (k - 1)] = 0;
+            List<int[]> released = new ArrayList<int[]>();
+            if (isFromRetrieval && (tcc + (k - 1) < contents.length)) {
+                contents[tcc + (k - 1)] = 0;
+                // Every request merged onto this fetch is released now as a delayed
+                // hit, in the hit class of the job class that issued it.
+                for (int bslot = 0; bslot < rcList.length; bslot++) {
+                    if (rcItems[bslot] != k) continue;
+                    int bcol = tcc + np.nitems + bslot;
+                    if (bcol < contents.length && contents[bcol] > 0) {
+                        int hc = (rcOrigClass[bslot] < np.hitclass.length())
+                                ? (int) np.hitclass.get(rcOrigClass[bslot]) : -1;
+                        if (hc >= 0) {
+                            released.add(new int[]{hc, contents[bcol]});
+                        }
+                        contents[bcol] = 0;
+                    }
+                }
+            }
             int listidx = l - 1;
             if (rep == jline.lang.constant.ReplacementStrategy.FIFO
                     || rep == jline.lang.constant.ReplacementStrategy.LRU
@@ -3512,7 +3799,15 @@ phaseFlag.add(Boolean.FALSE);
                     contents[cposC(m, listidx, 1)] = k;
                 }
             }
-            return new int[]{missClass, 2};
+            // {outClass, category} followed by the (hitClass, count) pairs freed here
+            int[] out = new int[2 + 2 * released.size()];
+            out[0] = missClass;
+            out[1] = 2;
+            for (int j = 0; j < released.size(); j++) {
+                out[2 + 2 * j] = released.get(j)[0];
+                out[3 + 2 * j] = released.get(j)[1];
+            }
+            return out;
         }
 
         // Locate the 1-indexed list i and position j of posk.
@@ -3569,6 +3864,7 @@ phaseFlag.add(Boolean.FALSE);
             int samples,
             SolverOptions options,
             Matrix QN, Matrix UN, Matrix RN, Matrix TN, Matrix CN, Matrix XN,
+            Matrix StartN, Matrix PreemptN,
             NetworkStruct sn,
             List<Integer> fromIdx,
             List<int[]> fromIR,
@@ -3612,12 +3908,30 @@ phaseFlag.add(Boolean.FALSE);
         Matrix NK = sn.njobs.transpose();
 
         double totalTime = 0.0;
+        // Derived START/PREEMPT tallies. The NRM fires one reaction at a time and
+        // knows exactly which job takes a server and which is displaced, so these
+        // are COUNTS of events; dividing by the simulated time gives the same rate
+        // the serial engine estimates from the enabled-transition rates.
+        double[][] startCount = new double[sn.nnodes][R];
+        double[][] preemptCount = new double[sn.nnodes][R];
+        // Departures that were BLOCKED, per (node, class). TN integrates the
+        // PROPENSITY, which counts a departure the station never makes once its
+        // successor is full (0.744 against the exact 0.652 on the BUG-81
+        // tandem), so the blocked firings are subtracted from that integral
+        // before it is normalized. In expectation the count IS the integral of
+        // the blocked share of the rate, so the difference is unbiased -- and
+        // unlike recomputing that share it needs no second evaluation of a
+        // state-dependent dispatcher, whose draw would have to be replayed.
+        double[][] blockCount = new double[sn.nnodes][R];
         java.util.Map<jline.lang.nodes.Station, java.util.Map<jline.lang.JobClass, MatrixCell>> PH = sn.proc;
         Matrix S_servers = sn.nservers;
 
         final Routing rt = buildRouting(S);
         final boolean[] jsqReaction = buildJsqFlags(sn, rt, fromIdx, R, sm);
         final int[] sqD = buildSqK(sn, rt, fromIdx, R, sm);
+        // Closed-class destination blocking; inert unless some station carries a
+        // cap a closed class can actually reach. See Blk.
+        final Blk blk = blkPrecompute(sn, R);
 
         int n = 0;
         long tmoStart = System.nanoTime();
@@ -3687,15 +4001,26 @@ phaseFlag.add(Boolean.FALSE);
                 }
             }
 
-            int destPos = fireReaction(kfire, nvec, S, rt, fromIdx, jsqReaction, sqD, R, fcr, fcrBuf, fromIR, balk, sig, rrp, buffers, mi, sm, isPhaseRx, sn);
+            int destPos = fireReaction(kfire, nvec, S, rt, fromIdx, jsqReaction, sqD, R, fcr, fcrBuf, fromIR, balk, sig, rrp, buffers, mi, sm, isPhaseRx, sn, blk);
 
-            maintainBuffers(kfire, nvec, buffers, fromIR, destPos, mi, R, sn, isRenegeRx, isRetryRx, sm, svcph, bufPHNode, isBufSvcRx, depPhase, isPhaseRx, phaseToArr);
+            if (destPos == BLOCKED) {
+                // Nothing moved (see Blk): time still advances and this
+                // reaction's clock is still redrawn, but no state may change.
+                for (int i = 0; i < numReactions; i++) Tk[i] += Ak[i] * dt;
+                Pk[kfire] -= Math.log(Maths.rand());
+                blockCount[fromIR.get(kfire)[0]][fromIR.get(kfire)[1]]++;
+                n++;
+                printProgress(options, n);
+                continue;
+            }
+
+            maintainBuffers(kfire, nvec, buffers, fromIR, destPos, mi, R, sn, isRenegeRx, isRetryRx, sm, svcph, bufPHNode, isBufSvcRx, depPhase, isPhaseRx, phaseToArr, startCount, preemptCount);
 
             boolean svcChanged = bufPHNode[fromIR.get(kfire)[0]] || (destPos >= 0 && bufPHNode[sm.node[destPos]]);
 
             int nReleased = 0;
             if (fcr.on && fcr.anyWaitq) {
-                nReleased = fcrReleaseCascade(fcr, nvec, buffers, fcrBuf, mi, R, sn, sm, svcph, bufPHNode);
+                nReleased = fcrReleaseCascade(fcr, nvec, buffers, fcrBuf, mi, R, sn, sm, svcph, bufPHNode, startCount, preemptCount);
             }
 
             for (int i = 0; i < numReactions; i++) Tk[i] += Ak[i] * dt;
@@ -3715,7 +4040,12 @@ phaseFlag.add(Boolean.FALSE);
                 for (int kk = 0; kk < K; kk++) {
                     QN.set(ist, kk, QN.get(ist, kk) / totalTime);
                     UN.set(ist, kk, UN.get(ist, kk) / totalTime);
-                    TN.set(ist, kk, TN.get(ist, kk) / totalTime);
+                    // counts of events over the simulated time: a rate, like TN
+                    int indTag = (int) sn.stationToNode.get(ist);
+                    // net the blocked firings out of the departure-rate integral
+                    TN.set(ist, kk, (TN.get(ist, kk) - blockCount[indTag][kk]) / totalTime);
+                    StartN.set(ist, kk, startCount[indTag][kk] / totalTime);
+                    PreemptN.set(ist, kk, preemptCount[indTag][kk] / totalTime);
                 }
             }
         }
@@ -3760,6 +4090,8 @@ phaseFlag.add(Boolean.FALSE);
                 }
             }
         }
+
+        applyLoadDependentUtil(sn, UN, TN, M, K);
 
         for (int kk = 0; kk < K; kk++) {
             XN.set(0, kk, TN.get((int) sn.refstat.get(kk), kk));
@@ -3815,14 +4147,22 @@ phaseFlag.add(Boolean.FALSE);
             boolean[] isBufSvcRx,
             List<Integer> depPhase,
             boolean[] isPhaseRx,
-            int[] phaseToArr) {
+            int[] phaseToArr,
+            double[][] startCount,
+            double[][] preemptCount) {
         if (kfire < isRetryRx.length && isRetryRx[kfire]) {
             // A successful retry moves one orbiting job into the free server. The
             // population is unchanged (it was already counted at the station), so
             // only the orbit shrinks; in-service is read back as population minus
             // orbit occupancy. For memoryless retrials the orbiting jobs of a
             // class are exchangeable, so which one leaves cannot matter.
-            buffers[fromIR.get(kfire)[0]].removeFirstOccurrence(Integer.valueOf(fromIR.get(kfire)[1] + 1));
+            boolean removed = buffers[fromIR.get(kfire)[0]]
+                    .removeFirstOccurrence(Integer.valueOf(fromIR.get(kfire)[1] + 1));
+            if (removed && startCount != null) {
+                // the retrying job seizes the free server: this is where service
+                // starts at a retrial station, since its departures never promote
+                startCount[fromIR.get(kfire)[0]][fromIR.get(kfire)[1]] += 1.0;
+            }
             return;
         }
         if (kfire < isRenegeRx.length && isRenegeRx[kfire]) {
@@ -3843,7 +4183,8 @@ phaseFlag.add(Boolean.FALSE);
             svcph[ind][r][phaseToArr[kfire]] += 1.0;
             return;
         }
-        updateBuffers(kfire, nvec, buffers, fromIR, destPos, mi, R, sn, sm, svcph, bufPHNode, isBufSvcRx, depPhase);
+        updateBuffers(kfire, nvec, buffers, fromIR, destPos, mi, R, sn, sm, svcph, bufPHNode, isBufSvcRx, depPhase,
+                startCount, preemptCount);
     }
 
     private static void updateBuffers(
@@ -3859,7 +4200,9 @@ phaseFlag.add(Boolean.FALSE);
             double[][][] svcph,
             boolean[] bufPHNode,
             boolean[] isBufSvcRx,
-            List<Integer> depPhase) {
+            List<Integer> depPhase,
+            double[][] startCount,
+            double[][] preemptCount) {
         int ind = fromIR.get(kfire)[0];
 
         // Buffered-PH departure: the completing job leaves service, so drop it from
@@ -3873,7 +4216,13 @@ phaseFlag.add(Boolean.FALSE);
         // not a promotion but a rewrite: the completing position's chain shifts
         // classes along and removes one slot.
         if (isListSched(ind, sn) && !buffers[ind].isEmpty()) {
+            int[] oldList = listOf(buffers[ind]);
             oiDepart(sn, ind, buffers[ind], fromIR.get(kfire)[1]);
+            // An order-independent station serves every position whose rate
+            // increment Delta_mu is positive, so a departure starts whichever
+            // positions cross from a zero increment to a positive one -- the
+            // same rule AfterEventStation.afterEventStationPas tags.
+            addOiStarted(sn, ind, oldList, listOf(buffers[ind]), R, startCount);
             return;
         }
 
@@ -3886,6 +4235,9 @@ phaseFlag.add(Boolean.FALSE);
             int pos = pickFromBuffer(buffers[ind], sn, (int) sn.nodeToStation.get(ind));
             int promoted = elemAt(buffers[ind], pos) - 1;   // class id -> 0-based class
             removeAt(buffers[ind], pos);
+            if (promoted >= 0 && startCount != null) {
+                startCount[ind][promoted] += 1.0; // takes the freed server
+            }
             if (bufPHNode[ind] && promoted >= 0) {
                 // The promoted waiting job starts service now, entering a phase drawn
                 // from its entry distribution pie (the same allocation the init uses).
@@ -3898,7 +4250,51 @@ phaseFlag.add(Boolean.FALSE);
         if (destPos < 0) {
             return;
         }
-        applyArrivalBuffer(sm.node[destPos], sm.cls[destPos], nvec, buffers, mi, R, sn, sm, svcph, bufPHNode);
+        applyArrivalBuffer(sm.node[destPos], sm.cls[destPos], nvec, buffers, mi, R, sn, sm, svcph, bufPHNode,
+                startCount, preemptCount);
+    }
+
+    /**
+     * Add the START counts of a pass-and-swap rewrite: the positions of CNEW
+     * that are served (Delta_mu &gt; 0) and were not served in COLD.
+     */
+    private static void addOiStarted(NetworkStruct sn, int ind, int[] cold, int[] cnew, int R, double[][] startCount) {
+        if (startCount == null) {
+            return;
+        }
+        Object qpObj = sn.nodeparam.get(sn.nodes.get(ind));
+        if (!(qpObj instanceof jline.lang.nodeparam.QueueNodeParam)) {
+            return;
+        }
+        jline.util.SerializableFunction<Matrix, Double> muFun =
+                ((jline.lang.nodeparam.QueueNodeParam) qpObj).svcRateFun;
+        if (muFun == null) {
+            return;
+        }
+        double[] incNew = oiIncrements(muFun, cnew);
+        double[] incOld = oiIncrements(muFun, cold);
+        for (int p = 0; p < incNew.length; p++) {
+            if (incNew[p] <= 0) continue;
+            if (p < incOld.length && incOld[p] > 0) continue;
+            int cls = cnew[p] - 1;
+            if (cls >= 0 && cls < R) {
+                startCount[ind][cls] += 1.0;
+            }
+        }
+    }
+
+    /** Per-position increments Delta_mu(c1..cp) = mu(c1..cp) - mu(c1..c_{p-1}). */
+    private static double[] oiIncrements(jline.util.SerializableFunction<Matrix, Double> muFun, int[] c) {
+        double[] inc = new double[c.length];
+        double muPrev = 0.0;
+        for (int p = 0; p < c.length; p++) {
+            Matrix prefix = new Matrix(1, p + 1);
+            for (int i = 0; i <= p; i++) prefix.set(0, i, c[i] - 1);
+            double muCur = muFun.apply(prefix);
+            inc[p] = muCur - muPrev;
+            muPrev = muCur;
+        }
+        return inc;
     }
 
     /**
@@ -3911,13 +4307,16 @@ phaseFlag.add(Boolean.FALSE);
     private static void applyArrivalBuffer(int jnd, int r, Matrix nvec,
                                            ArrayDeque<Integer>[] buffers, double[] mi,
                                            int R, NetworkStruct sn, Smap sm,
-                                           double[][][] svcph, boolean[] bufPHNode) {
+                                           double[][][] svcph, boolean[] bufPHNode,
+                                           double[][] startCount, double[][] preemptCount) {
         if (isListSched(jnd, sn)) {
             // PAS/OI: the arrival simply joins the back of the ordered list; there
             // is no server/buffer split, so no capacity test against mi. Capacity
             // is the station's own cap, and an arrival past it is lost.
             if (buffers[jnd].size() < sn.cap.get((int) sn.nodeToStation.get(jnd))) {
+                int[] oldList = listOf(buffers[jnd]);
                 buffers[jnd].addLast(r + 1); // append at the back (newest last)
+                addOiStarted(sn, jnd, oldList, listOf(buffers[jnd]), R, startCount);
             }
             return;
         }
@@ -3950,6 +4349,9 @@ phaseFlag.add(Boolean.FALSE);
                     int c = pickPreempted(nvec, buffers[jnd], jnd, r, R, sm);
                     if (c >= 0) {
                         buffers[jnd].addFirst(c + 1); // addFirst
+                        if (preemptCount != null) {
+                            preemptCount[jnd][c] += 1.0; // displaced incumbent
+                        }
                     }
                     enteredService = true;
                 } else {
@@ -3959,6 +4361,9 @@ phaseFlag.add(Boolean.FALSE);
             } else {
                 // A server is free: the job goes straight into service.
                 enteredService = true;
+            }
+            if (enteredService && startCount != null) {
+                startCount[jnd][r] += 1.0; // the arrival took a server
             }
             if (enteredService && bufPHNode[jnd]) {
                 int ke = drawEntryPhase(sn, sm, jnd, r);
@@ -4106,7 +4511,7 @@ phaseFlag.add(Boolean.FALSE);
                                     Fcr fcr, ArrayDeque<Integer>[] fcrBuf,
                                     List<int[]> fromIR, Balk balk,
                                     Sig sig, Rr rrp, ArrayDeque<Integer>[] buffers, double[] mi,
-                                    Smap sm, boolean[] isPhaseRx, NetworkStruct sn) {
+                                    Smap sm, boolean[] isPhaseRx, NetworkStruct sn, Blk blk) {
         // A phase transition moves a job between the phases of its own service
         // process. It never leaves the node, so it bypasses the routing/balking/
         // signal machinery entirely and just applies its stoichiometry column.
@@ -4224,6 +4629,12 @@ phaseFlag.add(Boolean.FALSE);
             }
             int src = fromIdx.get(kfire);
             int destPos = rt.destRow[kfire][sel];
+            // A closed job that finds no room BLOCKS: the firing is cancelled
+            // before any gate that would consume it, because a job that cannot
+            // leave its station never gets the chance to balk or to be dropped.
+            if (capacityBlock(blk, nvec, destPos, src, R, sm)) {
+                return BLOCKED;
+            }
             // Balking is decided on the pre-arrival population, so it is drawn
             // before the state is updated. A balked job is lost: the source still
             // releases it, the destination never receives it.
@@ -4263,7 +4674,19 @@ phaseFlag.add(Boolean.FALSE);
             return destPos;
         }
         if (rt.nnzP[kfire] == 1) {
+            // NO phase-change exclusion is needed on the gates below: a phase
+            // reaction is early-returned at the top of this method, so it never
+            // reaches here. Do not "tidy" that early return away -- it is what
+            // keeps a phase change out of the balking and capacity gates, whose
+            // destination for such a firing is the job's OWN station. MATLAB
+            // and Python lacked it and destroyed the job they were serving
+            // (16.5% throughput error at the capacity gate, 32% at balking);
+            // both were guarded explicitly on 2026-07-25 to match this file.
             int destPos = rt.destRow[kfire][0];
+            // Same closed-class block as above (a phase change never reaches here).
+            if (capacityBlock(blk, nvec, destPos, fromIdx.get(kfire), R, sm)) {
+                return BLOCKED;
+            }
             boolean lost = balk.on && balkDraw(balk, nvec, destPos, R, sm);
             if (!lost && capacityLoss(sn, nvec, destPos, R, sm)) {
                 lost = true;
@@ -4658,6 +5081,18 @@ phaseFlag.add(Boolean.FALSE);
     }
 
     private static void printProgress(SolverOptions options, int samples_collected) {
+        // The solver console owns the line while it narrates: the in-place
+        // backspace counter below cannot be rewritten in a paged log, so the
+        // progress is reported as decimated rows instead.
+        if (jline.io.LineConsole.ownsLog()) {
+            final long every = Math.max(1L, options.samples / 20L);
+            if (samples_collected % every == 0) {
+                jline.io.LineConsole.iter(samples_collected / every,
+                        "simulated %d of %d samples (%.0f%%)", samples_collected,
+                        options.samples, 100.0 * samples_collected / options.samples);
+            }
+            return;
+        }
         if (System.console() != null && !"parallel".equals(options.method)
                 && (options.verbose == VerboseLevel.STD || options.verbose == VerboseLevel.DEBUG)) {
             if (samples_collected == 2) {

@@ -160,27 +160,23 @@ switch sn.sched(ist)
         for r=1:R
             nir(:,r) = Inf;
         end
-    case SchedStrategy.FCFS
+    case {SchedStrategy.FCFS, SchedStrategy.FCFSPRIO, SchedStrategy.HOL, ...
+          SchedStrategy.LCFS, SchedStrategy.LCFSPRIO}
         for r=1:R
             nir(:,r) = nir(:,r) + sum(space_buf==r,2); % class-r jobs in station
         end
-    case SchedStrategy.HOL
-        for r=1:R
-            nir(:,r) = nir(:,r) + sum(space_buf==r,2); % class-r jobs in station
+    case {SchedStrategy.FCFSPI, SchedStrategy.FCFSPIPRIO, SchedStrategy.FCFSPR, SchedStrategy.FCFSPRPRIO, SchedStrategy.LCFSPI, SchedStrategy.LCFSPIPRIO, SchedStrategy.LCFSPR, SchedStrategy.LCFSPRPRIO}
+        % buffer holds (class,phase) pairs: the class tags are the odd columns.
+        % Without this arm a preempted job was invisible to every consumer of
+        % the aggregate decode, so nir counted the server alone.
+        if size(space_buf,2)>1
+            space_bufcls = space_buf(:,1:2:end);
+            for r=1:R
+                nir(:,r) = nir(:,r) + sum(space_bufcls==r,2); % class-r jobs in station
+            end
         end
-    case SchedStrategy.LCFS
-        for r=1:R
-            nir(:,r) = nir(:,r) + sum(space_buf==r,2); % class-r jobs in station
-        end
-    case {SchedStrategy.SIRO, SchedStrategy.POLLING}
-        for r=1:R
-            nir(:,r) = nir(:,r) + space_buf(:,r); % class-r jobs in station
-        end
-    case SchedStrategy.SEPT
-        for r=1:R
-            nir(:,r) = nir(:,r) + space_buf(:,r); % class-r jobs in station
-        end
-    case SchedStrategy.LEPT
+    case {SchedStrategy.SIRO, SchedStrategy.POLLING, SchedStrategy.SEPT, ...
+          SchedStrategy.LEPT, SchedStrategy.SRPT, SchedStrategy.SRPTPRIO}
         for r=1:R
             nir(:,r) = nir(:,r) + space_buf(:,r); % class-r jobs in station
         end

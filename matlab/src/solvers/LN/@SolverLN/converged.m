@@ -25,6 +25,16 @@ if ~isempty(self.stochiter_mode)
     end
 end
 
+% The moment3 moment-based pass is terminal: it runs once hasconverged is set,
+% and its own output perturbs the error test below, which would clear
+% hasconverged and hand the next iteration back to the residence-time branch --
+% overwriting the moment-based entry laws with a quantity scaled by the entry's
+% visit ratio. See BUGS.md BUG-97.
+if strcmp(self.options.method,'moment3') && ~isempty(self.momentPassDone) && self.momentPassDone
+    bool = true;
+    return
+end
+
 iter_min = max([2*length(self.model.ensemble),ceil(self.options.iter_max/4)]);
 E = self.nlayers;
 results = self.results; %#ok<NASGU> % faster in matlab
@@ -120,17 +130,34 @@ if it>1
         %     end
         % end
     end
+    announceAveraging = false;
     if it==iter_min
-        if self.options.verbose
-            line_printf( '\b Started averaging to aid convergence.');
+        if LineConsole.isActive()
+            LineConsole.step('started averaging the iterates to aid convergence');
+        elseif self.options.verbose
+            announceAveraging = true; % printed below, once the row is complete
         end
         self.averagingstart = it;
     end
 
     % Print iteration error for tracing
-    if self.options.verbose
-        line_printf(sprintf('MaxIterErr=%.6e (tol=%.6e, hasconv=%d)', ...
-            self.maxitererr(it), self.options.iter_tol, self.hasconverged));
+    if LineConsole.isActive()
+        LineConsole.iter(it, ['layer iteration %d: max queue-length change %.3e ' ...
+            '(tolerance %.3e)'], it, self.maxitererr(it), self.options.iter_tol);
+    elseif self.options.verbose
+        % same row as the timings ITERATE laid down; the row is closed there
+        LineStatus.append(' MaxIterErr=%.6e (tol=%.6e, hasconv=%d)', ...
+            self.maxitererr(it), self.options.iter_tol, self.hasconverged);
+    end
+
+    % AFTER the error is appended, not before. This is a one-off notice and
+    % gets a line of its own (line_printf ends the open row), but printing it
+    % first ended the row while it was still one field short of its full
+    % width -- and therefore still padded with the blanks that covered the
+    % previous, longer row. Those blanks cannot be taken back once the row is
+    % closed, so the finished line kept them. See LineStatus.close.
+    if announceAveraging
+        line_printf('Started averaging to aid convergence.\n');
     end
 
     %% Update relaxation factor for adaptive/auto modes

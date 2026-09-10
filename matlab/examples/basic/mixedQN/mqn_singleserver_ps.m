@@ -44,7 +44,7 @@ optionssa = options; optionssa.cutoff = Inf;
 disp('This example shows the execution of the solver on a 2-class mixed model with 4 single server nodes.')
 % This part illustrates the execution of different solvers
 solver={};
-%solver{end+1} = CTMC(model,options); % CTMC is infinite on this model
+%solver{end+1} = CTMC(model, 'exact',options); % CTMC is infinite on this model
 solver{end+1} = JMT(model,options);
 solver{end+1} = SSA(model,optionssa);
 solver{end+1} = FLD(model,options);

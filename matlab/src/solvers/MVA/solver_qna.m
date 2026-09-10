@@ -16,7 +16,8 @@ config = options.config;
 config.space_max = 1;
 
 K = sn.nclasses;
-rt = sn.rt;
+% sn.rt and sn.visits are indexed by stateful node: project them onto stations
+[rt, V] = sn_rt_stations(sn);
 S = 1./sn.rates;
 scv = sn.scv; scv(isnan(scv))=0;
 
@@ -42,7 +43,6 @@ scv = sn.scv; scv(isnan(scv))=0;
 I = sn.nnodes;
 M = sn.nstations;
 C = sn.nchains;
-V = cellsum(sn.visits);
 Q = zeros(M,K);
 
 U = zeros(M,K);
@@ -51,6 +51,26 @@ T = zeros(M,K);
 X = zeros(1,K);
 
 lambda = zeros(1,C);
+
+% The station update below has an arm for INF, PS and FCFS and none for any
+% other discipline, so a SIRO, LCFS, LCFS-PR, HOL or priority station used to
+% leave its whole row of Q, U, R and T at zero and the table was returned as a
+% solution. SolverMVA.getMethodFeatureSet withholds 'qna' for exactly these
+% disciplines; refusing here too keeps the report and the run in step.
+for ist=1:M
+    ind = sn.stationToNode(ist);
+    if ind >= 1 && ind <= numel(sn.nodetype) && sn.nodetype(ind) == NodeType.Join
+        continue % a Join station carries no service; the loop below skips it
+    end
+    switch sn.sched(ist)
+        case {SchedStrategy.EXT, SchedStrategy.INF, SchedStrategy.PS, SchedStrategy.FCFS}
+            % served by the station update below
+        otherwise
+            line_error(mfilename, sprintf(['QNA decomposes every station as a GI/G/m centre ' ...
+                'and has no arm for %s scheduling. Use the ''default'' or ''lin'' methods.'], ...
+                SchedStrategy.toText(sn.sched(ist))));
+    end
+end
 
 if any(isfinite(sn.njobs))
     %    line_error(mfilename,'QNA does not support closed classes.');
@@ -70,13 +90,15 @@ f2 = zeros(M*K,M*K); % scv of each flow pair (i,r) -> (j,s)
 mubar = [];
 c2 = [];
 Wiq = [];
+% deterministic (round-robin) split degrees, k=1 where the split is Markovian
+kRR = npfqn_traffic_split_rr(sn);
 for ist=1:M
     for jst=1:M
         if sn.nodetype(sn.stationToNode(jst)) ~= NodeType.Source
             for r=1:K
                 for s=1:K
                     if rt((ist-1)*K+r, (jst-1)*K+s)>0
-                        f2((ist-1)*K+r, (jst-1)*K+s) = 1; % C^2ij,r
+                        f2((ist-1)*K+r, (jst-1)*K+s) = 1 + rt((ist-1)*K+r, (jst-1)*K+s) * (1-kRR(ist,r)); % C^2ij,r at d2=1
                     end
                 end
             end
@@ -261,7 +283,8 @@ fpopts.config.da_nanstop = true; % legacy while-loop exited on NaN convergence m
                     for r=1:K
                         for s=1:K
                             if rt((ist-1)*K+r, (jst-1)*K+s)>0
-                                f2((ist-1)*K+r, (jst-1)*K+s) = 1 + rt((ist-1)*K+r, (jst-1)*K+s) * (d2(ist)-1); % C^2ij,r
+                                % k-fold convolution then Bernoulli thinning at q=k*p: C^2 = (q/k)*d2+1-q
+                                f2((ist-1)*K+r, (jst-1)*K+s) = 1 + rt((ist-1)*K+r, (jst-1)*K+s) * (d2(ist)-kRR(ist,r)); % C^2ij,r
                             end
                         end
                     end

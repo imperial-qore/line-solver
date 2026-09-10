@@ -31,9 +31,9 @@ for i=1:M
     for h=1:size(MAPs{i}{1},1)
         for k=1:size(MAPs{i}{1},1)
             if h==k
-                v(i,k,h)=0; 
+                v(i,h,k)=0; 
             else
-                v(i,k,h)=MAPs{i}{1}(h,k);
+                v(i,h,k)=MAPs{i}{1}(h,k); % (from,to), as mu is: v(i,k,h) reverses an Erlang
             end
         end
     end
@@ -95,13 +95,18 @@ end
     function fobj = mem(x)
         % MEM
         %maximize H: -sum {m in 1..MR} sum {i in 1..M} sum {k in 1..K[i]} sum {ni in 1..F[i]} p2[i,ni,k,i,ni,k,m]*log(1e-6+p2[i,ni,k,i,ni,k,m]);
+        %
+        % Returned NEGATED, i.e. as -H, because fmincon MINIMIZES and the AMPL
+        % objective above is a MAXIMIZE. Returning +H picks the minimum-entropy
+        % point of the polytope, the opposite face, under a method documented as
+        % maximum-entropy; that is what every port did until 2026-08-29.
         [p2,~] = sub_qrfvar(x);
         fobj = 0;
         for m = 1:MR
             for i = 1:M
                 for k = 1:K(i)
                     for ni = 1+(1:F(i))
-                        fobj = fobj - p2(i,ni,k,i,ni,k,m)*log(1e-6 + p2(i,ni,k,i,ni,k,m));
+                        fobj = fobj + p2(i,ni,k,i,ni,k,m)*log(1e-6 + p2(i,ni,k,i,ni,k,m));
                     end
                 end
             end

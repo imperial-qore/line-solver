@@ -41,7 +41,7 @@ options = Solver.defaultOptions;
 options.verbose=1;
 options.samples=1e4;
 options.seed = 23000;
-solver{end+1} = CTMC(model,options);
+solver{end+1} = CTMC(model, 'exact',options);
 solver{end+1} = JMT(model,options);
 solver{end+1} = FLD(model,options);
 % Solver.defaultOptions carries the GENERIC iter_tol (1e-4), which overrides

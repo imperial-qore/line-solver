@@ -172,6 +172,160 @@ classdef MarkovProcess < Process
             [soujt, sts] = ctmc_simulate(self.infGen, [], n);
         end
 
+        function [pi_t, kmax] = transient(self, pi0, t, method)
+            % [PI_T, KMAX] = TRANSIENT(PI0, T, METHOD)
+            % Distribution at time T from PI0 (uniform if empty). METHOD is
+            % 'unif' (Jensen uniformization, the default) or 'foxglynn', whose
+            % weights avoid evaluating the Poisson terms directly.
+            if nargin<2 || isempty(pi0)
+                pi0 = ones(1,length(self.infGen))/length(self.infGen);
+            end
+            if nargin<4 || isempty(method)
+                method = 'unif';
+            end
+            switch lower(method)
+                case 'foxglynn'
+                    [pi_t, ~, right] = ctmc_foxglynn(reshape(pi0,1,[]), self.infGen, t);
+                    kmax = right;
+                otherwise
+                    [pi_t, kmax] = ctmc_uniformization(reshape(pi0,1,[]), self.infGen, t);
+            end
+        end
+
+        function p = solveRelative(self, refstate)
+            % P = SOLVERELATIVE(REFSTATE)
+            % Equilibrium distribution relative to REFSTATE, i.e. with
+            % p(REFSTATE)=1. Unnormalized by construction, so it is defined
+            % even where the normalizing constant is not.
+            if nargin<2
+                refstate = 1;
+            end
+            p = ctmc_relsolve(self.infGen, refstate);
+        end
+
+        function [p, eps, epsMAX] = aggregate(self, MS, method, param)
+            % [P, EPS, EPSMAX] = AGGREGATE(MS, METHOD, PARAM)
+            % Aggregation-disaggregation over the macrostate partition MS, a
+            % cell array of state-index vectors. METHOD is 'courtois' (PARAM is
+            % the randomization rate q), 'kms' or 'takahashi' (PARAM is the
+            % iteration count, default 10), or 'multi' (PARAM is the
+            % second-level partition MSS). EPS is the nearly-complete-
+            % decomposability index of the partition and EPSMAX the largest
+            % index for which the approximation is meant to hold.
+            if nargin<3 || isempty(method)
+                method = 'courtois';
+            end
+            if nargin<4
+                param = [];
+            end
+            switch lower(method)
+                case 'courtois'
+                    if isempty(param)
+                        [p,~,~,eps,epsMAX] = ctmc_courtois(self.infGen, MS);
+                    else
+                        [p,~,~,eps,epsMAX] = ctmc_courtois(self.infGen, MS, param);
+                    end
+                case 'kms'
+                    if isempty(param), param = 10; end
+                    [p,~,~,eps,epsMAX] = ctmc_kms(self.infGen, MS, param);
+                case 'takahashi'
+                    if isempty(param), param = 10; end
+                    [p,~,~,~,eps,epsMAX] = ctmc_takahashi(self.infGen, MS, param);
+                case 'multi'
+                    if isempty(param)
+                        line_error(mfilename,'The ''multi'' method requires the second-level partition MSS.');
+                    end
+                    [p,~,~,eps,epsMAX] = ctmc_multi(self.infGen, MS, param);
+                otherwise
+                    line_error(mfilename,'Unknown aggregation method ''%s''.', method);
+            end
+        end
+
+        function [pi_t, kmax] = transientProb(self, pi0, t)
+            % [PI_T, KMAX] = TRANSIENTPROB(PI0, T)
+            % Alias of transient, under the name the JAR must use since
+            % 'transient' is a Java keyword.
+            if nargin<2
+                pi0 = [];
+            end
+            [pi_t, kmax] = self.transient(pi0, t);
+        end
+
+        function [piTimeAvg, piExit] = timeAverage(self, pi0, t)
+            % [PITIMEAVG, PIEXIT] = TIMEAVERAGE(PI0, T)
+            % Time-averaged distribution over [0,T] and its endpoint.
+            if nargin<2 || isempty(pi0)
+                pi0 = ones(1,length(self.infGen))/length(self.infGen);
+            end
+            [piTimeAvg, piExit] = ctmc_timeaverage(reshape(pi0,1,[]), self.infGen, t);
+        end
+
+        function dpi = sens(self, dQ)
+            % DPI = SENS(DQ)
+            % Sensitivity of the stationary distribution to a scalar parameter,
+            % given the derivative DQ of the generator.
+            dpi = ctmc_sens(self.infGen, dQ, self.solve());
+        end
+
+        function S = stochComp(self, I)
+            % S = STOCHCOMP(I)
+            % Stochastic complement of the states I, a generator on that subset.
+            % Use stochCompFull to also obtain the partitioned blocks.
+            if nargin<2
+                S = ctmc_stochcomp(self.infGen);
+            else
+                S = ctmc_stochcomp(self.infGen, I);
+            end
+        end
+
+        function [S, Q11, Q12, Q21, Q22, T] = stochCompFull(self, I)
+            % [S, Q11, Q12, Q21, Q22, T] = STOCHCOMPFULL(I)
+            % Stochastic complement of the states I together with the blocks of
+            % the generator partitioned by I and its complement, and the
+            % return-path term T = Q12*inv(-Q22)*Q21, so that S = Q11 + T.
+            if nargin<2
+                [S, Q11, Q12, Q21, Q22, T] = ctmc_stochcomp(self.infGen);
+            else
+                [S, Q11, Q12, Q21, Q22, T] = ctmc_stochcomp(self.infGen, I);
+            end
+        end
+
+        function h = hittingTime(self, targetStates)
+            % H = HITTINGTIME(TARGETSTATES)
+            % Mean TIME to reach any state in TARGETSTATES, zero on the target
+            % set itself and Inf from a state that cannot reach it. The twin
+            % MarkovChain.hittingTime counts STEPS instead, so the two answer
+            % different questions about the same jump structure.
+            h = ctmc_hitting_time(self.infGen, targetStates);
+        end
+
+        function bool = isFeasible(self)
+            % BOOL = ISFEASIBLE()
+            % True when the generator is a valid one.
+            bool = ctmc_isfeasible(self.infGen);
+        end
+
+        function A = toEmbedded(self)
+            % A = TOEMBEDDED()
+            % Embedded jump chain, i.e. the DTMC of the states visited at
+            % transition epochs. Unlike toDTMC (uniformization) it does not
+            % preserve the stationary distribution, since it drops the holding
+            % times; an absorbing state stays absorbing.
+            Q = self.infGen;
+            n = size(Q,1);
+            exitRate = -diag(Q);
+            P = Q - diag(diag(Q));
+            for i = 1:n
+                if exitRate(i) > 0
+                    P(i,:) = P(i,:) / exitRate(i);
+                else
+                    P(i,i) = 1;
+                end
+            end
+            A = MarkovChain(P);
+            A.setStateSpace(self.stateSpace);
+        end
+
     end
 
     methods (Static)

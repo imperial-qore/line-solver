@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from line_solver import Network, ClosedClass, Delay, Queue
 from line_solver import Environment, ENV, FLD, MVA
-from line_solver.constants import SchedStrategy
+from line_solver.constants import SchedStrategy, VerboseLevel
 from line_solver.distributions import Exp
 
 
@@ -68,9 +68,16 @@ def main():
 
     # Block 4: Solve using ENV
     # ENV requires a solver factory that creates solvers for each stage
-    # We use the Fluid solver (FLD) with transient analysis
-    env_solver = ENV(env, lambda m: FLD(m))
-    Q, U, T = env_solver.getAvg()
+    # We use the Fluid solver (FLD) with transient analysis.
+    # The stage horizon and the outer tolerances are the MATLAB twin's: a stage
+    # solver left without a timespan gets a warned-about default of [0,30], and
+    # the outer loop's own iter_tol is what the two codebases have to share for
+    # the environment average to land on the same fixed point. Both are stated
+    # as LITERALS because parity/example_methods.py reads them off this source
+    # to pin the CLI rows; behind a variable they would not be seen.
+    env_solver = ENV(env, lambda m: FLD(m, timespan=[0, 100], verbose=VerboseLevel.SILENT),
+                     {'iter_max': 50, 'iter_tol': 0.01, 'verbose': VerboseLevel.SILENT})
+    Q, U, _, T, _, _ = env_solver.getAvg()
 
     # Display average results weighted by environment probabilities
     print('\n--- Environment-Averaged Results ---')

@@ -55,7 +55,8 @@ def _remove_from_retrieval_system(var_flat, item, total_cache_capacity):
         var_flat[col] = 0
 
 
-def after_event_cache(sn, ind, event, job_class, R, space_buf, space_srv, space_var):
+def after_event_cache(sn, ind, event, job_class, R, space_buf, space_srv, space_var,
+                      is_simulation=False):
     """
     Handle events at a Cache node.
 
@@ -68,6 +69,8 @@ def after_event_cache(sn, ind, event, job_class, R, space_buf, space_srv, space_
         space_buf: Buffer state (empty for Cache)
         space_srv: Server state, shape (n_rows, R) - job counts per class
         space_var: Variable state - cache list contents
+        is_simulation: sample-path mode, which has no enumerated state space and
+            hence no delayed-hit truncation level
 
     Returns:
         Tuple of (outspace, outrate, outprob)
@@ -87,35 +90,8 @@ def after_event_cache(sn, ind, event, job_class, R, space_buf, space_srv, space_
     elif event == EventType.DEP:
         if space_srv[0, job_class] > 0:
             # A retrieval-class job departs the cache only to BEGIN a retrieval
-            # (cache -> queue); record the item in the per-item occupancy bitmap.
-            nparam_dep = sn.nodeparam[ind] if sn.nodeparam is not None and ind in sn.nodeparam else None
-            if nparam_dep is not None:
-                if isinstance(nparam_dep, dict):
-                    rci = nparam_dep.get('retrieval_class_indices', set()) or set()
-                    tcc_dep = nparam_dep.get('total_cache_capacity', None)
-                    pread_dep = nparam_dep.get('pread', None)
-                else:
-                    rci = getattr(nparam_dep, 'retrieval_class_indices', set()) or set()
-                    tcc_dep = getattr(nparam_dep, 'total_cache_capacity', None)
-                    pread_dep = getattr(nparam_dep, 'pread', None)
-                if job_class in rci and pread_dep is not None and job_class < len(pread_dep) \
-                        and pread_dep[job_class] is not None:
-                    if tcc_dep is None:
-                        tcc_dep = space_var.shape[1] if space_var.ndim >= 2 else space_var.shape[0]
-                    tcc_dep = int(tcc_dep)
-                    pr = list(pread_dep[job_class])
-                    item = pr.index(1.0) if 1.0 in pr else -1
-                    if item >= 0:
-                        row0 = (space_var[0] if space_var.ndim >= 2 else space_var)
-                        if _is_in_retrieval_system(np.atleast_1d(row0).ravel(), item, tcc_dep):
-                            # already retrieving this item; this departure produces nothing
-                            return np.zeros((0, 0)), np.zeros((0, 0)), np.zeros((0, 0))
-                        col = tcc_dep + item
-                        if space_var.ndim >= 2 and col < space_var.shape[1]:
-                            space_var[:, col] = 1
-                        elif space_var.ndim == 1 and col < space_var.shape[0]:
-                            space_var[col] = 1
-
+            # (cache -> queue). The per-item occupancy bit is already set by the
+            # READ that started the fetch, so the departure only moves the job.
             space_srv[:, job_class] -= 1
 
             # Update round-robin pointer if applicable
@@ -152,13 +128,13 @@ def after_event_cache(sn, ind, event, job_class, R, space_buf, space_srv, space_
         return np.zeros((0, 0)), np.zeros((0, 0)), np.zeros((0, 0))
 
     elif event == EventType.READ:
-        return _handle_read(sn, ind, job_class, R, space_srv, space_var)
+        return _handle_read(sn, ind, job_class, R, space_srv, space_var, is_simulation)
 
     return np.zeros((0, 0)), np.zeros((0, 0)), np.zeros((0, 0))
 
 
-def _handle_read(sn, ind, job_class, R, space_srv, space_var):
-    """Handle READ event at a Cache node (CTMC mode only)."""
+def _handle_read(sn, ind, job_class, R, space_srv, space_var, is_simulation=False):
+    """Handle READ event at a Cache node."""
     # Extract cache parameters
     nparam = sn.nodeparam[ind] if sn.nodeparam is not None and ind in sn.nodeparam else None
     if nparam is None:
@@ -249,6 +225,26 @@ def _handle_read(sn, ind, job_class, R, space_srv, space_var):
     out_rate_list = []
     Immediate = GlobalConstants.Immediate
 
+    # Block B of the local-variable vector: per-retrieval-class counts of the
+    # secondary requests merged onto an in-flight fetch (see _space_cache). Its
+    # width and truncation level are read off the node state space rather than
+    # from nodeparam, because only sn.space is propagated back from the
+    # state-space generator.
+    from .ctmc_ssg import cache_retrieval_class_map
+    rc_list, rc_items, rc_orig_class = cache_retrieval_class_map(sn, ind)
+    block_b_offset = tcc + n
+    var_width = space_var.shape[1] if space_var.ndim >= 2 else space_var.shape[0]
+    width_b = len(rc_list) if (var_width - block_b_offset) == len(rc_list) else 0
+    # simulation has no enumerated state space, hence no truncation: a fetch may
+    # merge any number of secondary requests
+    max_pending = np.inf if is_simulation else 0
+    if width_b > 0 and not is_simulation:
+        isfc = int(sn.nodeToStateful[ind])
+        spc = sn.space[isfc] if getattr(sn, 'space', None) is not None and isfc in sn.space else None
+        if spc is not None and np.asarray(spc).size > 0:
+            spc = np.atleast_2d(np.asarray(spc))
+            max_pending = int(np.max(np.sum(spc[:, spc.shape[1] - width_b:], axis=1)))
+
     # Find enabled rows
     for e in range(space_srv.shape[0]):
         if space_srv[e, job_class] <= 0:
@@ -291,23 +287,46 @@ def _handle_read(sn, ind, job_class, R, space_srv, space_var):
                     continue
 
                 # Begin a retrieval: the job switches to the retrieval class for
-                # item k. The occupancy bitmap is only set on the subsequent DEP
-                # (when the job departs the cache for the queue), so the cache
-                # state is unchanged here.
+                # item k and item k is marked as being fetched. A concurrent
+                # request for an item already being fetched is a delayed hit: it
+                # merges onto the in-flight fetch and is held in block B until
+                # that fetch completes.
                 if (not is_from_retrieval) and rc >= 0:
                     space_srv_e_b = space_srv_e.copy()
+                    var_b = var.copy()
+                    vb_flat = np.atleast_1d(var_b).ravel()
                     if not _is_in_retrieval_system(var_flat, k, tcc):
                         space_srv_e_b[rc] += 1
+                        _add_to_retrieval_system(vb_flat, k, tcc)
+                    else:
+                        bslot = rc_list.index(rc) if rc in rc_list else -1
+                        bcol = block_b_offset + bslot
+                        if bslot < 0 or bcol >= len(vb_flat) or \
+                                np.sum(vb_flat[block_b_offset:]) >= max_pending:
+                            continue  # beyond the delayed-hit truncation level
+                        vb_flat[bcol] += 1
                     out_srv_list.append(space_srv_e_b)
-                    out_var_list.append(var.copy())
+                    out_var_list.append(vb_flat.reshape(var_b.shape))
                     out_rate_list.append(p[k] * Immediate)
                     continue
 
                 # Item has now been retrieved: mark as a miss and clear its bit.
+                # Every secondary request merged onto this fetch is released in the
+                # same transition and departs as a delayed hit, in the hit class of
+                # the job class that issued it.
                 if var.size > tcc:
                     var = var.copy()
                     vf = np.atleast_1d(var).ravel()
                     _remove_from_retrieval_system(vf, k, tcc)
+                    for bslot in range(width_b):
+                        if rc_items[bslot] != k + 1:
+                            continue
+                        bcol = block_b_offset + bslot
+                        if bcol < len(vf) and vf[bcol] > 0:
+                            hc = int(hitclass[rc_orig_class[bslot]])
+                            if hc >= 0:
+                                space_srv_e[hc] += vf[bcol]
+                            vf[bcol] = 0
                     var = vf.reshape(var.shape)
                 space_srv_e[int(missclass[job_class])] += 1
                 _handle_miss(m, h, k, p, ac, job_class, repl_name, space_srv_e, var,

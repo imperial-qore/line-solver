@@ -50,27 +50,31 @@ public final class Ctmc_transient {
         double[] y = new double[pi0.length()];
 
         if (timestep != null && timestep > 0) {
+            // grid built on an index, never by accumulating the step: repeated addition
+            // drifts and made the loop bound miss or duplicate the endpoint
             List<Double> timePoints = new ArrayList<Double>();
-            double t = t0;
-            while (t <= t1) {
-                timePoints.add(t);
-                t += timestep;
+            int nsteps = (int) Math.floor((t1 - t0) / timestep + 1e-9);
+            for (int i = 0; i <= nsteps; i++) {
+                timePoints.add(t0 + i * timestep);
             }
-            if (timePoints.get(timePoints.size() - 1) != t1) {
+            if (timePoints.get(timePoints.size() - 1) < t1) {
                 timePoints.add(t1);
             }
 
+            // t0 carries pi0 itself; integrating over a zero-length first interval is
+            // what threw inside LSODA
             List<double[]> piResults = new ArrayList<double[]>();
-            timePoints.add(0, t0);
+            double[] cur = pi0.toArray1D();
+            piResults.add(cur.clone());
             for (int i = 1; i < timePoints.size(); i++) {
-                lsoda.integrate(ode, timePoints.get(i - 1),
-                        (i == 1) ? pi0.toArray1D() : y, timePoints.get(i), y);
-                piResults.add(y.clone());
+                lsoda.integrate(ode, timePoints.get(i - 1), cur, timePoints.get(i), y);
+                cur = y.clone();
+                piResults.add(cur);
             }
 
-            double[] tArr = new double[timePoints.size() - 1];
+            double[] tArr = new double[timePoints.size()];
             for (int i = 0; i < tArr.length; i++) {
-                tArr[i] = timePoints.get(i + 1);
+                tArr[i] = timePoints.get(i);
             }
             return new Pair<double[], List<double[]>>(tArr, piResults);
         } else {
