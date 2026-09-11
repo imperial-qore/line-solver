@@ -1,4 +1,0 @@
-interface:
-  display_name: "LINE Full Tests"
-  short_description: "Run and report all LINE test phases"
-  default_prompt: "Use $tests to run the complete LINE test matrix."
