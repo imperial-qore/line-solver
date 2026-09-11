@@ -58,6 +58,26 @@ using lang::Distrib;
 using lang::SchedStrategy;
 using lang::RoutingStrategy;
 
+/**
+ * The path of a data file under `cpp/examples/data/`, which is where every
+ * repo-root read of a C++ example resolves.
+ *
+ * Its entries are SYMLINKS to the MATLAB and Python originals, so the tree
+ * still holds exactly ONE copy of each trace and each `.lqnx` and no drift
+ * between the codebases is possible, which is the rule the repo-root read was
+ * introduced for. `zip` dereferences a symlink, so the C++-only release archive
+ * gets the files as regular files under `cpp/examples/data/` and is
+ * self-contained without shipping the `python/` and `matlab/` trees it has no
+ * other use for.
+ *
+ * A new repo-root read in a C++ example means a new symlink here, and nothing
+ * else: the release no longer carries a per-file include list that has to be
+ * kept in step.
+ */
+inline std::string example_data_file(const std::string& name) {
+    return std::string(LINE_EXAMPLES_REPO_ROOT) + "/cpp/examples/data/" + name;
+}
+
 /** The arithmetic every example runs in. `line-cli --arith` is the CLI's knob. */
 using D = Distrib<double>;
 using Net = qn::Network<double>;

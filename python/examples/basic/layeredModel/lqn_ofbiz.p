@@ -1,5 +1,5 @@
 # lqns 6.2.28
-# lqns --parseable /home/gcasale/Dropbox/code/line-dev.git/python/examples/basic/layeredModel/lqn_ofbiz.xml
+# lqns --parseable lqn_ofbiz.xml
 # $Id$
 V y
 C 0.000854006

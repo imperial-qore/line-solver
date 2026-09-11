@@ -138,6 +138,22 @@ while [ $# -gt 0 ]; do
     shift
 done
 
+# `-t` IN A DISTRIBUTED TREE HAS NOTHING TO BUILD, and must say so itself.
+# release/pre-release.sh strips cpp/tests (and cpp/bench) from every archive, as
+# it already stripped the MATLAB, Java and Python suites, so cpp/CMakeLists
+# skips the target when the glob comes back empty. Asking cmake to build a
+# target that was never defined reports "No rule to make target", which reads as
+# a broken build system rather than as an absent suite -- and the suite is
+# absent BY DESIGN here: it needs cpp/run-tests.sh and the shared goldens/ tree,
+# neither of which an archive carries.
+if [ "$tests" = ON ] && ! ls "${here}"/tests/*.cpp >/dev/null 2>&1; then
+    echo "$0: this tree carries no cpp/tests, so there is no doctest suite to build." >&2
+    echo "  Release archives ship cpp/ as source WITHOUT its tests; the suite lives" >&2
+    echo "  in the development repository, where cpp/run-tests.sh drives it." >&2
+    echo "  Drop -t to build line-cli, ldes and line-examples." >&2
+    exit 2
+fi
+
 # A SEPARATE DIRECTORY PER MODE, not a flag flipped in one. Changing
 # CMAKE_CXX_FLAGS_RELEASE invalidates every object in the directory, so sharing
 # one would make each alternation between the three modes a full rebuild --

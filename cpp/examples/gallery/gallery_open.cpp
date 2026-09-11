@@ -352,8 +352,7 @@ Net gallery_mmapk(double k) {
  */
 Net gallery_replayerm1() {
     const std::vector<double> trace =
-        read_trace(std::string(LINE_EXAMPLES_REPO_ROOT) +
-                   "/python/examples/gettingstarted/example_trace.txt");
+        read_trace(example_data_file("gettingstarted/example_trace.txt"));
     const D replayer = D::replayer(trace);
     return one_queue("Trace/M/1", "mySource", "myQueue", "mySink", SchedStrategy::FCFS, replayer,
                      Exp(3.0 / replayer.mean));

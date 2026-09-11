@@ -15,7 +15,7 @@ import sys
 import os
 
 # Add the line_solver package to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 
 from line_solver import Network, ClosedClass, Delay, Queue
 from line_solver import Environment, ENV, FLD, MVA

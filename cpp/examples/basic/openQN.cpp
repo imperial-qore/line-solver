@@ -587,8 +587,7 @@ void oqn_trace_driven() {
 
     source.set_arrival(oc, Exp(1.0));
     queue.set_service(oc,
-                  replayer_from_file(std::string(LINE_EXAMPLES_REPO_ROOT) +
-                                     "/matlab/examples/basic/openQN/example_trace.txt"));
+                  replayer_from_file(example_data_file("openQN/example_trace.txt")));
 
     Routing P;
     serial(P, {source, queue, sink});

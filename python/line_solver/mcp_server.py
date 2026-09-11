@@ -252,6 +252,18 @@ def _avg_table_to_json(avg_table, metadata: dict | None = None) -> str:
     return json.dumps(payload, indent=2, default=str)
 
 
+def _error(message: str, format: str = "text") -> str:
+    """Render a tool-level error in the caller's requested format.
+
+    A json caller must get json back even when the run never reached a result:
+    sweep_parameter reads these replies with json.loads, and a plain-text error
+    surfaced there as a parse failure rather than as the reason it failed.
+    """
+    if format == "json":
+        return json.dumps({"error": message}, indent=2, default=str)
+    return message
+
+
 # ---------------------------------------------------------------------------
 # 9. Session state
 # ---------------------------------------------------------------------------
@@ -308,7 +320,7 @@ def solve_line_model(code: str, format: str = "text", session_id: str = "") -> s
         else:
             exec_globals = _make_exec_namespace()
     except Exception as e:
-        return f"Error importing line_solver: {e}"
+        return _error(f"Error importing line_solver: {e}", format)
 
     # Capture stdout
     old_stdout = sys.stdout
@@ -318,7 +330,7 @@ def solve_line_model(code: str, format: str = "text", session_id: str = "") -> s
         _exec_with_timeout(code, exec_globals)
     except _TimeoutError as te:
         sys.stdout = old_stdout
-        return str(te)
+        return _error(str(te), format)
     except Exception:
         sys.stdout = old_stdout
         output = captured.getvalue()
@@ -327,7 +339,7 @@ def solve_line_model(code: str, format: str = "text", session_id: str = "") -> s
         if output.strip():
             parts.append(output.strip())
         parts.append(f"Error:\n{tb}")
-        return "\n".join(parts)
+        return _error("\n".join(parts), format)
     finally:
         sys.stdout = old_stdout
 
@@ -439,18 +451,19 @@ def analyze_queue(
     # --- Input validation ---
     warnings: list[str] = []
     if arrival_rate <= 0:
-        return "Error: arrival_rate must be > 0."
+        return _error("Error: arrival_rate must be > 0.", format)
     if service_rate <= 0:
-        return "Error: service_rate must be > 0."
+        return _error("Error: service_rate must be > 0.", format)
     if servers < 1:
-        return "Error: servers must be >= 1."
+        return _error("Error: servers must be >= 1.", format)
 
     rho = arrival_rate / (service_rate * servers)
     if queue_capacity < 0 and rho >= 1.0:
-        return (
+        return _error(
             f"Error: system is unstable (rho = {rho:.4f} >= 1). "
             "Reduce arrival_rate, increase service_rate/servers, "
-            "or set a finite queue_capacity."
+            "or set a finite queue_capacity.",
+            format,
         )
 
     solver_upper = solver.upper()
@@ -470,7 +483,7 @@ def analyze_queue(
             FLD as SolverFLD_cls, MAM as SolverMAM_cls,
         )
     except Exception as e:
-        return f"Error importing line_solver: {e}"
+        return _error(f"Error importing line_solver: {e}", format)
 
     sched_map = {
         "FCFS": SchedStrategy.FCFS,
@@ -480,7 +493,7 @@ def analyze_queue(
     }
     sched = sched_map.get(scheduling.upper())
     if sched is None:
-        return f"Unknown scheduling strategy '{scheduling}'. Use: {', '.join(sched_map)}"
+        return _error(f"Unknown scheduling strategy '{scheduling}'. Use: {', '.join(sched_map)}", format)
 
     solver_map = {
         "MVA": SolverMVA_cls,
@@ -492,7 +505,7 @@ def analyze_queue(
     }
     solver_cls = solver_map.get(solver_upper)
     if solver_cls is None:
-        return f"Unknown solver '{solver}'. Use: {', '.join(solver_map)}"
+        return _error(f"Unknown solver '{solver}'. Use: {', '.join(solver_map)}", format)
 
     try:
         notation = f"M/M/{servers}" if servers > 1 else "M/M/1"
@@ -554,7 +567,7 @@ def analyze_queue(
         return "\n".join(header) + str(avg_table)
 
     except Exception:
-        return f"Error solving model:\n{traceback.format_exc()}"
+        return _error(f"Error solving model:\n{traceback.format_exc()}", format)
 
 
 # ---------------------------------------------------------------------------
@@ -588,13 +601,13 @@ def analyze_closed_network(
         Formatted performance metrics table.
     """
     if population < 1:
-        return "Error: population must be >= 1."
+        return _error("Error: population must be >= 1.", format)
     if think_time < 0:
-        return "Error: think_time must be >= 0."
+        return _error("Error: think_time must be >= 0.", format)
     if service_rate <= 0:
-        return "Error: service_rate must be > 0."
+        return _error("Error: service_rate must be > 0.", format)
     if servers < 1:
-        return "Error: servers must be >= 1."
+        return _error("Error: servers must be >= 1.", format)
 
     try:
         from line_solver import (
@@ -607,7 +620,7 @@ def analyze_closed_network(
             FLD as SolverFLD_cls, MAM as SolverMAM_cls,
         )
     except Exception as e:
-        return f"Error importing line_solver: {e}"
+        return _error(f"Error importing line_solver: {e}", format)
 
     sched_map = {
         "FCFS": SchedStrategy.FCFS,
@@ -617,7 +630,7 @@ def analyze_closed_network(
     }
     sched = sched_map.get(scheduling.upper())
     if sched is None:
-        return f"Unknown scheduling strategy '{scheduling}'. Use: {', '.join(sched_map)}"
+        return _error(f"Unknown scheduling strategy '{scheduling}'. Use: {', '.join(sched_map)}", format)
 
     solver_map = {
         "MVA": SolverMVA_cls,
@@ -630,7 +643,7 @@ def analyze_closed_network(
     solver_upper = solver.upper()
     solver_cls = solver_map.get(solver_upper)
     if solver_cls is None:
-        return f"Unknown solver '{solver}'. Use: {', '.join(solver_map)}"
+        return _error(f"Unknown solver '{solver}'. Use: {', '.join(solver_map)}", format)
 
     try:
         notation = f"Closed / N={population} / k={servers}"
@@ -680,7 +693,7 @@ def analyze_closed_network(
         return "\n".join(header) + str(avg_table)
 
     except Exception:
-        return f"Error solving model:\n{traceback.format_exc()}"
+        return _error(f"Error solving model:\n{traceback.format_exc()}", format)
 
 
 # ---------------------------------------------------------------------------
@@ -797,7 +810,7 @@ def sweep_parameter(
                     rec[param] = v
                     rows.append(rec)
             else:
-                errors.append(f"{param}={v}: {data.get('output', raw)}")
+                errors.append(f"{param}={v}: {data.get('error', data.get('output', raw))}")
         except Exception as exc:
             errors.append(f"{param}={v}: {exc}")
 

@@ -175,9 +175,17 @@ target_link_libraries(line-cli PRIVATE line_mp_api)
 add_executable(ldes src/cli/ldes_cli.cpp)
 target_link_libraries(ldes PRIVATE line_mp)
 
-if(LINE_MP_BUILD_TESTS)
+# A DISTRIBUTED TREE CARRIES NO tests/, and must still configure. The suite is
+# maintained here and stripped from every release archive by
+# release/pre-release.sh, as the MATLAB, Java and Python suites already were.
+# The glob is therefore evaluated BEFORE the option is consulted: an empty one
+# means this is such a tree, and add_executable with no sources is a CMake ERROR
+# ("No SOURCES given to target"), so an unguarded block would make a released
+# tree refuse to configure for anyone running cmake by hand. cpp/make.sh passes
+# LINE_MP_BUILD_TESTS=OFF, so it never saw this; a user's IDE would have.
+file(GLOB LINE_MP_TEST_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp)
+if(LINE_MP_BUILD_TESTS AND LINE_MP_TEST_SOURCES)
   enable_testing()
-  file(GLOB LINE_MP_TEST_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp)
   add_executable(line_mp_tests ${LINE_MP_TEST_SOURCES})
   target_link_libraries(line_mp_tests PRIVATE line_mp_api)
   target_compile_definitions(line_mp_tests PRIVATE
@@ -187,7 +195,10 @@ if(LINE_MP_BUILD_TESTS)
   add_test(NAME line_mp_tests COMMAND line_mp_tests)
 endif()
 
-if(LINE_MP_BUILD_BENCH)
+# bench/ is stripped from the release archives for the same reason tests/ is, so
+# the same guard applies: the option alone would name a source file that a
+# distributed tree does not have.
+if(LINE_MP_BUILD_BENCH AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/bench)
   add_executable(bench_backends bench/bench_backends.cpp)
   target_link_libraries(bench_backends PRIVATE line_mp)
   # Wall-clock of the native LDES engine, for comparison against the Java one

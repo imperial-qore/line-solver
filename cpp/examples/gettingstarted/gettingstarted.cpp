@@ -63,8 +63,7 @@ const char* kGroup = "gettingstarted";
 
 /** The trace `Replayer(example_trace.txt)` replays, read from the repository. */
 std::vector<double> example_trace() {
-    return read_trace(std::string(LINE_EXAMPLES_REPO_ROOT) +
-                      "/python/examples/gettingstarted/example_trace.txt");
+    return read_trace(example_data_file("gettingstarted/example_trace.txt"));
 }
 
 /** The station index of a named station, which is how a tutorial selects a row. */

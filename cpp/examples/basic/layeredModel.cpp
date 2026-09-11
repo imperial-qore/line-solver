@@ -90,7 +90,7 @@ D Em(double mean) { return D::exp_mean(mean); }
 
 /** The path of a data file of this reference directory. */
 std::string layered_file(const std::string& name) {
-    return std::string(LINE_EXAMPLES_REPO_ROOT) + "/python/examples/basic/layeredModel/" + name;
+    return example_data_file("layeredModel/" + name);
 }
 
 // ---------------------------------------------------------------------------

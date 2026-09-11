@@ -9,7 +9,7 @@ LQN solutions.
 """
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 
 import numpy as np
 from line_solver.layered import LayeredNetwork, Processor, Task, Entry, Activity
