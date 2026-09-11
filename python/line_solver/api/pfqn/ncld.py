@@ -1890,7 +1890,7 @@ def _xia_F(u: float, k: float) -> float:
 
 
 def pfqn_xia(L: np.ndarray, N: int, s: np.ndarray) -> float:
-    """
+    r"""
     Xia's asymptotic approximation of the load-dependent normalizing constant.
 
     The demands are first rescaled so that the largest per-server utilization
@@ -1900,7 +1900,7 @@ def pfqn_xia(L: np.ndarray, N: int, s: np.ndarray) -> float:
     F(u,k) = sum_{j<k} u^j/j! + (u^k/k!)/(1 - u/k), the closed form of the
     geometric tail beyond the k-th server. The result is
 
-        log G ~ -log((|B|-1)!) - N log(c) + sum_{b in B} [s_b log L_b - log(s_b!)]
+        log G ~ -log((\|B\|-1)!) - N log(c) + sum_{b in B} [s_b log L_b - log(s_b!)]
                                           + sum_{k not in B} log F(L_k, s_k),
 
     with c the rescaling factor. The leading behaviour in N enters ONLY through

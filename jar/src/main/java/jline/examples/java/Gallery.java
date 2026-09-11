@@ -14,14 +14,13 @@ import jline.gen.NetworkGenerator;
 import jline.gen.LayeredNetworkGenerator;
 import jline.util.matrix.Matrix;
 import jline.VerboseLevel;
+import jline.examples.ExampleData;
 import jline.lang.nodes.*;
 import jline.lang.processes.*;
 import jline.solvers.wrappers.jmt.JMT;
 import org.apache.commons.math3.util.FastMath;
 
 import javax.xml.parsers.ParserConfigurationException;
-import java.net.URI;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
@@ -1278,15 +1277,7 @@ public class Gallery {
     }
 
     public static Network gallery_replayerm1() {
-        URI fileURI = null;
-        try {
-            fileURI = Gallery.class.getResource("/example_trace.txt").toURI();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        assert fileURI != null;
-        String fileName = Paths.get(fileURI).toString();
-        return gallery_replayerm1(fileName);
+        return gallery_replayerm1(ExampleData.path("/example_trace.txt"));
     }
 
     public static Network gallery_replayerm1(String fileName) {

@@ -184,7 +184,7 @@ def stirling_remainder(n):
 
 def pfqn_bkt(L: np.ndarray, N: np.ndarray,
               Z: Optional[np.ndarray] = None) -> Tuple[float, float]:
-    """Knessl-Tier expansion corrected for the Stirling remainder (BKT).
+    r"""Knessl-Tier expansion corrected for the Stirling remainder (BKT).
 
     pfqn_kt extracts N from the generating function of G by steepest descent. On the
     demand-free integral the exact coefficient is [u^N] exp(Z u) = Z^N/N!, whereas the
@@ -192,7 +192,7 @@ def pfqn_bkt(L: np.ndarray, N: np.ndarray,
     of log(N!) in place of log(N!). So KT lies ABOVE the exact value by the remainder
     s(N) per Laplaced class direction, and BKT subtracts sum_r s(N_r). The remainder
     is evaluated exactly from gammaln: truncating it at 1/(12 N) loses an order of
-    magnitude (on the 1562 models of Cas17 sec5.3.1 the median |error| is 0.083 nats
+    magnitude (on the 1562 models of Cas17 sec5.3.1 the median \|error\| is 0.083 nats
     for KT, 1.9e-4 for the truncation and 1.4e-5 for the exact remainder).
 
     Only the classes pfqn_kt actually Laplaces are corrected: a class with no jobs is

@@ -860,13 +860,19 @@ class SolverLDES(NetworkSolver):
         )
 
     @staticmethod
-    def _get_ldes_jar_path() -> str:
+    def _get_ldes_jar_path(download: bool = True) -> Optional[str]:
         """Get path to ldes.jar, downloading if necessary.
 
         Lookup order:
         1. Bundled in package (line_solver/bin/ldes.jar)
         2. Repository common/ directory
         3. Auto-download from SourceForge
+
+        With download=False the search stops after step 2 and returns None
+        instead of reaching for the network: that is the right question when
+        the jar would only be a FALLBACK behind a native binary that is
+        already present, and it mirrors MATLAB getLdesRunners, which offers
+        the jar runner only when the file is on disk.
         """
         # 1. Check package bin/ directory (pip-installed wheel)
         bin_dir = SolverLDES._get_package_bin_dir()
@@ -879,6 +885,9 @@ class SolverLDES(NetworkSolver):
         ldes_path = os.path.join(common_dir, 'ldes.jar')
         if os.path.isfile(ldes_path):
             return ldes_path
+
+        if not download:
+            return None
 
         # 3. Try to download to common/
         os.makedirs(common_dir, exist_ok=True)
@@ -956,9 +965,15 @@ class SolverLDES(NetworkSolver):
             runners.append([native_path, 'solve', model_path, '-o', result_path] + flags)
         java_exe = self._find_java()
         if java_exe is not None:
-            ldes_jar = self._get_ldes_jar_path()
-            runners.append([java_exe, '-jar', ldes_jar, 'solve', model_path,
-                            '-o', result_path] + flags)
+            # Download the jar only when it is the ONLY engine left. With the
+            # native binary in hand the jar is a fall-through candidate, and
+            # fetching 24 MB from SourceForge to build a list entry that will
+            # not be used made the first LDES solve wait on the network and
+            # FAIL OUTRIGHT on a host that is offline but has a JVM.
+            ldes_jar = self._get_ldes_jar_path(download=(native_path is None))
+            if ldes_jar is not None:
+                runners.append([java_exe, '-jar', ldes_jar, 'solve', model_path,
+                                '-o', result_path] + flags)
         if not runners:
             # Neither a usable native binary (absent, wrong CPU architecture,
             # or a non-Linux host) nor a JVM for ldes.jar: tell the user to

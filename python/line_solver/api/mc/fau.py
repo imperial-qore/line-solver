@@ -33,14 +33,14 @@ FAU_MAX_STEPS = 1000000
 
 @dataclass
 class CtmcFauInfo:
-    """
+    r"""
     Diagnostics of a fast adaptive uniformization sweep.
 
     Attributes:
         steps: number of birth steps K+1 actually taken
         lambda_min: smallest adaptive rate used
         lambda_max: largest adaptive rate used, the Lstar of the weights
-        uniform_rate: max_i |q_ii|, the rate ordinary uniformization would use
+        uniform_rate: max_i \|q_ii\|, the rate ordinary uniformization would use
         weight_tail: mass reaching the overflow index, that is P{N(t) > K}
         weight_window: Poisson mass outside the Fox-Glynn window of the weights
         dropped_mass: probability removed by the occupancy threshold
@@ -220,16 +220,16 @@ def _fau_accumulate(pi0: np.ndarray, Q, d: np.ndarray, delta: float,
 def ctmc_fau(pi0: np.ndarray, Q, t: float, epsilon: float = 1e-6,
              delta: float = 1e-12,
              maxsteps: int = -1) -> Tuple[np.ndarray, CtmcFauInfo]:
-    """
+    r"""
     Transient distribution of a CTMC at time t by fast adaptive uniformization.
 
-    Ordinary uniformization fixes one rate q >= max_i |q_ii| over the whole
+    Ordinary uniformization fixes one rate q >= max_i \|q_ii\| over the whole
     state space and mixes the powers of P = I + Q/q against a Poisson(q*t)
     law, so its cost is set by the fastest state anywhere, including states
     that carry no probability at time t. Adaptive uniformization instead picks
     a rate per step from the states the iterate occupies,
 
-        Lambda_n >= max{|q_ii| : i in supp(u^(n))},
+        Lambda_n >= max{\|q_ii\| : i in supp(u^(n))},
         u^(n+1) = u^(n)(I + Q/Lambda_n),
 
     which keeps every entry of u^(n+1) nonnegative. The subordinating process
@@ -245,7 +245,7 @@ def ctmc_fau(pi0: np.ndarray, Q, t: float, epsilon: float = 1e-6,
     each remove mass and none puts any back, whence
 
         0 <= pi(t) - pit componentwise, and
-        |pi(t) - pit|_1 = sum(pi0) - sum(pit) = info.error_bound.
+        \|pi(t) - pit\|_1 = sum(pi0) - sum(pit) = info.error_bound.
 
     The birth weights are computed exactly rather than quadratured, by
     uniformizing the bidiagonal birth generator; see _fau_weights. The sweep

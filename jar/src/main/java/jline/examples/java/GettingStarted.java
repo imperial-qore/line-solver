@@ -8,6 +8,7 @@ package jline.examples.java;
 import de.xypron.jcobyla.Calcfc;
 import de.xypron.jcobyla.Cobyla;
 import jline.VerboseLevel;
+import jline.examples.ExampleData;
 import jline.examples.java.advanced.RandomEnvExamples;
 import jline.examples.java.basic.OpenExamples;
 import jline.examples.java.basic.OpenModel;
@@ -39,9 +40,6 @@ import jline.lang.constant.SolverType;
 import jline.util.matrix.Matrix;
 
 import javax.xml.parsers.ParserConfigurationException;
-import java.net.URI;
-import java.net.URISyntaxException;
-import java.nio.file.Paths;
 import java.util.function.Function;
 import java.util.List;
 
@@ -107,13 +105,7 @@ public class GettingStarted {
         source.setArrival(jobclass1, new Exp(0.5));
         source.setArrival(jobclass2, new Exp(0.5));
         queue.setService(jobclass1, Erlang.fitMeanAndSCV(1, (double) 1 / 3));
-        try {
-            URI fileURI = GettingStarted.class.getResource("/example_trace.txt").toURI();
-            String fileName = Paths.get(fileURI).toString();
-            queue.setService(jobclass2, new Replayer(fileName).fitAPH());
-        } catch (URISyntaxException e) {
-            throw new RuntimeException(e);
-        }
+        queue.setService(jobclass2, new Replayer(ExampleData.path("/example_trace.txt")).fitAPH());
         RoutingMatrix P = model.initRoutingMatrix();
         P.set(jobclass1, Network.serialRouting(source, queue, sink));
         P.set(jobclass2, Network.serialRouting(source, queue, sink));

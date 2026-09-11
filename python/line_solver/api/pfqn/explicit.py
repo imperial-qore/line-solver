@@ -118,16 +118,16 @@ def _grepeated(th: np.ndarray, Nt: float, K: int, tol: float) -> Tuple[float, fl
 
 def pfqn_explicit(L, N, tol: Optional[float] = None, method: str = 'auto',
                   maxloss: float = np.inf) -> Tuple[float, float, str, float]:
-    """Explicit closed-form normalizing constant of a multiclass closed network.
+    r"""Explicit closed-form normalizing constant of a multiclass closed network.
 
     Evaluates the two explicit expressions of Casale, "Accelerating Performance
     Inference over Closed Systems by Asymptotic Methods", ACM SIGMETRICS 2017,
     Eqs. (15) and (16). Both instantiate the divided-difference form of
     Corollary 3.2,
 
-        G(N) = sum_{0<=t<=N} (-1)^(|N|-|t|)/(N_1!...N_R!) prod_r C(N_r,t_r) g_t(|N|)
+        G(N) = sum_{0<=t<=N} (-1)^(\|N\|-\|t\|)/(N_1!...N_R!) prod_r C(N_r,t_r) g_t(\|N\|)
 
-    by substituting a closed form for the single-class constant g_t(|N|) at the
+    by substituting a closed form for the single-class constant g_t(\|N\|) at the
     induced demands theta_k(t) = sum_r t_r L(k,r). Eq. (15) is Gordon's partial
     fraction and needs the induced demands PAIRWISE DISTINCT; Eq. (16) is the
     general partial-fraction expansion over the distinct values and their

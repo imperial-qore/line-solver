@@ -42,6 +42,7 @@ def qsys_tandem_ub_ciucu(x, lst: Callable[[float], float], p, mu,
         A = 1,  C = theta sum_i p_i/(mu_i-theta) / sum_i p_i mu_i/(mu_i-theta)^2,
         D = max(-C E[U e^{theta V}]/E[V e^{theta V}], 0),  U = Y-X, V = Z-X,
         B = C (1/mu_1 - alpha E[e^{theta Z}])   if D = 0,
+
           = (C+D)/(mu_1-theta) - theta/mu_1     if D > 0,
 
     with ``mu_1`` the smallest service rate. Corollary 2 then turns gamma into

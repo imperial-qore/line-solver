@@ -353,6 +353,7 @@ def pfqn_nc(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
         N: Population vector (R,)
         Z: Think time vector (R,) (default: zeros)
         method: Algorithm to use:
+
             - 'ca', 'exact': Convolution algorithm
             - 'default': Auto-select based on problem size
             - 'le': Logistic expansion (Cas17 eq. 34 as published)
@@ -1399,7 +1400,7 @@ def pfqn_clw(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
              euler_m: int = 20, euler_tol: float = 1e-10, euler_maxm: int = 160,
              beta: np.ndarray = None, dimred: bool = True,
              dimred_maxd: int = 4) -> Tuple[float, float]:
-    """
+    r"""
     Choudhury-Leung-Whitt normalization constant by numerical inversion of the
     generating function (JACM 42(5):935-970, 1995).
 
@@ -1416,14 +1417,14 @@ def pfqn_clw(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
 
     Both of the paper's accelerations are applied. Dimension reduction by
     decomposition (Sec. 3, Sec. 5.4) removes from the interdependence graph of
-    the factors the subset D minimizing |D| + max_i |S_i(D)| (eq. 3.3): with the
+    the factors the subset D minimizing \|D\| + max_i \|S_i(D)\| (eq. 3.3): with the
     D variables fixed on their contours the remaining factors share no variable,
     so each connected component is inverted separately and the results
     multiplied. Euler summation (Sec. 2.4, eq. 2.22) replaces the nearly
     alternating inner sum of (2.3) by the Euler sum of its first n+m+1 terms,
     applied once for k >= 0 and once for k < 0, so prod_j K_j becomes
     prod_j min(n+m+1, K_j) in the cost (eq. 2.26); the order m is doubled until
-    the paper's own estimate |E(m,n) - E(m,n+1)| falls under euler_tol.
+    the paper's own estimate \|E(m,n) - E(m,n+1)\| falls under euler_tol.
 
     Args:
         L: (q' x p) single-server relative traffic intensities, L[i,j]=rho_{ji}.
@@ -1436,13 +1437,13 @@ def pfqn_clw(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
         euler: apply Euler summation where K_j > euler_n + euler_m.
         euler_n: terms summed exactly before averaging (n in eq. 2.22).
         euler_m: starting order of the Euler averaging (m in eq. 2.22).
-        euler_tol: relative tolerance on |E(m,n) - E(m,n+1)|.
+        euler_tol: relative tolerance on \|E(m,n) - E(m,n+1)\|.
         euler_maxm: largest Euler order reached by doubling.
         beta: (p,) multipliers on the scale parameters alpha_j, the manual tuning
            of page 956 (the paper uses 0.8 <= beta <= 1.2 on its largest
            examples). Default ones.
         dimred: apply dimension reduction by decomposition.
-        dimred_maxd: largest |D| examined when minimizing (3.3).
+        dimred_maxd: largest \|D\| examined when minimizing (3.3).
 
     Returns:
         Tuple (G, lG): normalization constant (inf if it overflows double) and
@@ -1934,7 +1935,7 @@ def pfqn_perm(A: np.ndarray, m: np.ndarray = None) -> float:
     """
     Permanent of a demand matrix, with optional column multiplicities.
 
-    The pfqn_ entry point of the permanent library. It exists because the
+    The ``pfqn_`` entry point of the permanent library. It exists because the
     product-form joint queue-length probability of the per-station TOTAL
     populations is a permanent of the demand matrix replicated once per job,
     which is a normalizing-constant quantity rather than a general-purpose

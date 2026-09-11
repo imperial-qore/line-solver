@@ -17,7 +17,7 @@ Key algorithms:
     Conditional Lindley: qsys_mm1_lindley, qsys_hh1_lindley, qsys_tandem_lindley
     Tandem tail bounds: qsys_tandem_ub_ciucu
     Abandonment: qsys_mgisrgi_whitt (M/GI/s/r+GI), qsys_erlanga (M/M/s/r+M),
-        qsys_ggisgi_fluid (G/GI/s+GI fluid limit)
+    qsys_ggisgi_fluid (G/GI/s+GI fluid limit)
     QED regime: qsys_mmk_qed, qsys_mmk_qed_alpha, qsys_mmk_qed_staffing
     Time-varying: qsys_mtginf (Mt/G/inf, exact)
     Extremal bounds: qsys_gig1_bnds_extremal

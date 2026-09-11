@@ -123,7 +123,7 @@ def trace_acf(trace: ArrayLike, lags: ArrayLike = None) -> np.ndarray:
     return rho
 
 def trace_gamma(trace: ArrayLike, limit: int = 1000) -> np.ndarray:
-    """
+    r"""
     Estimate the autocorrelation decay rate of a trace.
 
     Args:
@@ -138,7 +138,7 @@ def trace_gamma(trace: ArrayLike, limit: int = 1000) -> np.ndarray:
 
     Mirrors trace_gamma.m: rho_k = RHO0 * gamma^k is fitted by ROBUST nonlinear
     least squares over the whole range of gamma, started at 0.99. MATLAB uses
-    nlinfit with RobustWgtFun 'fair', whose weight 1/(1 + |r|/c) at the default
+    nlinfit with RobustWgtFun 'fair', whose weight 1/(1 + \|r\|/c) at the default
     tuning c = 1.4 is exactly the derivative of the fair loss passed to
     least_squares below, so the two minimize the same criterion. An unweighted
     fit is the fallback, as MATLAB falls back to lsqcurvefit.

@@ -12,7 +12,8 @@ function [PH] = kpcfit_ph_auto(E,options)
 %
 % OUTPUT
 % PH{i,1}: the i-th fitted PH described as a PH-renewal process specified
-%          in the (D0,D1) notation. The (alpha,T) representa
+%          in the (D0,D1) notation. The (alpha,T) representation is
+%          obtained with map2ph(PH{i,1}).
 %
 % EXAMPLE
 %

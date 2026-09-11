@@ -6,6 +6,7 @@
 package jline.examples.java.basic;
 
 import jline.VerboseLevel;
+import jline.examples.ExampleData;
 import jline.lang.ClassSwitchMatrix;
 import jline.lang.Network;
 import jline.lang.OpenClass;
@@ -170,7 +171,7 @@ public class OpenModel {
 
         node1.setArrival(jobclass1, Exp.fitMean(1.00)); // (Source,OpenClass)
         // Load trace file from resources
-        String traceFile = OpenModel.class.getResource("/example_trace.txt").getPath();
+        String traceFile = ExampleData.path("/example_trace.txt");
         node2.setService(jobclass1, new Replayer(traceFile)); // (Queue,OpenClass)
 
         // Block 3: topology

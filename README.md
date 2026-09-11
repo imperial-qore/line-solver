@@ -40,7 +40,7 @@ LINE's native model format is a portable JSON shared across the MATLAB, Java and
 
 ## MCP Integration (for LLM-based Analysis)
 
-LINE is available as a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server, letting LLM tools such as [Claude Code](https://claude.ai/code) and [Claude Desktop](https://claude.ai/download) build and solve queueing models through natural language. Install with `pip install line-solver`, then configure your MCP client to use `line-solver` as a server; see the [MCP Getting Started Guide](https://line-solver.sourceforge.net/doc/LINE-mcp.pdf) for setup and examples.
+LINE is available as a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server, letting LLM tools such as [Claude Code](https://claude.ai/code) and [Claude Desktop](https://claude.ai/download) build and solve queueing models through natural language. Install with `pip install line-solver`, which brings the server and the MCP SDK with it and puts a `line-mcp` command on your path; point your MCP client at that command and see the [MCP Getting Started Guide](https://line-solver.sourceforge.net/doc/LINE-mcp.pdf) for setup and examples.
 
 ## License
 

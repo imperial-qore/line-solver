@@ -1901,8 +1901,20 @@ def kpcfit_ph_auto(E: np.ndarray, options: KpcfitPhOptions = None
         options: Fitting options (default: auto-generated)
 
     Returns:
-        List of (PH_distribution, distance, params, method) tuples
-        sorted by fitting quality. PH_distribution is a (D0, D1) tuple.
+        List of (PH_distribution, distance, params, method) tuples.
+        PH_distribution is a (D0, D1) tuple, distance is the moment
+        matching distance (lower is better), and method is one of
+        'exact', 'approx_moment_space' or 'approx_param_space'.
+
+        The list is NOT sorted by fitting quality. Entries are appended
+        in method order (exact, then moment space, then parameter
+        space), as kpcfit_ph_auto.m does, so element 0 is the first
+        candidate rather than the best one. Select the best fit by
+        minimum distance:
+
+            best = min(results, key=lambda r: r[1])[0]
+
+        kpcfit_ph_summary prints the candidates grouped by method.
     """
     from line_solver.api.mam import map_isfeasible, map_moment
     import math

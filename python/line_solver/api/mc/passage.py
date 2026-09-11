@@ -268,8 +268,10 @@ def smp_passage_moments(P: np.ndarray, hmom, pi0: Optional[np.ndarray], target,
 
       (nstates, nmax) array   m_i(r), the holding time in i depends only on i.
                               Eq. 7 with the u_i(r) recurrence of Eq. 8,
+
                                   u_i(r) = -sum_{j=1..r} C(r,j) m_i(j) u_i(r-j),
                                   u_i(0) = 1,
+
                               which are the derivatives at the origin of
                               1/h*_i(s). Cheaper: no per-pair moments.
 

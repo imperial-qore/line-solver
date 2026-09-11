@@ -260,7 +260,7 @@ def pfqn_clwoi(Z: Sequence[float],
                mu: Optional[Union[Callable, List[Callable]]] = None,
                visits=None,
                options=None) -> Tuple[float, float]:
-    """Normalizing constant of a closed delay + order-independent network.
+    r"""Normalizing constant of a closed delay + order-independent network.
 
     Inverts the multichain generating function with the lattice-Poisson
     algorithm of Choudhury, Leung and Whitt (J. ACM 42(5):935-970, 1995). This
@@ -271,10 +271,12 @@ def pfqn_clwoi(Z: Sequence[float],
     count lattice by support S, on which mu_i(n) = mu_{i,S} is constant,
 
         (mu_{i,S} - sum_{r in S} v_{i,r} z_r) F_{i,S}(z)
+
             = sum_{r in S} v_{i,r} z_r F_{i,S-r}(z),   F_{i,{}} = 1,
+
         F_i(z) = sum_S F_{i,S}(z).
 
-    The singularities are the |S| hyperplanes sum_{r in S} v_{i,r} z_r =
+    The singularities are the \|S\| hyperplanes sum_{r in S} v_{i,r} z_r =
     mu_{i,S}, one per support, and the restrictive static scaling of CLW
     eqs. 5.41-5.46 runs on the expanded constraint matrix that lists one row per
     (station, nonempty support) pair.

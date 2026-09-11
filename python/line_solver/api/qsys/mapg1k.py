@@ -209,9 +209,11 @@ def qsys_mapg1k(D0, D1, svc: Dict[str, Any], K: int, tol: float = 1e-12,
         The chain embedded at departure epochs is used, in the state (n,j):
         n = 0..K-1 packets left behind by a departure, j = MAP phase. With A_m
         the matrix of "m arrivals during a service, phase i -> j",
+
             n >= 1: n' = n-1+min(m, K-n), overflow sum_{m>=K-n} A_m
             n == 0: the phase first jumps by (-D0)^{-1}*D1 (the idle period
-                    ends at an arrival), the service then proceeds as from n=1.
+            ends at an arrival), the service then proceeds as from n=1.
+
         Its stationary law sigma gives, by Markov renewal reward, the cycle
         mean, p0 and pK, where Q_m is the expected time within a service with
         exactly m arrivals so far. Time-stationary p0 and pK follow, so no
@@ -399,7 +401,9 @@ def qsys_mmapg1k(D0, D1c: Sequence, svc: Dict[str, Any], K: int,
         The aggregate MAP {D0, sum_k D1c[k]} drives qsys_mapg1k, whose embedded
         chain returns the joint law of buffer level and MAP phase. A class-k
         arrival leaves phase i at rate (D1c[k]*e)_i, so
+
             lambda_k = pi*D1c[k]*e,  L_k = (pKvec*D1c[k]*e)/lambda_k.
+
         This is exact: no independence between classes is assumed and no PASTA
         argument is used, the phase resolution of pKvec doing the work.
 
@@ -482,7 +486,9 @@ def qsys_mapg1k_perflow(MAPS: Sequence, svc: Dict[str, Any], K: int,
         while the other N-1 flows are replaced by a single Poisson stream of
         rate lambda - lambda_n, justified by the Palm-Khinchin limiting theorem
         on the superposition of many point processes. The superposition yields
+
             D0 = D0n - lambdaBar_n*I,  D1 = D1n + lambdaBar_n*I,
+
         which is passed to qsys_mapg1k. The sweep is O(N*(K*M)^3) against the
         O(M^(3N)*K^3) of the exact joint model.
 

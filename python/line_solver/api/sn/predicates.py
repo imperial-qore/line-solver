@@ -1098,6 +1098,7 @@ def sn_has_product_form_not_het_fcfs(sn: NetworkStruct, check_means: bool = True
     Check if network has product form except for heterogeneous FCFS.
 
     This checks:
+
     - All stations use INF, PS, FCFS, LCFSPR, or EXT scheduling
     - No priorities, no fork-join, no state-dependent routing
     - At FCFS stations, all active class SCVs are approximately 1 (exponential)

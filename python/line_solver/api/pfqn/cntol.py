@@ -6,16 +6,16 @@ __all__ = ['pfqn_cntol', 'is_cntol']
 
 
 def pfqn_cntol(N) -> float:
-    """
+    r"""
     Termination cutoff 1/(4000 + 16*sum(N)) of the Linearizer.
 
     Published in K. M. Chandy, D. Neuse, "Linearizer: A Heuristic Algorithm for
     Queuing Network Models of Computing Systems", Commun. ACM 25(2):126-134,
     1982, p.129 and appendix. The iteration continues while
 
-        max_{i,r} |Q^I(i,r) - Q^{I-1}(i,r)| / N_r > 1/(4000 + 16*|N|),
+        max_{i,r} \|Q^I(i,r) - Q^{I-1}(i,r)\| / N_r > 1/(4000 + 16*\|N\|),
 
-    |N| = sum(N). The paper motivates the scaling with |N|: at large populations
+    \|N\| = sum(N). The paper motivates the scaling with \|N\|: at large populations
     removing one job changes the queue lengths very little, so a fixed cutoff
     would terminate the iteration prematurely. It also notes that the expression
     stays below 0.00025 even at very small populations.

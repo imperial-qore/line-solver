@@ -70,18 +70,18 @@ def _hlld(th, M, Nt, alphaS, vcap, lcum, lbr, sbr, method, tol):
 
 def pfqn_explicit_ld(L, N, mu=None, tol: Optional[float] = None, method: str = 'auto',
                      maxloss: float = np.inf) -> Tuple[float, float, str, float]:
-    """Explicit closed-form normalizing constant of a multiclass LLD network.
+    r"""Explicit closed-form normalizing constant of a multiclass LLD network.
 
     Load-dependent counterpart of pfqn_explicit. It evaluates the same
     divided-difference form of Casale (SIGMETRICS 2017), Corollary 3.2,
 
-        G(N) = sum_{0<=t<=N} (-1)^(|N|-|t|)/(N_1!...N_R!) prod_r C(N_r,t_r) h_t(|N|)
+        G(N) = sum_{0<=t<=N} (-1)^(\|N\|-\|t\|)/(N_1!...N_R!) prod_r C(N_r,t_r) h_t(\|N\|)
 
-    but substitutes for the single-class constant h_t(|N|) the LIMITED
+    but substitutes for the single-class constant h_t(\|N\|) the LIMITED
     LOAD-DEPENDENT closed form of Casale, Harrison and Ong (Perform. Eval.
     2021), Theorem 1, Eq. (8),
 
-        h_theta(N) = sum_{0<=v<s} g_sigma(N-|v|) prod_k phi_k(v_k)
+        h_theta(N) = sum_{0<=v<s} g_sigma(N-\|v\|) prod_k phi_k(v_k)
         phi_k(v_k) = theta_k^v_k / prod_{t=1..v_k} alpha_k(t) * (1 - alpha_k(v_k)/alpha_k(s_k))
 
     at the induced demands theta_k(t) = sum_r t_r L(k,r). Here alpha_k(.) =
@@ -96,7 +96,7 @@ def pfqn_explicit_ld(L, N, mu=None, tol: Optional[float] = None, method: str = '
     and are easy to get wrong. alpha_k(0) is taken as ZERO inside the bracket of
     phi_k, so that phi_k(0) = 1, even though the state probabilities use
     alpha_k(0) = 1; and g_sigma(n) = 0 for n < 0, which caps the outer sum at
-    |v| <= |N|. With alpha_k(n) = min(n,s_k) the expression collapses to
+    \|v\| <= \|N\|. With alpha_k(n) = min(n,s_k) the expression collapses to
     Gordon's multi-server formula, Oper. Res. 38(5), 1990, Eq. (29), but unlike
     that one it needs neither a multi-server shape nor distinct scaled demands.
 
@@ -104,10 +104,10 @@ def pfqn_explicit_ld(L, N, mu=None, tol: Optional[float] = None, method: str = '
     alpha_k(n) = alpha_k(s_k) for all n >= s_k, and a LARGER s_k is always
     admissible, so s_k is detected here as the smallest index whose value the
     tail of mu(k,:) repeats to within tol. A station whose rates never settle
-    (an infinite server, mu(k,n) = n) gets s_k = |N|, which is still exact:
-    populations above |N| do not occur, so redefining alpha_k there changes
+    (an infinite server, mu(k,n) = n) gets s_k = \|N\|, which is still exact:
+    populations above \|N\| do not occur, so redefining alpha_k there changes
     nothing. It is merely expensive, since the inner sum costs prod_k s_k terms,
-    capped by |v| <= |N|. Think time is not admissible: a delay would have to
+    capped by \|v\| <= \|N\|. Think time is not admissible: a delay would have to
     enter g_sigma, whose closed form covers queues only.
 
     NUMERICS. Both sums alternate in sign with terms far larger than the result,
