@@ -16,9 +16,9 @@ The package offers solution algorithms for queueing systems (e.g., M/M/1, M/M/k,
 | [Python Native](python/) | python/ | Python 3.11+             | Stable                    | [PDF](https://line-solver.sourceforge.net/doc/LINE-user-python.pdf), [Primer](https://line-solver.sourceforge.net/doc/LINE-primer-python.pdf) | [Sphinx](https://line-solver.sourceforge.net/sphinx/index.html) |
 | [C++](cpp/) | cpp/ | C++17 compiler | Beta | [PDF](https://line-solver.sourceforge.net/doc/LINE-user-cpp.pdf), [Primer](https://line-solver.sourceforge.net/doc/LINE-primer-cpp.pdf) | [Doxygen](https://line-solver.sourceforge.net/doxygen-cpp/index.html) |
 
-The `jar/` folder contains the canonical Java implementation, building `common/jline.jar`, which is callable from any JVM language. A former JPype-based Python Wrapper has been retired; native Python users should use the `python/` folder, and users needing JAR-backed performance can call `common/jline.jar` directly. The JAR implementation offers better performance than the native Python version for large-scale and layered models.
+The `jar/` folder contains the canonical Java implementation, building `common/jline.jar`, which is callable from any JVM language. Native Python users should use the `python/` folder, while users needing portability can call `common/jline.jar` directly: it is a single self-contained artifact that runs unchanged on any platform with a JVM, requiring no toolchain, compilation or platform-specific build.
 
-The `cpp/` folder holds a header-only C++ port (`cpp/include/line/`), the `line-cli` binary and the native LDES simulation engine. It ships as source; build it with `cpp/make.sh -O` for an optimized build.
+The `cpp/` folder holds a header-only C++ port (`cpp/include/line/`), the `line-cli` binary and the native LDES simulation engine. It is the fastest of the implementations, which matters most for large-scale and layered models. It ships as source; build it with `cpp/make.sh -O` for an optimized build.
 
 ## Command-Line Interface
 
@@ -36,7 +36,7 @@ python line-cli.py info
 ```
 for command line options and features. The script can also start a WebSocket server for integration with other tools; an HTTP REST API is available separately in `io/rest-api/`.
 
-LINE's native model format is a portable JSON shared across the MATLAB, Java and Python codebases — see [`example.json`](example.json) (a queueing network) and [`example_lqn.json`](example_lqn.json) (a layered network) in the repository root. It is specified by [`doc/line-model.schema.json`](doc/line-model.schema.json) (JSON Schema, canonical `$id` `https://line-solver.sourceforge.net/line-model.schema.json`) and documented in the "JSON model format" appendix of each manual (see the [Available Versions](#available-versions) table). External file types such as Java Modelling Tools's [JSIMG](https://jmt.sourceforge.net/Papers/JMT_system_Manual.pdf#page=7) format and LQNS's [LQNX](https://github.com/layeredqueuing/V6/blob/master/xml/lqn.xsd) format can also be passed to the `line-cli.py` tool.
+LINE's native model format is a portable JSON shared across the MATLAB, Java and Python codebases — see [`example.json`](example.json) (a queueing network) and [`example_lqn.json`](example_lqn.json) (a layered network) in the repository root. It is specified by [`doc/line-model.schema.json`](doc/line-model.schema.json) (JSON Schema) and documented in the "JSON model format" appendix of each manual (see the [Available Versions](#available-versions) table). External file types such as Java Modelling Tools's [JSIMG](https://jmt.sourceforge.net/Papers/JMT_system_Manual.pdf#page=7) format and LQNS's [LQNX](https://github.com/layeredqueuing/V6/blob/master/xml/lqn.xsd) format can also be passed to the `line-cli.py` tool.
 
 ## MCP Integration (for LLM-based Analysis)
 
