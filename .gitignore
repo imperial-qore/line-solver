@@ -54,11 +54,16 @@ python/line_solver/jline.jar
 *.ipynb_checkpoints/
 *_nbconvert_backup.ipynb
 
-# LINE manuals in both doc/ and doc/latex/
-doc/LINE*.pdf
+# LINE manuals. The built manuals under doc/ are PUBLISHED here: doc/ mirrors
+# the set of PDFs linked from the line-solver.sf.net homepage, so they must be
+# tracked. Only the LaTeX build trees' intermediate copies stay ignored -- they
+# are byte-identical duplicates of the doc/ originals.
 doc/latex/LINE*.pdf
 doc/latex-researcher/LINE*.pdf
 doc/latex-internals/LINE*.pdf
+# Not published on the mirror. Note the lowercase name: the `doc/LINE*.pdf`
+# rule that used to live here never matched it, so it needs its own entry.
+doc/linesolver-manual.pdf
 
 doc/html
 doc/doxygen-cpp
