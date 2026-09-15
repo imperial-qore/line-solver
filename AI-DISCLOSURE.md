@@ -39,7 +39,7 @@ and/or simulation and/or external tools.
 LDES and the C++ codebase are 100% AI-generated. The majority of the python 
 codebase is also an automated AI-generated port. Most of MATLAB and Java code is
 instead originally implemented by humans, but heavily debugged, refactored, and 
-further extended via AI-assistances after version 2.0.39.
+further extended via AI-assistance after version 2.0.39.
 
 ## Verification
 
