@@ -7,6 +7,8 @@ LINE is an open-source software package to analyze queueing models via analytica
 
 The package offers solution algorithms for queueing systems (e.g., M/M/1, M/M/k, M/G/1, ...), queueing networks, layered queueing networks, and queueing models in random environments. Models are solved in LINE either natively or via external solvers, such as [JMT](http://jmt.sourceforge.net/), [LQNS](http://www.sce.carleton.ca/rads/lqns/), [MAMSolver](https://www.cs.wm.edu/MAMSolver/), [Q-MAM](https://win.uantwerpen.be/~vanhoudt/), [SMCSolver](https://win.uantwerpen.be/~vanhoudt/), and [BuTools](http://webspn.hit.bme.hu/~telek/tools/butools/). See the [LINE website](http://line-solver.sf.net).
 
+After version 2.0.39, LINE has made extensive use of AI-assistance for its development. Please refer to the [AI-DISCLOSURE](AI-DISCLOSURE.md) document for a description.
+
 ## Available Versions
 
 | Version | Folder                       | Requirements             | Maturity | Manual | API Reference |
