@@ -1,0 +1,909 @@
+package jline.solvers.ctmc.analyzers;
+
+import jline.api.mam.*;
+import jline.api.mc.Ctmc_makeinfgen;
+import jline.api.mc.Ctmc_solve;
+import jline.api.mc.Ctmc_solve_reducible_blkdecomp;
+import jline.api.pfqn.ld.CdPeakScaling;
+import jline.api.sn.SnNonmarkovToPh;
+import jline.io.InputOutput;
+import jline.io.InputOutput;
+import jline.lang.NetworkStruct;
+import jline.lang.JobClass;
+import jline.lang.constant.DropStrategy;
+import jline.lang.constant.NodeType;
+import jline.lang.constant.SchedStrategy;
+import jline.lang.nodeparam.CacheNodeParam;
+import jline.lang.state.State;
+import jline.lang.state.ToMarginal;
+import jline.solvers.SolverOptions;
+import jline.solvers.ctmc.SolverCTMC;
+import jline.solvers.ctmc.handlers.Solver_ctmc;
+import jline.util.Maths;
+import jline.util.MatFileUtils;
+import jline.util.graph.DirectedGraph;
+import jline.util.matrix.Matrix;
+import jline.util.matrix.MatrixCell;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+public class Solver_ctmc_analyzer {
+
+    private final SolverCTMC solverCTMC;
+
+    public Solver_ctmc_analyzer(SolverCTMC solverCTMC) {
+        this.solverCTMC = solverCTMC;
+    }
+
+    public static SolverCTMC.AnalyzerResult solver_ctmc_analyzer(NetworkStruct snInput, SolverOptions options) {
+        // see _kb/06-solver-catalog.md for rationale
+        NetworkStruct sn = SnNonmarkovToPh.snNonmarkovToPh(snInput, options, false);
+        int M = sn.nstations;
+        int K = sn.nclasses;
+        Matrix S = sn.nservers;
+        Matrix NK = sn.njobs.transpose();
+        java.util.Map<jline.lang.nodes.Station, jline.lang.constant.SchedStrategy> schedid = sn.sched;
+        long Tstart = System.nanoTime();
+        Object PH = sn.proc;
+        // sn.proc is stored as Object (erased); this cast to its concrete nested-map
+        // type is inherently unchecked. Hoist it once and reuse.
+        @SuppressWarnings("unchecked")
+        java.util.Map<Object, java.util.Map<Object, MatrixCell>> PHmap =
+                (java.util.Map<Object, java.util.Map<Object, MatrixCell>>) PH;
+
+        jline.solvers.ctmc.ResultCTMC solverCTMCResult = Solver_ctmc.solver_ctmc(sn, options);
+        Matrix InfGen = solverCTMCResult.getQ();
+        Matrix StateSpace = solverCTMCResult.getStateSpace();
+        Matrix StateSpaceAggr = solverCTMCResult.getStateSpaceAggr();
+        jline.util.matrix.MatrixCell EventFiltration = solverCTMCResult.getDfilt();
+        double[][][] arvRates = solverCTMCResult.getArvRates();
+        double[][][] depRates = solverCTMCResult.getDepRates();
+        sn = solverCTMCResult.getSn();
+
+        for (int isf = 0; isf < sn.nstateful; isf++) {
+            if (sn.state.get(sn.stateful.get(isf)).getNumCols() < sn.space.get(sn.stateful.get(isf)).getNumCols()) {
+                Matrix state_matrix = new Matrix(1, sn.space.get(sn.stateful.get(isf)).getNumCols());
+                state_matrix.zero();
+
+                int startIdx = sn.space.get(sn.stateful.get(isf)).getNumCols() - sn.state.get(sn.stateful.get(isf)).getNumCols();
+                int endIdx = state_matrix.getNumCols();
+                for (int col = startIdx; col < endIdx; col++) {
+                    state_matrix.set(0, col, sn.state.get(sn.stateful.get(isf)).get(col - startIdx));
+                }
+                sn.state.replace(sn.stateful.get(isf), state_matrix);
+            }
+        }
+
+        NetworkStruct sncopy = sn;
+        String fname = "";
+        if (options.keep) {
+            try {
+                MatFileUtils.ensureWorkspaceDirectoryExists();
+                fname = MatFileUtils.genFilename("workspace");
+                MatFileUtils.saveCTMCWorkspace(StateSpace, InfGen, null, fname);
+            } catch (Exception e) {
+                InputOutput.line_warning("solver_ctmc_analyzer", "Could not save workspace to .mat file: %s", e.getMessage());
+                fname = "";
+            }
+        } else {
+            fname = "";
+        }
+
+        // wsetMap maps new indices to old indices; identity mapping unless reducible
+        int[] wsetMap = null;
+        Matrix wset = new Matrix(1, InfGen.length());
+        for (int col = 0; col < wset.getNumCols(); col++) {
+            wset.set(0, col, col);
+        }
+
+        // see _kb/06-solver-catalog.md for rationale
+        Matrix probSysState = null;
+        Matrix StateSpaceWork = StateSpace;
+        Matrix StateSpaceAggrWork = StateSpaceAggr;
+        // see _kb/06-solver-catalog.md for rationale
+        Matrix InfGenWork = InfGen;
+
+        jline.io.LineConsole.step("infinitesimal generator built: %d states, %d transitions",
+                InfGen.getNumRows(), InfGen.getNonZeroLength() - InfGen.getNumRows());
+        jline.io.LineConsole.step("solving for the stationary distribution");
+        // every CTMC solve uses block decomposition; the irreducible case is the degenerate BSCC / no-transient one -- see jline.solvers.ctmc.CtmcStationary
+        probSysState = jline.solvers.ctmc.CtmcStationary.solve(InfGen, StateSpace, sn, options);
+        jline.io.LineConsole.step("stationary distribution obtained, computing the mean metrics");
+
+        if (probSysState.hasNaN() || probSysState.isEmpty()) {
+            throw new RuntimeException("CTMC solver failed to compute steady-state probabilities for this cache model. " +
+                    "This may indicate numerical instability or an invalid model configuration.");
+        }
+
+        // The clamp removes the tiny negative residues a genuine CTMC solve leaves
+        // behind. With a matrix-exponential process the stationary vector is a genuinely
+        // SIGNED measure -- only its aggregates over each phase block are probabilities --
+        // so clamping there deletes real mass and every mean measure moves. Mean measures
+        // are linear in the vector and stay exact without the clamp.
+        boolean allPhaseType = true;
+        if (sn.isph != null) {
+            for (java.util.Map<jline.lang.JobClass, Boolean> isphRow : sn.isph.values()) {
+                for (Boolean v : isphRow.values()) {
+                    if (v != null && !v) {
+                        allPhaseType = false;
+                    }
+                }
+            }
+        }
+        if (allPhaseType) {
+            for (int row = 0; row < probSysState.getNumRows(); row++) {
+                for (int col = 0; col < probSysState.getNumCols(); col++) {
+                    if (probSysState.get(row, col) < 0) {
+                        probSysState.set(row, col, 0);
+                    }
+                }
+            }
+        }
+
+        double sum = probSysState.sumSubMatrix(0, probSysState.getNumRows(), 0, probSysState.getNumCols());
+        if (sum > 0) {
+            probSysState.divide(sum, probSysState, true);
+        } else {
+            throw new RuntimeException("CTMC solver computed zero total probability. This indicates an invalid model configuration.");
+        }
+
+        final int[] finalWsetMap = wsetMap;
+
+        Matrix XN = new Matrix(1, K);
+        XN.zero();
+        Matrix UN = new Matrix(M, K);
+        UN.zero();
+        Matrix QN = new Matrix(M, K);
+        QN.zero();
+        Matrix RN = new Matrix(M, K);
+        RN.zero();
+        Matrix TN = new Matrix(M, K);
+        TN.zero();
+        Matrix CN = new Matrix(1, K);
+        CN.zero();
+
+        // Column span of each STATION inside a state-space row. A row is the
+        // concatenation of the per-node local states in STATEFUL index order, and
+        // sn.space is keyed the same way. A stateful node need not be a station --
+        // a Cache is stateful and is not -- so the running offset must walk every
+        // stateful node and be read back through sn.stationToStateful. Walking it
+        // with the station index instead both skipped the non-station widths and
+        // took the wrong node's width, handing ToMarginal another node's columns.
+        Matrix sfSpaceShift = new Matrix(1, sn.nstateful);
+        sfSpaceShift.zero();
+        for (int isf = 1; isf < sn.nstateful; isf++) {
+            sfSpaceShift.set(0, isf,
+                    sfSpaceShift.get(0, isf - 1) + sn.space.get(sn.stateful.get(isf - 1)).getNumCols());
+        }
+        Matrix istSpaceShift = new Matrix(1, M);
+        istSpaceShift.zero();
+        Matrix istSpaceWidth = new Matrix(1, M);
+        istSpaceWidth.zero();
+        for (int i = 0; i < M; i++) {
+            int isf = (int) sn.stationToStateful.get(i);
+            istSpaceShift.set(0, i, sfSpaceShift.get(0, isf));
+            istSpaceWidth.set(0, i, sn.space.get(sn.stateful.get(isf)).getNumCols());
+        }
+
+        double refsf;
+        for (int k = 0; k < K; k++) {
+            refsf = sn.stationToStateful.get((int) sn.refstat.get(k));
+            XN.set(0, k, refsf);
+            double sumValue = 0.0;
+            for (int i = 0; i < wset.getNumCols(); i++) {
+                int index = (int) wset.get(i);
+                int origIdx = (finalWsetMap != null) ? finalWsetMap[index] : index;
+                sumValue += probSysState.get(index) * arvRates[origIdx][(int) refsf][k];
+            }
+            XN.set(0, k, sumValue);
+        }
+
+        // see _kb/06-solver-catalog.md for rationale
+        boolean[] inDropRegion = new boolean[M];
+        if (sn.nregions > 0 && sn.region != null && sn.regionrule != null) {
+            for (int f = 0; f < sn.nregions; f++) {
+                boolean isDropRegion = false;
+                for (int r = 0; r < sn.regionrule.getNumCols(); r++) {
+                    if (sn.regionrule.get(f, r) == DropStrategy.Drop.getID()) {
+                        isDropRegion = true;
+                        break;
+                    }
+                }
+                if (!isDropRegion) {
+                    continue;
+                }
+                Matrix regf = sn.region.get(f);
+                for (int i = 0; i < M && i < regf.getNumRows(); i++) {
+                    for (int c = 0; c < regf.getNumCols(); c++) {
+                        if (regf.get(i, c) != -1) {
+                            inDropRegion[i] = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        for (int i = 0; i < M; i++) {
+            int isf = (int) sn.stationToStateful.get(i);
+            int ind = (int) sn.stationToNode.get(i);
+            for (int k = 0; k < K; k++) {
+                double sumTN = 0.0;
+                double sumQN = 0.0;
+                for (int index = 0; index < wset.getNumCols(); index++) {
+                    int wstIdx = (int) wset.get(index);
+                    int origIdx = (finalWsetMap != null) ? finalWsetMap[wstIdx] : wstIdx;
+                    double depRate = depRates[origIdx][isf][k];
+                    double probState = probSysState.get(wstIdx);
+                    sumTN += probState * depRate;
+                    double ssaValue = StateSpaceAggrWork.get(wstIdx, i * K + k);
+                    double product = probState * ssaValue;
+                    sumQN += product;
+                }
+                TN.set(i, k, sumTN);
+                QN.set(i, k, sumQN);
+            }
+            if (sn.nodetype.get(ind) != NodeType.Source) {
+                // see _kb/06-solver-catalog.md for rationale
+                boolean stationCapFinite = !Double.isInfinite(sn.cap.get(i)) && sn.cap.get(i) < Integer.MAX_VALUE;
+                boolean[] canDropClass = new boolean[K];
+                for (int r = 0; r < K; r++) {
+                    boolean classCapFinite = !Double.isInfinite(sn.classcap.get(i, r)) && sn.classcap.get(i, r) < Integer.MAX_VALUE;
+                    canDropClass[r] = Double.isInfinite(sn.njobs.get(r)) && (stationCapFinite || classCapFinite || inDropRegion[i]);
+                }
+                // see _kb/06-solver-catalog.md for rationale
+                double[] arvAtStation = new double[K];
+                for (int r = 0; r < K; r++) {
+                    for (int idx = 0; idx < wset.length(); idx++) {
+                        int wsetIdxSig = (int) wset.get(idx);
+                        int origIdxSig = (finalWsetMap != null) ? finalWsetMap[wsetIdxSig] : wsetIdxSig;
+                        arvAtStation[r] += probSysState.get(idx) * arvRates[origIdxSig][isf][r];
+                    }
+                }
+                boolean[] signalLossy = jline.solvers.ctmc.handlers.CtmcSignalLossy.signalLossyClasses(sn, arvAtStation);
+                for (int r = 0; r < K; r++) {
+                    canDropClass[r] = canDropClass[r] || signalLossy[r];
+                }
+                SchedStrategy schedStrategy = schedid.get(sn.stations.get(i));
+                if (schedStrategy == SchedStrategy.INF) {
+                    int k = 0;
+                    while (k < K) {
+                        UN.set(i, k, QN.get(i, k));
+                        k++;
+                    }
+                } else if (schedStrategy == SchedStrategy.PS || schedStrategy == SchedStrategy.DPS || schedStrategy == SchedStrategy.GPS) {
+                    if (sn.lldscaling.isEmpty() && sn.cdscaling.isEmpty() && (sn.jdscaling == null || sn.jdscaling.isEmpty())) {
+                        int k = 0;
+                        while (k < K) {
+                            if (!PHmap.get(sn.stations.get(i)).get(sn.jobclasses.get(k)).isEmpty()) {
+                                MatrixCell value = PHmap.get(sn.stations.get(i)).get(sn.jobclasses.get(k));
+                                double mean = Map_mean.map_mean(value) / S.get(i);
+                                double UNarv_ik = 0.0;
+                                int idx = 0;
+                                while (idx < wset.length()) {
+                                    int wsetIdx = (int) wset.get(idx);
+                                    int origIdx = (finalWsetMap != null) ? finalWsetMap[wsetIdx] : wsetIdx;
+                                    UNarv_ik += probSysState.get(idx) * arvRates[origIdx][isf][k];
+                                    idx++;
+                                }
+                                UNarv_ik = UNarv_ik * mean;
+                                double UNdep_ik = TN.get(i, k) * mean;
+                                UN.set(i, k, canDropClass[k] ? UNdep_ik : Maths.max(UNarv_ik, UNdep_ik));
+                            }
+                            k++;
+                        }
+                    } else {
+                        // see _kb/06-solver-catalog.md for rationale
+                        ind = (int) sn.stationToNode.get(i);
+                        double ceffPs = S.get(i);
+                        if (sn.lldscaling != null && !sn.lldscaling.isEmpty() && i < sn.lldscaling.getNumRows()) {
+                            for (int j = 0; j < sn.lldscaling.getNumCols(); j++) {
+                                ceffPs = Math.max(ceffPs, sn.lldscaling.get(i, j));
+                            }
+                        }
+                        int col = 0;
+                        while (col < K) {
+                            UN.set(i, col, 0);
+                            col++;
+                        }
+                        int index = 0;
+                        while (index < wset.getNumCols()) {
+                            int st = (int) wset.get(index);
+                            int StateSpaceColStart = (int) istSpaceShift.get(i);
+                            int StateSpaceColEnd = (int) istSpaceShift.get(i) + (int) istSpaceWidth.get(0, i);
+                            jline.lang.state.State.StateMarginalStatistics toMarginalResult = ToMarginal.toMarginal(sn,
+                                    ind,
+                                    Matrix.extract(StateSpaceWork, st, st + 1, StateSpaceColStart, StateSpaceColEnd),
+                                    null, null, null, null, null);
+                            Matrix ni = toMarginalResult.ni;
+                            Matrix nir = toMarginalResult.nir;
+                            boolean checkNi = true;
+                            double totJobsPs = 0.0;
+                            int niIndex = 0;
+                            while (niIndex < ni.length()) {
+                                if (ni.get(niIndex) <= 0) {
+                                    checkNi = false;
+                                }
+                                totJobsPs += ni.get(niIndex);
+                                niIndex++;
+                            }
+                            if (checkNi) {
+                                double lldNowPs = 1.0;
+                                if (sn.lldscaling != null && !sn.lldscaling.isEmpty() && i < sn.lldscaling.getNumRows()) {
+                                    int lldIdx = (int) Math.min(Math.max(totJobsPs, 1.0) - 1, sn.lldscaling.getNumCols() - 1);
+                                    lldNowPs = sn.lldscaling.get(i, lldIdx);
+                                }
+                                int k = 0;
+                                while (k < K) {
+                                    double v = probSysState.get(st) * nir.get(k) * sn.schedparam.get(i, k);
+                                    Matrix dividend = nir.mult(sn.schedparam.getRow(i).transpose());
+                                    double addSum = 0.0;
+                                    int divIndex = 0;
+                                    while (divIndex < dividend.length()) {
+                                        addSum += v / dividend.get(divIndex);
+                                        divIndex++;
+                                    }
+                                    UN.set(i, k, addSum * lldNowPs / ceffPs + UN.get(i, k));
+                                    k++;
+                                }
+                            }
+                            index++;
+                        }
+                    }
+                } else if (schedStrategy == SchedStrategy.PAS || schedStrategy == SchedStrategy.OI) {
+                    // see _kb/06-solver-catalog.md for rationale
+                    int col = 0;
+                    while (col < K) {
+                        UN.set(i, col, 0);
+                        col++;
+                    }
+                    int index = 0;
+                    while (index < wset.length()) {
+                        int st = (int) wset.get(index);
+                        int StateSpaceColStart = (int) istSpaceShift.get(i);
+                        int StateSpaceColEnd = (int) istSpaceShift.get(i) + (int) istSpaceWidth.get(0, i);
+                        jline.lang.state.State.StateMarginalStatistics toMarginalResult = ToMarginal.toMarginal(sn,
+                                ind,
+                                Matrix.extract(StateSpaceWork, st, st + 1, StateSpaceColStart, StateSpaceColEnd),
+                                null, null, null, null, null);
+                        Matrix sir = toMarginalResult.sir;
+                        int k = 0;
+                        while (k < K) {
+                            double v = UN.get(i, k) + probSysState.get(st) * sir.get(k) / S.get(i);
+                            UN.set(i, k, v);
+                            k++;
+                        }
+                        index++;
+                    }
+                } else {
+                    if ((sn.lldscaling == null || sn.lldscaling.isEmpty()) && (sn.cdscaling == null || sn.cdscaling.isEmpty()) && (sn.jdscaling == null || sn.jdscaling.isEmpty())) {
+                        int k = 0;
+                        while (k < K) {
+                            if (!PHmap.get(sn.stations.get(i)).get(sn.jobclasses.get(k)).isEmpty()) {
+                                double UNarv_ik = 0.0;
+                                MatrixCell value = PHmap.get(sn.stations.get(i)).get(sn.jobclasses.get(k));
+                                double mean = Map_mean.map_mean(value);
+                                int idx = 0;
+                                while (idx < wset.length()) {
+                                    int wsetIdx = (int) wset.get(idx);
+                                    int origIdx = (finalWsetMap != null) ? finalWsetMap[wsetIdx] : wsetIdx;
+                                    UNarv_ik += probSysState.get(idx) * arvRates[origIdx][isf][k];
+                                    idx++;
+                                }
+                                UNarv_ik = UNarv_ik * mean / S.get(i);
+                                double UNdep_ik = TN.get(i, k) * Map_mean.map_mean(value) / S.get(i);
+                                UN.set(i, k, canDropClass[k] ? UNdep_ik : Maths.max(UNarv_ik, UNdep_ik));
+                            }
+                            k++;
+                        }
+                    } else {
+                        ind = (int) sn.stationToNode.get(i);
+                        int col = 0;
+                        while (col < K) {
+                            UN.set(i, col, 0);
+                            col++;
+                        }
+                        int index = 0;
+                        while (index < wset.length()) {
+                            int st = (int) wset.get(index);
+                            int StateSpaceColStart = (int) istSpaceShift.get(i);
+                            int StateSpaceColEnd = (int) istSpaceShift.get(i) + (int) istSpaceWidth.get(0, i);
+                            jline.lang.state.State.StateMarginalStatistics toMarginalResult = ToMarginal.toMarginal(sn,
+                                    ind,
+                                    Matrix.extract(StateSpaceWork, st, st + 1, StateSpaceColStart, StateSpaceColEnd),
+                                    null, null, null, null, null);
+                            Matrix ni = toMarginalResult.ni;
+                            Matrix sir = toMarginalResult.sir;
+                            boolean checkNir = true;
+                            int niIndex = 0;
+                            while (niIndex < ni.length()) {
+                                if (ni.get(niIndex) <= 0) {
+                                    checkNir = false;
+                                }
+                                niIndex++;
+                            }
+                            if (checkNir) {
+                                // see _kb/06-solver-catalog.md for rationale
+                                double totJobs = 0.0;
+                                for (int nidx = 0; nidx < ni.length(); nidx++) totJobs += ni.get(nidx);
+                                double lldNow = 1.0;
+                                double ceff = S.get(i);
+                                if (sn.lldscaling != null && !sn.lldscaling.isEmpty() && i < sn.lldscaling.getNumRows()) {
+                                    int colIdx = (int) Maths.min(Maths.max(totJobs, 1.0) - 1, sn.lldscaling.getNumCols() - 1);
+                                    lldNow = sn.lldscaling.get(i, colIdx);
+                                    for (int cidx = 0; cidx < sn.lldscaling.getNumCols(); cidx++) {
+                                        ceff = Maths.max(ceff, sn.lldscaling.get(i, cidx));
+                                    }
+                                }
+                                double sirTot = 0.0;
+                                for (int k2 = 0; k2 < K; k2++) sirTot += sir.get(k2);
+                                int k = 0;
+                                while (k < K) {
+                                    double share = sirTot > 0 ? sir.get(k) / sirTot : 0.0;
+                                    double v = UN.get(i, k) + probSysState.get(st) * share * lldNow / ceff;
+                                    UN.set(i, k, v);
+                                    k++;
+                                }
+                            }
+                            index++;
+                        }
+                    }
+                }
+                // server pools: busy servers over the whole bank, as in LDES, since the mean of the class law
+                // differs from pool to pool (Solver_ctmc_pools)
+                if (jline.lang.state.AfterEventStationPool.isPooled(sn, (int) sn.stationToNode.get(i))) {
+                    jline.solvers.ctmc.handlers.Solver_ctmc_pools.utilization(sn, i, UN, StateSpaceWork,
+                            (int) istSpaceShift.get(i), (int) istSpaceShift.get(i) + (int) istSpaceWidth.get(0, i),
+                            wset, probSysState, K);
+                }
+                // see _kb/06-solver-catalog.md for rationale
+                boolean anySignalLossy = false;
+                for (int r = 0; r < K; r++) {
+                    anySignalLossy = anySignalLossy || signalLossy[r];
+                }
+                if (anySignalLossy && schedStrategy != SchedStrategy.INF
+                        && sn.lldscaling.isEmpty() && sn.cdscaling.isEmpty() && (sn.jdscaling == null || sn.jdscaling.isEmpty())) {
+                    double[] UNb = jline.solvers.ctmc.handlers.CtmcSignalBusy.busyFraction(sn,
+                            (int) sn.stationToNode.get(i), i, schedStrategy, S.get(i),
+                            StateSpaceWork, istSpaceShift, wset, probSysState, K);
+                    for (int k = 0; k < K; k++) {
+                        if (signalLossy[k]) {
+                            UN.set(i, k, UNb[k]);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Synchronous calls (REPLY signals): a caller that is blocked awaiting a reply
+        // still HOLDS its server and, by the LDES/LQN convention, still owns the job it
+        // sent to the callee -- that simultaneous resource possession is the point of
+        // the feature. The held servers live in the reply block of the local state, so
+        // add their time average to the caller's utilization and queue length; without
+        // it CTMC reports only the carried load (0.32915 against LDES 0.54997 on the
+        // closed client/server model, with QLen 0.46395 against 0.68499).
+        Matrix QNblocked = new Matrix(M, K);
+        QNblocked.zero();
+        if (sn.replyblock != null && !sn.replyblock.isEmpty()) {
+            for (int i = 0; i < M; i++) {
+                int indR = (int) sn.stationToNode.get(i);
+                if (!jline.lang.state.ReplyBlock.holds(sn, indR)) {
+                    continue;
+                }
+                jline.lang.state.ReplyBlock.Info rinfoU = jline.lang.state.ReplyBlock.info(sn, indR);
+                int bcol0 = (int) istSpaceShift.get(0, i)
+                        + (int) istSpaceWidth.get(0, i) - rinfoU.width;
+                for (int pos = 0; pos < rinfoU.classes.size(); pos++) {
+                    int r = rinfoU.classes.get(pos).intValue();
+                    double bmean = 0;
+                    for (int index = 0; index < wset.getNumCols(); index++) {
+                        int wstIdx = (int) wset.get(index);
+                        bmean += probSysState.get(wstIdx) * StateSpaceWork.get(wstIdx, bcol0 + pos);
+                    }
+                    QN.set(i, r, QN.get(i, r) + bmean);
+                    UN.set(i, r, UN.get(i, r) + bmean / S.get(i));
+                    QNblocked.set(i, r, bmean);
+                }
+            }
+        }
+
+        // class-, joint- and global-dependence utilization normalization (U = T*S/peak
+        // using the declared sn.cdscalingpeak, sn.jdscalingpeak and sn.gdscalingpeak);
+        // see _kb/06-solver-catalog.md for rationale
+        boolean anyCd = sn.cdscaling != null && !sn.cdscaling.isEmpty();
+        boolean anyJd = sn.jdscaling != null && !sn.jdscaling.isEmpty();
+        boolean anyGd = sn.gdscaling != null && sn.gdscalingpeak != null;
+        if (anyCd || anyJd || anyGd) {
+            boolean allFinite = true;
+            for (int k = 0; k < K; k++) {
+                if (Double.isInfinite(sn.njobs.get(k))) { allFinite = false; break; }
+            }
+            if (allFinite) {
+                for (int ist = 0; ist < M; ist++) {
+                    jline.lang.nodes.Station stat = sn.stations.get(ist);
+                    jline.util.SerializableFunction<Matrix, Matrix> beta =
+                            anyCd ? sn.cdscaling.get(stat) : null;
+                    jline.util.SerializableFunction<Matrix, Matrix> eta =
+                            anyJd ? sn.jdscaling.get(stat) : null;
+                    if (beta == null && eta == null && !anyGd) continue;
+                    Matrix cdPeak = (beta != null && sn.cdscalingpeak != null)
+                            ? sn.cdscalingpeak.get(stat) : null;
+                    Matrix jdPeak = (eta != null && sn.jdscalingpeak != null)
+                            ? sn.jdscalingpeak.get(stat) : null;
+                    for (int k = 0; k < K; k++) {
+                        double rate = sn.rates.get(ist, k);
+                        // beta_r(n), eta_i(n) and phi(n) scale the SAME rate, so the peaks multiply
+                        double bmax = 1.0;
+                        if (cdPeak != null) bmax *= cdPeak.get(0, k);
+                        if (jdPeak != null) bmax *= jdPeak.get(0, k);
+                        if (anyGd) bmax *= sn.gdscalingpeak.get(ist, k);
+                        if (Double.isFinite(rate) && rate > 0 && bmax > 0) {
+                            UN.set(ist, k, TN.get(ist, k) / rate / bmax);
+                        } else {
+                            UN.set(ist, k, 0.0);
+                        }
+                    }
+                }
+            }
+        }
+
+        // see _kb/06-solver-catalog.md for rationale
+        if (sn.isbasblocking != null && sn.connmatrix != null && !sn.connmatrix.isEmpty()) {
+            for (int i = 0; i < M; i++) {
+                int indB = (int) sn.stationToNode.get(i);
+                // see _kb/06-solver-catalog.md for rationale
+                if (indB >= sn.isbasblocking.length() || sn.isbasblocking.get(indB) != 1) {
+                    continue; // no blocked marker at this station
+                }
+                int dest = -1;
+                boolean ambiguous = false;
+                for (int j = 0; j < sn.connmatrix.getNumCols(); j++) {
+                    if (sn.connmatrix.get(indB, j) != 1 || sn.isstation.get(j) != 1) {
+                        continue;
+                    }
+                    if (dest >= 0) {
+                        ambiguous = true;
+                        break;
+                    }
+                    dest = j;
+                }
+                if (ambiguous || dest < 0) {
+                    continue; // ambiguous destination: leave the job where it sits
+                }
+                int jst = (int) sn.nodeToStation.get(dest);
+                if (jst < 0) {
+                    continue;
+                }
+                int bcol = (int) istSpaceShift.get(0, i)
+                        + (int) istSpaceWidth.get(0, i) - 1;
+                for (int k = 0; k < K; k++) {
+                    double shift = 0.0;
+                    for (int index = 0; index < wset.getNumCols(); index++) {
+                        int wstIdx = (int) wset.get(index);
+                        // see _kb/06-solver-catalog.md for rationale
+                        if (StateSpaceWork.get(wstIdx, bcol) != 1.0) {
+                            continue;
+                        }
+                        // Only the held job itself moves, not the whole queue at i: a
+                        // blocked state holds exactly one completed job, so cap at 1.
+                        double nk = StateSpaceAggrWork.get(wstIdx, i * K + k);
+                        shift += probSysState.get(wstIdx) * Math.min(nk, 1.0);
+                    }
+                    if (shift > 0) {
+                        QN.set(i, k, QN.get(i, k) - shift);
+                        QN.set(jst, k, QN.get(jst, k) + shift);
+                    }
+                }
+            }
+        }
+
+        for (int k = 0; k < K; k++) {
+            for (int i = 0; i < M; i++) {
+                if (TN.get(i, k) > 0) {
+                    // Response time is time spent AT the station, so the job blocked
+                    // out at the callee is excluded even though QLen/Util count it
+                    // (LDES measures the sojourn directly and reports the same).
+                    RN.set(i, k, (QN.get(i, k) - QNblocked.get(i, k)) / TN.get(i, k));
+                } else {
+                    RN.set(i, k, 0);
+                }
+            }
+            CN.set(k, NK.get(k) / XN.get(k));
+        }
+        QN.setNaNToZero();
+        CN.setNaNToZero();
+        RN.setNaNToZero();
+        UN.setNaNToZero();
+        XN.setNaNToZero();
+        TN.setNaNToZero();
+
+        long Tstop = System.nanoTime();
+        double runtime = ((double) (Tstop - Tstart)) / 1000000000.0;
+
+        Matrix TNcache = new Matrix(sn.nstateful, K);
+        Matrix XNcache = new Matrix(sn.nstateful, K);
+        for (int k = 0; k < K; k++) {
+            for (int isf = 0; isf < sn.nstateful; isf++) {
+                int ind = (int) sncopy.statefulToNode.get(isf);
+                if (sncopy.nodetype.get(ind) == NodeType.Cache) {
+                    double TNcacheSum = 0.0;
+                    double XNcacheSum = 0.0;
+                    for (int i = 0; i < wset.getNumCols(); i++) {
+                        int index = (int) wset.get(i);
+                        int origIdx = (finalWsetMap != null) ? finalWsetMap[index] : index;
+                        TNcacheSum += probSysState.get(i) * depRates[origIdx][isf][k];
+                        XNcacheSum += probSysState.get(i) * arvRates[origIdx][isf][k];
+                    }
+                    TNcache.set(isf, k, TNcacheSum);
+                    XNcache.set(isf, k, XNcacheSum);
+                }
+            }
+        }
+
+        // Exact retrieval-system rewards, mirroring the delayed-hit block of the MATLAB
+        // solver_ctmc_analyzer. Block A of the cache local-variable vector marks the items
+        // whose fetch is in flight and block B counts, per retrieval class, the secondary
+        // requests merged onto those fetches, so both populations and the fetch-completion
+        // rate are exact rewards of the stationary distribution.
+        for (int isf = 0; isf < sncopy.nstateful; isf++) {
+            int ind = (int) sncopy.statefulToNode.get(isf);
+            if (sncopy.nodetype.get(ind) != NodeType.Cache) {
+                continue;
+            }
+            CacheNodeParam cnp = (CacheNodeParam) sncopy.nodeparam.get(sn.nodes.get(ind));
+            if (cnp == null || cnp.retrievalSystemCapacity <= 0 || sncopy.space == null) {
+                continue;
+            }
+            int[][] rcMap = State.cacheRetrievalClassMap(sncopy, ind);
+            int[] rcItems = rcMap[1], rcOrig = rcMap[2];
+            Matrix scache = sncopy.space.get(sncopy.stateful.get(isf));
+            if (scache == null) {
+                continue;
+            }
+            int colOff = 0;
+            for (int j = 0; j < isf; j++) {
+                Matrix sj = sncopy.space.get(sncopy.stateful.get(j));
+                colOff += (sj == null) ? 0 : sj.getNumCols();
+            }
+            int lvs = scache.getNumCols() - (cnp.totalCacheCapacity + cnp.nitems + rcItems.length);
+            if (lvs < 0 || colOff + scache.getNumCols() > StateSpace.getNumCols()
+                    || StateSpace.getNumRows() != probSysState.length()) {
+                continue;
+            }
+            int a0 = colOff + lvs + cnp.totalCacheCapacity;
+            int b0 = a0 + cnp.nitems;
+
+            // Secondary requests merged onto the in-flight fetches: a block-B state reward,
+            // so it splits by the originating class of each retrieval class.
+            Matrix dclass = new Matrix(1, K);
+            dclass.zero();
+            for (int j = 0; j < rcItems.length; j++) {
+                double d = 0;
+                for (int row = 0; row < StateSpace.getNumRows(); row++) {
+                    d += probSysState.get(row) * StateSpace.get(row, b0 + j);
+                }
+                dclass.set(rcOrig[j], dclass.get(rcOrig[j]) + d);
+            }
+            cnp.delayedhitqlenclass = dclass;
+
+            // Primary requests in flight: one job per set block A bit, counted as the network
+            // population of that read class's retrieval classes. Block A is indexed by item
+            // alone and cannot be split when two read classes share a cache, whereas the
+            // retrieval classes are per (item, read class) pair.
+            Matrix inflight = new Matrix(1, K);
+            inflight.zero();
+            if (cnp.retrievalClasses != null && !cnp.retrievalClasses.isEmpty()) {
+                for (int c = 0; c < Math.min(cnp.retrievalClasses.getNumCols(), K); c++) {
+                    double tot = 0;
+                    for (int i = 0; i < cnp.retrievalClasses.getNumRows(); i++) {
+                        int r = (int) cnp.retrievalClasses.get(i, c);
+                        if (r >= 0 && r < QN.getNumCols()) {
+                            for (int st = 0; st < QN.getNumRows(); st++) {
+                                tot += QN.get(st, r);
+                            }
+                        }
+                    }
+                    inflight.set(c, tot);
+                }
+            }
+            cnp.retrievalinflight = inflight;
+
+            // Exact delayed-hit rate per originating class. A fetch of item i completes on
+            // exactly the transitions that clear block A bit i, and each such transition
+            // releases the block-B counts of item i as delayed hits. The rate is therefore a
+            // TRANSITION reward over the generator, not a state reward: the alternative
+            // arrival-rate identity lambda_i*phi_i is only PASTA-exact. Column K accumulates
+            // the total fetch-completion rate, which equals the total miss rate because a
+            // completed fetch yields exactly one miss.
+            Matrix drate = new Matrix(1, K + 1);
+            drate.zero();
+            for (int row = 0; row < StateSpace.getNumRows(); row++) {
+                double w = probSysState.get(row);
+                for (int i = 0; i < cnp.nitems; i++) {
+                    if (StateSpace.get(row, a0 + i) == 0) {
+                        continue;
+                    }
+                    double cr = 0;
+                    for (int col = 0; col < InfGen.getNumCols(); col++) {
+                        if (col == row) {
+                            continue;
+                        }
+                        double q = InfGen.get(row, col);
+                        if (q != 0 && StateSpace.get(col, a0 + i) == 0) {
+                            cr += q;
+                        }
+                    }
+                    if (cr == 0) {
+                        continue;
+                    }
+                    drate.set(K, drate.get(K) + w * cr);
+                    for (int j = 0; j < rcItems.length; j++) {
+                        if (rcItems[j] != i + 1) {
+                            continue;
+                        }
+                        double b = StateSpace.get(row, b0 + j);
+                        if (b > 0) {
+                            drate.set(rcOrig[j], drate.get(rcOrig[j]) + w * b * cr);
+                        }
+                    }
+                }
+            }
+            cnp.delayedhitrate = drate;
+        }
+
+        boolean retrievalLatencyWarned = false;
+        for (int k = 0; k < K; k++) {
+            for (int isf = 0; isf < sncopy.nstateful; isf++) {
+                int ind = (int) sncopy.statefulToNode.get(isf);
+                if (sncopy.nodetype.get(ind) == NodeType.Cache) {
+                    CacheNodeParam cacheParam = (CacheNodeParam) sncopy.nodeparam.get(sn.nodes.get(ind));
+                    if (cacheParam.hitclass.length() > k) {
+                        int h = (int) cacheParam.hitclass.get(k);
+                        int m = (int) cacheParam.missclass.get(k);
+
+                        if (cacheParam.actualhitprob == null) {
+                            cacheParam.actualhitprob = new Matrix(1, K);
+                            cacheParam.actualhitprob.fill(Double.NaN);
+                        }
+                        if (cacheParam.actualmissprob == null) {
+                            cacheParam.actualmissprob = new Matrix(1, K);
+                            cacheParam.actualmissprob.fill(Double.NaN);
+                        }
+
+                        double actualmissprobValue = Double.NaN;
+                        double actualhitprobValue = Double.NaN;
+                        if (h != -1 && m != -1) {
+                            actualhitprobValue = TNcache.get(isf, h) / (TNcache.get(isf, h) + TNcache.get(isf, m));
+                            actualmissprobValue = TNcache.get(isf, m) / (TNcache.get(isf, h) + TNcache.get(isf, m));
+                        }
+                        cacheParam.actualhitprob.set(k, actualhitprobValue);
+                        cacheParam.actualmissprob.set(k, actualmissprobValue);
+
+                        // Retrieval-system expected latency (eq. latency tot), by Little's law
+                        // over the retrieval sub-system rather than the FPI approximation
+                        // SolverMVA reports:
+                        //
+                        //   Z_k = (sum_i phi_{i,k} + sum_i d_{i,k}) / (miss_k + delayed_k)
+                        //
+                        // Numerator: the requests the sub-system holds, namely the primary
+                        // request of every in-flight fetch (retrievalinflight) plus the
+                        // secondary requests merged onto those fetches (delayedhitqlenclass).
+                        // Denominator: the rate at which requests enter it, that is the miss
+                        // rate plus the exact delayed-hit rate. Both are exact state and
+                        // transition rewards of this CTMC, so Z_k is exact up to the state
+                        // space cutoff, which truncates block B and so approaches the exact
+                        // value from below. See _kb/06-solver-catalog.md.
+                        double dRate = 0;
+                        if (cacheParam.delayedhitrate != null && cacheParam.delayedhitrate.length() > k) {
+                            dRate = cacheParam.delayedhitrate.get(k);
+                            if (h != -1) {
+                                dRate = Math.min(dRate, TNcache.get(isf, h));
+                            }
+                        }
+                        double actualresidt = Double.NaN;
+                        List<Integer> retrievalSystemQueueIndices =
+                                (cacheParam.retrievalSystemQueueIndices != null)
+                                        ? cacheParam.retrievalSystemQueueIndices.get(k) : null;
+                        if (retrievalSystemQueueIndices != null && !retrievalSystemQueueIndices.isEmpty()) {
+                            double inflightk = (cacheParam.retrievalinflight != null
+                                    && cacheParam.retrievalinflight.length() > k)
+                                    ? cacheParam.retrievalinflight.get(k) : 0;
+                            double dk = (cacheParam.delayedhitqlenclass != null
+                                    && cacheParam.delayedhitqlenclass.length() > k)
+                                    ? cacheParam.delayedhitqlenclass.get(k) : 0;
+                            double retrRate = dRate;
+                            if (m != -1) {
+                                retrRate += TNcache.get(isf, m);
+                            }
+                            if (retrRate > jline.GlobalConstants.Zero) {
+                                actualresidt = (inflightk + dk) / retrRate;
+                            } else if (!retrievalLatencyWarned) {
+                                InputOutput.line_warning("solver_ctmc_analyzer",
+                                        "Retrieval system is never entered; reporting NaN expected latency.");
+                                retrievalLatencyWarned = true;
+                            }
+                        }
+
+                        if (cacheParam.actualresidt == null) {
+                            cacheParam.actualresidt = new Matrix(1, K);
+                            cacheParam.actualresidt.fill(Double.NaN);
+                        }
+                        cacheParam.actualresidt.set(k, actualresidt);
+                    }
+                }
+            }
+        }
+        SolverCTMC.AnalyzerResult analyzerResult = new SolverCTMC.AnalyzerResult(QN, UN, RN, TN, CN, XN,
+                InfGen, StateSpace, StateSpaceAggr, EventFiltration,
+                runtime, fname, sncopy,
+                probSysState, StateSpaceWork, StateSpaceAggrWork, InfGenWork);
+        // Derived service-start and preemption rates: pi*F*e over the same state
+        // set the metrics above use. They read the aux filtrations only, so no
+        // rate, probability or state above depends on them.
+        Matrix[][] startFilt = solverCTMCResult.getStartFilt();
+        Matrix[][] preemptFilt = solverCTMCResult.getPreemptFilt();
+        Matrix StartN = new Matrix(M, K);
+        Matrix PreemptN = new Matrix(M, K);
+        if (startFilt != null) {
+            for (int i = 0; i < M && i < startFilt.length; i++) {
+                for (int r = 0; r < K && r < startFilt[i].length; r++) {
+                    StartN.set(i, r, auxRate(startFilt[i][r], probSysState));
+                    PreemptN.set(i, r, auxRate(preemptFilt[i][r], probSysState));
+                }
+            }
+        }
+        analyzerResult.StartN = StartN;
+        analyzerResult.PreemptN = PreemptN;
+        analyzerResult.startFilt = startFilt;
+        analyzerResult.preemptFilt = preemptFilt;
+        return analyzerResult;
+    }
+
+    /**
+     * pi * F * e, the long-run rate of the tagged events a derived filtration
+     * carries. The same reduction the departure rates use, so the two are
+     * directly comparable.
+     */
+    private static double auxRate(Matrix F, Matrix pi) {
+        if (F == null || pi == null || F.isEmpty()) {
+            return 0.0;
+        }
+        Matrix rowSums = F.sumRows();
+        double acc = 0.0;
+        int n = Math.min(rowSums.length(), pi.length());
+        for (int s = 0; s < n; s++) {
+            acc += pi.get(s) * rowSums.get(s);
+        }
+        return acc;
+    }
+
+    /**
+     * Returns the set of state indices forward-reachable from {@code start} in the
+     * directed graph of positive off-diagonal entries of the generator {@code Q}.
+     * For a closed pass-and-swap network whose initial placement lies in a
+     * recurrent class, this is exactly that recurrent class.
+     */
+    private static List<Integer> forwardReachable(Matrix Q, int start) {
+        int n = Q.length();
+        boolean[] visited = new boolean[n];
+        java.util.ArrayDeque<Integer> queue = new java.util.ArrayDeque<Integer>();
+        visited[start] = true;
+        queue.add(start);
+        while (!queue.isEmpty()) {
+            int u = queue.poll();
+            for (int v = 0; v < n; v++) {
+                if (v != u && !visited[v] && Math.abs(Q.get(u, v)) > jline.GlobalConstants.ArcTol) {
+                    visited[v] = true;
+                    queue.add(v);
+                }
+            }
+        }
+        List<Integer> result = new ArrayList<Integer>();
+        for (int i = 0; i < n; i++) {
+            if (visited[i]) result.add(i);
+        }
+        return result;
+    }
+}

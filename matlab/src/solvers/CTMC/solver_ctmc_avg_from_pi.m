@@ -1,0 +1,239 @@
+function [QN,UN,RN,TN,CN,XN] = solver_ctmc_avg_from_pi(sn, pivec, StateSpace, StateSpaceAggr, arvRates, depRates, options)
+% SOLVER_CTMC_AVG_FROM_PI  Map a state distribution to mean performance metrics.
+%
+% [QN,UN,RN,TN,CN,XN] = SOLVER_CTMC_AVG_FROM_PI(SN, PIVEC, STATESPACE,
+%   STATESPACEAGGR, ARVRATES, DEPRATES)
+%
+% Given an arbitrary probability vector PIVEC over the enumerated CTMC state
+% space of SN (rows of STATESPACE / STATESPACEAGGR), returns the per-(station,
+% class) mean queue length QN, utilization UN, response time RN, throughput TN,
+% system response time CN and system throughput XN. The discipline-aware mapping
+% is identical to the steady-state reduction performed by solver_ctmc_analyzer;
+% it is factored here so that callers holding their own distribution (e.g. the
+% SolverENV state-vector analyzer, which time-averages a transient distribution)
+% can reuse it without re-solving for the stationary vector.
+%
+% Copyright (c) 2012-2026, Imperial College London
+% All rights reserved.
+
+M = sn.nstations;
+K = sn.nclasses;
+S = sn.nservers;
+NK = sn.njobs';
+sched = sn.sched;
+PH = sn.proc;
+
+probSysState = pivec(:)';
+% clamp removes numerical residues, but an ME stationary vector is genuinely SIGNED, so clamping deletes real mass -- see solver_ctmc_analyzer
+if ~(isfield(sn,'isph') && ~isempty(sn.isph) && ~all(sn.isph(:)))
+    probSysState(probSysState<GlobalConstants.Zero) = 0;
+end
+if sum(probSysState) > 0
+    probSysState = probSysState/sum(probSysState);
+end
+wset = 1:size(StateSpace,1);
+
+XN = NaN*zeros(1,K);
+UN = NaN*zeros(M,K);
+QN = NaN*zeros(M,K);
+RN = NaN*zeros(M,K);
+TN = NaN*zeros(M,K);
+CN = NaN*zeros(1,K);
+
+% Column span of each STATION inside a StateSpace row; see the twin block in
+% solver_ctmc_analyzer.m. sn.space is keyed by STATEFUL index and a stateful
+% node need not be a station (a Cache is stateful and is not), so the running
+% offset walks every stateful node and is read back through stationToStateful.
+sfSpaceShift = zeros(1,sn.nstateful);
+for isf=2:sn.nstateful
+    sfSpaceShift(isf) = sfSpaceShift(isf-1) + size(sn.space{isf-1},2);
+end
+istSpaceShift = zeros(1,M);
+istSpaceWidth = zeros(1,M);
+for ist=1:M
+    isf = sn.stationToStateful(ist);
+    istSpaceShift(ist) = sfSpaceShift(isf);
+    istSpaceWidth(ist) = size(sn.space{isf},2);
+end
+
+for k=1:K
+    refsf = sn.stationToStateful(sn.refstat(k));
+    XN(k) = probSysState*arvRates(wset,refsf,k);
+end
+
+for ist=1:M
+    isf = sn.stationToStateful(ist);
+    ind = sn.stationToNode(ist);
+    isSource = sn.nodetype(ind) == NodeType.Source;
+    for k=1:K
+        TN(ist,k) = probSysState*depRates(wset,isf,k);
+        if isSource
+            % State.toMarginal encodes an EXT station as nir = Inf, an infinite
+            % reservoir, which is a statement about the state space and not a
+            % queue length. Reading it as one gave Q = Inf at the Source.
+            QN(ist,k) = 0;
+        else
+            QN(ist,k) = probSysState*StateSpaceAggr(wset,(ist-1)*K+k);
+        end
+    end
+    if ~isSource
+        % THE ARRIVAL-RATE ESTIMATOR IS NOT FORMED HERE, and the difference from
+        % solver_ctmc_analyzer is deliberate: this function's ONLY caller is the
+        % SolverENV state-vector analyzer, which hands it a SOJOURN-AVERAGED
+        % TRANSIENT distribution. UNarv and UNdep coincide only at stationarity,
+        % where flow balance holds, so max(UNarv,UNdep) biases upward by
+        % construction out of steady state -- on the two-stage environment of
+        % test_environment_statevec it reported 1.9246 at a SINGLE-SERVER FCFS
+        % queue, which is impossible in LINE's per-server convention, and blended
+        % to 1.2041 against the 0.8817 the JAR and python-native report.
+        % See _kb/06-solver-catalog.md; the JAR (Ctmc_avg_from_pi) and python
+        % (solver_env/statevec._avg_from_pi) have carried the departure-rate
+        % estimator alone since 2026-07-25, and this file lost that fix to a copy
+        % from the analyzer in c3323eb541. The four ANALYZER sites keep the max.
+        signalLoss = ctmc_signal_lossy(sn, arvRates, probSysState, wset, isf);
+        switch sched(ist)
+            case SchedStrategy.INF
+                for k=1:K
+                    UN(ist,k) = QN(ist,k);
+                end
+            case {SchedStrategy.PS, SchedStrategy.DPS, SchedStrategy.GPS, SchedStrategy.LPS}
+                if isempty(sn.lldscaling) && isempty(sn.cdscaling) && isempty(sn.jdscaling)
+                    for k=1:K
+                        if ~isempty(PH{ist}{k})
+                            % Departure-rate estimator only; see the note above
+                            UN(ist,k) = TN(ist,k)*map_mean(PH{ist}{k})/S(ist); % valid because CS in LINE is in a separate node
+                        end
+                    end
+                else % lld/cd/ljd cases
+                    % see _kb/06-solver-catalog.md (Utilization conventions) for rationale
+                    ind = sn.stationToNode(ist);
+                    ceff = S(ist);
+                    if ~isempty(sn.lldscaling) && ist <= size(sn.lldscaling,1)
+                        ceff = max(ceff, max(sn.lldscaling(ist,:)));
+                    end
+                    UN(ist,1:K) = 0;
+                    for st = wset
+                        [ni,nir] = State.toMarginal(sn, ind, StateSpace(st,(istSpaceShift(ist)+1):(istSpaceShift(ist)+istSpaceWidth(ist))));
+                        if ni>0
+                            lldnow = 1;
+                            if ~isempty(sn.lldscaling) && ist <= size(sn.lldscaling,1)
+                                lldnow = sn.lldscaling(ist, min(max(sum(ni),1), size(sn.lldscaling,2)));
+                            end
+                            for k=1:K
+                                UN(ist,k) = UN(ist,k) + probSysState(st)*nir(k)*sn.schedparam(ist,k)/(nir*sn.schedparam(ist,:)')*lldnow/ceff;
+                            end
+                        end
+                    end
+                end
+            case SchedStrategy.PAS
+                % see _kb/06-solver-catalog.md (Utilization conventions) for rationale
+                ind = sn.stationToNode(ist);
+                UN(ist,1:K) = 0;
+                for st = wset
+                    [~,~,sir] = State.toMarginal(sn, ind, StateSpace(st,(istSpaceShift(ist)+1):(istSpaceShift(ist)+istSpaceWidth(ist))));
+                    for k=1:K
+                        UN(ist,k) = UN(ist,k) + probSysState(st)*sir(k)/S(ist);
+                    end
+                end
+            otherwise
+                if isempty(sn.lldscaling) && isempty(sn.cdscaling) && isempty(sn.jdscaling)
+                    for k=1:K
+                        if ~isempty(PH{ist}{k})
+                            % Departure-rate estimator only; see the note above
+                            UN(ist,k) = TN(ist,k)*map_mean(PH{ist}{k})/S(ist); % valid because CS in LINE is in a separate node
+                        end
+                    end
+                else % lld/cd/ljd cases
+                    ind = sn.stationToNode(ist);
+                    % the load-dependent station's capacity is its PEAK scaling,
+                    % not its server count, so normalize by ceff not S
+                    ceff = S(ist);
+                    if ~isempty(sn.lldscaling) && ist <= size(sn.lldscaling,1)
+                        ceff = max(ceff, max(sn.lldscaling(ist,:)));
+                    end
+                    UN(ist,1:K) = 0;
+                    for st = wset
+                        [ni,~,sir] = State.toMarginal(sn, ind, StateSpace(st,(istSpaceShift(ist)+1):(istSpaceShift(ist)+istSpaceWidth(ist))));
+                        if ni>0
+                            lldnow = 1;
+                            if ~isempty(sn.lldscaling) && ist <= size(sn.lldscaling,1)
+                                lldnow = sn.lldscaling(ist, min(max(sum(ni),1), size(sn.lldscaling,2)));
+                            end
+                            sirtot = sum(sir);
+                            for k=1:K
+                                if sirtot > 0
+                                    UN(ist,k) = UN(ist,k) + probSysState(st)*(sir(k)/sirtot)*lldnow/ceff;
+                                end
+                            end
+                        end
+                    end
+                end
+        end
+        if isstruct(sn.nodeparam{ind}) && isfield(sn.nodeparam{ind},'ctmcpool')
+            % server pools: busy servers over the whole bank, as in solver_ctmc_analyzer
+            UN(ist,1:K) = 0;
+            for st = wset
+                [~,~,sir] = State.toMarginal(sn, ind, StateSpace(st,(istSpaceShift(ist)+1):(istSpaceShift(ist)+istSpaceWidth(ist))));
+                UN(ist,1:K) = UN(ist,1:K) + probSysState(st)*sir(1:K)/sn.nservers(ist);
+            end
+        end
+        % see _kb/06-solver-catalog.md (G-network signals) for rationale
+        if any(signalLoss) && sched(ist) ~= SchedStrategy.INF && ...
+                isempty(sn.lldscaling) && isempty(sn.cdscaling) && isempty(sn.jdscaling)
+            UNb = ctmc_signal_busy(sn, ind, ist, sched(ist), S(ist), StateSpace, istSpaceShift, wset, probSysState);
+            UN(ist,signalLoss) = UNb(signalLoss);
+        end
+    end
+end
+
+% Class-, joint- and global-dependence utilization normalization Util=T*S/peak,
+% using the declared sn.cdscalingpeak, sn.jdscalingpeak and sn.gdscalingpeak;
+% see _kb/06-solver-catalog.md (Utilization conventions) for rationale.
+hasgd = isfield(sn,'gdscaling') && ~isempty(sn.gdscaling);
+if (~isempty(sn.cdscaling) || ~isempty(sn.jdscaling) || hasgd) && ~any(isinf(sn.njobs))
+    for ist=1:M
+        hascd = ~isempty(sn.cdscaling) && length(sn.cdscaling) >= ist && ~isempty(sn.cdscaling{ist});
+        hasjd = ~isempty(sn.jdscaling) && length(sn.jdscaling) >= ist && ~isempty(sn.jdscaling{ist});
+        if ~hascd && ~hasjd && ~hasgd
+            continue
+        end
+        for k=1:K
+            % beta_r(n), eta_i(n) and phi(n) scale the SAME rate, so the peaks multiply
+            bmax = 1;
+            if hascd
+                bmax = bmax * sn.cdscalingpeak(ist,k);
+            end
+            if hasjd
+                bmax = bmax * sn.jdscalingpeak(ist,k);
+            end
+            if hasgd
+                bmax = bmax * sn.gdscalingpeak(ist,k);
+            end
+            if isfinite(sn.rates(ist,k)) && sn.rates(ist,k) > 0 && bmax > 0
+                UN(ist,k) = TN(ist,k) / sn.rates(ist,k) / bmax;
+            else
+                UN(ist,k) = 0;
+            end
+        end
+    end
+end
+
+
+for k=1:K
+    for ist=1:M
+        if TN(ist,k)>0
+            RN(ist,k) = QN(ist,k)./TN(ist,k);
+        else
+            RN(ist,k)=0;
+        end
+    end
+    CN(k) = NK(k)./XN(k);
+end
+
+QN(isnan(QN))=0;
+CN(isnan(CN))=0;
+RN(isnan(RN))=0;
+UN(isnan(UN))=0;
+XN(isnan(XN))=0;
+TN(isnan(TN))=0;
+end

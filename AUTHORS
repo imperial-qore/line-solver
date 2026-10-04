@@ -1,0 +1,40 @@
+This file consolidates the codebase authors of LINE across its language-specific
+implementations (matlab/, java/, kotlin/, python/, python-wrapper/). Per-module
+AUTHORS files are retained in each subfolder. Each contributor is listed once;
+the modules and releases they contributed to are noted in parentheses.
+
+Giuliano Casale (matlab 0.*.*-2.0.*, java/kotlin 2.0.19-*, python 3.0.*, python-wrapper 2.0.*; 2017-Present)
+Avinash Bommareddy (java 3.0.6; 2026)
+Anastasia Chanbour (python-wrapper 2.0.37; 2025)
+Manoj Darsh (java/kotlin 2.0.23; 2022)
+Harvey Densem (java 3.0.6; 2026)
+Jacob Dillarstone (matlab, java/kotlin 2.0.23; 2022)
+Rares Dobres (matlab, java/kotlin 2.0.29; 2023)
+David Dragulin (java/kotlin 2.0.29; 2023)
+Yiran Fan (java/kotlin 2.0.40, 3.0.0, 3.0.1; 2025)
+Yicheng Gao (matlab 2.0.14; 2021)
+Yilei Guan (java/kotlin 2.0.29; 2023)
+Qi Huang (matlab 2.0.23; 2022)
+Ze Jin (java/kotlin 2.0.35; 2024)
+Dongchi Li (matlab, java/kotlin 2.0.23; 2022)
+Songtao Li (java/kotlin 2.0.29; 2023)
+Zhuoyuan Li (java/kotlin 2.0.29; 2023)
+Darius Nilforooshan (java/kotlin 2.0.32-35; 2024)
+Zifeng Niu (matlab 2.0.13, 2.0.37; 2021, 2025)
+Juan Fernando Perez (matlab 0.*.*, 1.0.*; 2017-19)
+Wenzheng Shan (matlab, java/kotlin 2.0.23; 2022)
+Matthew Sheldon (matlab 2.0.18, java/kotlin 2.0.19-23; 2021-2022)
+Somdutta Sinha (java/kotlin 3.0.1; 2025)
+Emily Summerscale (java/kotlin 2.0.33-35; 2024)
+Jing Hong Teh (java/kotlin 2.0.35; 2024)
+Toan Truong (java 3.0.6; 2026)
+Yujiao Xiao (java/kotlin 2.0.35; 2024)
+Ye Lun Yang (java/kotlin 2.0.33-35; 2024)
+Tianquan Zhang (matlab 2.0.11; 2020)
+Xian Zhao (matlab 2.0.14, 2.0.16; 2021)
+Yaqi Zhou (java/kotlin 2.0.29; 2023)
+Lulai Zhu (matlab 2.0.3; 2019)
+
+We gracefully acknowledge the following people for their feedbacks and contributions to the debugging of LINE:
+2.0.*: Salvatore Dipietro, Yicheng Gao, Alim Ul Gias, Li, Zhuoyuan Li, Zifeng Niu, Jukka Soikkeli, Lulai Zhu
+0.*.*, 1.0.*: Danilo Ardagna, Michele Ciavotta, Daniel Dubois, Rasha Osman

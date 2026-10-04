@@ -1,0 +1,156 @@
+package jline.examples.java.advanced;
+
+import jline.lang.Network;
+import jline.lang.layered.LayeredNetwork;
+import jline.solvers.NetworkSolver;
+import jline.solvers.ln.LN;
+import jline.solvers.SolverOptions;
+import java.util.Scanner;
+
+/**
+ * Examples demonstrating layered queueing networks with contention queues (CQ).
+ * 
+ * This class provides Java implementations corresponding to the example notebooks
+ * in jline.examples.java.advanced.layeredCQ package.
+ */
+public class LayeredCQExamples {
+
+    private static final Scanner scanner = new Scanner(System.in);
+
+    private static void pauseForUser() {
+        // Skip pause if running in non-interactive mode (e.g., Maven exec)
+        if (System.console() == null) {
+            System.out.println("\n[Running in non-interactive mode, continuing...]");
+            return;
+        }
+        System.out.println("\nPress Enter to continue to next example...");
+        try {
+            scanner.nextLine();
+        } catch (Exception e) {
+            // Ignore scanner errors in case of pipe or redirection
+        }
+    }
+
+    /**
+     * Demonstrates a layered CQ model with a single host (lcq_singlehost.ipynb).
+     * 
+     * This example shows a basic layered queueing network where software tasks execute
+     * on a single host. The model captures both software contention (at the task level)
+     * and hardware contention (at the host level), typical in client-server architectures.
+     * 
+     * Features:
+     * - Single host with multiple software tasks
+     * - Nested queueing structure (software and hardware layers)
+     * - Analysis of software bottlenecks vs. hardware bottlenecks
+     * - Mean value analysis for layered networks
+     * 
+     * @throws Exception if the solver encounters an error
+     */
+    public static void lcq_singlehost() throws Exception {
+        LayeredNetwork model = LayeredCQModel.lcq_singlehost();
+        
+        // MVA LAYERS, as the reference pins: MVA layers and NC layers are
+        // different fixed points, and on this model they part company by 4.5%.
+        LN solver = new LN(model, (subModel) -> new jline.solvers.mva.MVA(subModel, "verbose",
+                jline.VerboseLevel.SILENT));
+        
+        try {
+            solver.getAvgTable().print();
+        } catch (Exception e) {
+        }
+        
+        pauseForUser();
+    }
+
+    /**
+     * Demonstrates a layered CQ model with three hosts (lcq_threehosts.ipynb).
+     * 
+     * This example extends the single host case to a distributed system with three hosts.
+     * Different software tasks are deployed on different hosts, creating a more complex
+     * interaction pattern typical of multi-tier architectures.
+     * 
+     * Features:
+     * - Three hosts with distributed software tasks
+     * - Inter-host communication patterns
+     * - Analysis of distributed system bottlenecks
+     * - Load balancing considerations in layered networks
+     * 
+     * @throws Exception if the solver encounters an error
+     */
+    public static void lcq_threehosts() throws Exception {
+        LayeredNetwork model = LayeredCQModel.lcq_threehosts();
+        
+        // NC layers FIRST, then MVA layers: the reference runs both, and the
+        // golden holds the first table (goldens/corpus.json multiModelExamples).
+        LN ncLayers = new LN(model, (subModel) -> new jline.solvers.nc.NC(subModel, "verbose",
+                jline.VerboseLevel.SILENT));
+        LN mvaLayers = new LN(model, (subModel) -> new jline.solvers.mva.MVA(subModel, "verbose",
+                jline.VerboseLevel.SILENT));
+        
+        try {
+            ncLayers.getAvgTable().print();
+            mvaLayers.getAvgTable().print();
+        } catch (Exception e) {
+        }
+        
+        pauseForUser();
+    }
+
+    /**
+     * Layered cache queueing model with ASYNCHRONOUS (non-blocking) cache
+     * access (lcq_async_cache.m).
+     *
+     * The client makes an asynchronous call to the cache and continues without
+     * waiting for the reply, which is what a prefetch or a cache warm-up does;
+     * the cache still resolves the request through POST_CACHE hit/miss
+     * branching. Compare with {@link #lcq_singlehost()}, whose call is
+     * synchronous.
+     *
+     * @throws Exception if the solver encounters an error
+     */
+    public static void lcq_async_cache() throws Exception {
+        LayeredNetwork model = LayeredCQModel.lcq_async_cache();
+
+        SolverOptions lnoptions = LN.defaultOptions();
+        lnoptions.verbose = jline.VerboseLevel.STD;
+        LN solver = new LN(model, (subModel) -> new jline.solvers.mva.MVA(subModel, "verbose",
+                jline.VerboseLevel.SILENT), lnoptions);
+
+        solver.getAvgTable().print();
+
+        pauseForUser();
+    }
+
+    /**
+     * Main method to run all layered CQ examples.
+     * 
+     * @param args command line arguments (not used)
+     */
+    public static void main(String[] args) {
+        System.out.println("\n=== Running example: lcq_singlehost ===");
+        try {
+            lcq_singlehost();
+        } catch (Exception e) {
+            System.err.println("lcq_singlehost failed: " + e.getMessage());
+            e.printStackTrace();
+        }
+        
+        System.out.println("\n=== Running example: lcq_async_cache ===");
+        try {
+            lcq_async_cache();
+        } catch (Exception e) {
+            System.err.println("lcq_async_cache failed: " + e.getMessage());
+            e.printStackTrace();
+        }
+        
+        System.out.println("\n=== Running example: lcq_threehosts ===");
+        try {
+            lcq_threehosts();
+        } catch (Exception e) {
+            System.err.println("lcq_threehosts failed: " + e.getMessage());
+            e.printStackTrace();
+        }
+        
+        scanner.close();
+    }
+}

@@ -1,0 +1,48 @@
+2.0.x:
+See release notes at https://github.com/imperial-qore/line-solver/releases
+
+1.0.0 
+- Line now offers support for both synchronous and asynchronous calls. This is achieved by extending the transformation from LQN models to incorporate asynchronous calls, and by extending the analysis to differentiate how these two types of calls account for remote execution time. 
+- This version includes beta versions of solvers for two extended types of execution: simultaneous resource possession (SRP) and synchronous calls with blocking (SCP). These can be used at the script level. 
+- This version has undergone a naming revision, simplifying names of scripts. 
+
+0.7.1 
+- LINE now provides support for the computation of transient metrics. This includes both mean-value metrics and response-time distributions. 
+- LINE is compatible with the latest release of the Palladio Bench tool. The LINE binaries now accept LQN models in .xml and .lqxo file formats. 
+
+0.7.0 
+- LINE now provides initial support for the performance evaluation of BPMN collaboration diagrams. LINE reads the BPMN model in the standard BPMN XML format, augmented with timing information, and analyzes it by means of a model-to-model transformation to LQN models. Examples of how to use this feature are provided in the scripts example_BPMN_X.m included in the examples folder. 
+- LINE now supports the performance evaluation of closed queueing networks described as PMIF models. LINE reads the PMIF model in the standard PMIF XML format, which it analyzes by means of a model-to-model transformation to LQN models. Examples of how to use this feature are provided in the scripts example_PMIF_X.m included in the examples folder. 
+- LINE now offers the QD-AMVA solver, which has been developed to analyze queueing networks with queue-dependent processing times. This solver can be selected by setting a new configuration variable, called solver, to the value QDAMVA. The default solver is the existing fluid solver. 
+- The source code in LINE has been re-structured, facilitating its extensibility, particularly to consider different input models and solvers. 
+
+0.6.0 
+- The reliability model in LINE, called Random Environment, now has support for general (Coxian) holding times in each environmental stage. This generalizes the exponential holding times in previous versions.
+- For the intermediate software layers, LINE now computes the expected throughput. This is in addition to response times means and percentiles, already included.
+- LINE has been re-structured, offering a more compartmental architecture, separating model parsing from model solving, and performance metrics computation. This facilitates the extension of the tool to consider different abstractions.
+
+0.5.2 
+- LINE now accepts models with Coxian processing times. The specification of the Coxian distributions is done by means of an XML file containing LQN extensions, which also includes Random Environments. Notice that these distribution are specified at the level of LQN activities. 
+- The computation of the response time percentiles has been fixed to compute long tails.
+- The parser is now decomposed in 2 phases that were previously mixed up: first, the parsing of the LQN model, from an LQN XML file; second, the parsing of the LQN Extensions, from a different XML file.
+- The analysis of the SEFF mean response times is now performed in a separate script.
+- Line now accepts the parallel property in the configuration file. It has 3 possible values: SEQ for sequential execution (default); JOB for parallel execution using Matlab parallel engine for batch job execution; PARFOR for parallel execution using the parfor mechanism in Matlab.
+- Line now parses and solves models with multiple PCM usage models, which in the LQN model are translated into multiple references tasks. Performance measures are computed for the different usage model/user types.
+- Line now accepts a verbose property that can be set to 1 for verbose screen output. The default is 0 which provides limited screen output.
+- The analysis of services (denoted SEFF in Palladio) has been extended to consider general probabilistic interactions among them, as when one SEFF calls several other SEFFs to provide its service.
+
+0.5.1 
+- The main new feature in this version is the ability to compute the percentiles of the overall response time. The requested percentiles are specified in the configuration file, and the results are included in the results file.
+- LINE now accepts a sequence of connections from the clients, and only terminates after receiving the command QUIT. To close a connection the client must submit the command CLOSE. Once the connection is closed, LINE replies with the message LINE CLOSED.
+- In relation to the previous feature, a new configuration option has been added. The property connectionTimeout sets the timeout before LINE closes the current connection. The time (in seconds) is counted after the last command was received and all the outstanding models have been solved.
+- The LQN XML parser has been extended to consider more general usage models. The parser now supports LQN models with general probabilistic activity graphs. It also considers the speed factor to determine the mean service demands.
+
+0.5.0 
+- This release works as a server that receives instructions to solve models, requiring a single startup to solve as many models as needed.
+- This release exploits the parallel execution of jobs on multi-core computers, thus offering significant time savings when solving many models.
+
+0.4.1 
+- This release is designed to run batch jobs.
+
+0.4.0 
+- First public release. 

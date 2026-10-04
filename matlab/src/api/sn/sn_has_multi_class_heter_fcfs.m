@@ -1,0 +1,47 @@
+%{ @file sn_has_multi_class_heter_fcfs.m
+ %  @brief Checks for multi-class FCFS with heterogeneous service
+ %
+ %  @author LINE Development Team
+%}
+
+%{
+ % @brief Checks for multi-class FCFS with heterogeneous service
+ %
+ % @details
+ % Returns true if any FCFS station serves multiple classes with different service time distributions.
+ %
+ % @par Syntax:
+ % @code
+ % bool = sn_has_multi_class_heter_fcfs(sn)
+ % @endcode
+ %
+ % @par Parameters:
+ % <table>
+ % <tr><th>Name<th>Description
+ % <tr><td>sn<td>Network structure
+ % </table>
+ %
+ % @par Returns:
+ % <table>
+ % <tr><th>Name<th>Description
+ % <tr><td>bool<td>True if any multi-class FCFS station has heterogeneous service
+ % </table>
+%}
+function bool = sn_has_multi_class_heter_fcfs(sn)
+
+iset = find(sn.sched == SchedStrategy.FCFS);
+if isempty(iset)
+    bool = false;
+else
+    bool = false;
+    for idx=1:length(iset)
+        i = iset(idx);
+        ratesRow = sn.rates(i,:);
+        ratesRow = ratesRow(isfinite(ratesRow) & ~isnan(ratesRow));
+        % Relative FineTol, not > 0: LN layer rates are inverses of computed
+        % service times, and a one-ulp spread flipped the MVA dispatch between
+        % exact MVA and AMVA (see _kb/07-cross-language-parity.md, LN interlock).
+        bool = bool | (max(ratesRow) - min(ratesRow)) > GlobalConstants.FineTol * abs(min(ratesRow));
+    end
+end
+end

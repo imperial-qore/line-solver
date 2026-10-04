@@ -1,0 +1,47 @@
+profiling
+private
+
+.DS_Store
+outputpdf/
+*~
+# local files
+simulate_JSQ
+tmpFile
+sir_simu
+tmp_N*
+.idea
+/test_example.py
+
+
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mypy
+.mypy_cache/
+
+

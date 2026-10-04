@@ -1,0 +1,1283 @@
+/*
+ * Copyright (c) 2012-2026, QORE Lab, Imperial College London
+ * All rights reserved.
+ */
+
+package jline.examples.java.basic;
+
+import jline.VerboseLevel;
+import jline.lang.constant.SchedStrategy;
+import jline.lang.constant.ServerType;
+import jline.lang.constant.SolverType;
+import jline.lang.layered.*;
+import jline.lang.processes.APH;
+import jline.lang.processes.Erlang;
+import jline.lang.processes.Exp;
+import jline.lang.processes.Immediate;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URISyntaxException;
+import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
+import jline.solvers.SolverOptions;
+import jline.solvers.ln.LN;
+import jline.solvers.wrappers.lqns.LQNS;
+import jline.util.matrix.Matrix;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+
+/**
+ * Examples of layered networks
+ */
+public class LayeredModel {
+
+    /**
+     * Round-robin call dispatch over a set of target tasks (lqn_rrobin.m).
+     *
+     * <p>A client task issues its synchronous calls to three interchangeable
+     * server tasks in cyclic order rather than by probabilistic branching. The
+     * two models carry the same aggregate call rate; what differs is that
+     * round-robin removes the variance of the branching, which smooths the
+     * server queues.</p>
+     *
+     * <p>ONE call per invocation, its destination cycling over the three
+     * servers. A mean of 1 over 3 targets is where round-robin actually bites:
+     * the probabilistic twin makes 0..3 calls per invocation with the same mean,
+     * round-robin makes exactly one.</p>
+     *
+     * @return the round-robin dispatch model
+     */
+    public static LayeredNetwork lqn_rrobin() {
+        LayeredNetwork model = new LayeredNetwork("LQN-RRobin");
+
+        Processor PC = new Processor(model, "PC", 1, SchedStrategy.INF);
+        Processor PS = new Processor(model, "PS", 1, SchedStrategy.PS);
+
+        Task TC = new Task(model, "TC", 10, SchedStrategy.REF).on(PC).setThinkTime(new Exp(1.0 / 5));
+        Task TS1 = new Task(model, "TS1", 5, SchedStrategy.FCFS).on(PS);
+        Task TS2 = new Task(model, "TS2", 5, SchedStrategy.FCFS).on(PS);
+        Task TS3 = new Task(model, "TS3", 5, SchedStrategy.FCFS).on(PS);
+
+        Entry EC = new Entry(model, "EC").on(TC);
+        Entry ES1 = new Entry(model, "ES1").on(TS1);
+        Entry ES2 = new Entry(model, "ES2").on(TS2);
+        Entry ES3 = new Entry(model, "ES3").on(TS3);
+
+        Activity AC = new Activity(model, "AC", new Exp(2)).on(TC).boundTo(EC);
+        AC.synchCallRoundRobin(Arrays.asList(ES1, ES2, ES3), 1);
+        new Activity(model, "AS1", new Exp(1)).on(TS1).boundTo(ES1).repliesTo(ES1);
+        new Activity(model, "AS2", new Exp(1)).on(TS2).boundTo(ES2).repliesTo(ES2);
+        new Activity(model, "AS3", new Exp(1)).on(TS3).boundTo(ES3).repliesTo(ES3);
+
+        return model;
+    }
+
+    /**
+     * Join-the-shortest-queue call dispatch over a set of target tasks (lqn_jsq.m).
+     *
+     * <p>The twin of {@link #lqn_rrobin()}: the target is the one holding the
+     * fewest jobs at dispatch time rather than the next one in cyclic order.
+     * What JSQ adds over round-robin is that the dispatch reacts to the state of
+     * the servers, so it also absorbs asymmetry in the service times, not only
+     * the variance of the branching.</p>
+     *
+     * @return the JSQ dispatch model
+     */
+    public static LayeredNetwork lqn_jsq() {
+        LayeredNetwork model = new LayeredNetwork("LQN-JSQ");
+
+        Processor PC = new Processor(model, "PC", 1, SchedStrategy.INF);
+        Processor PS = new Processor(model, "PS", 1, SchedStrategy.PS);
+
+        Task TC = new Task(model, "TC", 10, SchedStrategy.REF).on(PC).setThinkTime(new Exp(1.0 / 5));
+        Task TS1 = new Task(model, "TS1", 5, SchedStrategy.FCFS).on(PS);
+        Task TS2 = new Task(model, "TS2", 5, SchedStrategy.FCFS).on(PS);
+        Task TS3 = new Task(model, "TS3", 5, SchedStrategy.FCFS).on(PS);
+
+        Entry EC = new Entry(model, "EC").on(TC);
+        Entry ES1 = new Entry(model, "ES1").on(TS1);
+        Entry ES2 = new Entry(model, "ES2").on(TS2);
+        Entry ES3 = new Entry(model, "ES3").on(TS3);
+
+        // ONE call per invocation, its destination the least loaded of the three
+        // servers.
+        Activity AC = new Activity(model, "AC", new Exp(2)).on(TC).boundTo(EC);
+        AC.synchCallJSQ(Arrays.asList(ES1, ES2, ES3), 1);
+        new Activity(model, "AS1", new Exp(1)).on(TS1).boundTo(ES1).repliesTo(ES1);
+        new Activity(model, "AS2", new Exp(1)).on(TS2).boundTo(ES2).repliesTo(ES2);
+        new Activity(model, "AS3", new Exp(1)).on(TS3).boundTo(ES3).repliesTo(ES3);
+
+        return model;
+    }
+
+    /**
+     * BPMN-derived layered network with OR and AND branching (lqn_bpmn_trace.m).
+     *
+     * <p>Seven processors, seven tasks and sixteen entries: a reference task
+     * whose activity graph branches 0.6/0.4 through an OrFork, and a second-tier
+     * task whose graph forks and joins over an AndFork. Its point is the
+     * iteration trace, so the surrounding example drives the layered solver by
+     * hand rather than through the analyzer.</p>
+     *
+     * @return the traced BPMN-derived model
+     */
+    public static LayeredNetwork lqn_bpmn_trace() {
+        LayeredNetwork model = new LayeredNetwork("myLayeredModel");
+
+        Processor P1 = new Processor(model, "R1_Processor", 100, SchedStrategy.FCFS);
+        Processor P2 = new Processor(model, "R2_Processor", Integer.MAX_VALUE, SchedStrategy.INF);
+        Processor P3 = new Processor(model, "R3_Processor", 2, SchedStrategy.FCFS);
+        Processor P4 = new Processor(model, "R1A_Processor", 7, SchedStrategy.FCFS);
+        Processor P5 = new Processor(model, "R1B_Processor", 3, SchedStrategy.FCFS);
+        Processor P6 = new Processor(model, "R2A_Processor", 4, SchedStrategy.FCFS);
+        Processor P7 = new Processor(model, "R2B_Processor", 5, SchedStrategy.FCFS);
+
+        Task T1 = new Task(model, "R1_Task", 100, SchedStrategy.REF).on(P1)
+                .setThinkTime(Exp.fitMean(20));
+        Task T2 = new Task(model, "R2_Task", Integer.MAX_VALUE, SchedStrategy.INF).on(P2)
+                .setThinkTime(Immediate.getInstance());
+        Task T3 = new Task(model, "R3_Task", 2, SchedStrategy.FCFS).on(P3)
+                .setThinkTime(Immediate.getInstance());
+        Task T4 = new Task(model, "R1A_Task", 7, SchedStrategy.FCFS).on(P4)
+                .setThinkTime(Immediate.getInstance());
+        Task T5 = new Task(model, "R1B_Task", 3, SchedStrategy.FCFS).on(P5)
+                .setThinkTime(Immediate.getInstance());
+        Task T6 = new Task(model, "R2A_Task", 4, SchedStrategy.FCFS).on(P6)
+                .setThinkTime(Immediate.getInstance());
+        Task T7 = new Task(model, "R2B_Task", 5, SchedStrategy.FCFS).on(P7)
+                .setThinkTime(Immediate.getInstance());
+
+        Entry E1 = new Entry(model, "R1_Ref_Entry").on(T1);
+        Entry E2 = new Entry(model, "R2_Synch_A2_Entry").on(T2);
+        Entry E3 = new Entry(model, "R2_Synch_A5_Entry").on(T2);
+        Entry E4 = new Entry(model, "R3_Synch_A9_Entry").on(T3);
+        Entry E5 = new Entry(model, "R1A_Synch_A1_Entry").on(T4);
+        Entry E6 = new Entry(model, "R1A_Synch_A2_Entry").on(T4);
+        Entry E7 = new Entry(model, "R1A_Synch_A3_Entry").on(T4);
+        Entry E8 = new Entry(model, "R1B_Synch_A4_Entry").on(T5);
+        Entry E9 = new Entry(model, "R1B_Synch_A5_Entry").on(T5);
+        Entry E10 = new Entry(model, "R1B_Synch_A6_Entry").on(T5);
+        Entry E11 = new Entry(model, "R2A_Synch_A7_Entry").on(T6);
+        Entry E12 = new Entry(model, "R2A_Synch_A8_Entry").on(T6);
+        Entry E13 = new Entry(model, "R2A_Synch_A11_Entry").on(T6);
+        Entry E14 = new Entry(model, "R2B_Synch_A9_Entry").on(T7);
+        Entry E15 = new Entry(model, "R2B_Synch_A10_Entry").on(T7);
+        Entry E16 = new Entry(model, "R2B_Synch_A12_Entry").on(T7);
+
+        Activity A1 = new Activity(model, "A1_Empty", Immediate.getInstance()).on(T1)
+                .boundTo(E1).synchCall(E5, 1);
+        Activity A2 = new Activity(model, "A2_Empty", Immediate.getInstance()).on(T1)
+                .synchCall(E6, 1);
+        Activity A3 = new Activity(model, "A5_Empty", Immediate.getInstance()).on(T1)
+                .synchCall(E9, 1);
+        Activity A4 = new Activity(model, "A6_Empty", Immediate.getInstance()).on(T1)
+                .synchCall(E10, 1);
+        Activity A5 = new Activity(model, "A3_Empty", Immediate.getInstance()).on(T1)
+                .synchCall(E7, 1);
+        Activity A6 = new Activity(model, "A4_Empty", Immediate.getInstance()).on(T1)
+                .synchCall(E8, 1);
+        Activity A7 = new Activity(model, "E4_Empty", Immediate.getInstance()).on(T2).boundTo(E2);
+        Activity A8 = new Activity(model, "A7_Empty", Immediate.getInstance()).on(T2)
+                .synchCall(E11, 1);
+        Activity A9 = new Activity(model, "A8_Empty", Immediate.getInstance()).on(T2)
+                .synchCall(E12, 1);
+        Activity A10 = new Activity(model, "A9_Empty", Immediate.getInstance()).on(T2)
+                .synchCall(E14, 1);
+        Activity A11 = new Activity(model, "A11_Empty", Immediate.getInstance()).on(T2)
+                .synchCall(E13, 1).repliesTo(E2);
+        new Activity(model, "A12_Empty", Immediate.getInstance()).on(T2).boundTo(E3)
+                .synchCall(E16, 1).repliesTo(E3);
+        Activity A13 = new Activity(model, "A10_Empty", Immediate.getInstance()).on(T2)
+                .synchCall(E15, 1);
+        new Activity(model, "A13", Exp.fitMean(10)).on(T3).boundTo(E4).repliesTo(E4);
+        new Activity(model, "A1", Exp.fitMean(7)).on(T4).boundTo(E5).repliesTo(E5);
+        Activity A16 = new Activity(model, "A2", Exp.fitMean(4)).on(T4).boundTo(E6);
+        new Activity(model, "A3", Exp.fitMean(5)).on(T4).boundTo(E7).repliesTo(E7);
+        Activity A18 = new Activity(model, "A2_Res_Empty", Immediate.getInstance()).on(T4)
+                .synchCall(E2, 1).repliesTo(E6);
+        new Activity(model, "A4", Exp.fitMean(8)).on(T5).boundTo(E8).repliesTo(E8);
+        Activity A20 = new Activity(model, "A5", Exp.fitMean(4)).on(T5).boundTo(E9);
+        new Activity(model, "A6", Exp.fitMean(6)).on(T5).boundTo(E10).repliesTo(E10);
+        Activity A22 = new Activity(model, "A5_Res_Empty", Immediate.getInstance()).on(T5)
+                .synchCall(E3, 1).repliesTo(E9);
+        new Activity(model, "A7", Exp.fitMean(6)).on(T6).boundTo(E11).repliesTo(E11);
+        new Activity(model, "A8", Exp.fitMean(8)).on(T6).boundTo(E12).repliesTo(E12);
+        new Activity(model, "A11", Exp.fitMean(4)).on(T6).boundTo(E13).repliesTo(E13);
+        Activity A26 = new Activity(model, "A9", Exp.fitMean(4)).on(T7).boundTo(E14);
+        new Activity(model, "A10", Exp.fitMean(6)).on(T7).boundTo(E15).repliesTo(E15);
+        new Activity(model, "A12", Exp.fitMean(8)).on(T7).boundTo(E16).repliesTo(E16);
+        Activity A29 = new Activity(model, "A9_Res_Empty", Immediate.getInstance()).on(T7)
+                .synchCall(E4, 1).repliesTo(E14);
+
+        T1.addPrecedence(ActivityPrecedence.Serial(A1, A2));
+        T1.addPrecedence(ActivityPrecedence.Serial(A3, A4));
+        T2.addPrecedence(ActivityPrecedence.Serial(A7, A8));
+        T2.addPrecedence(ActivityPrecedence.Serial(A10, A13));
+        T4.addPrecedence(ActivityPrecedence.Serial(A16, A18));
+        T5.addPrecedence(ActivityPrecedence.Serial(A20, A22));
+        T7.addPrecedence(ActivityPrecedence.Serial(A26, A29));
+
+        Matrix orProbs = new Matrix(1, 2);
+        orProbs.set(0, 0, 0.6);
+        orProbs.set(0, 1, 0.4);
+        T1.addPrecedence(ActivityPrecedence.OrFork(A2, Arrays.asList(A5, A6), orProbs));
+        T2.addPrecedence(ActivityPrecedence.AndFork(A8, Arrays.asList(A9, A10)));
+        T1.addPrecedence(ActivityPrecedence.OrJoin(Arrays.asList(A5, A6), A3));
+        T2.addPrecedence(ActivityPrecedence.AndJoin(Arrays.asList(A9, A13), A11));
+
+        return model;
+    }
+
+    /**
+     * Base LQN whose think time and AS3 host demand are the hidden parameters
+     * of the EKF identification (lqn_paramident.m).
+     *
+     * @return the identification model, mirroring {@link #lqn_basic()}
+     */
+    public static LayeredNetwork lqn_paramident() {
+        LayeredNetwork model = new LayeredNetwork("paramident_LQN");
+
+        Processor P1 = new Processor(model, "P1", 2, SchedStrategy.PS);
+        Processor P2 = new Processor(model, "P2", 3, SchedStrategy.PS);
+
+        Task T1 = new Task(model, "T1", 50, SchedStrategy.REF).on(P1).setThinkTime(new Exp(1.0 / 2));
+        Task T2 = new Task(model, "T2", 50, SchedStrategy.FCFS).on(P1)
+                .setThinkTime(new Exp(1.0 / 3));
+        Task T3 = new Task(model, "T3", 25, SchedStrategy.FCFS).on(P2)
+                .setThinkTime(new Exp(1.0 / 4));
+
+        Entry E1 = new Entry(model, "E1").on(T1);
+        Entry E2 = new Entry(model, "E2").on(T2);
+        Entry E3 = new Entry(model, "E3").on(T3);
+
+        new Activity(model, "AS1", new Exp(10)).on(T1).boundTo(E1).synchCall(E2, 1);
+        new Activity(model, "AS2", new Exp(20)).on(T2).boundTo(E2).synchCall(E3, 5).repliesTo(E2);
+        new Activity(model, "AS3", new Exp(50)).on(T3).boundTo(E3).repliesTo(E3);
+
+        return model;
+    }
+
+    /**
+     * Three-layer chain for the transient analysis (lqn_transient.m).
+     *
+     * <p>A reference task T1 on processor P1 whose activity synchronously calls
+     * entry E2 of task T2 on processor P2. The three ensemble layers are the two
+     * processor (host) layers and the T2 task layer.</p>
+     *
+     * @return the three-layer transient model
+     */
+    public static LayeredNetwork lqn_transient() {
+        LayeredNetwork model = new LayeredNetwork("lqn_transient");
+
+        Processor P1 = new Processor(model, "P1", 1, SchedStrategy.PS);
+        Processor P2 = new Processor(model, "P2", 1, SchedStrategy.PS);
+
+        Task T1 = new Task(model, "T1", 5, SchedStrategy.REF).on(P1).setThinkTime(new Exp(1.0));
+        Task T2 = new Task(model, "T2", 5, SchedStrategy.FCFS).on(P2).setThinkTime(new Exp(1.0));
+
+        Entry E1 = new Entry(model, "E1").on(T1);
+        Entry E2 = new Entry(model, "E2").on(T2);
+
+        new Activity(model, "A1", new Exp(2.0)).on(T1).boundTo(E1).synchCall(E2, 1);
+        new Activity(model, "A2", new Exp(3.0)).on(T2).boundTo(E2).repliesTo(E2);
+
+        return model;
+    }
+
+    /**
+     * Three-deep call chain for the squashed phase-type encoding (lqn_flatph.m).
+     *
+     * <p>The middle task is at once a server to T1 and a caller of T3, so the
+     * two levels of the LQN accounting are both exercised. Under {@code flat.ph}
+     * a task station's service law is ALREADY the inflated entry law (host
+     * demand plus call counts times callee service and waiting), which the outer
+     * fixed point updates, exactly as lqns does under --squashed-layering.</p>
+     *
+     * @return the three-deep chain model
+     */
+    public static LayeredNetwork lqn_flatph() {
+        LayeredNetwork model = new LayeredNetwork("flatphExample");
+
+        Processor P1 = new Processor(model, "P1", 1, SchedStrategy.PS);
+        Processor P2 = new Processor(model, "P2", 1, SchedStrategy.PS);
+        Processor P3 = new Processor(model, "P3", 1, SchedStrategy.PS);
+
+        Task T1 = new Task(model, "T1", 4, SchedStrategy.REF).on(P1).setThinkTime(new Exp(1));
+        Task T2 = new Task(model, "T2", 2, SchedStrategy.FCFS).on(P2);
+        Task T3 = new Task(model, "T3", 1, SchedStrategy.FCFS).on(P3);
+
+        Entry E1 = new Entry(model, "E1").on(T1);
+        Entry E2 = new Entry(model, "E2").on(T2);
+        Entry E3 = new Entry(model, "E3").on(T3);
+
+        new Activity(model, "A1", new Exp(5)).on(T1).boundTo(E1).synchCall(E2, 1);
+        new Activity(model, "A2", new Exp(5)).on(T2).boundTo(E2).synchCall(E3, 1).repliesTo(E2);
+        new Activity(model, "A3", new Exp(5)).on(T3).boundTo(E3).repliesTo(E3);
+
+        return model;
+    }
+
+    /**
+     * Activity graphs the series-parallel reduction composes exactly (lqn_srvnph.m).
+     *
+     * <p>Exercises the two constructs {@code srvn.ph} handles exactly and the
+     * default routing encoding only approximates: an AND fork-join, whose branch
+     * times are a maximum and not a sum, and a geometric loop of mean 3.</p>
+     *
+     * @return the fork-join plus loop model
+     */
+    public static LayeredNetwork lqn_srvnph() {
+        LayeredNetwork model = new LayeredNetwork("srvnphExample");
+
+        Processor P1 = new Processor(model, "P1", 1, SchedStrategy.INF);
+        Task T1 = new Task(model, "T1", 20, SchedStrategy.REF).on(P1);
+        T1.setThinkTime(Exp.fitMean(1.0));
+        Entry E1 = new Entry(model, "E1").on(T1);
+
+        Processor P2 = new Processor(model, "P2", 1, SchedStrategy.PS);
+        Task T2 = new Task(model, "T2", 5, SchedStrategy.FCFS).on(P2);
+        Entry E2 = new Entry(model, "E2").on(T2);
+        Entry E3 = new Entry(model, "E3").on(T2);
+
+        Processor P3 = new Processor(model, "P3", 1, SchedStrategy.PS);
+        Task T3 = new Task(model, "T3", 3, SchedStrategy.FCFS).on(P3);
+        Entry E4 = new Entry(model, "E4").on(T3);
+
+        // client
+        new Activity(model, "A1", Exp.fitMean(0.1)).on(T1).boundTo(E1).synchCall(E2, 1)
+                .synchCall(E3, 1);
+
+        // E2: AND fork-join over two branches, one of which calls a third tier
+        Activity A20 = new Activity(model, "A20", Exp.fitMean(0.2)).on(T2).boundTo(E2);
+        Activity A21 = new Activity(model, "A21", Exp.fitMean(0.3)).on(T2);
+        Activity A22 = new Activity(model, "A22", Exp.fitMean(0.2)).on(T2).synchCall(E4, 1);
+        Activity A23 = new Activity(model, "A23", Exp.fitMean(0.1)).on(T2).repliesTo(E2);
+        T2.addPrecedence(ActivityPrecedence.AndFork(A20, Arrays.asList(A21, A22)));
+        T2.addPrecedence(ActivityPrecedence.AndJoin(Arrays.asList(A21, A22), A23));
+
+        // E3: a geometric loop of mean 3 around a body of two activities
+        Activity A30 = new Activity(model, "A30", Exp.fitMean(0.1)).on(T2).boundTo(E3);
+        Activity A31 = new Activity(model, "A31", Exp.fitMean(0.2)).on(T2);
+        Activity A32 = new Activity(model, "A32", Exp.fitMean(0.1)).on(T2);
+        Activity A33 = new Activity(model, "A33", Exp.fitMean(0.1)).on(T2).repliesTo(E3);
+        T2.addPrecedence(ActivityPrecedence.Loop(A30, Arrays.asList(A31, A32, A33), 3));
+
+        // third tier
+        new Activity(model, "A4", Exp.fitMean(0.15)).on(T3).boundTo(E4).repliesTo(E4);
+
+        return model;
+    }
+
+    /**
+     * Basic layered network with multiple processors and synchronous calls.
+     * <p>
+     * Features:
+     * - Two PS processors P1 (2 cores) and P2 (3 cores)
+     * - Three tasks: T1 (50 jobs, REF), T2 (50 jobs, FCFS), T3 (25 jobs, FCFS)
+     * - Synchronous call chain: T1 -> E2 (1 call), T2 -> E3 (5 calls)
+     * - Demonstrates basic multi-tier application modeling
+     *
+     * @return configured basic layered network model
+     * @throws Exception if model creation fails
+     */
+    public static LayeredNetwork lqn_basic() throws Exception {
+        LayeredNetwork model = new LayeredNetwork("test_LQN_4");
+
+        Processor P1 = new Processor(model, "P1", 2, SchedStrategy.PS);
+        Processor P2 = new Processor(model, "P2", 3, SchedStrategy.PS);
+
+        Task T1 = new Task(model, "T1", 50, SchedStrategy.REF).on(P1).setThinkTime(new Exp(1.0 / 2));
+        Task T2 = new Task(model, "T2", 50, SchedStrategy.FCFS).on(P1).setThinkTime(new Exp(1.0 / 3));
+        Task T3 = new Task(model, "T3", 25, SchedStrategy.FCFS).on(P2).setThinkTime(new Exp(1.0 / 4));
+
+        Entry E1 = new Entry(model, "E1").on(T1);
+        Entry E2 = new Entry(model, "E2").on(T2);
+        Entry E3 = new Entry(model, "E3").on(T3);
+
+        Activity A1 = new Activity(model, "AS1", new Exp(10.0)).on(T1);
+        A1.boundTo(E1);
+        A1.synchCall(E2, 1);
+        Activity A2 = new Activity(model, "AS2", new Exp(20.0)).on(T2);
+        A2.boundTo(E2);
+        A2.synchCall(E3, 5);
+        A2.repliesTo(E2);
+        Activity A3 = new Activity(model, "AS3", new Exp(50.0)).on(T3);
+        A3.boundTo(E3);
+        A3.repliesTo(E3);
+
+        return model;
+    }
+
+    /**
+     * Basic layered network with two processors and synchronous calls.
+     * <p>
+     * Features:
+     * - Two PS processors P1 and P2 with single server each
+     * - Task T1 (10 jobs, REF) with exponential think time (0.01)
+     * - Task T2 (1 job, FCFS) with immediate think time
+     * - Activities with serial precedence and synchronous calls
+     * - Demonstrates basic layered network modeling
+     *
+     * @return configured layered network model
+     * @throws Exception if model creation fails
+     */
+    public static LayeredNetwork lqn_serial() throws Exception {
+        LayeredNetwork model = new LayeredNetwork("myLayeredModel");
+
+        Processor P1 = new Processor(model, "P1", 1, SchedStrategy.PS);
+        Processor P2 = new Processor(model, "P2", 1, SchedStrategy.PS);
+
+        Task T1 = new Task(model, "T1", 10, SchedStrategy.REF).on(P1).setThinkTime(Exp.fitMean(100.0));
+        Task T2 = new Task(model, "T2", 1, SchedStrategy.FCFS).on(P2).setThinkTime(Immediate.getInstance());
+
+        Entry E1 = new Entry(model, "E1").on(T1);
+        Entry E2 = new Entry(model, "E2").on(T2);
+
+        Activity A1 = new Activity(model, "AS1", Exp.fitMean(1.6)).on(T1);
+        A1.boundTo(E1);
+        Activity A2 = new Activity(model, "AS2", Immediate.getInstance()).on(T1);
+        A2.synchCall(E2, 1);
+        Activity A3 = new Activity(model, "AS3", Exp.fitMean(5.0)).on(T2);
+        A3.boundTo(E2);
+        Activity A4 = new Activity(model, "AS4", Exp.fitMean(1.0)).on(T2);
+        A4.repliesTo(E2);
+
+        T1.addPrecedence(ActivityPrecedence.Serial("AS1", "AS2"));
+        T2.addPrecedence(ActivityPrecedence.Serial("AS3", "AS4"));
+
+        // Model solution
+//        LN solver = new LN(model, SolverType.MVA);
+//        solver.getEnsembleAvg();
+        return model;
+    }
+
+    /**
+     * Layered network with infinite servers and APH service.
+     * <p>
+     * Features:
+     * - Two infinite capacity processors (P1, P2)
+     * - Task T1 (1 job, REF) with Erlang think time
+     * - Task T2 (infinite jobs, INF) with immediate think time
+     * - APH service distribution with high variability (SCV=10)
+     * - Synchronous call with multiplicity 3
+     *
+     * @return configured layered network with infinite servers
+     * @throws Exception if model creation fails
+     */
+    public static LayeredNetwork lqn_multi_solvers() throws Exception {
+
+        LayeredNetwork model = new LayeredNetwork("LQN1");
+
+        Processor P1 = new Processor(model, "P1", Integer.MAX_VALUE, SchedStrategy.INF);
+        Processor P2 = new Processor(model, "P2", Integer.MAX_VALUE, SchedStrategy.INF);
+
+        Task T1 = new Task(model, "T1", 1, SchedStrategy.REF).on(P1);
+        T1.setThinkTime(Erlang.fitMeanAndOrder(0.0001, 2));
+        Task T2 = new Task(model, "T2", Integer.MAX_VALUE, SchedStrategy.INF).on(P2);
+        T2.setThinkTime(Immediate.getInstance());
+
+        Entry E1 = new Entry(model, "E1").on(T1);
+        Entry E2 = new Entry(model, "E2").on(T2);
+
+        Activity A1 = new Activity(model, "A1", new Exp(1)).on(T1);
+        A1.boundTo(E1);
+        A1.synchCall(E2, 3);
+        Activity A2 = new Activity(model, "A2", APH.fitMeanAndSCV(1, 10)).on(T2);
+        A2.boundTo(E2);
+        A2.repliesTo(E2);
+
+
+        // Model solution
+//        LN solver = new LN(model, SolverType.MVA);
+//        solver.getEnsembleAvg();
+        return model;
+    }
+
+    /**
+     * Layered network with a task whose servers switch off when idle.
+     * <p>
+     * Features:
+     * - 2 processors (P1 infinite, P2 with 4 servers)
+     * - SetupTask paying an activation delay and an idle keep-alive period
+     * - Setup time (activation penalty) and delay-off time (idle window)
+     * - Synchronous calls between the client and the setup-task layer
+     * - Serverless cold start / keep-alive is one instance of this pattern
+     *
+     * @return configured layered network with a setup task
+     * @throws Exception if model creation fails
+     */
+    /**
+     * A processor whose servers are not interchangeable.
+     *
+     * <p>P1 declares three servers, but they are not a homogeneous pool: S1 is
+     * dedicated to task T2, S3 to task T3, and only S2 can take either. Neither
+     * task can therefore reach more than two of the three servers, and the
+     * model is a different system from a plain multiplicity-3 processor even
+     * though it holds the same number of servers.
+     *
+     * <pre>
+     *   P1 (3 servers)     S1 --- T2
+     *                      S2 --&lt; T2, T3
+     *                      S3 --- T3
+     * </pre>
+     *
+     * <p>The pools are declared with {@link jline.lang.constant.ServerType},
+     * the same class the heterogeneous queueing station uses, with the
+     * compatible entities being the OPERANDS of the layered server: the tasks
+     * of a processor, or the entries of a task.
+     *
+     * <p>SolverLN lowers the declaration to the activated-server rate of
+     * {@link jline.api.sn.SnCompatRate}, carried onto the layer station as a
+     * joint dependence, so a compatibility declaration is an APPROXIMATION
+     * inside a layer and is admitted only under the class-switching layerings
+     * ("srvn.cs", "flat.cs").
+     *
+     * @param compatibility true for the compatibility graph, false for one
+     *                      fully-compatible pool of three (the neutral pool)
+     */
+    public static LayeredNetwork lqn_server_pools(boolean compatibility) throws Exception {
+
+        LayeredNetwork model = new LayeredNetwork("LQNserverPools");
+
+        Processor P0 = new Processor(model, "P0", 1, SchedStrategy.PS);
+        Processor P1 = new Processor(model, "P1", 3, SchedStrategy.PS);
+
+        Task T1 = new Task(model, "T1", 3, SchedStrategy.REF).on(P0).setThinkTime(new Exp(1.0));
+        Task T2 = new Task(model, "T2", 3, SchedStrategy.FCFS).on(P1);
+        Task T3 = new Task(model, "T3", 3, SchedStrategy.FCFS).on(P1);
+
+        Entry E1 = new Entry(model, "E1").on(T1);
+        Entry E2 = new Entry(model, "E2").on(T2);
+        Entry E3 = new Entry(model, "E3").on(T3);
+
+        new Activity(model, "A1", new Exp(2.0)).on(T1).boundTo(E1).synchCall(E2, 1.0).synchCall(E3, 1.0);
+        new Activity(model, "A2", new Exp(3.0)).on(T2).boundTo(E2).repliesTo(E2);
+        new Activity(model, "A3", new Exp(2.0)).on(T3).boundTo(E3).repliesTo(E3);
+
+        if (compatibility) {
+            P1.addServerType(new ServerType("S1", 1, 1.0, T2));       // dedicated to T2
+            P1.addServerType(new ServerType("S2", 1, 1.0, T2, T3));   // shared
+            P1.addServerType(new ServerType("S3", 1, 1.0, T3));       // dedicated to T3
+        } else {
+            // one pool of three, every task eligible on every server: the
+            // neutral declaration, which reproduces the plain multiserver
+            P1.addServerType(new ServerType("All", 3, 1.0, T2, T3));
+        }
+
+        return model;
+    }
+
+    public static LayeredNetwork lqn_setup() throws Exception {
+
+        LayeredNetwork model = new LayeredNetwork("setup_example");
+
+        // Definition of processors, tasks and entries
+        Processor P1 = new Processor(model, "P1", Integer.MAX_VALUE, SchedStrategy.INF);
+        Processor P2 = new Processor(model, "P2", 4, SchedStrategy.FCFS);
+
+        Task T1 = new Task(model, "T1", 1, SchedStrategy.REF).on(P1);
+        Entry E1 = new Entry(model, "E1").on(T1);
+
+        //Task T2 = new Task(model, "T2", 1, SchedStrategy.FCFS).on(P2); // Commented alternative
+        SetupTask T2 = new SetupTask(model, "F2", 6, SchedStrategy.FCFS).on(P2).setThinkTime(Exp.fitMean(8.0));
+        T2.setSetupTime(new Exp(1.0));      // Activation time
+        T2.setDelayOffTime(new Exp(2.0));   // Idle time before a server powers off
+
+        Entry E2 = new Entry(model, "E2").on(T2);
+
+        // T3 = Task(model, 'T3', 1, SchedStrategy.FCFS).on(P2); // Commented alternative
+        // E3 = Entry(model, 'E3').on(T3); // Commented alternative
+
+        // Definition of activities
+        Activity A1 = new Activity(model, "A1", new Exp(1.0)).on(T1).boundTo(E1).synchCall(E2, 1.0);
+        Activity A2 = new Activity(model, "A2", new Exp(3.0)).on(T2).boundTo(E2).repliesTo(E2);
+        // A3 = Activity(model, 'A3', Exp(5.0)).on(T3).boundTo(E3).repliesTo(E3); // Commented alternative
+
+        return model;
+    }
+
+    /**
+     * Layered network with multiple entries and synchronous calls.
+     * <p>
+     * Features:
+     * - Two PS processors with high task populations
+     * - Task T1 (100 jobs, REF) with Erlang think time
+     * - Task T2 (100 jobs, INF) with multiple entries (E2, E3)
+     * - Activity A1 makes synchronous calls to both E2 and E3
+     * - Serial precedence pattern in T2 activities
+     * - Demonstrates concurrent service requests
+     *
+     * @return configured multi-entry layered network
+     * @throws Exception if model creation fails
+     */
+    public static LayeredNetwork lqn_twotasks() throws Exception {
+
+        LayeredNetwork model = new LayeredNetwork("myLayeredModel");
+
+        Processor P1 = new Processor(model, "P1", 1, SchedStrategy.PS);
+        Task T1 = new Task(model, "T1", 100, SchedStrategy.REF).on(P1);
+        Entry E1 = new Entry(model, "E1").on(T1);
+
+        Processor P2 = new Processor(model, "P2", 1, SchedStrategy.PS);
+        Task T2 = new Task(model, "T2", Integer.MAX_VALUE, SchedStrategy.INF).on(P2);
+        Entry E2 = new Entry(model, "E2").on(T2);
+        Entry E3 = new Entry(model, "E3").on(T2);
+
+        T1.setThinkTime(Erlang.fitMeanAndOrder(10, 1));
+
+        Activity A1 = new Activity(model, "A1", new Exp(1)).on(T1).boundTo(E1).synchCall(E2).synchCall(E3, 1);
+        Activity A20 = new Activity(model, "A20", new Exp(1)).on(T2).boundTo(E2);
+        Activity A21 = new Activity(model, "A21", new Exp(1)).on(T2);
+        Activity A22 = new Activity(model, "A22", new Exp(1)).on(T2).repliesTo(E2);
+
+        T2.addPrecedence(ActivityPrecedence.Serial(A20, A21, A22));
+
+        Activity A5 = new Activity(model, "A3", new Exp(1)).on(T2);
+        A5.boundTo(E3);
+        A5.repliesTo(E3);
+
+
+        // Model solution
+//        LN solver = new LN(model, SolverType.MVA);
+//        solver.getEnsembleAvg();
+        return model;
+    }
+
+    /**
+     * Complex layered network with fork-join patterns and multiple precedence types.
+     * <p>
+     * Features:
+     * - 7 processors with varying capacities and scheduling strategies
+     * - 7 tasks with different multiplicity and reference patterns
+     * - 16 entries across all tasks
+     * - OrFork, AndFork, OrJoin, AndJoin activity precedence patterns
+     * - Demonstrates advanced layered network control flow
+     * - Complex synchronous call patterns between layers
+     *
+     * @return configured fork-join layered network
+     * @throws Exception if model creation fails
+     */
+    public static LayeredNetwork lqn_bpmn() throws Exception {
+
+        //URI fileURI = GettingStarted.class.getResource("/lqn_bpmn.xml").toURI();
+        //Mode model = LayeredNetwork.parseXML(fileURI.getRawPath());
+        LayeredNetwork model = new LayeredNetwork("lqn_bpmn.xml");
+
+        Processor P1 = new Processor(model, "R1_Processor", 100, SchedStrategy.FCFS);
+        Processor P2 = new Processor(model, "R2_Processor", Integer.MAX_VALUE, SchedStrategy.INF);
+        Processor P3 = new Processor(model, "R3_Processor", 2, SchedStrategy.FCFS);
+        Processor P4 = new Processor(model, "R1A_Processor", 7, SchedStrategy.FCFS);
+        Processor P5 = new Processor(model, "R1B_Processor", 3, SchedStrategy.FCFS);
+        Processor P6 = new Processor(model, "R2A_Processor", 4, SchedStrategy.FCFS);
+        Processor P7 = new Processor(model, "R2B_Processor", 5, SchedStrategy.FCFS);
+
+        Task T1 = new Task(model, "R1_Task", 100, SchedStrategy.REF).on(P1);
+        T1.setThinkTime(Exp.fitMean(20.0));
+        Task T2 = new Task(model, "R2_Task", Integer.MAX_VALUE, SchedStrategy.INF).on(P2);
+        T2.setThinkTime(Immediate.getInstance());
+        Task T3 = new Task(model, "R3_Task", 2, SchedStrategy.FCFS).on(P3);
+        T3.setThinkTime(Immediate.getInstance());
+        Task T4 = new Task(model, "R1A_Task", 7, SchedStrategy.FCFS).on(P4);
+        T4.setThinkTime(Immediate.getInstance());
+        Task T5 = new Task(model, "R1B_Task", 3, SchedStrategy.FCFS).on(P5);
+        T5.setThinkTime(Immediate.getInstance());
+        Task T6 = new Task(model, "R2A_Task", 4, SchedStrategy.FCFS).on(P6);
+        T6.setThinkTime(Immediate.getInstance());
+        Task T7 = new Task(model, "R2B_Task", 5, SchedStrategy.FCFS).on(P7);
+        T7.setThinkTime(Immediate.getInstance());
+
+        Entry E1 = new Entry(model, "R1_Ref_Entry").on(T1);
+
+        Entry E2 = new Entry(model, "R2_Synch_A2_Entry").on(T2);
+        Entry E3 = new Entry(model, "R2_Synch_A5_Entry").on(T2);
+
+        Entry E4 = new Entry(model, "R3_Synch_A9_Entry").on(T3);
+
+        Entry E5 = new Entry(model, "R1A_Synch_A1_Entry").on(T4);
+        Entry E6 = new Entry(model, "R1A_Synch_A2_Entry").on(T4);
+        Entry E7 = new Entry(model, "R1A_Synch_A3_Entry").on(T4);
+
+        Entry E8 = new Entry(model, "R1B_Synch_A4_Entry").on(T5);
+        Entry E9 = new Entry(model, "R1B_Synch_A5_Entry").on(T5);
+        Entry E10 = new Entry(model, "R1B_Synch_A6_Entry").on(T5);
+
+        Entry E11 = new Entry(model, "R2A_Synch_A7_Entry").on(T6);
+        Entry E12 = new Entry(model, "R2A_Synch_A8_Entry").on(T6);
+        Entry E13 = new Entry(model, "R2A_Synch_A11_Entry").on(T6);
+
+        Entry E14 = new Entry(model, "R2B_Synch_A9_Entry").on(T7);
+        Entry E15 = new Entry(model, "R2B_Synch_A10_Entry").on(T7);
+        Entry E16 = new Entry(model, "R2B_Synch_A12_Entry").on(T7);
+
+        Activity A1 = new Activity(model, "A1_Empty", Immediate.getInstance()).on(T1);
+        A1.boundTo(E1);
+        A1.synchCall(E5, 1);
+        Activity A2 = new Activity(model, "A2_Empty", Immediate.getInstance()).on(T1);
+        A2.synchCall(E6, 1);
+        Activity A3 = new Activity(model, "A5_Empty", Immediate.getInstance()).on(T1);
+        A3.synchCall(E9, 1);
+        Activity A4 = new Activity(model, "A6_Empty", Immediate.getInstance()).on(T1);
+        A4.synchCall(E10, 1);
+        Activity A5 = new Activity(model, "A3_Empty", Immediate.getInstance()).on(T1);
+        A5.synchCall(E7, 1);
+        Activity A6 = new Activity(model, "A4_Empty", Immediate.getInstance()).on(T1);
+        A6.synchCall(E8, 1);
+
+        Activity A7 = new Activity(model, "E4_Empty", Immediate.getInstance()).on(T2);
+        A7.boundTo(E2);
+        Activity A8 = new Activity(model, "A7_Empty", Immediate.getInstance()).on(T2);
+        A8.synchCall(E11, 1);
+        Activity A9 = new Activity(model, "A8_Empty", Immediate.getInstance()).on(T2);
+        A9.synchCall(E12, 1);
+        Activity A10 = new Activity(model, "A9_Empty", Immediate.getInstance()).on(T2);
+        A10.synchCall(E14, 1);
+        Activity A11 = new Activity(model, "A11_Empty", Immediate.getInstance()).on(T2);
+        A11.synchCall(E13, 1);
+        A11.repliesTo(E2);
+        Activity A12 = new Activity(model, "A12_Empty", Immediate.getInstance()).on(T2);
+        A12.boundTo(E3);
+        A12.synchCall(E16, 1);
+        A12.repliesTo(E3);
+        Activity A13 = new Activity(model, "A10_Empty", Immediate.getInstance()).on(T2);
+        A13.synchCall(E15, 1);
+
+        Activity A14 = new Activity(model, "A13", Exp.fitMean(10.0)).on(T3);
+        A14.boundTo(E4);
+        A14.repliesTo(E4);
+        Activity A15 = new Activity(model, "A1", Exp.fitMean(7.0)).on(T4);
+        A15.boundTo(E5);
+        A15.repliesTo(E5);
+        Activity A16 = new Activity(model, "A2", Exp.fitMean(4.0)).on(T4);
+        A16.boundTo(E6);
+        Activity A17 = new Activity(model, "A3", Exp.fitMean(5.0)).on(T4);
+        A17.boundTo(E7);
+        A17.repliesTo(E7);
+        Activity A18 = new Activity(model, "A2_Res_Empty", Immediate.getInstance()).on(T4);
+        A18.synchCall(E2, 1);
+        A18.repliesTo(E6);
+        Activity A19 = new Activity(model, "A4", Exp.fitMean(8.0)).on(T5);
+        A19.boundTo(E8);
+        A19.repliesTo(E8);
+        Activity A20 = new Activity(model, "A5", Exp.fitMean(4.0)).on(T5);
+        A20.boundTo(E9);
+        Activity A21 = new Activity(model, "A6", Exp.fitMean(6.0)).on(T5);
+        A21.boundTo(E10);
+        A21.repliesTo(E10);
+        Activity A22 = new Activity(model, "A5_Res_Empty", Immediate.getInstance()).on(T5);
+        A22.synchCall(E3, 1);
+        A22.repliesTo(E9);
+        Activity A23 = new Activity(model, "A7", Exp.fitMean(6.0)).on(T6);
+        A23.boundTo(E11);
+        A23.repliesTo(E11);
+        Activity A24 = new Activity(model, "A8", Exp.fitMean(8.0)).on(T6);
+        A24.boundTo(E12);
+        A24.repliesTo(E12);
+        Activity A25 = new Activity(model, "A11", Exp.fitMean(4.0)).on(T6);
+        A25.boundTo(E13);
+        A25.repliesTo(E13);
+        Activity A26 = new Activity(model, "A9", Exp.fitMean(4.0)).on(T7);
+        A26.boundTo(E14);
+        Activity A27 = new Activity(model, "A10", Exp.fitMean(6.0)).on(T7);
+        A27.boundTo(E15);
+        A27.repliesTo(E15);
+        Activity A28 = new Activity(model, "A12", Exp.fitMean(8.0)).on(T7);
+        A28.boundTo(E16);
+        A28.repliesTo(E16);
+        Activity A29 = new Activity(model, "A9_Res_Empty", Immediate.getInstance()).on(T7);
+        A29.synchCall(E4, 1);
+        A29.repliesTo(E14);
+
+        T1.addPrecedence(ActivityPrecedence.Serial("A1_Empty", "A2_Empty"));
+        T1.addPrecedence(ActivityPrecedence.Serial("A5_Empty", "A6_Empty"));
+        T2.addPrecedence(ActivityPrecedence.Serial("E4_Empty", "A7_Empty"));
+        T2.addPrecedence(ActivityPrecedence.Serial("A9_Empty", "A10_Empty"));
+        T4.addPrecedence(ActivityPrecedence.Serial("A2", "A2_Res_Empty"));
+        T5.addPrecedence(ActivityPrecedence.Serial("A5", "A5_Res_Empty"));
+        T7.addPrecedence(ActivityPrecedence.Serial("A9", "A9_Res_Empty"));
+
+        // OrFork Activity Precedence
+        ArrayList<String> precActs = new ArrayList<String>();
+        Matrix probs = new Matrix(1, 2);
+        precActs.add("A3_Empty");
+        precActs.add("A4_Empty");
+        probs.set(0, 0, 0.6);
+        probs.set(0, 1, 0.4);
+        T1.addPrecedence(ActivityPrecedence.OrFork("A2_Empty", precActs, probs));
+
+        // AndFork Activity Precedence
+        ArrayList<String> postActs = new ArrayList<String>();
+        postActs.add("A8_Empty");
+        postActs.add("A9_Empty");
+        T2.addPrecedence(ActivityPrecedence.AndFork("A7_Empty", postActs));
+
+        // OrJoin Activity Precedence
+        ArrayList<String> precActs2 = new ArrayList<String>();
+        precActs2.add("A3_Empty");
+        precActs2.add("A4_Empty");
+        T1.addPrecedence(ActivityPrecedence.OrJoin(precActs2, "A5_Empty"));
+
+        // AndJoin Activity Precedence
+        ArrayList<String> precActs3 = new ArrayList<String>();
+        precActs3.add("A8_Empty");
+        precActs3.add("A10_Empty");
+        T2.addPrecedence(ActivityPrecedence.AndJoin(precActs3, "A11_Empty"));
+
+        // Model solution
+        //LN solver = new LN(model, SolverType.MVA);
+        //solver.getEnsembleAvg();
+        return model;
+    }
+
+    /**
+     * Layered network demonstrating loop and fork-join precedence patterns.
+     * <p>
+     * Features:
+     * - 3 processors: P1 (INF), P2 (INF), P3 (5 servers, PS)
+     * - Task T1 with loop precedence (3 iterations)
+     * - Task T2 with AndFork/AndJoin patterns
+     * - Task T3 with OrFork/OrJoin patterns (30%, 30%, 40% probabilities)
+     * - Nested synchronous calls between tasks
+     * - Demonstrates complex control flow in layered networks
+     *
+     * @return configured layered network with loops and forks
+     * @throws Exception if model creation fails
+     */
+    public static LayeredNetwork lqn_workflows() throws Exception {
+        LayeredNetwork model = new LayeredNetwork("myLayeredModel");
+
+        Processor P1 = new Processor(model, "P1", Integer.MAX_VALUE, SchedStrategy.INF);
+        Processor P2 = new Processor(model, "P2", Integer.MAX_VALUE, SchedStrategy.INF);
+        Processor P3 = new Processor(model, "P3", 5, SchedStrategy.PS);
+
+        Task T1 = new Task(model, "T1", 1, SchedStrategy.REF).on(P1);
+        T1.setThinkTime(Immediate.getInstance());
+        Task T2 = new Task(model, "T2", 1, SchedStrategy.INF).on(P2);
+        T2.setThinkTime(Immediate.getInstance());
+        Task T3 = new Task(model, "T3", 20, SchedStrategy.INF).on(P3);
+        T3.setThinkTime(Exp.fitMean(10.0));
+
+        Entry E1 = new Entry(model, "Entry").on(T1);
+        Entry E2 = new Entry(model, "E2").on(T2);
+        Entry E3 = new Entry(model, "E1").on(T3);
+
+        Activity A1 = new Activity(model, "A1", Exp.fitMean(1.0)).on(T1);
+        A1.boundTo(E1);
+        Activity A2 = new Activity(model, "A2", Exp.fitMean(2.0)).on(T1);
+        Activity A3 = new Activity(model, "A3", Exp.fitMean(3.0)).on(T1);
+        A3.synchCall(E2, 1);
+
+        Activity A4 = new Activity(model, "B1", Exp.fitMean(0.1)).on(T2);
+        A4.boundTo(E2);
+        Activity A5 = new Activity(model, "B2", Exp.fitMean(0.2)).on(T2);
+        Activity A6 = new Activity(model, "B3", Exp.fitMean(0.3)).on(T2);
+        Activity A7 = new Activity(model, "B4", Exp.fitMean(0.4)).on(T2);
+        Activity A8 = new Activity(model, "B5", Exp.fitMean(0.5)).on(T2);
+        Activity A9 = new Activity(model, "B6", Exp.fitMean(0.6)).on(T2);
+        A9.synchCall(E3, 1);
+        A9.repliesTo(E2);
+        Activity A10 = new Activity(model, "C1", Exp.fitMean(0.1)).on(T3);
+        A10.boundTo(E3);
+        Activity A11 = new Activity(model, "C2", Exp.fitMean(0.2)).on(T3);
+        Activity A12 = new Activity(model, "C3", Exp.fitMean(0.3)).on(T3);
+        Activity A13 = new Activity(model, "C4", Exp.fitMean(0.4)).on(T3);
+        Activity A14 = new Activity(model, "C5", Exp.fitMean(0.5)).on(T3);
+        A14.repliesTo(E3);
+
+        // Sequential Activity Precedence
+        T2.addPrecedence(ActivityPrecedence.Serial("B4", "B5"));
+
+        // Loop Activity Precedence
+        ArrayList<String> precActs = new ArrayList<String>();
+        precActs.add("A2");
+        precActs.add("A3");
+        T1.addPrecedence(ActivityPrecedence.Loop("A1", precActs, Matrix.singleton(3)));
+
+        // OrFork Activity Precedence
+        precActs = new ArrayList<String>();
+        Matrix probs = new Matrix(1, 3);
+        precActs.add("C2");
+        precActs.add("C3");
+        precActs.add("C4");
+        probs.set(0, 0, 0.3);
+        probs.set(0, 1, 0.3);
+        probs.set(0, 2, 0.4);
+        T3.addPrecedence(ActivityPrecedence.OrFork("C1", precActs, probs));
+
+        // OrJoin Activity Precedence
+        precActs = new ArrayList<String>();
+        precActs.add("C2");
+        precActs.add("C3");
+        precActs.add("C4");
+        T3.addPrecedence(ActivityPrecedence.OrJoin(precActs, "C5"));
+
+        // AndFork Activity Precedence
+        //precActs = new ArrayList<String>();
+        ArrayList<String> postActs = new ArrayList<String>();
+        postActs.add("B2");
+        postActs.add("B3");
+        postActs.add("B4");
+        T2.addPrecedence(ActivityPrecedence.AndFork("B1", postActs));
+
+        // AndJoin Activity Precedence
+        precActs = new ArrayList<String>();
+        precActs.add("B2");
+        precActs.add("B3");
+        precActs.add("B5");
+        T2.addPrecedence(ActivityPrecedence.AndJoin(precActs, "B6"));
+
+        return model;
+    }
+
+
+    /**
+     * Entry-level open arrival: an exogenous Poisson stream that is not a call.
+     * <p>
+     * Features:
+     * - One processor, one task, one entry taking Exp(0.2) open arrivals
+     * - Nothing else reaches T1, so the stream is carried by the thread pool it
+     *   drives rather than by an open class of its own
+     * <p>
+     * Rate 0.2 against a mean service of 1.6 is 0.32 of the host. With no caller
+     * T1 has no task layer, so SolverLN closes its caller chain on the known
+     * arrival rate, the construction a forwarding target gets. Reported: entry
+     * throughput 0.2, utilization 0.32, response time 1.6, which lqns gives
+     * exactly and lqsim (0.192-0.200) and LDES (0.19986 / 0.31957 / 1.599)
+     * confirm; MATLAB, native Python and the C++ port agree. The earlier reading
+     * of 0.425 / 0.68 / 2.3529 was an artifact of ALSO placing an open class on
+     * the layer, which loaded the host twice.
+     *
+     * @return configured layered network model
+     * @throws Exception if model creation fails
+     */
+    public static LayeredNetwork lqn_open_arrival() throws Exception {
+        LayeredNetwork model = new LayeredNetwork("openArrivalLQN");
+
+        Processor P1 = new Processor(model, "P1", 1, SchedStrategy.PS);
+        Task T1 = new Task(model, "T1", 1, SchedStrategy.FCFS).on(P1);
+        T1.setThinkTime(Immediate.getInstance());
+        Entry E1 = new Entry(model, "E1").on(T1);
+        E1.setArrival(new Exp(0.2));
+
+        new Activity(model, "A1", Exp.fitMean(1.6)).on(T1).boundTo(E1).repliesTo(E1);
+
+        return model;
+    }
+
+
+    /**
+     * AND fork/join on a task that also receives an entry-level open arrival.
+     * <p>
+     * Features:
+     * - Server task with two entries, each with its own AND fork/join
+     * - SE is called by the closed Client (rendezvous), OE takes a Poisson stream
+     * - OE has no reply activity: an open-arrival entry is send-no-reply
+     * <p>
+     * External references: lqns 6.2.28 (valid) gives Client throughput 0.413391,
+     * Server task throughput 0.513391, OE throughput 0.1 with open-wait 1.22917;
+     * lqsim (T=5e5, seed 1234) gives 0.4154, 0.52242 and open-wait 1.10546.
+     * SolverLN refuses the combination: the fork-join transform mints its own
+     * Source and collides with the Source the open stream is routed through. The
+     * flat counterpart that IS solved is ForkJoinModel.fj_mixed_openclosed().
+     *
+     * @return configured layered network model
+     * @throws Exception if model creation fails
+     */
+    public static LayeredNetwork lqn_fork_open_arrival() throws Exception {
+        LayeredNetwork model = new LayeredNetwork("lqnForkOpenArrival");
+
+        Processor P1 = new Processor(model, "P1", Integer.MAX_VALUE, SchedStrategy.INF);
+        Processor P2 = new Processor(model, "P2", Integer.MAX_VALUE, SchedStrategy.INF);
+
+        Task T1 = new Task(model, "Client", 1, SchedStrategy.REF).on(P1);
+        T1.setThinkTime(Exp.fitMean(1.0));
+        Task T2 = new Task(model, "Server", 1, SchedStrategy.FCFS).on(P2);
+        T2.setThinkTime(Immediate.getInstance());
+
+        Entry CE = new Entry(model, "CE").on(T1);
+        Entry SE = new Entry(model, "SE").on(T2);
+        Entry OE = new Entry(model, "OE").on(T2);
+        OE.setArrival(new Exp(0.1));
+
+        new Activity(model, "CA", Exp.fitMean(0.5)).on(T1).boundTo(CE).synchCall(SE, 1);
+
+        new Activity(model, "RA1", Exp.fitMean(0.2)).on(T2).boundTo(SE);
+        new Activity(model, "RA2", Exp.fitMean(0.3)).on(T2);
+        new Activity(model, "RA3", Exp.fitMean(0.4)).on(T2);
+        new Activity(model, "RA4", Exp.fitMean(0.1)).on(T2).repliesTo(SE);
+
+        new Activity(model, "OA1", Exp.fitMean(0.2)).on(T2).boundTo(OE);
+        new Activity(model, "OA2", Exp.fitMean(0.3)).on(T2);
+        new Activity(model, "OA3", Exp.fitMean(0.4)).on(T2);
+        new Activity(model, "OA4", Exp.fitMean(0.1)).on(T2);
+
+        ArrayList<String> rendezvousBranches = new ArrayList<String>();
+        rendezvousBranches.add("RA2");
+        rendezvousBranches.add("RA3");
+        T2.addPrecedence(ActivityPrecedence.AndFork("RA1", rendezvousBranches));
+        T2.addPrecedence(ActivityPrecedence.AndJoin(rendezvousBranches, "RA4"));
+
+        ArrayList<String> openBranches = new ArrayList<String>();
+        openBranches.add("OA2");
+        openBranches.add("OA3");
+        T2.addPrecedence(ActivityPrecedence.AndFork("OA1", openBranches));
+        T2.addPrecedence(ActivityPrecedence.AndJoin(openBranches, "OA4"));
+
+        return model;
+    }
+
+
+    /**
+     * Large enterprise layered network model (ofbizExample substitute).
+     * <p>
+     * Features:
+     * - 5 processors representing different system layers
+     * - Client layer with reference task (10 jobs) 
+     * - 3 service layers with FCFS tasks
+     * - Database layer with FCFS task
+     * - Serial activity precedence with synchronous calls
+     * - Representative of Apache OFBiz-style enterprise architecture
+     * - Each service layer makes database calls
+     *
+     * @return configured large layered network model
+     * @throws Exception if model creation fails
+     */
+    /**
+     * A file holding the resource, as parseXML reads files only. A resource on the class path directory is used in
+     * place (decoded, so a path with spaces resolves); one packed in jline.jar is copied to a temporary directory
+     * under its own name, which parseXML also uses as the model name.
+     */
+    private static File resourceFile(URL resource, String name) throws IOException {
+        if ("file".equals(resource.getProtocol())) {
+            try {
+                return new File(resource.toURI());
+            } catch (URISyntaxException e) {
+                return new File(resource.getPath());
+            }
+        }
+        File dir = Files.createTempDirectory("line-example").toFile();
+        dir.deleteOnExit();
+        File out = new File(dir, name);
+        out.deleteOnExit();
+        InputStream in = resource.openStream();
+        try {
+            Files.copy(in, out.toPath(), StandardCopyOption.REPLACE_EXISTING);
+        } finally {
+            in.close();
+        }
+        return out;
+    }
+
+    public static LayeredNetwork lqn_ofbiz() throws Exception {
+        // Load from XML resource
+        try {
+            // For tests, try to load from test classpath first
+            ClassLoader testClassLoader = Thread.currentThread().getContextClassLoader();
+            URL resource = testClassLoader != null ? testClassLoader.getResource("ofbizExample.xml") : null;
+            
+            // Fall back to main class loader if test classpath doesn't work
+            if (resource == null) {
+                resource = LayeredModel.class.getClassLoader().getResource("ofbizExample.xml");
+            }
+            
+            if (resource == null) {
+                return null;
+            }
+            return LayeredNetwork.parseXML(resourceFile(resource, "ofbizExample.xml").getAbsolutePath());
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Sock Shop microservice layered network model.
+     * <p>
+     * Features:
+     * - 7 processors: P1 (INF), P2_1 (PS, replication=2), P2_2-P2_3, P3_1-P3_3 (PS)
+     * - 7 tasks: T0 (1000 users, REF), T1-T5 and T6 (FCFS with various thread pools)
+     * - 12 entries, 24 activities with serial precedence
+     * - Processor replication on P2_1 (edge router)
+     * - Fan-in/fan-out for replicated task communication
+     * - Synchronous calls across a multi-tier microservice architecture
+     * - Based on the Sock Shop benchmark (atom2021)
+     *
+     * @return configured Sock Shop layered network model
+     * @throws Exception if model creation fails
+     */
+    public static LayeredNetwork lqn_sockshop() throws Exception {
+        LayeredNetwork model = new LayeredNetwork("sockshop");
+
+        // Processors
+        Processor P1 = new Processor(model, "P1", 1, SchedStrategy.INF);
+        Processor P2_1 = new Processor(model, "P2_1", 1, SchedStrategy.PS);
+        P2_1.setQuantum(0.1);
+        P2_1.setReplication(2);
+        Processor P2_2 = new Processor(model, "P2_2", 1, SchedStrategy.PS);
+        P2_2.setQuantum(0.1);
+        Processor P2_3 = new Processor(model, "P2_3", 1, SchedStrategy.PS);
+        P2_3.setQuantum(0.1);
+        Processor P3_1 = new Processor(model, "P3_1", 1, SchedStrategy.PS);
+        P3_1.setQuantum(0.1);
+        Processor P3_2 = new Processor(model, "P3_2", 1, SchedStrategy.PS);
+        P3_2.setQuantum(0.1);
+        Processor P3_3 = new Processor(model, "P3_3", 1, SchedStrategy.PS);
+        P3_3.setQuantum(0.1);
+
+        // Tasks
+        Task T0 = new Task(model, "T0", 1000, SchedStrategy.REF).on(P1);
+        T0.setThinkTime(Exp.fitMean(7.0));
+        Task T1 = new Task(model, "T1", 24, SchedStrategy.FCFS).on(P2_1);  // edge router
+        T1.setThinkTime(Immediate.getInstance());
+        Task T2 = new Task(model, "T2", 21, SchedStrategy.FCFS).on(P2_2);  // front end
+        T2.setThinkTime(Immediate.getInstance());
+        T2.setFanIn("T1", 1);
+        Task T6 = new Task(model, "T6", 100, SchedStrategy.FCFS).on(P2_3); // cartdb
+        T6.setThinkTime(Immediate.getInstance());
+        T6.setFanIn("T3", 1);
+        Task T3 = new Task(model, "T3", 139, SchedStrategy.FCFS).on(P3_1); // cart
+        T3.setThinkTime(Immediate.getInstance());
+        T3.setFanIn("T2", 1);
+        Task T4 = new Task(model, "T4", 16, SchedStrategy.FCFS).on(P3_2);  // catalog
+        T4.setThinkTime(Immediate.getInstance());
+        T4.setFanIn("T2", 1);
+        Task T5 = new Task(model, "T5", 151, SchedStrategy.FCFS).on(P3_3); // catalogdb
+        T5.setThinkTime(Immediate.getInstance());
+        T5.setFanIn("T4", 1);
+
+        // Entries
+        Entry E0 = new Entry(model, "E0").on(T0);
+        Entry E1 = new Entry(model, "E1").on(T1);
+        Entry E2 = new Entry(model, "E2").on(T2);
+        Entry E3 = new Entry(model, "E3").on(T2);
+        Entry E4 = new Entry(model, "E4").on(T2);
+        Entry E11 = new Entry(model, "E11").on(T6);
+        Entry E5 = new Entry(model, "E5").on(T3);
+        Entry E6 = new Entry(model, "E6").on(T3);
+        Entry E7 = new Entry(model, "E7").on(T3);
+        Entry E8 = new Entry(model, "E8").on(T4);
+        Entry E9 = new Entry(model, "E9").on(T4);
+        Entry E10 = new Entry(model, "E10").on(T5);
+
+        // Activities - T0: reference task
+        Activity AS = new Activity(model, "AS", Exp.fitMean(0.00000005)).on(T0);
+        AS.boundTo(E0);
+        Activity AS0 = new Activity(model, "AS0", Exp.fitMean(0.00000005)).on(T0);
+        AS0.synchCall(E1, 1.0);
+
+        // Activities - T1: edge router
+        Activity AS1 = new Activity(model, "AS1", Exp.fitMean(0.00000005)).on(T1);
+        AS1.boundTo(E1);
+        Activity AS2 = new Activity(model, "AS2", Exp.fitMean(0.0022216)).on(T1);
+        AS2.synchCall(E2, 0.33);
+        AS2.synchCall(E3, 0.17);
+        AS2.synchCall(E4, 0.50);
+        AS2.repliesTo(E1);
+
+        // Activities - T2: front end, Entry E2
+        Activity AH1 = new Activity(model, "AH1", Exp.fitMean(0.00000005)).on(T2);
+        AH1.boundTo(E2);
+        Activity AH2 = new Activity(model, "AH2", Exp.fitMean(0.0021319)).on(T2);
+        AH2.repliesTo(E2);
+
+        // Activities - T2: front end, Entry E3
+        Activity AH3 = new Activity(model, "AH3", Exp.fitMean(0.00000005)).on(T2);
+        AH3.boundTo(E3);
+        Activity AH4 = new Activity(model, "AH4", Exp.fitMean(0.0037561)).on(T2);
+        AH4.synchCall(E8, 0.5);
+        AH4.synchCall(E9, 0.5);
+        AH4.repliesTo(E3);
+
+        // Activities - T2: front end, Entry E4
+        Activity AH5 = new Activity(model, "AH5", Exp.fitMean(0.00000005)).on(T2);
+        AH5.boundTo(E4);
+        Activity AH6 = new Activity(model, "AH6", Exp.fitMean(0.0051774)).on(T2);
+        AH6.synchCall(E5, 0.33);
+        AH6.synchCall(E6, 0.33);
+        AH6.synchCall(E7, 0.33);
+        AH6.repliesTo(E4);
+
+        // Activities - T6: cartdb
+        Activity AH15 = new Activity(model, "AH15", Exp.fitMean(0.0000000005)).on(T6);
+        AH15.boundTo(E11);
+        Activity AH16 = new Activity(model, "AH16", Exp.fitMean(0.0040355)).on(T6);
+        AH16.repliesTo(E11);
+
+        // Activities - T3: cart, Entry E5
+        Activity AH7 = new Activity(model, "AH7", Exp.fitMean(0.0000000005)).on(T3);
+        AH7.boundTo(E5);
+        Activity AH8 = new Activity(model, "AH8", Exp.fitMean(0.0029469)).on(T3);
+        AH8.synchCall(E11, 1);
+        AH8.repliesTo(E5);
+
+        // Activities - T3: cart, Entry E6
+        Activity AH9 = new Activity(model, "AH9", Exp.fitMean(0.0000000005)).on(T3);
+        AH9.boundTo(E6);
+        Activity AH10 = new Activity(model, "AH10", Exp.fitMean(0.012323)).on(T3);
+        AH10.synchCall(E11, 1);
+        AH10.repliesTo(E6);
+
+        // Activities - T3: cart, Entry E7
+        Activity AH11 = new Activity(model, "AH11", Exp.fitMean(0.0000000005)).on(T3);
+        AH11.boundTo(E7);
+        Activity AH12 = new Activity(model, "AH12", Exp.fitMean(0.0033488)).on(T3);
+        AH12.synchCall(E11, 1);
+        AH12.repliesTo(E7);
+
+        // Activities - T4: catalog, Entry E8
+        Activity AS3 = new Activity(model, "AS3", Exp.fitMean(0.0000000005)).on(T4);
+        AS3.boundTo(E8);
+        Activity AS4 = new Activity(model, "AS4", Exp.fitMean(0.0034925)).on(T4);
+        AS4.synchCall(E10, 1);
+        AS4.repliesTo(E8);
+
+        // Activities - T4: catalog, Entry E9
+        Activity AS5 = new Activity(model, "AS5", Exp.fitMean(0.0000000005)).on(T4);
+        AS5.boundTo(E9);
+        Activity AS6 = new Activity(model, "AS6", Exp.fitMean(0.0030162)).on(T4);
+        AS6.synchCall(E10, 1);
+        AS6.repliesTo(E9);
+
+        // Activities - T5: catalogdb
+        Activity AH13 = new Activity(model, "AH13", Exp.fitMean(0.0000000005)).on(T5);
+        AH13.boundTo(E10);
+        Activity AH14 = new Activity(model, "AH14", Exp.fitMean(0.0032434)).on(T5);
+        AH14.repliesTo(E10);
+
+        // Serial precedence
+        T0.addPrecedence(ActivityPrecedence.Serial("AS", "AS0"));
+        T1.addPrecedence(ActivityPrecedence.Serial("AS1", "AS2"));
+        T2.addPrecedence(ActivityPrecedence.Serial("AH1", "AH2"));
+        T2.addPrecedence(ActivityPrecedence.Serial("AH3", "AH4"));
+        T2.addPrecedence(ActivityPrecedence.Serial("AH5", "AH6"));
+        T6.addPrecedence(ActivityPrecedence.Serial("AH15", "AH16"));
+        T3.addPrecedence(ActivityPrecedence.Serial("AH7", "AH8"));
+        T3.addPrecedence(ActivityPrecedence.Serial("AH9", "AH10"));
+        T3.addPrecedence(ActivityPrecedence.Serial("AH11", "AH12"));
+        T4.addPrecedence(ActivityPrecedence.Serial("AS3", "AS4"));
+        T4.addPrecedence(ActivityPrecedence.Serial("AS5", "AS6"));
+        T5.addPrecedence(ActivityPrecedence.Serial("AH13", "AH14"));
+
+        return model;
+    }
+
+    /**
+     * Main method for testing and demonstrating layered model examples.
+     *
+     * <p>Currently contains commented code for various testing scenarios:
+     * - XML parsing and export functionality
+     * - Solver integration and performance analysis
+     * - Model structure inspection and visualization
+     * - Ensemble analysis for layered networks
+     *
+     * @param args command line arguments (not used)
+     * @throws Exception if any example execution fails
+     */
+    public static void main(String[] args) throws Exception {
+        LayeredNetwork model = lqn_basic();
+        //new LQNS(model).getAvgTable().print();
+        new LN(model, SolverType.MVA).getAvgTable().print();
+    }
+}

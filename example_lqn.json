@@ -1,0 +1,87 @@
+{
+  "format": "line-model",
+  "version": "1.0",
+  "model": {
+    "type": "LayeredNetwork",
+    "name": "ClientDBSystem",
+    "hosts": [
+      {
+        "name": "ClientProcessor",
+        "multiplicity": 1,
+        "scheduling": "PS",
+        "quantum": 0.0,
+        "speedFactor": 1.0
+      },
+      {
+        "name": "DBProcessor",
+        "multiplicity": 1,
+        "scheduling": "PS",
+        "quantum": 0.0,
+        "speedFactor": 1.0
+      }
+    ],
+    "tasks": [
+      {
+        "name": "ClientTask",
+        "host": "ClientProcessor",
+        "multiplicity": 10,
+        "scheduling": "REF",
+        "thinkTime": {
+          "type": "Exp",
+          "params": {
+            "lambda": 0.2
+          }
+        },
+        "thinkTimeMean": 5.0,
+        "thinkTimeSCV": 1.0
+      },
+      {
+        "name": "DBTask",
+        "host": "DBProcessor",
+        "multiplicity": 2147483647,
+        "scheduling": "INF"
+      }
+    ],
+    "entries": [
+      {
+        "name": "ClientEntry",
+        "task": "ClientTask"
+      },
+      {
+        "name": "DBEntry",
+        "task": "DBTask"
+      }
+    ],
+    "activities": [
+      {
+        "name": "ClientActivity",
+        "task": "ClientTask",
+        "hostDemand": {
+          "type": "Exp",
+          "params": {
+            "lambda": 1.0
+          }
+        },
+        "boundToEntry": "ClientEntry",
+        "synchCalls": [
+          {
+            "dest": "DBEntry",
+            "mean": 2.5
+          }
+        ]
+      },
+      {
+        "name": "DBActivity",
+        "task": "DBTask",
+        "hostDemand": {
+          "type": "Exp",
+          "params": {
+            "lambda": 1.25
+          }
+        },
+        "boundToEntry": "DBEntry",
+        "repliesTo": "DBEntry"
+      }
+    ]
+  }
+}

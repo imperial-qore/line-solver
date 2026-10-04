@@ -1,0 +1,1 @@
+../../../../python/examples/gettingstarted/example_trace.txt

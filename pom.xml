@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+         http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>ca.appsimulations</groupId>
+    <artifactId>line-root</artifactId>
+    <version>1.0.0</version>
+    <packaging>pom</packaging>
+
+    <name>root pom</name>
+    <description>Root POM for LINE solver that delegates to jar module</description>
+
+    <modules>
+        <module>jar</module>
+    </modules>
+
+    <build>
+        <plugins>
+            <!-- Override default package behavior to use profile 'b' -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+                    <execution>
+                        <id>package-with-profile-b</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <executable>mvn</executable>
+                            <workingDirectory>${basedir}/jar</workingDirectory>
+                            <arguments>
+                                <argument>clean</argument>
+                                <argument>package</argument>
+                                <argument>-P</argument>
+                                <argument>b</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <!-- Profile for deploy with jar-mvn -->
+        <profile>
+            <id>deploy-jar-mvn</id>
+            <activation>
+                <property>
+                    <name>performRelease</name>
+                    <value>true</value>
+                </property>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>exec-maven-plugin</artifactId>
+                        <version>3.1.0</version>
+                        <executions>
+                            <execution>
+                                <id>deploy-with-profile-jar-mvn</id>
+                                <phase>deploy</phase>
+                                <goals>
+                                    <goal>exec</goal>
+                                </goals>
+                                <configuration>
+                                    <executable>mvn</executable>
+                                    <workingDirectory>${basedir}/jar</workingDirectory>
+                                    <arguments>
+                                        <argument>clean</argument>
+                                        <argument>deploy</argument>
+                                        <argument>-P</argument>
+                                        <argument>jar-mvn</argument>
+                                    </arguments>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+
+    <!-- Override deploy phase to use jar-mvn profile -->
+    <distributionManagement>
+        <repository>
+            <id>dummy</id>
+            <url>file://${project.build.directory}/dummy</url>
+        </repository>
+    </distributionManagement>
+</project>

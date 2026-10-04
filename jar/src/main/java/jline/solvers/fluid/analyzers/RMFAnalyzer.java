@@ -1,0 +1,724 @@
+/*
+ * Copyright (c) 2012-2026, QORE Lab, Imperial College London
+ * All rights reserved.
+ */
+
+package jline.solvers.fluid.analyzers;
+
+import jline.api.cache.Cache_gamma_lp;
+import jline.lib.rmf.CacheRMF;
+import jline.api.cache.CacheMissFpiResult;
+import jline.api.cache.Cache_miss_rmf;
+import jline.api.cache.Cache_miss_sfifo_rmf;
+import jline.api.cache.Cache_miss_fifo_rmf;
+import jline.api.mc.Dtmc_stochcomp;
+import jline.api.sn.SnRefreshVisits;
+import jline.io.Ret;
+import jline.lang.NetworkStruct;
+import jline.lang.NodeParam;
+import jline.lang.constant.NodeType;
+import jline.lang.constant.ReplacementStrategy;
+import jline.lang.constant.SchedStrategy;
+import jline.lang.nodeparam.CacheNodeParam;
+import jline.lang.state.State;
+import jline.lang.state.ToMarginal;
+import jline.solvers.SolverOptions;
+import jline.solvers.SolverResult;
+import jline.solvers.fluid.FluidResult;
+import jline.util.matrix.Matrix;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Random;
+
+/**
+ * Integrated cache-queueing network analyzer using fluid approximation.
+ *
+ * <p>Iterates between isolated cache analysis and fluid ODE solution
+ * of the surrounding queueing network until arrival rates converge.
+ * This matches the MATLAB solver_fld_cacheqn_analyzer implementation.</p>
+ *
+ * @see CacheNodeParam
+ * @see MatrixMethodAnalyzer
+ */
+public class RMFAnalyzer implements FluidAnalyzer {
+
+    private Matrix xvecIt;
+
+    /**
+     * The moment closure of the LAST network step, when the requested method is
+     * "minnormal". SolverFluid reads its covariance and class blocks off this,
+     * exactly as it does for a cache-free model.
+     */
+    public MinNormalAnalyzer lastMinNormal;
+
+    @Override
+    public void analyze(NetworkStruct sn, SolverOptions options, SolverResult result) {
+        int I = sn.nnodes;
+        int K = sn.nclasses;
+        int M = sn.nstations;
+        // options.method selects the QUEUEING layer; the cache layer is the
+        // refined mean field either way, it has no first-order alternative here
+        boolean useMoments = options.method != null && options.method.endsWith("minnormal");
+
+        // Build statefulNodesClasses indices
+        List<Integer> statefulNodes = new ArrayList<Integer>();
+        for (int i = 0; i < sn.isstateful.length(); i++) {
+            if (sn.isstateful.get(i) == 1.0) {
+                statefulNodes.add(i);
+            }
+        }
+        List<Integer> statefulNodeClassesList = new ArrayList<Integer>();
+        for (int ind : statefulNodes) {
+            for (int k = 0; k < K; k++) {
+                statefulNodeClassesList.add(ind * K + k);
+            }
+        }
+
+        // Find cache nodes
+        List<Integer> caches = new ArrayList<Integer>();
+        for (int i = 0; i < sn.nodetype.size(); i++) {
+            if (sn.nodetype.get(i) == NodeType.Cache) {
+                caches.add(i);
+            }
+        }
+
+        Matrix lambda = new Matrix(1, K);
+        Matrix lambda_1 = new Matrix(1, K);
+        Matrix hitprob = new Matrix(caches.size(), K);
+        Matrix missprob = new Matrix(caches.size(), K);
+        Matrix missrate = new Matrix(caches.size(), K);
+
+        Random random = new Random(options.seed);
+        int convergedIter = options.iter_max;
+
+        // converged isolated-cache inputs, for the moment report
+        int[] lastCacheNode = new int[caches.size()];
+        Matrix[] lastCacheM = new Matrix[caches.size()];
+        Matrix[][] lastCacheLambda = new Matrix[caches.size()][];
+        ReplacementStrategy[] lastCacheStrat = new ReplacementStrategy[caches.size()];
+        boolean[] lastCacheLinear = new boolean[caches.size()];
+        // Converged list-resolved occupancy, for the per-list hit split below.
+        Matrix[] lastCacheXss = new Matrix[caches.size()];
+
+        for (int it = 1; it <= options.iter_max; it++) {
+            for (int cIdx = 0; cIdx < caches.size(); cIdx++) {
+                int ind = caches.get(cIdx);
+                NodeParam param = sn.nodeparam.get(sn.nodes.get(ind));
+                if (param == null || !(param instanceof CacheNodeParam)) {
+                    continue;
+                }
+                CacheNodeParam ch = (CacheNodeParam) param;
+                Matrix hitClass = ch.hitclass;
+                Matrix missClass = ch.missclass;
+
+                // Find input classes (non-negative hitClass entries)
+                List<Integer> inputClass = new ArrayList<Integer>();
+                for (int i = 0; i < hitClass.getNumCols(); i++) {
+                    if (hitClass.get(0, i) != -1.0) {
+                        inputClass.add(i);
+                    }
+                }
+
+                Matrix m = ch.itemcap;
+                int n = ch.nitems;
+                int h = m.length();
+                int u = lambda.getNumCols();
+
+                if (it == 1) {
+                    // Initial random arrival rates
+                    for (int i : inputClass) {
+                        lambda_1.set(0, i, random.nextDouble());
+                    }
+                    for (int i = 0; i < K; i++) {
+                        lambda.set(0, i, lambda_1.get(0, i));
+                    }
+                    // Convert cache to ClassSwitch for QN solving
+                    sn.nodetype.set(ind, NodeType.ClassSwitch);
+                }
+
+                // Build lambda_cache[u][n x (h+1)]
+                Matrix[] lambda_cache = new Matrix[u];
+                for (int v = 0; v < u; v++) {
+                    lambda_cache[v] = new Matrix(n, h + 1);
+                    List<Double> pread_v = ch.pread.get(v);
+                    if (pread_v != null) {
+                        for (int k = 0; k < n; k++) {
+                            for (int l = 0; l < h + 1; l++) {
+                                if (k < pread_v.size()) {
+                                    lambda_cache[v].set(k, l, lambda.get(0, v) * pread_v.get(k));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Get access cost matrix R
+                Matrix[][] R = ch.accost;
+                if (R == null) {
+                    // Default linear cache routing: items flow from list l to list l+1
+                    R = new Matrix[u][n];
+                    for (int v = 0; v < u; v++) {
+                        for (int k = 0; k < n; k++) {
+                            R[v][k] = new Matrix(h + 1, h + 1);
+                            for (int l = 0; l < h; l++) {
+                                R[v][k].set(l, l + 1, 1.0);
+                            }
+                            R[v][k].set(h, h, 1.0);
+                        }
+                    }
+                }
+
+                // Solve isolated cache
+                Ret.cacheGamma gammaResult = Cache_gamma_lp.cache_gamma_lp(lambda_cache, R);
+                Matrix gamma = gammaResult.gamma;
+                // the covariance below linearises at the CONVERGED inputs, so keep
+                // overwriting: the last sweep is the fixed point
+                lastCacheNode[cIdx] = ind;
+                lastCacheM[cIdx] = m;
+                lastCacheLambda[cIdx] = lambda_cache;
+                lastCacheStrat[cIdx] = ch.replacestrat;
+                lastCacheLinear[cIdx] = accostIsLinear(ch.accost, h);
+
+                // see _kb/06-solver-catalog.md (JAR-only implementation notes: RMFAnalyzer miss_isolated RANDOM(m) vs FPI)
+                // RANDOM(m) and FIFO(m) share the refined mean field (Gast15
+                // Thm 1: pi_FIFO(m) = pi_RAND(m)); strict FIFO(m) uses its own
+                // position-resolved mean field. Every other strategy (LRU/HLRU/
+                // CLIMB/QLRU) has no drift-based fluid model and is refused
+                // rather than served a non-fluid FPI/characteristic-time fixed point.
+                // RR/FIFO/SFIFO honour a custom access graph (accost) via their
+                // general drift; the linear default keeps the refined RAND (FIFO)
+                // / linear position-resolved (SFIFO) path. FIFO(m) == RANDOM(m)
+                // only for the linear chain (Gast15 Thm 1), so a non-linear graph
+                // uses FIFO's own position-resolved drift.
+                boolean nonlinear = !accostIsLinear(ch.accost, h);
+                if (ch.replacestrat == ReplacementStrategy.RR) {
+                    CacheMissFpiResult rr = Cache_miss_rmf.cache_miss_rmf(gamma, m, lambda_cache, ch.accost);
+                    lastCacheXss[cIdx] = rr.xss;
+                    Matrix MU = rr.MU;
+                    for (int v = 0; v < u; v++) {
+                        missrate.set(cIdx, v, MU.get(v, 0));
+                    }
+                } else if (ch.replacestrat == ReplacementStrategy.FIFO) {
+                    Matrix MU;
+                    if (nonlinear) {
+                        MU = Cache_miss_fifo_rmf.cache_miss_fifo_rmf(gamma, m, lambda_cache, ch.accost).MU;
+                    } else {
+                        CacheMissFpiResult ff = Cache_miss_rmf.cache_miss_rmf(gamma, m, lambda_cache);
+                        lastCacheXss[cIdx] = ff.xss;
+                        MU = ff.MU;
+                    }
+                    for (int v = 0; v < u; v++) {
+                        missrate.set(cIdx, v, MU.get(v, 0));
+                    }
+                } else if (ch.replacestrat == ReplacementStrategy.SFIFO) {
+                    Matrix MU = Cache_miss_sfifo_rmf.cache_miss_sfifo_rmf(gamma, m, lambda_cache, ch.accost).MU;
+                    for (int v = 0; v < u; v++) {
+                        missrate.set(cIdx, v, MU.get(v, 0));
+                    }
+                } else {
+                    throw new RuntimeException("SolverFluid supports only RANDOM(m)/FIFO(m) "
+                            + "(refined mean field) and strict FIFO(m) (position-resolved "
+                            + "mean field) cache replacement; replacement strategy "
+                            + ch.replacestrat + " has no drift-based fluid model. Use "
+                            + "SolverNC/SolverMVA or SolverLDES for this cache.");
+                }
+
+                // Compute hit/miss probabilities for input classes only
+                for (int i : inputClass) {
+                    double lam = lambda.get(0, i);
+                    if (lam > 0) {
+                        missprob.set(cIdx, i, missrate.get(cIdx, i) / lam);
+                        hitprob.set(cIdx, i, 1.0 - missprob.get(cIdx, i));
+                    } else {
+                        missprob.set(cIdx, i, 0);
+                        hitprob.set(cIdx, i, 0);
+                    }
+                }
+                // Clean NaN values
+                for (int i = 0; i < K; i++) {
+                    if (Double.isNaN(hitprob.get(cIdx, i))) {
+                        hitprob.set(cIdx, i, 0);
+                    }
+                    if (Double.isNaN(missprob.get(cIdx, i))) {
+                        missprob.set(cIdx, i, 0);
+                    }
+                }
+
+                // Update routing matrix with hit/miss probabilities
+                for (int r : inputClass) {
+                    // Zero the row for this class at this node
+                    for (int j = 0; j < sn.rtnodes.getNumCols(); j++) {
+                        sn.rtnodes.set(ind * K + r, j, 0);
+                    }
+                    // Set hit/miss routing to connected nodes
+                    for (int jnd = 0; jnd < I; jnd++) {
+                        if (sn.connmatrix.get(ind, jnd) == 1.0) {
+                            sn.rtnodes.set(ind * K + r, (int) (jnd * K + hitClass.get(r)), hitprob.get(cIdx, r));
+                            sn.rtnodes.set(ind * K + r, (int) (jnd * K + missClass.get(r)), missprob.get(cIdx, r));
+                        }
+                    }
+                }
+
+                // Stochastic complement to get station-level routing
+                sn.rt = Dtmc_stochcomp.dtmc_stochcomp(sn.rtnodes, statefulNodeClassesList);
+            }
+
+            // Refresh visits
+            sn = SnRefreshVisits.snRefreshVisits(sn, sn.chains, sn.rt, sn.rtnodes);
+
+            // Solve the queueing network. The caches are already relabeled as
+            // class switches above, so this is a plain queueing network and the
+            // moment closure applies to it unchanged: "minnormal" reaches a cache
+            // model through this same decomposition, with the closure in place of
+            // the first-order matrix method.
+            SolverOptions fluidOptions = options.copy();
+            fluidOptions.init_sol = computeFluidInitSol(sn);
+            if (useMoments) {
+                fluidOptions.method = "minnormal";
+                MinNormalAnalyzer minNormalAnalyzer = new MinNormalAnalyzer();
+                minNormalAnalyzer.analyze(sn, fluidOptions, result);
+                lastMinNormal = minNormalAnalyzer;
+            } else {
+                fluidOptions.method = "matrix";
+                MatrixMethodAnalyzer matrixAnalyzer = new MatrixMethodAnalyzer();
+                matrixAnalyzer.analyze(sn, fluidOptions, result);
+            }
+
+            // Compute system throughputs XN
+            Matrix XN = new Matrix(1, K);
+            for (int k = 0; k < K; k++) {
+                int refstat = (int) sn.refstat.get(k);
+                if (refstat >= 0) {
+                    XN.set(0, k, result.TN.get(refstat, k));
+                }
+            }
+
+            // Update arrival rates to the cache
+            // Sum nodevisits across chains
+            Matrix nodevisits = null;
+            for (Object key : sn.nodevisits.keySet()) {
+                Matrix nv = sn.nodevisits.get(key);
+                if (nodevisits == null) {
+                    nodevisits = new Matrix(nv);
+                } else {
+                    nodevisits = nodevisits.add(1.0, nv);
+                }
+            }
+
+            for (int cIdx = 0; cIdx < caches.size(); cIdx++) {
+                int ind = caches.get(cIdx);
+                NodeParam param = sn.nodeparam.get(sn.nodes.get(ind));
+                if (param == null || !(param instanceof CacheNodeParam)) {
+                    continue;
+                }
+                CacheNodeParam ch = (CacheNodeParam) param;
+                Matrix hitClass = ch.hitclass;
+                List<Integer> inputClass = new ArrayList<Integer>();
+                for (int i = 0; i < hitClass.getNumCols(); i++) {
+                    if (hitClass.get(0, i) != -1.0) {
+                        inputClass.add(i);
+                    }
+                }
+
+                for (int r : inputClass) {
+                    // Find which chain class r belongs to
+                    int c = 0;
+                    while (c < sn.chains.getNumRows() && sn.chains.get(c, r) == 0.0) {
+                        c++;
+                    }
+                    // Find classes in this chain
+                    List<Integer> inchain = new ArrayList<Integer>();
+                    for (int j = 0; j < sn.chains.getNumCols(); j++) {
+                        if (sn.chains.get(c, j) != 0.0) {
+                            inchain.add(j);
+                        }
+                    }
+                    // Sum throughput across chain
+                    double sumXN = 0.0;
+                    for (int ix : inchain) {
+                        sumXN += XN.get(0, ix);
+                    }
+                    // Compute lambda
+                    int refNode = (int) sn.stationToNode.get((int) sn.refstat.get(r));
+                    int refClass;
+                    if (sn.refclass.get(c) > -1) {
+                        refClass = (int) sn.refclass.get(c);
+                    } else {
+                        refClass = r;
+                    }
+                    double nvRef = nodevisits.get(refNode, refClass);
+                    double nvCache = nodevisits.get(ind, r);
+                    if (nvRef > 0) {
+                        lambda.set(0, r, sumXN * nvCache / nvRef);
+                    }
+                }
+            }
+
+            // Check convergence
+            double diff = 0.0;
+            for (int i = 0; i < K; i++) {
+                diff += Math.abs(lambda.get(0, i) - lambda_1.get(0, i));
+            }
+            if (diff < options.iter_tol) {
+                convergedIter = it;
+                break;
+            }
+            for (int i = 0; i < K; i++) {
+                lambda_1.set(0, i, lambda.get(0, i));
+            }
+        }
+
+        // A SOURCE'S THROUGHPUT IS ITS ARRIVAL RATE AT EVERY INSTANT, and the
+        // network step above cannot say so. A Source is held out of the drift
+        // with theta = 0, so the matrix method (and the closure that replaces it
+        // under "minnormal") restates only the AVERAGE TN from sn.rates and
+        // leaves TNt at the zero trajectory -- the contract
+        // solver_fluid_matrix.m defines and SolverFluidTest pins.
+        //
+        // A CACHE MODEL'S TRANSIENT IS THE ONE PLACE THAT CONTRACT IS NOT WHAT
+        // THE CALLER GETS IN MATLAB. There, @SolverFLD/getTranAvg switches
+        // "rmf" to the CLOSING ODE for the queueing transient, and the closing
+        // rates carry the Source row at lambda over the whole horizon
+        // (solver_fluid_closing.m, the EXT arm). This port keeps "rmf" for the
+        // transient, since solver_fld_cacheqn_tran has no twin here, so the
+        // decomposition stands in for that switch and the Source row is
+        // restated on the trajectory HERE rather than inside the matrix method.
+        //
+        // It is not cosmetic: SolverENV couples its stages THROUGH these
+        // trajectories, and on an open cache model the Source is the ONLY
+        // station -- a Cache is a StatefulNode and a Sink is no station -- so a
+        // zero trajectory made the environment blend report every throughput as
+        // zero while the hit ratios were right.
+        if (result.TNt != null) {
+            for (int ist = 0; ist < M; ist++) {
+                if (sn.sched.get(sn.stations.get(ist)) != SchedStrategy.EXT) {
+                    continue;
+                }
+                for (int r = 0; r < K; r++) {
+                    double rate = sn.rates.get(ist, r);
+                    if (Double.isNaN(rate) || rate <= 0) {
+                        continue;
+                    }
+                    if (result.TNt[ist] == null || result.TNt[ist][r] == null) {
+                        continue;
+                    }
+                    Matrix trace = result.TNt[ist][r];
+                    for (int s = 0; s < trace.getNumRows(); s++) {
+                        trace.set(s, 0, rate);
+                    }
+                }
+            }
+        }
+
+        // Compute CN
+        result.CN = new Matrix(1, K);
+        Matrix XN = new Matrix(1, K);
+        for (int k = 0; k < K; k++) {
+            int refstat = (int) sn.refstat.get(k);
+            if (refstat >= 0) {
+                XN.set(0, k, result.TN.get(refstat, k));
+                if (XN.get(0, k) > 0) {
+                    result.CN.set(0, k, sn.njobs.get(k) / XN.get(0, k));
+                }
+            }
+        }
+        result.XN = XN;
+
+        // Store hit/miss probabilities in the result
+        if (result instanceof FluidResult) {
+            // hitprob is (numCaches x K), expand to (nnodes x K) for consistency with MVA
+            Matrix hitprobFull = new Matrix(sn.nnodes, K);
+            Matrix missprobFull = new Matrix(sn.nnodes, K);
+            for (int cIdx = 0; cIdx < caches.size(); cIdx++) {
+                int ind = caches.get(cIdx);
+                for (int k = 0; k < K; k++) {
+                    hitprobFull.set(ind, k, hitprob.get(cIdx, k));
+                    missprobFull.set(ind, k, missprob.get(cIdx, k));
+                }
+            }
+            ((FluidResult) result).hitProb = hitprobFull;
+            ((FluidResult) result).missProb = missprobFull;
+
+            // The per-list hit split, on the same converged inputs and for the
+            // same reason. A cache whose strategy has no list-resolved fluid
+            // model leaves it null, which reads as absent rather than as zero.
+            Matrix[] hitListByNode = new Matrix[sn.nnodes];
+            boolean anyList = false;
+            for (int cIdx = 0; cIdx < caches.size(); cIdx++) {
+                Matrix hl = cacheHitByList(lastCacheXss[cIdx], lastCacheLambda[cIdx],
+                        lastCacheM[cIdx], K);
+                if (hl != null) {
+                    hitListByNode[caches.get(cIdx)] = hl;
+                    anyList = true;
+                }
+            }
+            if (anyList) {
+                ((FluidResult) result).hitProbList = hitListByNode;
+            }
+        }
+
+        // The cache half of the moment report: the linear noise covariance of the
+        // item occupancy, at the CONVERGED isolated-cache inputs. Only RR/FIFO on
+        // the linear access chain have the drift it linearises, so a cache
+        // without one is omitted rather than reported as a fabricated zero.
+        if (useMoments && result instanceof FluidResult) {
+            FluidResult fr = (FluidResult) result;
+            List<Matrix> sigmas = new ArrayList<Matrix>();
+            List<Matrix> pi0s = new ArrayList<Matrix>();
+            List<Integer> nodes = new ArrayList<Integer>();
+            Matrix missVar = new Matrix(caches.size(), K);
+            for (int cIdx = 0; cIdx < caches.size(); cIdx++) {
+                if (lastCacheLambda[cIdx] == null || !lastCacheLinear[cIdx]
+                        || (lastCacheStrat[cIdx] != ReplacementStrategy.RR
+                            && lastCacheStrat[cIdx] != ReplacementStrategy.FIFO)) {
+                    continue;
+                }
+                Matrix[] lam = lastCacheLambda[cIdx];
+                int u = lam.length;
+                int n = lam[0].getNumRows();
+                int h = lastCacheM[cIdx].length();
+                double[] lamI = new double[n];
+                for (int v = 0; v < u; v++) {
+                    for (int i = 0; i < n; i++) {
+                        double val = lam[v].get(i, 0);
+                        if (Double.isFinite(val)) {
+                            lamI[i] += val;
+                        }
+                    }
+                }
+                double tot = 0;
+                for (int i = 0; i < n; i++) {
+                    tot += lamI[i];
+                }
+                if (!(tot > 0)) {
+                    continue;
+                }
+                double[] p = new double[n];
+                for (int i = 0; i < n; i++) {
+                    p[i] = lamI[i] / tot;
+                }
+                int[] mi = new int[h];
+                for (int k = 0; k < h; k++) {
+                    mi[k] = (int) Math.round(lastCacheM[cIdx].get(k));
+                }
+                CacheRMF rmf = new CacheRMF(p, mi);
+                double[] x = rmf.fixedPoint();
+                try {
+                    Object[] res = rmf.meanFieldExpansionSteadyState();
+                    double[] pi = (double[]) res[0];
+                    double[] V = (double[]) res[1];
+                    boolean finite = true;
+                    double[] xref = new double[pi.length];
+                    for (int i = 0; i < pi.length; i++) {
+                        xref[i] = pi[i] + V[i] / n;
+                        finite = finite && Double.isFinite(xref[i]);
+                    }
+                    if (finite) {
+                        x = xref;
+                    }
+                } catch (RuntimeException e) {
+                    // keep the plain mean field
+                }
+                double[][] W = rmf.lnaCovariance(x);
+                if (W == null) {
+                    continue;
+                }
+                Matrix Wm = new Matrix(W.length, W.length);
+                for (int a = 0; a < W.length; a++) {
+                    for (int b = 0; b < W.length; b++) {
+                        Wm.set(a, b, W[a][b]);
+                    }
+                }
+                Matrix pi0 = new Matrix(n, 1);
+                for (int i = 0; i < n; i++) {
+                    pi0.set(i, 0, Math.min(1.0, Math.max(0.0, x[i])));
+                }
+                for (int r = 0; r < Math.min(K, u); r++) {
+                    double wtot = 0;
+                    double[] w = new double[n];
+                    for (int i = 0; i < n; i++) {
+                        double val = lam[r].get(i, 0);
+                        w[i] = Double.isFinite(val) ? val : 0.0;
+                        wtot += w[i];
+                    }
+                    if (!(wtot > 0)) {
+                        continue;
+                    }
+                    double acc = 0;
+                    for (int i = 0; i < n; i++) {
+                        for (int j = 0; j < n; j++) {
+                            acc += (w[i] / wtot) * W[i][j] * (w[j] / wtot);
+                        }
+                    }
+                    missVar.set(cIdx, r, Math.max(0.0, acc));
+                }
+                sigmas.add(Wm);
+                pi0s.add(pi0);
+                nodes.add(lastCacheNode[cIdx]);
+            }
+            if (!sigmas.isEmpty()) {
+                fr.momentCacheSigma = sigmas.toArray(new Matrix[0]);
+                fr.momentCachePi0 = pi0s.toArray(new Matrix[0]);
+                fr.momentCacheMissProbVar = missVar;
+                int[] nodeArr = new int[nodes.size()];
+                for (int i = 0; i < nodes.size(); i++) {
+                    nodeArr[i] = nodes.get(i);
+                }
+                fr.momentCacheNode = nodeArr;
+            }
+        }
+
+        xvecIt = (result instanceof FluidResult) ? ((FluidResult) result).odeStateVec : null;
+    }
+
+    @Override
+    public Matrix getXVecIt() {
+        return xvecIt;
+    }
+
+    /**
+     * Compute fluid initial solution from network struct.
+     * Matches MATLAB solver_fluid_initsol: iterates over stateful station nodes,
+     * extracts per-class per-phase populations, skips non-station nodes.
+     */
+    private static Matrix computeFluidInitSol(NetworkStruct sn) {
+        Matrix initSol = new Matrix(1, 0);
+        for (int ind = 0; ind < sn.nnodes; ind++) {
+            if (sn.isstateful.get(ind, 0) != 1) {
+                continue;
+            }
+            int ist = (int) sn.nodeToStation.get(ind);
+            // Skip non-station stateful nodes (e.g., Router, ClassSwitch from cache conversion)
+            if (ist < 0) {
+                continue;
+            }
+            int isf = (int) sn.nodeToStateful.get(ind);
+            Matrix state_i = sn.state.get(sn.nodes.get(ind));
+            if (state_i == null) {
+                continue;
+            }
+
+            State.StateMarginalStatistics stats = ToMarginal.toMarginal(sn, ind, state_i, null, null, null, null, null);
+            Matrix nir = stats.nir;
+            java.util.List<Matrix> kir_i = stats.kir;
+            if (kir_i == null || kir_i.isEmpty()) {
+                continue;
+            }
+
+            SchedStrategy sched = sn.sched.get(sn.stations.get(ist));
+            int rMax = kir_i.get(0).getNumCols();
+
+            for (int r = 0; r < rMax; r++) {
+                int kMax = sn.mu.get(sn.stations.get(ist)).get(sn.jobclasses.get(r)).length();
+                for (int k = 0; k < kMax; k++) {
+                    if (Double.isNaN(sn.rates.get(ist, r))) {
+                        continue;
+                    }
+                    initSol.expandMatrix(1, initSol.getNumCols() + 1, initSol.getNumElements() + 1);
+                    if (sched == SchedStrategy.EXT) {
+                        // Source: use kir directly
+                        initSol.set(0, initSol.getNumCols() - 1, kir_i.get(k).get(0, r));
+                    } else {
+                        // Station: phase 0 = waiting buffer jobs, phases 1+ = in-service
+                        if (k == 0) {
+                            double sumKir = 0;
+                            for (int m = 1; m < kir_i.size(); m++) {
+                                sumKir += kir_i.get(m).get(0, r);
+                            }
+                            initSol.set(0, initSol.getNumCols() - 1, nir.get(0, r) - sumKir);
+                        } else {
+                            initSol.set(0, initSol.getNumCols() - 1, kir_i.get(k).get(0, r));
+                        }
+                    }
+                }
+            }
+        }
+        return initSol;
+    }
+
+    /**
+     * True when every per-(user,item) access graph is the standard linear chain
+     * (miss -> list 1, hit in list a -> list a+1, self-loop on the top list).
+     */
+    /**
+     * Hit probability of each read class resolved by cache list, from the
+     * converged mean-field occupancy XSS (item-major over lists 0..h) and the
+     * isolated per-item request rates LAMBDACACHE. List 0 is outside the cache,
+     * so the hit rows are lists 1..h and sum to the class's total hit
+     * probability, which is the identity a caller asserts on.
+     *
+     * @return a [classes x lists] matrix, or null when no list-resolved state
+     *         was produced (absent is not zero)
+     */
+    private static Matrix cacheHitByList(Matrix xss, Matrix[] lambdaCache, Matrix m, int K) {
+        if (xss == null || xss.isEmpty() || lambdaCache == null || lambdaCache.length == 0 || m == null) {
+            return null;
+        }
+        int n = lambdaCache[0].getNumRows();
+        int h = m.length();
+        if (n <= 0 || h < 1 || xss.length() < n * (h + 1)) {
+            return null;
+        }
+        Matrix hpl = new Matrix(K, h);
+        for (int r = 0; r < K; r++) {
+            for (int l = 0; l < h; l++) {
+                hpl.set(r, l, Double.NaN);
+            }
+        }
+        boolean any = false;
+        for (int r = 0; r < Math.min(K, lambdaCache.length); r++) {
+            double tot = 0;
+            double[] w = new double[n];
+            for (int i = 0; i < n; i++) {
+                double val = lambdaCache[r].get(i, 0);
+                w[i] = Double.isFinite(val) ? val : 0.0;
+                tot += w[i];
+            }
+            if (!(tot > 0)) {
+                continue;
+            }
+            for (int l = 1; l <= h; l++) {
+                double acc = 0;
+                for (int i = 0; i < n; i++) {
+                    acc += (w[i] / tot) * xss.get(i + l * n, 0);
+                }
+                hpl.set(r, l - 1, Math.max(0.0, Math.min(1.0, acc)));
+                any = true;
+            }
+        }
+        return any ? hpl : null;
+    }
+
+    private static boolean accostIsLinear(Matrix[][] accost, int h) {
+        if (accost == null) {
+            return true;
+        }
+        double[][] lin = new double[h + 1][h + 1];
+        lin[0][1] = 1.0;
+        for (int a = 1; a < h; a++) {
+            lin[a][a + 1] = 1.0;
+        }
+        lin[h][h] = 1.0;
+        for (int v = 0; v < accost.length; v++) {
+            if (accost[v] == null) {
+                continue;
+            }
+            for (int k = 0; k < accost[v].length; k++) {
+                Matrix g = accost[v][k];
+                if (g == null) {
+                    continue;
+                }
+                for (int a = 0; a <= h; a++) {
+                    for (int b = 0; b <= h; b++) {
+                        if (Math.abs(g.get(a, b) - lin[a][b]) > 1e-9) {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+        return true;
+    }
+}

@@ -1,0 +1,18 @@
+This file acknowledges codebase authors across successive releases of the tool:
+Giuliano Casale (0.*.*, 1.0.*, 2.0.*; 2017-Present)
+Jacob Dillarstone (2.0.23; 2022)
+Rares Dobres (2.0.29; 2023)
+Yicheng Gao (2.0.14; 2021)
+Qi Huang (2.0.23; 2022) 
+Dongchi Li (2.0.23; 2022)
+Zifeng Niu (2.0.13, 2.0.37; 2021, 2025)
+Juan Fernando Perez (0.*.*, 1.0.*; 2017-19)
+Wenzheng Shan (2.0.23; 2022)
+Matthew Sheldon (2.0.18; 2021)
+Tianquan Zhang (2.0.11; 2020)
+Xian Zhao (2.0.14, 2.0.16; 2021)
+Lulai Zhu (2.0.3; 2019)
+
+We gracefully acknowledge the following people for their feedbacks and contributions to the debugging of LINE:
+2.0.*: Salvatore Dipietro, Yicheng Gao, Alim Ul Gias, Li, Zhuoyuan Li, Zifeng Niu, Jukka Soikkeli, Lulai Zhu
+0.*.*, 1.0.*: Danilo Ardagna, Michele Ciavotta, Daniel Dubois, Rasha Osman

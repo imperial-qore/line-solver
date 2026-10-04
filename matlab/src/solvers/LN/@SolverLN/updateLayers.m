@@ -1,0 +1,143 @@
+function updateLayers(self, it)
+% Under a PH encoding the layer classes are one per caller task and their laws
+% are composed, not read off the update maps -- see _kb/06-solver-catalog.md
+if self.isPHEncoding()
+    updateLayersPH(self, it);
+    return
+end
+lqn = self.lqn;
+ensemble = self.ensemble;
+idxhash = self.idxhash;
+thinktproc = self.thinktproc;
+servtproc = self.servtproc;
+thinkt_classes_updmap = self.thinkt_classes_updmap;
+arvproc_classes_updmap = self.arvproc_classes_updmap;
+tputproc = self.tputproc;
+call_classes_updmap = self.call_classes_updmap;
+callservtproc = self.callservtproc;
+
+% reassign service times
+for r=1:size(thinkt_classes_updmap,1)
+    if mod(it, 2)==1 % elevator
+        ri = size(thinkt_classes_updmap,1) - r + 1;
+    else
+        ri = r;
+    end
+    idx = thinkt_classes_updmap(ri,1);
+    aidx = thinkt_classes_updmap(ri,2);
+    nodeidx = thinkt_classes_updmap(ri,3);
+    classidx = thinkt_classes_updmap(ri,4);
+    class = ensemble{idxhash(thinkt_classes_updmap(ri,1))}.classes{classidx};
+    % here update the number of jobs in the task chain
+    if aidx <= lqn.tshift + lqn.ntasks
+        % aidx here is actually set to tidx in buildLayersRecursive
+        switch class.type
+            case JobClassType.CLOSED
+                if self.options.config.interlocking
+                    class.population = self.njobs(aidx,idx);
+                end
+        end
+    end
+    node = ensemble{idxhash(idx)}.nodes{nodeidx};
+    if nodeidx == ensemble{idxhash(idx)}.attribute.clientIdx
+        if lqn.type(aidx) == LayeredNetworkElement.TASK
+            if lqn.sched(aidx) ~= SchedStrategy.REF
+                if ~isempty(thinktproc{aidx}) % this is empty for isolated components, which can be ignored
+                    node.setService(class, thinktproc{aidx});
+                end
+            else
+                node.setService(class, servtproc{aidx});
+            end
+        else
+            node.setService(class, servtproc{aidx});
+        end
+    else % server replica (any of them)
+        node.setService(class, servtproc{aidx});
+    end
+end
+
+% Reassign the reference-path stage means. It runs here, after the think times:
+% residt, callresidt, util and tput are all fresh by now, and the stages are the
+% only thing left that the merged client chains read.
+if strcmp(self.interlockMethod, 'refpath')
+    self.updateRefPathStages(it);
+end
+
+% reassign arrival rates
+for r=1:size(arvproc_classes_updmap,1)
+    %for r=1:0
+    if  mod(it, 2)==1 % elevator
+        ri = size(arvproc_classes_updmap,1) - r + 1;
+    else
+        ri = r;
+    end
+    idx = arvproc_classes_updmap(ri,1);
+    eidx_or_cidx = arvproc_classes_updmap(ri,2);
+    nodeidx = arvproc_classes_updmap(ri,3);
+    classidx = arvproc_classes_updmap(ri,4);
+    class = ensemble{idxhash(arvproc_classes_updmap(ri,1))}.classes{classidx};
+    node = ensemble{idxhash(idx)}.nodes{nodeidx};
+
+    if eidx_or_cidx < 0  % Entry-level arrival (negative index)
+        eidx = -eidx_or_cidx;
+        node.setArrival(class, lqn.arrival{eidx});
+    else  % Async call arrival (positive index)
+        cidx = eidx_or_cidx;
+        node.setArrival(class, tputproc{lqn.callpair(cidx,1)});
+    end
+end
+
+% Under flat layering the callee's station and its caller share one model, so
+% the phase-2 correction below would be applied twice; it belongs to the
+% multi-layer decomposition only -- see _kb/06-solver-catalog.md
+flatLayering = isfield(self.options.config,'layering') && ...
+    any(strcmpi(self.options.config.layering, {'flat','squashed'}));
+
+% reassign call service time / response time
+for c=1:size(call_classes_updmap,1)
+    if  mod(it, 2)==1 % elevator
+        ci = size(call_classes_updmap,1) - c + 1;
+    else
+        ci = c;
+    end
+    idx = call_classes_updmap(ci,1);
+    cidx = call_classes_updmap(ci,2);
+    nodeidx = call_classes_updmap(ci,3);
+    class = ensemble{idxhash(call_classes_updmap(ci,1))}.classes{call_classes_updmap(ci,4)};
+    node = ensemble{idxhash(idx)}.nodes{nodeidx};
+    if nodeidx == ensemble{idxhash(idx)}.attribute.clientIdx % client
+        node.setService(class, callservtproc{cidx});
+    else % server replica (any of them)
+        eidx = lqn.callpair(cidx,2);
+        if self.hasPhase2 && self.servt_ph2(eidx) > GlobalConstants.FineTol && ~flatLayering
+            % A phase-2 entry replies before phase 2 runs, so the caller is
+            % held for residt, not servt. Charging the caller servt here while
+            % its own layer charges residt makes the two layers settle at
+            % different rates and breaks flow conservation across the call.
+            node.setService(class, Exp.fitMean(self.residt(eidx)));
+        else
+            node.setService(class, servtproc{eidx});
+        end
+    end
+end
+
+% reassign activity think times
+actthinkt_classes_updmap = self.actthinkt_classes_updmap;
+for r=1:size(actthinkt_classes_updmap,1)
+    if mod(it, 2)==1 % elevator
+        ri = size(actthinkt_classes_updmap,1) - r + 1;
+    else
+        ri = r;
+    end
+    idx = actthinkt_classes_updmap(ri,1);
+    aidx = actthinkt_classes_updmap(ri,2);
+    nodeidx = actthinkt_classes_updmap(ri,3);
+    classidx = actthinkt_classes_updmap(ri,4);
+    class = ensemble{idxhash(actthinkt_classes_updmap(ri,1))}.classes{classidx};
+    node = ensemble{idxhash(idx)}.nodes{nodeidx};
+    % Activity think-time is at client delay node
+    if ~isempty(lqn.actthink{aidx})
+        node.setService(class, lqn.actthink{aidx});
+    end
+end
+end

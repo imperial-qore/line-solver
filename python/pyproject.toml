@@ -1,0 +1,101 @@
+[tool.poetry]
+name = "line-solver"
+version = "3.0.8.0"
+description = "Open source queueing theory solvers"
+authors = [
+    "Giuliano Casale <g.casale@imperial.ac.uk>"
+]
+license = "BSD-3"
+readme = "README.md"
+homepage = "https://line-solver.sourceforge.net"
+packages = [
+    { include = "line_solver" },
+    { include = "examples", to = "line_solver" },
+    { include = "line_solver/lib/rmf_tool/src/rmftool" },
+]
+
+# A bare path lands at the DISTRIBUTION ROOT, which for a wheel is the
+# site-packages root: mm1.py and mm1.ipynb installed there shadowed the name
+# `mm1` for every other package in the environment and no uninstall of a
+# neighbour would have been to blame. They are repo-root conveniences, so they
+# ship in the sdist only; the wheel carries the same tutorials inside the
+# package as line_solver/examples/, runnable with
+# `python -m line_solver.examples.gettingstarted.tut01_mm1_basics`.
+# (The former "gettingstarted/**" entry matched nothing: the tutorials live in
+# examples/gettingstarted, which the `packages` table above already ships.)
+include = [
+    { path = "AUTHORS", format = ["sdist", "wheel"] },
+    { path = "LICENSE", format = ["sdist", "wheel"] },
+    { path = "README.md", format = ["sdist", "wheel"] },
+    { path = "mm1.py", format = ["sdist"] },
+    { path = "mm1.ipynb", format = ["sdist"] },
+    { path = "requirements.txt", format = ["sdist", "wheel"] },
+    { path = "line_solver/bin/ldes", format = ["sdist", "wheel"] },
+]
+# JAR auto-download strategy: jline.jar, JMT.jar, ldes.jar are excluded from distributions
+# and auto-downloaded on first use when lang='java' is requested. This reduces package size
+# significantly (jline.jar alone is ~20MB) and keeps releases fresh via SourceForge updates.
+exclude = ["tests/**", "**/tests/**", "line_solver/bin/.gitignore", "**/jline.jar", "**/JMT.jar", "**/ldes.jar"]
+
+[tool.poetry.dependencies]
+python = ">=3.11"
+numpy = "^2.3.3"
+matplotlib = "^3.10.6"
+networkx = "^3.6"
+pandas = "^2.3.2"
+scipy = "^1.16.2"
+websockets = "^12.0"
+# Ships the MCP server: `pip install line-solver` alone must be enough to run
+# `line-mcp`, which is what the manual and the website tell users to do.
+mcp = "^2.0"
+
+# Optional dependencies for native backend
+torch = { version = ">=2.0.0", optional = true }
+sympy = { version = ">=1.10", optional = true }
+
+[tool.poetry.extras]
+native = ["torch"]
+gpu = ["torch"]
+symbolic = ["sympy"]
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^9.0.2"
+# The suite is subprocess-bound, not CPU-bound: 627 parity rows each fork a
+# fresh interpreter and ~335 notebooks each spawn a Jupyter kernel, so a serial
+# session leaves a 16-core host at load 2-3 for 13h45m. run-tests.sh passes
+# `-n auto --dist loadfile` by default; see the DIST_ARGS block there.
+pytest-xdist = "^3.6.1"
+nbformat = "^5.10.4"
+nbconvert = "^7.16.6"
+ipykernel = "^6.30.1"
+
+[tool.poetry.scripts]
+line = "line_solver.cli:main"
+line-install = "line_solver.install:main"
+line-mcp = "line_solver.mcp_server:main"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: marks tests that run full LINE solves (deselect with '-m \"not slow\"')",
+]
+# The vendored butools (line_solver/lib/thirdparty/butools) is matrix-typed
+# throughout: every mam/reptrans/queues entry point takes and returns
+# numpy.matrix, so each call raises PendingDeprecationWarning. On the full
+# suite that is ~750k of ~900k warnings and it buries the actionable ones.
+# The filter matches on MESSAGE, not module: numpy raises from its own
+# matrixlib frame, so a module-scoped filter would not catch it. Removing the
+# matrix subclass means rewriting butools, which is out of scope.
+#
+# The CTMC truncation advisory is emitted for EVERY open or mixed model, with no
+# dependence on the model or the cutoff, so in a suite that deliberately solves
+# open models by CTMC it discriminates nothing and only hides the actionable
+# warnings. It stays on for users; it is the run report it is filtered out of.
+filterwarnings = [
+    "ignore:the matrix subclass is not the recommended way:PendingDeprecationWarning",
+    "ignore:Importing from numpy.matlib is deprecated:PendingDeprecationWarning",
+    "ignore:State space truncation may cause inaccurate results:UserWarning",
+]

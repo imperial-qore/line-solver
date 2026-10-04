@@ -1,0 +1,18 @@
+/*
+ * Copyright (c) 2012-2026, QORE Lab, Imperial College London
+ * All rights reserved.
+ */
+package jline.io;
+
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+
+public class DocumentSectionPair {
+    public Document simDoc;
+    public Element section;
+
+    public DocumentSectionPair(Document simDoc, Element section) {
+        this.simDoc = simDoc;
+        this.section = section;
+    }
+}

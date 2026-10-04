@@ -1,0 +1,551 @@
+package jline.solvers.ssa.handlers;
+
+import java.util.HashMap;
+import java.util.Map;
+
+import jline.GlobalConstants;
+import jline.lang.NetworkStruct;
+import jline.lang.Sync;
+import jline.lang.constant.EventType;
+import jline.lang.constant.NodeType;
+import jline.lang.state.AfterEventContext;
+import jline.lang.state.EventCache;
+import jline.lang.state.State;
+import jline.lang.state.ToMarginal;
+import jline.solvers.ssa.SolverSSA;
+import jline.util.matrix.Matrix;
+import jline.util.matrix.MatrixCell;
+
+public final class Solver_ssa_findenabled {
+    private Solver_ssa_findenabled() {}
+
+    public static void solver_ssa_findenabled(NetworkStruct sn,
+                                              EventCache eventCache,
+                                              int A,
+                                              Map<Integer, Integer> node_a,
+                                              Map<Integer, Map<Integer, Matrix>> next_state,
+                                              Map<Integer, Matrix> stateCell,
+                                              Map<Integer, EventType> event_a,
+                                              Map<Integer, Integer> class_a,
+                                              boolean isSimulation,
+                                              Map<Integer, Double> outprob_a,
+                                              Map<Integer, Integer> node_p,
+                                              int local,
+                                              Map<Integer, EventType> event_p,
+                                              Map<Integer, Integer> class_p,
+                                              Map<Integer, Double> outprob_p,
+                                              Map<Integer, Double> prob_sync_p,
+                                              Map<Integer, Sync> sync,
+                                              Map<Integer, Integer> node_a_sf,
+                                              Map<Integer, Integer> node_p_sf,
+                                              Map<Integer, Matrix> startRatesSamples,
+                                              Map<Integer, Matrix> preemptRatesSamples,
+                                              Map<Integer, int[][]> enabled_tags,
+                                              Map<Integer, Matrix> depRatesSamples,
+                                              int samples_collected,
+                                              Map<Integer, Matrix> arvRatesSamples,
+                                              Map<Integer, Matrix> dlyRatesSamples,
+                                              int[] cacheVarW,
+                                              Matrix csmask,
+                                              Map<Integer, Double> enabled_rates,
+                                              Map<Integer, Integer> enabled_sync,
+                                              Map<Integer, int[]> enabled_fcr,
+                                              SolverSSA solverSSA,
+                                              AfterEventContext aectx) {
+        // The two halves' annotations are kept per action so the tag rates can be
+        // accumulated at the point where the transition is declared enabled.
+        Map<Integer, jline.io.Ret.EventResult> resultA = new HashMap<Integer, jline.io.Ret.EventResult>();
+        Map<Integer, jline.io.Ret.EventResult> resultP = new HashMap<Integer, jline.io.Ret.EventResult>();
+        // see _kb/06-solver-catalog.md for rationale
+        int nreg = sn.nregions;
+        boolean fcrOn = nreg > 0;
+        double[][] fcrClassCap = null, fcrXcur = null;
+        double[] fcrGlobalCap = null, fcrMemCap = null;
+        boolean[][] fcrMemberMask = null;
+        Matrix[] fcrA = null, fcrB = null;
+        if (fcrOn) {
+            int Kf = sn.nclasses;
+            fcrClassCap = new double[nreg][Kf];
+            fcrXcur = new double[nreg][Kf];
+            fcrGlobalCap = new double[nreg];
+            fcrMemCap = new double[nreg];
+            fcrMemberMask = new boolean[nreg][];
+            fcrA = new Matrix[nreg];
+            fcrB = new Matrix[nreg];
+            for (int f = 0; f < nreg; f++) {
+                Matrix Rmat = sn.region.get(f);
+                int M = Rmat.getNumRows();
+                java.util.List<Integer> members = new java.util.ArrayList<Integer>();
+                Matrix memMatMember = (sn.regionmaxmem != null && sn.regionmaxmem.size() > f) ? sn.regionmaxmem.get(f) : null;
+                // membership is read from sn.regionmembers, never re-derived from -1: a region
+                // bounded only by regionlincon (an LQN2QN thread pool) reads as empty otherwise
+                boolean[] mask = jline.api.sn.SnRegionMembers.snRegionMembers(sn, f, Rmat, memMatMember);
+                for (int i = 0; i < M; i++) {
+                    if (mask[i]) { members.add(i); }
+                }
+                fcrMemberMask[f] = mask;
+                for (int r = 0; r < Kf; r++) {
+                    double v = Double.POSITIVE_INFINITY;
+                    for (int i : members) { double x = Rmat.get(i, r); if (x != -1) { v = Math.min(v, x); } }
+                    fcrClassCap[f][r] = v;
+                }
+                double g = Double.POSITIVE_INFINITY;
+                for (int i : members) { double x = Rmat.get(i, Kf); if (x != -1) { g = Math.min(g, x); } }
+                fcrGlobalCap[f] = g;
+                double mc = Double.POSITIVE_INFINITY;
+                Matrix mm = (sn.regionmaxmem != null && sn.regionmaxmem.size() > f) ? sn.regionmaxmem.get(f) : null;
+                if (mm != null) {
+                    for (int i : members) { double x = mm.get(i, 0); if (x != -1) { mc = Math.min(mc, x); } }
+                }
+                fcrMemCap[f] = mc;
+                if (sn.regionlincon != null && sn.regionlincon.containsKey(f)) {
+                    MatrixCell ab = sn.regionlincon.get(f);
+                    if (ab != null && ab.size() >= 2 && ab.get(0) != null && ab.get(1) != null) {
+                        fcrA[f] = ab.get(0);
+                        fcrB[f] = ab.get(1);
+                    }
+                }
+                for (int i : members) {
+                    int ind_i = (int) sn.stationToNode.get(i);
+                    int isf_i = (int) sn.stationToStateful.get(i);
+                    Matrix nirM = ToMarginal.toMarginal(sn, ind_i, stateCell.get(isf_i), null, null, null, null, null).nir;
+                    for (int r = 0; r < Kf; r++) { fcrXcur[f][r] += nirM.get(0, r); }
+                }
+            }
+        }
+        // Global (Whittle) rate scaling declared through setGlobalDependence. It
+        // reads the FULL population matrix, so it is a constant within one state
+        // and factors out of the per-transition rates, as in Solver_ctmc.
+        Matrix gdNow = (sn.gdscaling != null) ? gdFactorNow(sn, stateCell) : null;
+        for (int act = 0; act < A; act++) {
+            Map<Integer, Matrix> rate_a = new HashMap<Integer, Matrix>();
+            int isf_a = (int) sn.nodeToStateful.get(node_a.get(act));
+            int isf_p = -1;
+            // next_state[act] = stateCell.mapValues { it.copy() }.toMutableMap()
+            Map<Integer, Matrix> initial = new HashMap<Integer, Matrix>();
+            for (Map.Entry<Integer, Matrix> entry : stateCell.entrySet()) {
+                Matrix v = entry.getValue();
+                initial.put(entry.getKey(), v != null ? v.copy() : null);
+            }
+            next_state.put(act, initial);
+
+            // see _kb/06-solver-catalog.md for rationale
+            boolean noPromote = State.immfeedSelfLoop(sn, event_a.get(act),
+                    node_a.get(act), node_p.get(act), class_p.get(act));
+
+            // solverSSA.run {... } — inline the block
+            {
+                jline.io.Ret.EventResult eventResult = State.afterEvent(sn,
+                        node_a.get(act),
+                        stateCell.get(isf_a),
+                        event_a.get(act),
+                        class_a.get(act),
+                        isSimulation,
+                        eventCache,
+                        aectx,
+                        noPromote);
+                resultA.put(act, eventResult);
+                if (!eventResult.outspace.isEmpty()) {
+                    next_state.get(act).put((int) sn.nodeToStateful.get(node_a.get(act)), eventResult.outspace);
+                } else {
+                    next_state.get(act).remove((int) sn.nodeToStateful.get(node_a.get(act)));
+                }
+                if (!eventResult.outrate.isEmpty()) {
+                    rate_a.put(act, eventResult.outrate);
+                } else {
+                    rate_a.remove(act);
+                }
+                if (!eventResult.outprob.isEmpty()) {
+                    outprob_a.put(act, eventResult.outprob.toDouble());
+                } else {
+                    outprob_a.remove(act);
+                }
+            }
+
+            if (!next_state.get(act).containsKey(isf_a) || !rate_a.containsKey(act)) {
+                continue;
+            }
+
+            // PHASE matters as much as DEP: refreshSync emits phase moves as
+            // active station events, so phase-type service would otherwise
+            // advance unscaled.
+            if (gdNow != null && sn.isstation.get(node_a.get(act)) == 1.0
+                    && (event_a.get(act) == EventType.DEP || event_a.get(act) == EventType.PHASE)) {
+                int istGd = (int) sn.nodeToStation.get(node_a.get(act));
+                double fGd = gdNow.get(istGd, class_a.get(act));
+                Matrix scaled = rate_a.get(act).copy();
+                for (int ig = 0; ig < scaled.length(); ig++) {
+                    scaled.set(ig, scaled.get(ig) * fGd);
+                }
+                rate_a.put(act, scaled);
+            }
+
+            // see _kb/06-solver-catalog.md for rationale
+            int numRowsA = next_state.get(act).get(isf_a).getNumRows();
+            for (int ia = 0; ia < numRowsA; ia++) {
+                if (Double.isNaN(rate_a.get(act).get(ia)) || rate_a.get(act).get(ia) == 0.0) {
+                    // handling degenerate rate values
+                    rate_a.get(act).set(ia, GlobalConstants.Zero);
+                }
+
+                Matrix hash_check = next_state.get(act).get(isf_a);
+                boolean hash_found = false;
+                for (int col = 0; col < hash_check.getNumCols(); col++) {
+                    if (hash_check.get(ia, col) != -1.0) {
+                        hash_found = true;
+                        break;
+                    }
+                }
+
+                if (!hash_found) {
+                    continue;
+                }
+
+                // A delayed hit is the ONLY cache transition that empties the node:
+                // the request merges onto the in-flight fetch and is held in block B,
+                // so it departs later in the hit class and is otherwise
+                // indistinguishable there from a true hit.
+                boolean isMergeA = false;
+                if (cacheVarW != null && isf_a < cacheVarW.length && cacheVarW[isf_a] >= 0
+                        && event_a.get(act) == EventType.READ) {
+                    Matrix rowsA = next_state.get(act).get(isf_a);
+                    Matrix preA = stateCell.get(isf_a);
+                    int eA = rowsA.getNumCols() - cacheVarW[isf_a];
+                    int eP = preA.getNumCols() - cacheVarW[isf_a];
+                    if (eA >= sn.nclasses && eP >= sn.nclasses) {
+                        double sA = 0, sP = 0;
+                        for (int c = eA - sn.nclasses; c < eA; c++) { sA += rowsA.get(ia, c); }
+                        for (int c = eP - sn.nclasses; c < eP; c++) { sP += preA.get(0, c); }
+                        isMergeA = (sA - sP) == -1.0;
+                    }
+                }
+
+                // boolean update_cond = true;
+                boolean becomeBlocked = false;   // true BAS: this DEP holds a completed job (not a departure)
+                if (rate_a.get(act).get(ia) > 0) {
+                    if (!node_p.get(act).equals(local)) {
+                        isf_p = (int) sn.nodeToStateful.get(node_p.get(act));
+                        if (node_p.get(act).equals(node_a.get(act))) {
+                            // self-loop
+
+                            jline.io.Ret.EventResult eventResult = State.afterEvent(sn,
+                                    node_p.get(act),
+                                    next_state.get(act).get(isf_a),
+                                    event_p.get(act),
+                                    class_p.get(act),
+                                    isSimulation,
+                                    eventCache,
+                                    aectx);
+                            resultP.put(act, eventResult);
+                            if (!eventResult.outspace.isEmpty()) {
+                                next_state.get(act).put(isf_p, eventResult.outspace);
+                            } else {
+                                next_state.get(act).remove(isf_p);
+                            }
+                            if (!eventResult.outprob.isEmpty()) {
+                                outprob_p.put(act, eventResult.outprob.toDouble());
+                            }
+                        } else {
+                            // departure
+                            jline.io.Ret.EventResult eventResult = State.afterEvent(sn,
+                                    node_p.get(act),
+                                    next_state.get(act).get(isf_p),
+                                    event_p.get(act),
+                                    class_p.get(act),
+                                    isSimulation,
+                                    eventCache,
+                                    aectx);
+
+                            resultP.put(act, eventResult);
+                            if (!eventResult.outspace.isEmpty()) {
+                                next_state.get(act).put(isf_p, eventResult.outspace);
+                            } else {
+                                next_state.get(act).remove(isf_p);
+                            }
+                            if (!eventResult.outprob.isEmpty()) {
+                                outprob_p.put(act, eventResult.outprob.toDouble());
+                            }
+                        }
+
+                        if (next_state.get(act).containsKey(isf_p)) {
+                            // Check if the source node (node_a) has state-dependent routing
+                            if (node_a.get(act) < sn.nnodes && sn.isstatedep.get(node_a.get(act), 2) == 1.0) {
+                                // see _kb/06-solver-catalog.md for rationale
+                                Map<jline.lang.nodes.Node, Matrix> stateCell_node = new HashMap<jline.lang.nodes.Node, Matrix>();
+                                for (Map.Entry<Integer, Matrix> entry : stateCell.entrySet()) {
+                                    Integer stateful_index = entry.getKey();
+                                    Matrix matrix = entry.getValue();
+                                    if (stateful_index != null && stateful_index < sn.stateful.size()) {
+                                        jline.lang.nodes.Node node = sn.stateful.get(stateful_index);
+                                        if (node != null) {
+                                            stateCell_node.put(node, matrix);
+                                        }
+                                    }
+                                }
+                                Map<jline.lang.nodes.Node, Matrix> nextState_node = new HashMap<jline.lang.nodes.Node, Matrix>();
+                                for (Map.Entry<Integer, Matrix> entry : next_state.get(act).entrySet()) {
+                                    Integer stateful_index = entry.getKey();
+                                    Matrix matrix = entry.getValue();
+                                    if (stateful_index != null && stateful_index < sn.stateful.size()) {
+                                        jline.lang.nodes.Node node = sn.stateful.get(stateful_index);
+                                        if (node != null) {
+                                            nextState_node.put(node, matrix);
+                                        }
+                                    }
+                                }
+                                jline.util.Pair<Map<jline.lang.nodes.Node, Matrix>, Map<jline.lang.nodes.Node, Matrix>> nodePairs =
+                                        new jline.util.Pair<Map<jline.lang.nodes.Node, Matrix>, Map<jline.lang.nodes.Node, Matrix>>(
+                                                stateCell_node, nextState_node);
+                                prob_sync_p.put(act, sync.get(act).passive.get(0).getProb(nodePairs));
+                            } else {
+                                prob_sync_p.put(act, sync.get(act).passive.get(0).getProb());
+                            }
+                        } else {
+                            prob_sync_p.put(act, 0.0);
+                            // see _kb/06-solver-catalog.md for rationale
+                            int Rc = sn.nclasses;
+                            if (event_a.get(act) == EventType.DEP
+                                    && sn.nvars != null && sn.nvars.getNumCols() > 2 * Rc
+                                    && sn.nvars.get(node_a.get(act), 2 * Rc) == 1) {
+                                Matrix curA = stateCell.get(isf_a);
+                                int bcol = curA.getNumCols() - 1;
+                                if (curA.get(0, bcol) == 0.0) {
+                                    Matrix blockedA = curA.copy();
+                                    blockedA.set(0, bcol, 1.0);
+                                    next_state.get(act).put(isf_a, blockedA);
+                                    next_state.get(act).put(isf_p, stateCell.get(isf_p).copy());
+                                    prob_sync_p.put(act, 1.0);
+                                    becomeBlocked = true;
+                                }
+                            }
+                        }
+                    }
+                    if (next_state.get(act).containsKey(isf_a)) {
+                        if (node_p.get(act).equals(local)) {
+                            prob_sync_p.put(act, 1.0);
+                        }
+                        if (!Double.isNaN(rate_a.get(act).toDouble())) {
+                            if (next_state.get(act).size() == stateCell.size()) {
+                                // see _kb/06-solver-catalog.md for rationale
+                                boolean blockFCR = false;
+                                int[] fcrMark = null;
+                                if (fcrOn && !node_p.get(act).equals(local) && node_p.get(act) < sn.nnodes) {
+                                    int jp = (int) sn.nodeToStation.get(node_p.get(act));
+                                    if (jp >= 0) {
+                                        int ja = (int) sn.nodeToStation.get(node_a.get(act));
+                                        int cc = class_p.get(act);
+                                        int dropIdFcr = jline.lang.constant.DropStrategy.Drop.getID();
+                                        for (int f = 0; f < nreg; f++) {
+                                            boolean[] mask = fcrMemberMask[f];
+                                            boolean waitqCc = (sn.regionrule == null || sn.regionrule.isEmpty())
+                                                    || sn.regionrule.get(f, cc) != dropIdFcr;
+                                            if (jp < mask.length && mask[jp] && (ja < 0 || ja >= mask.length || !mask[ja])) {
+                                                double[] xn = fcrXcur[f].clone();
+                                                xn[cc] += 1;
+                                                boolean bad = false;
+                                                double tot = 0;
+                                                for (int r = 0; r < sn.nclasses; r++) {
+                                                    tot += xn[r];
+                                                    if (xn[r] > fcrClassCap[f][r]) { bad = true; break; }
+                                                }
+                                                if (!bad && tot > fcrGlobalCap[f]) { bad = true; }
+                                                if (!bad && !Double.isInfinite(fcrMemCap[f])) {
+                                                    double mem = 0;
+                                                    for (int r = 0; r < sn.nclasses; r++) { mem += sn.regionsz.get(f, r) * xn[r]; }
+                                                    if (mem > fcrMemCap[f]) { bad = true; }
+                                                }
+                                                if (!bad && fcrA[f] != null && fcrB[f] != null) {
+                                                    int C = fcrA[f].getNumRows();
+                                                    for (int q = 0; q < C; q++) {
+                                                        double lhs = 0;
+                                                        for (int r = 0; r < sn.nclasses; r++) { lhs += fcrA[f].get(q, r) * xn[r]; }
+                                                        if (lhs > fcrB[f].get(q, 0)) { bad = true; break; }
+                                                    }
+                                                }
+                                                if (bad) {
+                                                    if (waitqCc) {
+                                                        fcrMark = new int[]{f, cc, node_p.get(act), 0}; // park
+                                                    } else {
+                                                        fcrMark = new int[]{f, cc, node_p.get(act), 2}; // DROP: destroyed
+                                                    }
+                                                    break;
+                                                }
+                                            } else if (jp < mask.length && mask[jp]
+                                                    && ja >= 0 && ja < mask.length && mask[ja]
+                                                    && cc != class_a.get(act)) {
+                                                // exit + gated re-entry; DROP destroys on refusal
+                                                fcrMark = new int[]{f, cc, node_p.get(act), waitqCc ? 1 : 3};
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                if (fcrMark != null) {
+                                    // suppress the passive application: the job leaves the
+                                    // upstream node; the entry is resolved at application time
+                                    int isf_pk = (int) sn.nodeToStateful.get(node_p.get(act));
+                                    next_state.get(act).put(isf_pk, stateCell.get(isf_pk).copy());
+                                    // A state-dependent route keeps the probability evaluated above on the admitted move: its closure
+                                    // reads the pre-event state and the active pointer only, so it is the same when the region refuses.
+                                    if (!(node_a.get(act) < sn.nnodes && sn.isstatedep.get(node_a.get(act), 2) == 1.0)) {
+                                        prob_sync_p.put(act, sync.get(act).passive.get(0).getProb());
+                                    }
+                                }
+                                // A true-BAS become-blocked outcome holds the job at the
+                                // active station, so it is not a departure either.
+                                if (event_a.get(act) == EventType.DEP && !blockFCR && !becomeBlocked) {
+                                    isf_p = (int) sn.nodeToStateful.get(node_p.get(act));
+                                    node_a_sf.put(act, isf_a);
+                                    node_p_sf.put(act, isf_p);
+
+                                    // Matrix original_departure = depRatesSamples.get(class_a.get(act));
+                                    // Matrix original_arrival = arvRatesSamples.get(class_p.get(act));
+                                    double added_value = (outprob_a.get(act) * outprob_p.get(act)
+                                            * rate_a.get(act).get(ia) * prob_sync_p.get(act));
+
+                                    int a_sf_act = node_a_sf.get(act);
+                                    int p_sf_act = node_p_sf.get(act);
+
+                                    double dep_value = (depRatesSamples.get(samples_collected - 1)
+                                            .get(class_a.get(act), a_sf_act) + added_value);
+                                    double arv_val = (arvRatesSamples.get(samples_collected - 1)
+                                            .get(class_p.get(act), p_sf_act) + added_value);
+
+                                    depRatesSamples.get(samples_collected - 1)
+                                            .set(class_a.get(act), a_sf_act, dep_value);
+                                    arvRatesSamples.get(samples_collected - 1)
+                                            .set(class_p.get(act), p_sf_act, arv_val);
+                                }
+                                if (node_p.get(act) < local
+                                        && csmask.get(class_a.get(act), class_p.get(act)) != 1.0
+                                        && sn.nodetype.get(node_p.get(act)) != NodeType.Source
+                                        && (rate_a.get(act).get(ia) * prob_sync_p.get(act) > 0)) {
+                                    // Error: state-dependent routing violates the class switching mask
+                                    throw new RuntimeException("Error: state-dependent routing at node "
+                                            + node_a.get(act) + " violates the class switching mask (node "
+                                            + node_a.get(act) + " -> node " + node_p.get(act) + ", class "
+                                            + class_a.get(act) + " -> class " + class_p.get(act) + ").");
+                                }
+
+                                if (isMergeA && !blockFCR && dlyRatesSamples != null) {
+                                    // Weighted like enabled_rates, NOT like depRates:
+                                    // for a simulated READ the item is already sampled
+                                    // from pread, so folding outprob_a back in would
+                                    // count p(k) twice.
+                                    Matrix dm = dlyRatesSamples.get(samples_collected - 1);
+                                    double dlyAdd = rate_a.get(act).get(ia) * prob_sync_p.get(act);
+                                    dm.set(class_a.get(act), isf_a,
+                                            dm.get(class_a.get(act), isf_a) + dlyAdd);
+                                }
+                                if (!blockFCR) {
+                                    int ctr = enabled_rates.size();
+                                    enabled_rates.put(ctr, rate_a.get(act).get(ia) * prob_sync_p.get(act));
+                                    enabled_sync.put(ctr, act);
+                                    if (fcrMark != null && enabled_fcr != null) {
+                                        enabled_fcr.put(ctr, fcrMark);
+                                    }
+                                    // START/PREEMPT tags of this arc, weighted like
+                                    // enabled_rates: they annotate the transition itself,
+                                    // so their rate is its rate. Written for EVERY action,
+                                    // not only for departures -- a retrial or a polling
+                                    // switchover starts service without being a DEP, and
+                                    // the arrival half of a departure is where most starts
+                                    // happen.
+                                    double wTag = rate_a.get(act).get(ia) * prob_sync_p.get(act);
+                                    java.util.List<int[]> tagsHere = new java.util.ArrayList<int[]>();
+                                    accumulateTags(sn, startRatesSamples, preemptRatesSamples, samples_collected - 1,
+                                            isf_a, resultA.get(act), ia, wTag, tagsHere);
+                                    if (!node_p.get(act).equals(local)) {
+                                        accumulateTags(sn, startRatesSamples, preemptRatesSamples, samples_collected - 1,
+                                                isf_p, resultP.get(act), 0, wTag, tagsHere);
+                                    }
+                                    if (enabled_tags != null) {
+                                        enabled_tags.put(ctr, tagsHere.toArray(new int[tagsHere.size()][]));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Add the START/PREEMPT counts of one successor row to the per-sample rate
+     * accumulators, and append them to TAGSHERE as [statefulIndex, class] pairs
+     * so the trace can report the tags of the transition that actually fires.
+     */
+    private static void accumulateTags(NetworkStruct sn, Map<Integer, Matrix> startRatesSamples,
+                                       Map<Integer, Matrix> preemptRatesSamples, int sample, int isf,
+                                       jline.io.Ret.EventResult res, int row, double w,
+                                       java.util.List<int[]> tagsHere) {
+        if (res == null || w == 0 || startRatesSamples == null || isf < 0) {
+            return;
+        }
+        Matrix startM = startRatesSamples.get(sample);
+        Matrix preemptM = preemptRatesSamples.get(sample);
+        if (startM == null || preemptM == null) {
+            return;
+        }
+        for (int r = 0; r < sn.nclasses; r++) {
+            double st = res.startOf(row, r);
+            if (st != 0) {
+                startM.set(r, isf, startM.get(r, isf) + w * st);
+                for (int c = 0; c < (int) st; c++) {
+                    tagsHere.add(new int[]{isf, r, 0});
+                }
+            }
+            double pr = res.preemptOf(row, r);
+            if (pr != 0) {
+                preemptM.set(r, isf, preemptM.get(r, isf) + w * pr);
+                for (int c = 0; c < (int) pr; c++) {
+                    tagsHere.add(new int[]{isf, r, 1});
+                }
+            }
+        }
+    }
+
+    /**
+     * Evaluates the global (Whittle) rate scaling phi(n) on the CURRENT
+     * sample-path state, returning the (nstations x nclasses) matrix of
+     * scalings. Solver_ctmc tabulates phi once per state of the enumerated
+     * space; a simulator has one state at a time, so the same factorization
+     * applies with the table collapsed to a single row.
+     */
+    private static Matrix gdFactorNow(NetworkStruct sn, Map<Integer, Matrix> stateCell) {
+        int M = sn.nstations;
+        int K = sn.nclasses;
+        Matrix n = new Matrix(M, K);
+        for (int ind = 0; ind < sn.nnodes; ind++) {
+            if (sn.isstation.get(ind, 0) != 1.0) {
+                continue;
+            }
+            int isf = (int) sn.nodeToStateful.get(ind);
+            int ist = (int) sn.nodeToStation.get(ind);
+            Matrix nir = ToMarginal.toMarginal(sn, ind, stateCell.get(isf), null, null, null, null, null).nir;
+            for (int r = 0; r < K; r++) {
+                n.set(ist, r, nir.get(0, r));
+            }
+        }
+        Matrix v = sn.gdscaling.apply(n);
+        Matrix out = new Matrix(M, K);
+        for (int i = 0; i < M; i++) {
+            for (int r = 0; r < K; r++) {
+                double f;
+                if (v.length() == 1) {
+                    f = v.get(0);
+                } else if (v.getNumCols() == 1) {
+                    f = v.get(i, 0);
+                } else {
+                    f = v.get(i, r);
+                }
+                if (!Double.isFinite(f) || f < 0) {
+                    throw new IllegalArgumentException("The global dependence handle returned a non-finite or negative scaling.");
+                }
+                out.set(i, r, f);
+            }
+        }
+        return out;
+    }
+}

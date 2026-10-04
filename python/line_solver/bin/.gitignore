@@ -1,0 +1,4 @@
+# LDES binaries are copied here temporarily during wheel build
+# They should not be committed - they are built from the ldes/ subtree
+ldes
+ldes.jar

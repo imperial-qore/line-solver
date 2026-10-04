@@ -1,0 +1,995 @@
+package jline.lang.state;
+
+import jline.io.Ret;
+import jline.lang.JobClass;
+import jline.lang.NetworkStruct;
+import jline.lang.constant.EventType;
+import jline.GlobalConstants;
+import jline.lang.constant.ReplacementStrategy;
+import jline.lang.nodeparam.CacheNodeParam;
+import jline.lang.nodes.Station;
+import jline.util.Maths;
+import jline.util.matrix.Matrix;
+
+import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+public class AfterEventCache implements Serializable {
+    static Ret.EventResult afterEventCache(NetworkStruct sn, int ind, EventType event, int jobClass, boolean isSimulation,
+                                           Matrix outspace, Matrix outrate, Matrix outprob, EventCache eventCache,
+                                           int M, int R,
+                                           int ist, Matrix K, Matrix Ks, Map<Station, Map<JobClass, Matrix>> mu, Map<Station, Map<JobClass, Matrix>> phi,
+                                           double V, Matrix spaceBuf, Matrix spaceSrv, Matrix spaceVar, EventCacheKey key) {
+        // job arrives in class, then reads and moves into hit or miss class, then departs
+        switch (event) {
+            case ARV:
+                for (int row = 0; row < spaceSrv.getNumRows(); row++) {
+                    spaceSrv.set(row, jobClass, spaceSrv.get(row, jobClass) + 1);
+                }
+                // buf is empty
+                outspace = Matrix.concatColumns(spaceSrv, spaceVar, null);
+                // passive action, rate is unspecified
+                outrate = new Matrix(outspace.getNumRows(), outspace.getNumRows());
+                outrate.ones();
+                outrate.scaleEq(-1);
+                break;
+            case DEP:
+                if (spaceSrv.get(jobClass) > 0) {
+                    // A retrieval-class job departs the cache only to BEGIN a retrieval
+                    // (cache -> queue). Nothing in the cache state separates such an
+                    // outbound job from an inbound one, back from the retrieval stations
+                    // and due to complete its fetch on the next READ: both sit in the same
+                    // per-class server slot. Left ambiguous, the DEP and the READ syncs are
+                    // both enabled and, both being immediate, split the probability evenly,
+                    // so a fetch spans a Geom(1/2) number of station visits. Its mean is
+                    // unchanged (E[N]=1), but its second moment gains 2*E0[F]^2 and with it
+                    // the delayed-hit queue length d_i = phi_i lambda_i E0[F_i^2]/(2 E0[F_i]),
+                    // which for an exponential fetch comes out exactly twice too large.
+                    // The per-item in-flight bit resolves the ambiguity: the outbound
+                    // departure below sets it and the READ that completes the fetch clears
+                    // it, so an outbound job (bit clear) may depart, while an inbound one
+                    // (bit set) may not and is left with its READ as the only action. The
+                    // block lifts as soon as another job shares the cache server, because
+                    // the READ cannot fire then either (it requires exactly one job present)
+                    // and the departure is the only way out of the state.
+                    Matrix var = spaceVar.copy();
+
+                    CacheNodeParam cpDep = (CacheNodeParam) sn.nodeparam.get(sn.nodes.get(ind));
+                    boolean beginBlocked = false;
+                    if (cpDep != null && cpDep.retrievalSystemCapacity > 0
+                            && cpDep.retrievalClasses != null && !cpDep.retrievalClasses.isEmpty()) {
+                        Matrix rcDep = cpDep.retrievalClasses;
+                        int itemDep = -1;
+                        for (int i = 0; i < rcDep.getNumRows() && itemDep < 0; i++) {
+                            for (int c = 0; c < rcDep.getNumCols(); c++) {
+                                if (rcDep.get(i, c) >= 0 && (int) rcDep.get(i, c) == jobClass) {
+                                    itemDep = i;
+                                    break;
+                                }
+                            }
+                        }
+                        if (itemDep >= 0) {
+                            int bitcol = cpDep.totalCacheCapacity + itemDep;
+                            if (bitcol < var.getNumCols()) {
+                                if (var.get(bitcol) != 0) {
+                                    double srvTot = 0;
+                                    for (int r = 0; r < spaceSrv.getNumCols(); r++) {
+                                        srvTot += spaceSrv.get(0, r);
+                                    }
+                                    beginBlocked = (srvTot == 1);
+                                } else {
+                                    for (int row = 0; row < var.getNumRows(); row++) {
+                                        var.set(row, bitcol, 1);
+                                    }
+                                }
+                            }
+                        } else if (jobClass < rcDep.getNumCols()) {
+                            // A read class that owns retrieval classes always switches at the
+                            // READ, into a hit, a miss or a retrieval class; its cache ->
+                            // station routing is drawn in the routing matrix only so that the
+                            // retrieval classes can inherit it, and must never carry the
+                            // reading job itself out of the cache unread.
+                            boolean ownsRetrieval = false;
+                            for (int i = 0; i < rcDep.getNumRows(); i++) {
+                                if (rcDep.get(i, jobClass) >= 0) {
+                                    ownsRetrieval = true;
+                                    break;
+                                }
+                            }
+                            if (ownsRetrieval && cpDep.hitclass != null && cpDep.missclass != null
+                                    && jobClass < cpDep.hitclass.length() && jobClass < cpDep.missclass.length()) {
+                                beginBlocked = (int) cpDep.hitclass.get(jobClass) != jobClass
+                                        && (int) cpDep.missclass.get(jobClass) != jobClass;
+                            }
+                        }
+                    }
+                    if (beginBlocked) {
+                        break;
+                    }
+
+                    for (int row = 0; row < spaceSrv.getNumRows(); row++) {
+                        spaceSrv.set(row, jobClass, spaceSrv.get(row, jobClass) - 1);
+                    }
+
+                    switch (sn.routing.get(sn.nodes.get(ind)).get(sn.jobclasses.get(jobClass))) {
+                        case RROBIN:
+                            // MATLAB: sn.nvars(ind,1:(R+class)) extracts columns 1 to R+class (1-based)
+                            // Java: columns 0 to R+jobClass (0-based), same logical data
+                            int nvarCols = R + jobClass + 1;
+                            Matrix nvar_ind = new Matrix(1, nvarCols);
+                            Matrix.extract(sn.nvars, ind, ind + 1, 0, nvarCols, nvar_ind, 0, 0);
+                            int nvar_sum = (int) nvar_ind.elementSum();
+                            // MATLAB uses 1-based indexing, Java needs 0-based
+                            int spaceVarIdx = nvar_sum - 1;
+                            int idx = -1;
+                            Matrix outlinks = sn.nodeparam.get(sn.nodes.get(ind)).outlinks.get(sn.jobclasses.get(jobClass));
+                            int numOutlinks = (int) outlinks.length();
+                            for (int row = 0; row < numOutlinks; row++) {
+                                if (var.get(spaceVarIdx) == outlinks.get(row)) {
+                                    idx = row;
+                                    break;
+                                }
+                            }
+                            if (idx >= 0 && idx < numOutlinks - 1) {
+                                var.set(spaceVarIdx, outlinks.get(idx + 1));
+                            } else {
+                                var.set(spaceVarIdx, outlinks.get(0));
+                            }
+                            break;
+                    }
+                    // buf is empty
+                    outspace = Matrix.concatColumns(spaceSrv, var, null);
+                    // immediate action
+                    outrate = new Matrix(outspace.getNumRows(), outspace.getNumRows());
+                    outrate.ones();
+                    outrate.scaleEq(GlobalConstants.Immediate);
+                    break;
+                }
+                break;
+            case READ:
+                int n = ((CacheNodeParam) sn.nodeparam.get(sn.nodes.get(ind))).nitems;
+                Matrix m = ((CacheNodeParam) sn.nodeparam.get(sn.nodes.get(ind))).itemcap;
+                int totalCacheCapacity = ((CacheNodeParam) sn.nodeparam.get(sn.nodes.get(ind))).totalCacheCapacity;
+                Matrix[][] ac = ((CacheNodeParam) sn.nodeparam.get(sn.nodes.get(ind))).accost;
+                Matrix hitclass = ((CacheNodeParam) sn.nodeparam.get(sn.nodes.get(ind))).hitclass;
+                Matrix missclass = ((CacheNodeParam) sn.nodeparam.get(sn.nodes.get(ind))).missclass;
+                Matrix retrievalClasses = ((CacheNodeParam) sn.nodeparam.get(sn.nodes.get(ind))).retrievalClasses;
+                int h = m.getNumCols();
+                Set<Integer> retrievalClassIndices = ((CacheNodeParam) sn.nodeparam.get(sn.nodes.get(ind))).retrievalClassIndices;
+                ReplacementStrategy replacement = ((CacheNodeParam) sn.nodeparam.get(sn.nodes.get(ind))).replacestrat;
+                double qadm = ((CacheNodeParam) sn.nodeparam.get(sn.nodes.get(ind))).qlru;
+
+                if (spaceSrv.sumCols(jobClass) > 0 && (int) spaceSrv.elementSum() == 1) {
+                    List<Double> p = ((CacheNodeParam) sn.nodeparam.get(sn.nodes.get(ind))).pread.get(jobClass);
+                    // Block B of the local-variable vector: per-retrieval-class counts of the
+                    // secondary requests merged onto an in-flight fetch (see State.spaceCache).
+                    // Its width and truncation level are read off the node state space rather
+                    // than from nodeparam, because only sn.space is propagated back from the
+                    // state-space generator.
+                    int[][] rcMap = State.cacheRetrievalClassMap(sn, ind);
+                    int[] rcList = rcMap[0], rcItems = rcMap[1], rcOrigClass = rcMap[2];
+                    int blockBOffset = totalCacheCapacity + n;
+                    int widthB = (spaceVar.getNumCols() - blockBOffset == rcList.length) ? rcList.length : 0;
+                    // Simulation has no enumerated state space, hence no truncation: a fetch
+                    // may absorb any number of secondary requests.
+                    int maxPending = isSimulation ? Integer.MAX_VALUE : 0;
+                    if (widthB > 0 && !isSimulation) {
+                        Matrix spc = sn.space.get(sn.stateful.get((int) sn.nodeToStateful.get(ind)));
+                        if (spc != null && spc.getNumRows() > 0) {
+                            for (int r2 = 0; r2 < spc.getNumRows(); r2++) {
+                                double tot = 0;
+                                for (int c2 = spc.getNumCols() - widthB; c2 < spc.getNumCols(); c2++) {
+                                    tot += spc.get(r2, c2);
+                                }
+                                maxPending = Math.max(maxPending, (int) tot);
+                            }
+                        }
+                    }
+                    Matrix spaceSrvK = new Matrix(0, 0);
+                    Matrix spaceVarK = new Matrix(0, 0);
+                    outrate = new Matrix(0, 0);
+                    Matrix en = new Matrix(spaceSrv.getNumRows(), 1);
+                    en.zero();
+                    boolean any_en = false;
+                    for (int row = 0; row < en.getNumRows(); row++) {
+                        if (spaceSrv.get(row, jobClass) > 0) {
+                            en.set(row, 0, 1);
+                            any_en = true;
+                        }
+                    }
+
+                    if (any_en) {
+                        // for e=find(en)'
+                        for (int e = 0; e < en.getNumRows(); e++) {
+                            if (en.get(e) == 1) {
+                                int kset = -1;
+                                int kend = -1;
+                                int l = -1;
+                                // If a retrieval is returning, it can only read one value
+                                if (isSimulation || retrievalClassIndices.contains(jobClass)) {
+                                    // pick one item
+                                    List<Double> pcumsum = new ArrayList<Double>();
+                                    pcumsum.add(p.get(0));
+                                    for (int i = 1; i < p.size(); i++) {
+                                        pcumsum.add(p.get(i) + pcumsum.get(i - 1));
+                                    }
+                                    double rand = Maths.rand();
+                                    for (int row = 0; row < pcumsum.size(); row++) {
+                                        if (rand > pcumsum.get(row)) {
+                                            kset = row;
+                                        }
+                                    }
+                                    kset++;
+                                    kend = kset + 1;
+                                    // pick one entry list
+                                    Matrix accumsum = ac[jobClass][kset].getRow(0);
+                                    accumsum = accumsum.cumsumViaRow();
+                                    rand = Maths.rand();
+                                    for (int col = 0; col < accumsum.getNumCols(); col++) {
+                                        if (rand > accumsum.get(col)) {
+                                            l = col;
+                                        }
+                                    }
+                                    l++;
+                                } else {
+                                    // Check if varsparam is set for this node (used in testing)
+                                    if (sn.varsparam != null && sn.varsparam.get(ind, 0) >= 0) {
+                                        // Use the specific item specified in varsparam
+                                        kset = (int) sn.varsparam.get(ind, 0);
+                                        kend = kset + 1;
+                                    } else {
+                                        kset = 0;
+                                        kend = n;
+                                    }
+                                }
+
+                                // request to item k
+                                for (int k = kset; k < kend; k++) {
+                                    Matrix spaceSrvE = spaceSrv.getRow(e);
+                                    spaceSrvE.set(jobClass, spaceSrvE.get(jobClass) - 1);
+                                    Matrix var = spaceVar.getRow(e);
+
+                                    int posk = -1;
+                                    for (int col = 0; col < totalCacheCapacity; col++) {
+                                        if (var.get(col) == k + 1) {
+                                            posk = col;
+                                            break;
+                                        }
+                                    }
+
+                                    // CACHE MISS, either begin retrieval or retrieved item can enter any list based on
+                                    // accessCost
+                                    if (posk == -1) {
+                                        Matrix retrievalClass = retrievalClasses.getRow(k);
+
+                                        // A retrieval-class job whose item is not recorded in the bitmap is
+                                        // outbound: it has not reached the retrieval stations yet, so it has no
+                                        // fetch to complete and only its departure is enabled.
+                                        if (retrievalClassIndices.contains(jobClass) &&
+                                                !isInRetrievalSystem(var, k, totalCacheCapacity)) {
+                                            continue;
+                                        }
+
+                                        // If the item is not returning from retrieval, it must be retrieved or there is
+                                        // a delayed hit, only begin a retrieval if the job class can switch to a
+                                        // retrieval pending class for item k
+                                        if (!retrievalClassIndices.contains(jobClass) &&
+                                                jobClass < retrievalClasses.getNumCols() &&
+                                                retrievalClass.get(jobClass) != -1) {
+                                            // If retrieval has not started for the item, then begin it and
+                                            // mark item k as being fetched. A concurrent request for an item
+                                            // already being fetched is a delayed hit: it merges onto the
+                                            // in-flight fetch and is held in block B until that fetch completes.
+                                            if (!isInRetrievalSystem(var, k, totalCacheCapacity)) {
+                                                // The job switches to item k's retrieval class and waits in the
+                                                // cache server for the departure that carries it to the retrieval
+                                                // stations. That departure, not this READ, sets the in-flight bit,
+                                                // so that an outbound retrieval job (bit clear) is distinguishable
+                                                // from an inbound one (bit set); see the DEP case above.
+                                                spaceSrvE.set((int) retrievalClass.get(jobClass), spaceSrvE.get((int) retrievalClass.get(jobClass)) + 1);
+                                            } else {
+                                                int rClassVal = (int) retrievalClass.get(jobClass);
+                                                int bslot = -1;
+                                                for (int j = 0; j < rcList.length; j++) {
+                                                    if (rcList[j] == rClassVal) { bslot = j; break; }
+                                                }
+                                                double pendTot = 0;
+                                                for (int j = 0; j < widthB; j++) {
+                                                    pendTot += var.get(blockBOffset + j);
+                                                }
+                                                if (bslot < 0 || blockBOffset + bslot >= var.getNumCols() || pendTot >= maxPending) {
+                                                    continue; // beyond the delayed-hit truncation level
+                                                }
+                                                var.set(blockBOffset + bslot, var.get(blockBOffset + bslot) + 1);
+                                            }
+
+                                            if (spaceSrvK.isEmpty()) {
+                                                spaceSrvK = spaceSrvE.copy();
+                                            } else {
+                                                spaceSrvK = Matrix.concatRows(spaceSrvK, spaceSrvE, null);
+                                            }
+                                            if (spaceVarK.isEmpty()) {
+                                                spaceVarK = var.copy();
+                                            } else {
+                                                spaceVarK = Matrix.concatRows(spaceVarK, var, null);
+                                            }
+
+                                            if (isSimulation) {
+                                                if (outrate.isEmpty()) {
+                                                    outrate = new Matrix(1, 1);
+                                                    outrate.set(0, 0, GlobalConstants.Immediate);
+                                                } else {
+                                                    Matrix bottom_row = new Matrix(1, 1);
+                                                    bottom_row.set(0, 0, GlobalConstants.Immediate);
+                                                    outrate = Matrix.concatRows(outrate, bottom_row, null);
+                                                }
+                                                outprob = Matrix.concatRows(outprob, Matrix.singleton(p.get(k)), null);
+                                                continue;
+                                            }
+
+                                            if (outrate.isEmpty()) {
+                                                outrate = new Matrix(1, 1);
+                                                outrate.set(0, 0, p.get(k) * GlobalConstants.Immediate);
+                                            } else {
+                                                Matrix bottom_row = new Matrix(1, 1);
+                                                bottom_row.set(0, 0, p.get(k) * GlobalConstants.Immediate);
+                                                outrate = Matrix.concatRows(outrate, bottom_row, null);
+                                            }
+                                            continue;
+                                        }
+                                        // Item has now been retrieved and can be marked as a miss. Every
+                                        // secondary request merged onto this fetch is released in the same
+                                        // transition and departs as a delayed hit, in the hit class of the
+                                        // job class that issued it.
+                                        spaceSrvE.set((int) missclass.get(jobClass), spaceSrvE.get((int) missclass.get(jobClass)) + 1);
+                                        removeFromRetrievalSystem(var, k, totalCacheCapacity);
+                                        for (int bslot = 0; bslot < widthB; bslot++) {
+                                            if (rcItems[bslot] != k + 1) continue;
+                                            int bcol = blockBOffset + bslot;
+                                            if (bcol < var.getNumCols() && var.get(bcol) > 0) {
+                                                int hc = (int) hitclass.get(rcOrigClass[bslot]);
+                                                if (hc >= 0) {
+                                                    spaceSrvE.set(hc, spaceSrvE.get(hc) + var.get(bcol));
+                                                }
+                                                var.set(bcol, 0);
+                                            }
+                                        }
+                                        Matrix varp;
+                                        switch (replacement) {
+                                            case FIFO:
+                                            case LRU:
+                                            case SFIFO:
+                                            case HLRU:
+                                                if (isSimulation) {
+                                                    int listidx = l - 1; // l is accessCost column index, listidx is actual list (0-indexed)
+                                                    int headPos = cpos(m, listidx, 0);
+                                                    int tailPos = cpos(m, listidx, (int) m.get(listidx) - 1);
+                                                    varp = var.copy();
+                                                    // Shift items in list listidx to make room at the head
+                                                    if (m.get(listidx) > 1) {
+                                                        Matrix.extract(var, 0, 1, headPos, tailPos, varp, 0, headPos + 1);
+                                                    }
+                                                    varp.set(headPos, k + 1); // head of list listidx
+                                                    if (spaceSrvK.isEmpty()) {
+                                                        spaceSrvK = spaceSrvE.copy();
+                                                    } else {
+                                                        spaceSrvK = Matrix.concatRows(spaceSrvK, spaceSrvE, null);
+                                                    }
+                                                    if (spaceVarK.isEmpty()) {
+                                                        spaceVarK = varp.copy();
+                                                    } else {
+                                                        spaceVarK = Matrix.concatRows(spaceVarK, varp, null);
+                                                    }
+                                                    // no p(k) weighting since that goes in the outprob vec
+                                                    if (outrate.isEmpty()) {
+                                                        outrate = new Matrix(1, 1);
+                                                        outrate.set(0, 0, GlobalConstants.Immediate);
+                                                    } else {
+                                                        Matrix bottom_row = new Matrix(1, 1);
+                                                        bottom_row.set(0, 0, GlobalConstants.Immediate);
+                                                        outrate = Matrix.concatRows(outrate, bottom_row, null);
+                                                    }
+                                                    outprob.set(0, 0, ac[jobClass][kset].get(0, l) * p.get(kset));
+                                                } else {
+                                                    // Cache reject (column 0): pass through without caching
+                                                    if (ac[jobClass][k].get(0, 0) > 0) {
+                                                        varp = var.copy();
+                                                        if (spaceSrvK.isEmpty()) {
+                                                            spaceSrvK = spaceSrvE.copy();
+                                                        } else {
+                                                            spaceSrvK = Matrix.concatRows(spaceSrvK, spaceSrvE, null);
+                                                        }
+                                                        if (spaceVarK.isEmpty()) {
+                                                            spaceVarK = varp.copy();
+                                                        } else {
+                                                            spaceVarK = Matrix.concatRows(spaceVarK, varp, null);
+                                                        }
+                                                        if (outrate.isEmpty()) {
+                                                            outrate = new Matrix(1, 1);
+                                                            outrate.set(0, 0, ac[jobClass][k].get(0, 0) * p.get(k) * GlobalConstants.Immediate);
+                                                        } else {
+                                                            Matrix bottom_row = new Matrix(1, 1);
+                                                            bottom_row.set(0, 0, ac[jobClass][k].get(0, 0) * p.get(k) * GlobalConstants.Immediate);
+                                                            outrate = Matrix.concatRows(outrate, bottom_row, null);
+                                                        }
+                                                        outprob = Matrix.concatRows(outprob, Matrix.singleton(1.0), null);
+                                                    }
+                                                    // Iterate over all possible target lists (columns 1 to h)
+                                                    for (l = 1; l <= h; l++) {
+                                                        int listidx = l - 1; // l is accessCost column index, listidx is actual list (0-indexed)
+                                                        int headPos = cpos(m, listidx, 0);
+                                                        int tailPos = cpos(m, listidx, (int) m.get(listidx) - 1);
+                                                        varp = var.copy();
+                                                        // Shift items in list listidx to make room at the head
+                                                        if (m.get(listidx) > 1) {
+                                                            Matrix.extract(var, 0, 1, headPos, tailPos, varp, 0, headPos + 1);
+                                                        }
+                                                        varp.set(headPos, k + 1); // head of list listidx
+                                                        if (spaceSrvK.isEmpty()) {
+                                                            spaceSrvK = spaceSrvE.copy();
+                                                        } else {
+                                                            spaceSrvK = Matrix.concatRows(spaceSrvK, spaceSrvE, null);
+                                                        }
+                                                        if (spaceVarK.isEmpty()) {
+                                                            spaceVarK = varp.copy();
+                                                        } else {
+                                                            spaceVarK = Matrix.concatRows(spaceVarK, varp, null);
+                                                        }
+                                                        if (outrate.isEmpty()) {
+                                                            outrate = new Matrix(1, 1);
+                                                            outrate.set(0, 0, ac[jobClass][k].get(0, l) * p.get(k) * GlobalConstants.Immediate);
+                                                        } else {
+                                                            Matrix bottom_row = new Matrix(1, 1);
+                                                            bottom_row.set(0, 0, ac[jobClass][k].get(0, l) * p.get(k) * GlobalConstants.Immediate);
+                                                            outrate = Matrix.concatRows(outrate, bottom_row, null);
+                                                        }
+                                                        outprob = Matrix.concatRows(outprob, Matrix.singleton(1.0), null);
+                                                    }
+                                                }
+                                                break;
+                                            case RR:
+                                                if (isSimulation) {
+                                                    int listidx = l - 1; // l is accessCost column index, listidx is actual list (0-indexed)
+                                                    int headPos = cpos(m, listidx, 0);
+                                                    varp = var.copy();
+                                                    // randi(m(listidx),1,1)
+                                                    int r = (int) (Maths.rand() * m.get(listidx));
+                                                    varp.set(headPos + r, k + 1);
+                                                    if (spaceSrvK.isEmpty()) {
+                                                        spaceSrvK = spaceSrvE.copy();
+                                                    } else {
+                                                        spaceSrvK = Matrix.concatRows(spaceSrvK, spaceSrvE, null);
+                                                    }
+                                                    if (spaceVarK.isEmpty()) {
+                                                        spaceVarK = varp.copy();
+                                                    } else {
+                                                        spaceVarK = Matrix.concatRows(spaceVarK, varp, null);
+                                                    }
+                                                    if (outrate.isEmpty()) {
+                                                        outrate = new Matrix(1, 1);
+                                                        outrate.set(0, 0, GlobalConstants.Immediate);
+                                                    } else {
+                                                        Matrix bottom_row = new Matrix(1, 1);
+                                                        bottom_row.set(0, 0, GlobalConstants.Immediate);
+                                                        outrate = Matrix.concatRows(outrate, bottom_row, null);
+                                                    }
+                                                    outprob.set(0, 0, ac[jobClass][kset].get(0, l) * p.get(kset));
+                                                } else {
+                                                    // Cache reject (column 0): pass through without caching
+                                                    if (ac[jobClass][k].get(0, 0) > 0) {
+                                                        varp = var.copy();
+                                                        if (spaceSrvK.isEmpty()) {
+                                                            spaceSrvK = spaceSrvE.copy();
+                                                        } else {
+                                                            spaceSrvK = Matrix.concatRows(spaceSrvK, spaceSrvE, null);
+                                                        }
+                                                        if (spaceVarK.isEmpty()) {
+                                                            spaceVarK = varp.copy();
+                                                        } else {
+                                                            spaceVarK = Matrix.concatRows(spaceVarK, varp, null);
+                                                        }
+                                                        if (outrate.isEmpty()) {
+                                                            outrate = new Matrix(1, 1);
+                                                            outrate.set(0, 0, ac[jobClass][k].get(0, 0) * p.get(k) * GlobalConstants.Immediate);
+                                                        } else {
+                                                            Matrix bottom_row = new Matrix(1, 1);
+                                                            bottom_row.set(0, 0, ac[jobClass][k].get(0, 0) * p.get(k) * GlobalConstants.Immediate);
+                                                            outrate = Matrix.concatRows(outrate, bottom_row, null);
+                                                        }
+                                                    }
+                                                    // Iterate over all possible target lists
+                                                    for (l = 1; l <= h; l++) {
+                                                        int listidx = l - 1; // l is accessCost column index, listidx is actual list (0-indexed)
+                                                        int headPos = cpos(m, listidx, 0);
+                                                        // random position in list listidx
+                                                        for (int r = 0; r < (int) m.get(listidx); r++) {
+                                                            varp = var.copy();
+                                                            varp.set(headPos + r, k + 1);
+                                                            if (spaceSrvK.isEmpty()) {
+                                                                spaceSrvK = spaceSrvE.copy();
+                                                            } else {
+                                                                spaceSrvK = Matrix.concatRows(spaceSrvK, spaceSrvE, null);
+                                                            }
+                                                            if (spaceVarK.isEmpty()) {
+                                                                spaceVarK = varp.copy();
+                                                            } else {
+                                                                spaceVarK = Matrix.concatRows(spaceVarK, varp, null);
+                                                            }
+                                                            if (outrate.isEmpty()) {
+                                                                outrate = new Matrix(1, 1);
+                                                                outrate.set(0, 0, ac[jobClass][k].get(0, l) * p.get(k) / m.get(listidx) * GlobalConstants.Immediate);
+                                                            } else {
+                                                                Matrix bottom_row = new Matrix(1, 1);
+                                                                bottom_row.set(0, 0, ac[jobClass][k].get(0, l) * p.get(k) / m.get(listidx) * GlobalConstants.Immediate);
+                                                                outrate = Matrix.concatRows(outrate, bottom_row, null);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                break;
+                                            case QLRU:
+                                                // q-LRU: admit (LRU head insert) with probability q, else pass through.
+                                                if (isSimulation) {
+                                                    int listidx = l - 1;
+                                                    varp = var.copy();
+                                                    if (listidx >= 0 && Maths.rand() <= qadm) {
+                                                        int headPos = cpos(m, listidx, 0);
+                                                        int tailPos = cpos(m, listidx, (int) m.get(listidx) - 1);
+                                                        if (m.get(listidx) > 1) {
+                                                            Matrix.extract(var, 0, 1, headPos, tailPos, varp, 0, headPos + 1);
+                                                        }
+                                                        varp.set(headPos, k + 1);
+                                                    }
+                                                    spaceSrvK = spaceSrvK.isEmpty() ? spaceSrvE.copy() : Matrix.concatRows(spaceSrvK, spaceSrvE, null);
+                                                    spaceVarK = spaceVarK.isEmpty() ? varp.copy() : Matrix.concatRows(spaceVarK, varp, null);
+                                                    if (outrate.isEmpty()) {
+                                                        outrate = new Matrix(1, 1);
+                                                        outrate.set(0, 0, GlobalConstants.Immediate);
+                                                    } else {
+                                                        Matrix bottom_row = new Matrix(1, 1);
+                                                        bottom_row.set(0, 0, GlobalConstants.Immediate);
+                                                        outrate = Matrix.concatRows(outrate, bottom_row, null);
+                                                    }
+                                                    outprob.set(0, 0, ac[jobClass][kset].get(0, l) * p.get(kset));
+                                                } else {
+                                                    double rejw = ac[jobClass][k].get(0, 0) + (1 - qadm) * (1 - ac[jobClass][k].get(0, 0));
+                                                    if (rejw > 0) {
+                                                        varp = var.copy();
+                                                        spaceSrvK = spaceSrvK.isEmpty() ? spaceSrvE.copy() : Matrix.concatRows(spaceSrvK, spaceSrvE, null);
+                                                        spaceVarK = spaceVarK.isEmpty() ? varp.copy() : Matrix.concatRows(spaceVarK, varp, null);
+                                                        if (outrate.isEmpty()) {
+                                                            outrate = new Matrix(1, 1);
+                                                            outrate.set(0, 0, rejw * p.get(k) * GlobalConstants.Immediate);
+                                                        } else {
+                                                            Matrix bottom_row = new Matrix(1, 1);
+                                                            bottom_row.set(0, 0, rejw * p.get(k) * GlobalConstants.Immediate);
+                                                            outrate = Matrix.concatRows(outrate, bottom_row, null);
+                                                        }
+                                                        outprob = Matrix.concatRows(outprob, Matrix.singleton(1.0), null);
+                                                    }
+                                                    for (l = 1; l <= h; l++) {
+                                                        int listidx = l - 1;
+                                                        int headPos = cpos(m, listidx, 0);
+                                                        int tailPos = cpos(m, listidx, (int) m.get(listidx) - 1);
+                                                        varp = var.copy();
+                                                        if (m.get(listidx) > 1) {
+                                                            Matrix.extract(var, 0, 1, headPos, tailPos, varp, 0, headPos + 1);
+                                                        }
+                                                        varp.set(headPos, k + 1);
+                                                        spaceSrvK = spaceSrvK.isEmpty() ? spaceSrvE.copy() : Matrix.concatRows(spaceSrvK, spaceSrvE, null);
+                                                        spaceVarK = spaceVarK.isEmpty() ? varp.copy() : Matrix.concatRows(spaceVarK, varp, null);
+                                                        if (outrate.isEmpty()) {
+                                                            outrate = new Matrix(1, 1);
+                                                            outrate.set(0, 0, qadm * ac[jobClass][k].get(0, l) * p.get(k) * GlobalConstants.Immediate);
+                                                        } else {
+                                                            Matrix bottom_row = new Matrix(1, 1);
+                                                            bottom_row.set(0, 0, qadm * ac[jobClass][k].get(0, l) * p.get(k) * GlobalConstants.Immediate);
+                                                            outrate = Matrix.concatRows(outrate, bottom_row, null);
+                                                        }
+                                                        outprob = Matrix.concatRows(outprob, Matrix.singleton(1.0), null);
+                                                    }
+                                                }
+                                                break;
+                                        }
+                                    }
+                                    // CACHE HIT in list i < h, move to list i+1
+                                    else if (posk < (m.elementSum() - m.get(h - 1))) {
+                                        spaceSrvE.set((int) hitclass.get(jobClass), spaceSrvE.get((int) hitclass.get(jobClass)) + 1);
+                                        // i = min(find(posk <= cumsum(m)));
+                                        int i = -1;
+                                        Matrix mcumsum = m.cumsumViaRow();
+                                        for (int col = 0; col < mcumsum.getNumCols(); col++) {
+                                            if (posk < mcumsum.get(col)) {
+                                                i = col;
+                                                // quit for loop once get the first index that met the condition
+                                                break;
+                                            }
+                                        }
+                                        // j = posk - sum(m(1:i-1));
+                                        int j = posk;
+                                        for (int m_ind = 0; m_ind < i; m_ind++) {
+                                            j -= m.get(m_ind);
+                                        }
+
+                                        switch (replacement) {
+                                            case FIFO:
+                                                if (isSimulation) {
+                                                    Matrix varp = var.copy();
+
+                                                    // probchoose(ac{class,k}(1+i,(1+i):end)/sum(ac{class,k}(1+i,(1+i):end)))
+                                                    Matrix aci = new Matrix(1, ac[jobClass][k].getNumCols() - (i + 1));
+                                                    Matrix.extract(ac[jobClass][k], i + 1, i + 2,
+                                                            i + 1, ac[jobClass][k].getNumCols(),
+                                                            aci, 0, 0);
+                                                    aci = aci.scale(1 / aci.elementSum());
+                                                    int probchoose = Maths.probchoose(aci);
+                                                    int inew = i + probchoose;
+
+                                                    if (inew != i) {
+                                                        varp.set(cpos(m, i, j), var.get(cpos(m, inew, (int) m.get(inew) - 1)));
+                                                        Matrix.extract(var, 0, 1, cpos(m, inew, 0), cpos(m, inew, (int) m.get(inew) - 1), varp, 0, cpos(m, inew, 1));
+                                                        varp.set(cpos(m, inew, 0), k + 1);
+                                                    }
+
+                                                    if (spaceSrvK.isEmpty()) {
+                                                        spaceSrvK = spaceSrvE.copy();
+                                                    } else {
+                                                        spaceSrvK = Matrix.concatRows(spaceSrvK, spaceSrvE, null);
+                                                    }
+                                                    if (spaceVarK.isEmpty()) {
+                                                        spaceVarK = varp.copy();
+                                                    } else {
+                                                        spaceVarK = Matrix.concatRows(spaceVarK, varp, null);
+                                                    }
+                                                    if (outrate.isEmpty()) {
+                                                        outrate = new Matrix(1, 1);
+                                                        outrate.set(0, 0, GlobalConstants.Immediate);
+                                                        outprob = Matrix.concatRows(outprob, Matrix.singleton(ac[jobClass][k].get(1 + i, 1 + inew) * p.get(k).doubleValue()), null);
+                                                    } else {
+                                                        Matrix bottom_row = new Matrix(1, 1);
+                                                        bottom_row.set(0, 0, GlobalConstants.Immediate);
+                                                        outrate = Matrix.concatRows(outrate, bottom_row, null);
+                                                    }
+                                                } else {
+                                                    // MATLAB: for inew = i:h (h = numel(m), 1-indexed)
+                                                    // In Java (0-indexed): inew goes from i to h-1
+                                                    for (int inew = i; inew < h; inew++) {
+                                                        Matrix varp = var.copy();
+                                                        varp.set(cpos(m, i, j), var.get(cpos(m, inew, (int) m.get(inew) - 1)));
+                                                        if (m.get(inew) > 1) {
+                                                            Matrix.extract(var, 0, 1, cpos(m, inew, 0), cpos(m, inew, (int) m.get(inew) - 1), varp, 0, cpos(m, inew, 1));
+                                                        }
+                                                        varp.set(cpos(m, inew, 0), k + 1);
+
+                                                        if (spaceSrvK.isEmpty()) {
+                                                            spaceSrvK = spaceSrvE.copy();
+                                                        } else {
+                                                            spaceSrvK = Matrix.concatRows(spaceSrvK, spaceSrvE, null);
+                                                        }
+                                                        if (spaceVarK.isEmpty()) {
+                                                            spaceVarK = varp.copy();
+                                                        } else {
+                                                            spaceVarK = Matrix.concatRows(spaceVarK, varp, null);
+                                                        }
+                                                        if (outrate.isEmpty()) {
+                                                            outrate = new Matrix(1, 1);
+                                                            outrate.set(0, 0, ac[jobClass][k].get(1 + i, 1 + inew) * p.get(k) * GlobalConstants.Immediate);
+                                                        } else {
+                                                            Matrix bottom_row = new Matrix(1, 1);
+                                                            bottom_row.set(0, 0, ac[jobClass][k].get(1 + i, 1 + inew) * p.get(k) * GlobalConstants.Immediate);
+                                                            outrate = Matrix.concatRows(outrate, bottom_row, null);
+                                                        }
+                                                    }
+                                                }
+                                                break;
+                                            case RR:
+                                                if (isSimulation) {
+                                                    Matrix varp = var.copy();
+
+                                                    // probchoose(ac{class,k}(1+i,(1+i):end)/sum(ac{class,k}(1+i,(1+i):end)))
+                                                    Matrix aci = new Matrix(1, ac[jobClass][k].getNumCols() - (i + 1));
+                                                    Matrix.extract(ac[jobClass][k], i + 1, i + 2,
+                                                            i + 1, ac[jobClass][k].getNumCols(),
+                                                            aci, 0, 0);
+                                                    aci = aci.scale(1 / aci.elementSum());
+                                                    int probchoose = Maths.probchoose(aci);
+                                                    int inew = i + probchoose;
+
+                                                    int r = (int) (Maths.rand() * m.get(inew));
+                                                    varp.set(cpos(m, i, j), var.get(cpos(m, inew, r)));
+                                                    varp.set(cpos(m, inew, r), k + 1);
+                                                    outprob = Matrix.concatRows(outprob, Matrix.singleton(ac[jobClass][k].get(1 + i, 1 + inew) * p.get(k).doubleValue() / m.get(inew)), null);
+
+                                                    if (spaceSrvK.isEmpty()) {
+                                                        spaceSrvK = spaceSrvE.copy();
+                                                    } else {
+                                                        spaceSrvK = Matrix.concatRows(spaceSrvK, spaceSrvE, null);
+                                                    }
+                                                    if (spaceVarK.isEmpty()) {
+                                                        spaceVarK = varp.copy();
+                                                    } else {
+                                                        spaceVarK = Matrix.concatRows(spaceVarK, varp, null);
+                                                    }
+                                                    if (outrate.isEmpty()) {
+                                                        outrate = new Matrix(1, 1);
+                                                        outrate.set(0, 0, GlobalConstants.Immediate);
+                                                    } else {
+                                                        Matrix bottom_row = new Matrix(1, 1);
+                                                        bottom_row.set(0, 0, GlobalConstants.Immediate);
+                                                        outrate = Matrix.concatRows(outrate, bottom_row, null);
+                                                    }
+                                                } else {
+                                                    for (int inew = i; inew < h; inew++) {
+                                                        for (int r = 0; r < (int) m.get(inew); r++) {
+                                                            Matrix varp = var.copy();
+                                                            varp.set(cpos(m, i, j), var.get(cpos(m, inew, r)));
+                                                            varp.set(cpos(m, inew, r), k + 1);
+
+                                                            if (spaceSrvK.isEmpty()) {
+                                                                spaceSrvK = spaceSrvE.copy();
+                                                            } else {
+                                                                spaceSrvK = Matrix.concatRows(spaceSrvK, spaceSrvE, null);
+                                                            }
+                                                            if (spaceVarK.isEmpty()) {
+                                                                spaceVarK = varp.copy();
+                                                            } else {
+                                                                spaceVarK = Matrix.concatRows(spaceVarK, varp, null);
+                                                            }
+                                                            if (outrate.isEmpty()) {
+                                                                outrate = new Matrix(1, 1);
+                                                                outrate.set(0, 0, ac[jobClass][k].get(1 + i, 1 + inew) * p.get(k) / m.get(inew) * GlobalConstants.Immediate);
+                                                            } else {
+                                                                Matrix bottom_row = new Matrix(1, 1);
+                                                                bottom_row.set(0, 0, ac[jobClass][k].get(1 + i, 1 + inew) * p.get(k) / m.get(inew) * GlobalConstants.Immediate);
+                                                                outrate = Matrix.concatRows(outrate, bottom_row, null);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                break;
+                                            case LRU:
+                                            case SFIFO:
+                                            case HLRU:
+                                            case QLRU:
+                                                if (isSimulation) {
+                                                    Matrix varp = var.copy();
+
+                                                    // probchoose(ac{class,k}(1+i,(1+i):end)/sum(ac{class,k}(1+i,(1+i):end)))
+                                                    Matrix aci = new Matrix(1, ac[jobClass][k].getNumCols() - (i + 1));
+                                                    Matrix.extract(ac[jobClass][k], i + 1, i + 2,
+                                                            i + 1, ac[jobClass][k].getNumCols(),
+                                                            aci, 0, 0);
+                                                    aci = aci.scale(1 / aci.elementSum());
+                                                    int probchoose = Maths.probchoose(aci);
+                                                    int inew = i + probchoose;
+
+                                                    Matrix.extract(var, 0, 1, cpos(m, i, 0), cpos(m, i, j), varp, 0, cpos(m, i, 1));
+                                                    varp.set(cpos(m, i, 0), var.get(cpos(m, inew, (int) m.get(inew) - 1)));
+                                                    Matrix.extract(var, 0, 1, cpos(m, inew, 0), cpos(m, inew, (int) m.get(inew) - 1), varp, 0, cpos(m, inew, 1));
+                                                    varp.set(cpos(m, inew, 0), k + 1);
+
+                                                    if (spaceSrvK.isEmpty()) {
+                                                        spaceSrvK = spaceSrvE.copy();
+                                                    } else {
+                                                        spaceSrvK = Matrix.concatRows(spaceSrvK, spaceSrvE, null);
+                                                    }
+                                                    if (spaceVarK.isEmpty()) {
+                                                        spaceVarK = varp.copy();
+                                                    } else {
+                                                        spaceVarK = Matrix.concatRows(spaceVarK, varp, null);
+                                                    }
+                                                    if (outrate.isEmpty()) {
+                                                        outrate = new Matrix(1, 1);
+                                                        outrate.set(0, 0, GlobalConstants.Immediate);
+                                                    } else {
+                                                        Matrix bottom_row = new Matrix(1, 1);
+                                                        bottom_row.set(0, 0, GlobalConstants.Immediate);
+                                                        outrate = Matrix.concatRows(outrate, bottom_row, null);
+                                                    }
+                                                    outprob = Matrix.concatRows(outprob, Matrix.singleton(ac[jobClass][k].get(1 + i, 1 + inew) * p.get(k).doubleValue()), null);
+                                                } else {
+                                                    for (int inew = i; inew < h; inew++) {
+                                                        Matrix varp = var.copy();
+                                                        if (j > 0) {
+                                                            Matrix.extract(var, 0, 1, cpos(m, i, 0), cpos(m, i, j), varp, 0, cpos(m, i, 1));
+                                                        }
+                                                        varp.set(cpos(m, i, 0), var.get(cpos(m, inew, (int) m.get(inew) - 1)));
+                                                        if (m.get(inew) > 1) {
+                                                            Matrix.extract(var, 0, 1, cpos(m, inew, 0), cpos(m, inew, (int) m.get(inew) - 1), varp, 0, cpos(m, inew, 1));
+                                                        }
+                                                        varp.set(cpos(m, inew, 0), k + 1);
+
+                                                        if (spaceSrvK.isEmpty()) {
+                                                            spaceSrvK = spaceSrvE.copy();
+                                                        } else {
+                                                            spaceSrvK = Matrix.concatRows(spaceSrvK, spaceSrvE, null);
+                                                        }
+                                                        if (spaceVarK.isEmpty()) {
+                                                            spaceVarK = varp.copy();
+                                                        } else {
+                                                            spaceVarK = Matrix.concatRows(spaceVarK, varp, null);
+                                                        }
+                                                        if (outrate.isEmpty()) {
+                                                            outrate = new Matrix(1, 1);
+                                                            outrate.set(0, 0, ac[jobClass][k].get(1 + i, 1 + inew) * p.get(k) * GlobalConstants.Immediate);
+                                                        } else {
+                                                            Matrix bottom_row = new Matrix(1, 1);
+                                                            bottom_row.set(0, 0, ac[jobClass][k].get(1 + i, 1 + inew) * p.get(k) * GlobalConstants.Immediate);
+                                                            outrate = Matrix.concatRows(outrate, bottom_row, null);
+                                                        }
+                                                    }
+                                                }
+                                                break;
+                                        }
+                                    }
+                                    // CACHE HIT in list h
+                                    else {
+                                        spaceSrvE.set((int) hitclass.get(jobClass), spaceSrvE.get((int) hitclass.get(jobClass)) + 1);
+                                        int i = h;
+                                        // j = posk - sum(m(1:i-1));
+                                        int j = posk;
+                                        for (int m_ind = 0; m_ind < i - 1; m_ind++) {
+                                            j -= m.get(m_ind);
+                                        }
+
+                                        switch (replacement) {
+                                            case RR:
+                                            case FIFO:
+                                            case SFIFO:
+                                                if (spaceSrvK.isEmpty()) {
+                                                    spaceSrvK = spaceSrvE.copy();
+                                                } else {
+                                                    spaceSrvK = Matrix.concatRows(spaceSrvK, spaceSrvE, null);
+                                                }
+                                                if (spaceVarK.isEmpty()) {
+                                                    spaceVarK = var.copy();
+                                                } else {
+                                                    spaceVarK = Matrix.concatRows(spaceVarK, var, null);
+                                                }
+
+                                                if (isSimulation) {
+                                                    if (outrate.isEmpty()) {
+                                                        outrate = new Matrix(1, 1);
+                                                        outrate.set(0, 0, GlobalConstants.Immediate);
+                                                    } else {
+                                                        Matrix bottom_row = new Matrix(1, 1);
+                                                        bottom_row.set(0, 0, GlobalConstants.Immediate);
+                                                        outrate = Matrix.concatRows(outrate, bottom_row, null);
+                                                    }
+                                                    outprob = Matrix.concatRows(outprob, Matrix.singleton(p.get(k).doubleValue()), null);
+                                                } else {
+                                                    if (outrate.isEmpty()) {
+                                                        outrate = new Matrix(1, 1);
+                                                        outrate.set(0, 0, p.get(k) * GlobalConstants.Immediate);
+                                                    } else {
+                                                        Matrix bottom_row = new Matrix(1, 1);
+                                                        bottom_row.set(0, 0, p.get(k) * GlobalConstants.Immediate);
+                                                        outrate = Matrix.concatRows(outrate, bottom_row, null);
+                                                    }
+                                                }
+                                                break;
+                                            case LRU:
+                                            case HLRU:
+                                            case QLRU:
+                                                Matrix varp = var.copy();
+                                                Matrix.extract(var, 0, 1, cpos(m, h - 1, 0), cpos(m, h - 1, j), varp, 0, cpos(m, h - 1, 1));
+                                                varp.set(cpos(m, h - 1, 0), var.get(cpos(m, h - 1, j)));
+
+
+                                                if (spaceSrvK.isEmpty()) {
+                                                    spaceSrvK = spaceSrvE.copy();
+                                                } else {
+                                                    spaceSrvK = Matrix.concatRows(spaceSrvK, spaceSrvE, null);
+                                                }
+                                                if (spaceVarK.isEmpty()) {
+                                                    spaceVarK = varp.copy();
+                                                } else {
+                                                    spaceVarK = Matrix.concatRows(spaceVarK, varp, null);
+                                                }
+
+                                                if (isSimulation) {
+                                                    if (outrate.isEmpty()) {
+                                                        outrate = new Matrix(1, 1);
+                                                        outrate.set(0, 0, GlobalConstants.Immediate);
+                                                    } else {
+                                                        Matrix bottom_row = new Matrix(1, 1);
+                                                        bottom_row.set(0, 0, GlobalConstants.Immediate);
+                                                        outrate = Matrix.concatRows(outrate, bottom_row, null);
+                                                    }
+                                                    outprob = Matrix.concatRows(outprob, Matrix.singleton(p.get(k).doubleValue()), null);
+                                                } else {
+                                                    if (outrate.isEmpty()) {
+                                                        outrate = new Matrix(1, 1);
+                                                        outrate.set(0, 0, p.get(k) * GlobalConstants.Immediate);
+                                                    } else {
+                                                        Matrix bottom_row = new Matrix(1, 1);
+                                                        bottom_row.set(0, 0, p.get(k) * GlobalConstants.Immediate);
+                                                        outrate = Matrix.concatRows(outrate, bottom_row, null);
+                                                    }
+                                                }
+                                                break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // if state is unchanged, still add with rate 0
+                        outspace = Matrix.concatColumns(spaceSrvK, spaceVarK, null);
+                    }
+                }
+                break;
+        }
+        return new Ret.EventResult(outspace, outrate, outprob);
+    }
+
+    public static int cpos(Matrix matrix, int i, int j) {
+        int pos = 0;
+
+        for (int idx = 0; idx < i; idx++) {
+            pos += (int) matrix.get(idx);
+        }
+        pos += j;
+        return pos;
+    }
+
+    /**
+     * Performs a check to see if an item is currently in the retrieval system.
+     *
+     * <p>
+     *     The retrieval system is encoded as a per-item occupancy bitmap appended after the cache contents:
+     *     column {@code totalCacheCapacity + item} is non-zero iff that item is currently being retrieved.
+     * </p>
+     *
+     * @param var: Matrix representing the space [Cache contents | Retrieval-system bitmap]
+     * @param item: Zero-indexed item identifier
+     * @param totalCacheCapacity: Total capacity of the cache
+     * @return true if item is in the retrieval system, false otherwise
+     */
+    private static boolean isInRetrievalSystem(Matrix var, int item, int totalCacheCapacity) {
+        int col = totalCacheCapacity + item;
+        // No retrieval-system bitmap present (no retrieval system configured)
+        if (col >= var.getNumCols()) {
+            return false;
+        }
+        return var.get(col) != 0;
+    }
+
+    /**
+     * Adds an item to the retrieval system by setting its occupancy bit.
+     *
+     * @param var: Matrix representing the space [Cache contents | Retrieval-system bitmap]
+     * @param item: Zero-indexed item identifier
+     * @param totalCacheCapacity: Total capacity of the cache
+     */
+    private static void addToRetrievalSystem(Matrix var, int item, int totalCacheCapacity) {
+        int col = totalCacheCapacity + item;
+        // No retrieval-system bitmap present (no retrieval system configured)
+        if (col >= var.getNumCols()) {
+            return;
+        }
+        var.set(col, 1);
+    }
+
+    /**
+     * Removes an item from the retrieval system by clearing its occupancy bit.
+     *
+     * <p>
+     *     If the retrieval system is not set, then this function does nothing.
+     * </p>
+     *
+     * @param var: Matrix representing the space [Cache contents | Retrieval-system bitmap]
+     * @param item: Zero-indexed item identifier
+     * @param totalCacheCapacity: Total capacity of the cache
+     */
+    private static void removeFromRetrievalSystem(Matrix var, int item, int totalCacheCapacity) {
+        int col = totalCacheCapacity + item;
+        // No retrieval-system bitmap present (no retrieval system configured)
+        if (col >= var.getNumCols()) {
+            return;
+        }
+        var.set(col, 0);
+    }
+}
