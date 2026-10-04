@@ -16,11 +16,11 @@ After version 2.0.39, LINE has made extensive use of AI-assistance for its devel
 | [MATLAB](matlab/) | matlab/                      | MATLAB                   | Stable       | [PDF](https://line-solver.sourceforge.net/doc/LINE-user-matlab.pdf), [Primer](https://line-solver.sourceforge.net/doc/LINE-primer-matlab.pdf) | [Sphinx](https://line-solver.sourceforge.net/sphinx-matlab/index.html) |
 | [Java](jar/) | jar/                        | Java SE 8+               | Stable       | [PDF](https://line-solver.sourceforge.net/doc/LINE-user-java.pdf), [Primer](https://line-solver.sourceforge.net/doc/LINE-primer-java.pdf) | [Javadoc](https://line-solver.sourceforge.net/javadoc/index.html) |
 | [Python Native](python/) | python/ | Python 3.11+             | Stable                    | [PDF](https://line-solver.sourceforge.net/doc/LINE-user-python.pdf), [Primer](https://line-solver.sourceforge.net/doc/LINE-primer-python.pdf) | [Sphinx](https://line-solver.sourceforge.net/sphinx/index.html) |
-| [C++](cpp/) | cpp/ | C++17 compiler | Beta | [PDF](https://line-solver.sourceforge.net/doc/LINE-user-cpp.pdf), [Primer](https://line-solver.sourceforge.net/doc/LINE-primer-cpp.pdf) | [Doxygen](https://line-solver.sourceforge.net/doxygen-cpp/index.html) |
+| [C++](cpp/) | cpp/ | C++17 compiler | Stable | [PDF](https://line-solver.sourceforge.net/doc/LINE-user-cpp.pdf), [Primer](https://line-solver.sourceforge.net/doc/LINE-primer-cpp.pdf) | [Doxygen](https://line-solver.sourceforge.net/doxygen-cpp/index.html) |
 
 The `jar/` folder contains the canonical Java implementation, building `common/jline.jar`. The JAR is callable from any JVM language and is the portable option: one self-contained file, no build step, any platform with a JVM. Native Python users should use the `python/` folder.
 
-The `cpp/` folder holds a header-only C++ port (`cpp/include/line/`), the `line-cli` binary and the native LDES simulation engine. It is the fastest implementation and ships as source; build it with `cpp/make.sh -O` for an optimized build.
+The `cpp/` folder holds the C++ port (headers in `cpp/include/line/`, plus the `line_mp_api` library that programs link for the solver facade), the `line-cli` binary and the native LDES simulation engine. It is the fastest implementation and ships as source; build it with `cpp/make.sh -O` for an optimized build.
 
 ## Command-Line Interface
 
